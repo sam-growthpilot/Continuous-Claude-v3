@@ -74,6 +74,41 @@ echo ""
 echo "7. Python Dependencies"
 warn_check "opc venv exists" "test -d '$CLAUDE_OPC_DIR/../.venv' || test -d '$CLAUDE_OPC_DIR/.venv'"
 
+
+# DevOps CLIs (optional — warn but don't fail)
+echo ""
+echo "=== DevOps Integration ==="
+if command -v linearis &>/dev/null; then
+  echo "  [OK] linearis CLI found"
+else
+  echo "  [WARN] linearis not installed (npm install -g linearis)"
+fi
+
+if command -v sentry-cli &>/dev/null; then
+  echo "  [OK] sentry-cli found"
+else
+  echo "  [WARN] sentry-cli not installed (npm install -g @sentry/cli)"
+fi
+
+if command -v playwright-cli &>/dev/null; then
+  echo "  [OK] @playwright/cli found"
+else
+  echo "  [WARN] @playwright/cli not installed (npm install -g @playwright/cli@latest)"
+fi
+
+# DevOps env vars (optional — warn)
+if [ -n "$LINEAR_API_TOKEN" ]; then
+  echo "  [OK] LINEAR_API_TOKEN set"
+else
+  echo "  [WARN] LINEAR_API_TOKEN not set (Linear CLI won't authenticate)"
+fi
+
+if [ -n "$SENTRY_AUTH_TOKEN" ]; then
+  echo "  [OK] SENTRY_AUTH_TOKEN set"
+else
+  echo "  [WARN] SENTRY_AUTH_TOKEN not set (Sentry CLI won't authenticate)"
+fi
+
 echo ""
 echo "=== Results ==="
 echo "  Passed: $PASS"

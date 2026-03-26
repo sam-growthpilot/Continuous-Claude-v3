@@ -53,11 +53,37 @@ cd $CLAUDE_OPC_DIR && PYTHONPATH=. uv run python scripts/core/recall_learnings.p
 ## What The System Provides
 
 - **Persistent memory** -- PostgreSQL + pgvector semantic search across sessions
-- **35+ hooks** -- auto-inject context, enforce patterns, track state
-- **18+ specialized agents** -- scout, kraken, architect, debug-agent, oracle, etc.
+- **95+ hook source files** -- auto-inject context, enforce patterns, track state
+- **40+ specialized agents** -- scout, kraken, architect, debug-agent, oracle, etc.
 - **150+ skills** -- /build, /fix, /explore, /ralph, /maestro workflows
 - **Cross-session continuity** -- handoffs, knowledge trees, ROADMAP tracking
 - **Auto-sync** -- git commits in the repo auto-deploy to ~/.claude/
+
+## DevOps Integration (Step 4b)
+
+The wizard will prompt for optional DevOps tool setup:
+
+**Linear** (issue tracking):
+- CLI: `linearis` for scripted automation, `linear-cli` for interactive
+- MCP: Remote server at `https://mcp.linear.app/mcp` (OAuth)
+- Env vars: `LINEAR_API_TOKEN`, `LINEAR_WORKSPACE`
+
+**Sentry** (error monitoring):
+- CLI: `sentry-cli` for releases, source maps, error queries
+- MCP: Remote server at `https://mcp.sentry.dev/sse` (OAuth)
+- Env vars: `SENTRY_AUTH_TOKEN`, `SENTRY_ORG`
+
+**Playwright CLI** (E2E testing):
+- CLI: `@playwright/cli` for token-efficient browser automation
+- Always installed — core to the QA workflow
+
+## Supply Chain Security
+
+A `package-install-guard` hook intercepts all package install commands and checks:
+1. Typosquat detection (local curated list)
+2. Known-malicious blocklist (auto-updated daily)
+3. OSV.dev real-time query (malware advisories)
+4. Package age check (blocks <24h old packages)
 
 ## Architecture
 

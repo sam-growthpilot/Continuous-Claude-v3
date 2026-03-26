@@ -309,6 +309,9 @@ Specific operational rules are loaded automatically from `.claude/rules/` files.
 - Agent model selection, proactive delegation patterns
 - Memory recall/store procedures, browser automation
 - TLDR CLI usage, hook auto-execution, sync workflows
+- Linear issue safety (confirm before create/update/delete)
+- Sentry release safety (confirm before new/delete/resolve)
+- Package install guard (4-layer supply chain security check)
 
 Those rules are always in context -- this file does not duplicate them.
 
