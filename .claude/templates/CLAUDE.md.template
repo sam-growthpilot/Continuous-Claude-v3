@@ -238,7 +238,7 @@ Types: `WORKING_SOLUTION`, `ERROR_FIX`, `CODEBASE_PATTERN`, `FAILED_APPROACH`, `
 Search modes: Hybrid RRF (default, best accuracy), pure vector, text-only.
 Deduplication at 0.85 similarity threshold. Scope classification: `scope:project` vs `scope:global` via tags.
 
-### Agent Ecosystem (30+ specialized agents)
+### Agent Ecosystem (40+ specialized agents)
 
 Available via Agent tool. Key agents:
 
@@ -255,11 +255,17 @@ Available via Agent tool. Key agents:
 | profiler | Performance profiling | Sonnet |
 | maestro | Multi-step orchestration | Opus |
 | scribe | Documentation, handoffs, session summaries | Sonnet |
-| deployer | Vercel deployment management, monitoring | Sonnet |
+| deployer | Vercel + Railway deployment with Sentry releases, Linear updates, E2E smoke | Sonnet |
 
 **Review gates:** Use `plan-reviewer` agent to validate architect and phoenix plans before implementation.
 
 **Agent output convention:** `$CLAUDE_PROJECT_DIR/.claude/cache/agents/<name>/latest-output.md`
+
+### CLI Tools (21 integrated tools)
+
+Linear, Sentry CLI, Playwright CLI among recent additions. Full inventory in `.claude/rules/cli-integration-strategy.md`.
+
+Supply chain security via `package-install-guard` hook — 4-layer check (typosquat, blocklist, OSV.dev, package age) runs automatically on every install command.
 
 ### TLDR CLI (AST-level code analysis)
 
@@ -334,6 +340,9 @@ Before specific actions, load the relevant skill file FIRST:
 | MCP tool use, integration context | MCP Guidance | `.claude/skills/mcp-guidance/SKILL.md` |
 | Persona request | Personas | `.claude/skills/personas/SKILL.md` |
 | Notion, bridge, Eve, handoff queue, bridge sync | Notion Bridge | `.claude/skills/notion-bridge/notion-bridge/SKILL.md` |
+| Linear, issue, tracker, sprint | Linear | `.claude/skills/linear/SKILL.md` |
+| Sentry, error, monitor, release | Sentry CLI | `.claude/skills/sentry-cli/SKILL.md` |
+| E2E test, QA, smoke test, browser test | QA Test | `.claude/skills/qa-test/SKILL.md` |
 
 **Iron Laws:**
 - No fixes without root cause investigation

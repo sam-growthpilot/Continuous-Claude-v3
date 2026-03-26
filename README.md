@@ -204,18 +204,11 @@ We integrated PageIndex — a reasoning-based retrieval system that achieved 98.
 </details>
 
 <details>
-<summary><strong>Browser Automation</strong> — Two systems for controlling web browsers via natural language</summary>
+<summary><strong>Browser Automation</strong> — Five-tier browser automation from interactive to headless CI/CD</summary>
 
 **The Problem:** Testing web apps, filling forms, and scraping data requires manual browser interaction or complex scripting.
 
-**Our Solution:** Two complementary browser automation systems:
-
-| System | Interface | Best For |
-|--------|-----------|----------|
-| **agent-browser** (`ab` CLI) | PowerShell/Bash commands | Headless testing, CI/CD, scripting, network mocking |
-| **claude-in-chrome** (MCP) | Visual browser control | Live debugging, GIF recording, visual verification |
-
-Both use ref-based element selection — Claude sees a page's interactive elements and interacts with them by reference, like a human pointing at buttons.
+**Our Solution:** Five-tier browser automation: @playwright/mcp (interactive) → @playwright/cli (AI agents, 4x fewer tokens) → CDP CLI (performance) → Playwright-core (scripting) → Playwright Test Runner (E2E suites)
 
 **Plain English Example:**
 ```
@@ -318,7 +311,7 @@ The wizard walks you through 12 steps:
 2. ✅ Checks that prerequisites are installed
 3. ✅ Sets up the database and API keys (optional)
 4. ✅ Starts Docker containers for PostgreSQL
-5. ✅ Installs 31 specialized agents
+5. ✅ Installs 40+ specialized agents
 6. ✅ Installs 137+ skill workflows
 7. ✅ Installs 93 hook source files (25 registered)
 8. ✅ Installs code analysis tools (95% efficiency boost)
@@ -390,7 +383,7 @@ That's it. You're now using Continuous Claude.
 
 </details>
 
-### Agents (31)
+### Agents (40+)
 
 **What they are:** Specialized AI assistants Claude delegates work to
 
@@ -403,7 +396,7 @@ That's it. You're now using Continuous Claude.
 **Do I need to code?** No. Agents work on your behalf.
 
 <details>
-<summary>See full agent roster (31 agents across 9 categories)</summary>
+<summary>See full agent roster (40+ agents across 9 categories)</summary>
 
 **Implementation (4)**
 - **kraken** — Test-driven implementation with strict TDD workflow
@@ -512,13 +505,35 @@ That's it. You're now using Continuous Claude.
 
 ### Browser Automation
 
-**What it is:** Two systems for controlling web browsers — `agent-browser` (headless CLI) and `claude-in-chrome` (visual MCP)
+**What it is:** Five-tier browser automation: @playwright/mcp (interactive) → @playwright/cli (AI agents, 4x fewer tokens) → CDP CLI (performance) → Playwright-core (scripting) → Playwright Test Runner (E2E suites)
 
 **How you use it:** "Test the login flow" or "Fill out this form" or "Take a screenshot of the dashboard"
 
 **What it enables:** E2E testing, form filling, web scraping, visual verification — all via natural language
 
 **Do I need to code?** No. Describe what you want to test or interact with.
+
+### DevOps Integration
+
+Full-cycle dev workflow: Linear (plan) → Claude Code (build) → GitHub (push) → Vercel/Railway (deploy) → Sentry (monitor) → Linear (triage)
+
+- **Linear**: Dual CLI (`linearis` for agents, `linear-cli` for interactive) + MCP server
+- **Sentry**: CLI for releases/source maps + MCP for error investigation + Seer AI autofix
+- **21 CLI tools** integrated via skills and safety rules
+
+### E2E Testing
+
+Browser-based QA with graded reports (A-F scale):
+- `/qa-test` — Record, run, debug, and maintain E2E test suites
+- `/qa-suite` — Plan-driven acceptance testing across multiple user roles
+- **sentinel agent** — Drives live browser with auth-aware multi-role scenarios
+- Integrated into Ralph GSD lifecycle as Phase 4.1.6 (conditional browser QA gate)
+
+### Supply Chain Security
+
+`package-install-guard` hook intercepts all package install commands with 4-layer checks:
+typosquat detection → known-malicious blocklist → OSV.dev real-time query → package age check.
+Auto-updated daily via GitHub Advisory API.
 
 ---
 
@@ -1260,7 +1275,7 @@ Two complementary browser automation systems:
 ```
 continuous-claude/
 ├── .claude/
-│   ├── agents/           # 31 specialized AI agents
+│   ├── agents/           # 40+ specialized AI agents
 │   ├── hooks/            # 93 hook source files (25 registered)
 │   │   ├── src/          # TypeScript source
 │   │   └── dist/         # Compiled JavaScript

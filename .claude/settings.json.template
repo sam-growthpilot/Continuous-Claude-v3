@@ -104,6 +104,11 @@
             "type": "command",
             "command": "node {{CLAUDE_HOME}}/hooks/dist/navigator-safety.mjs",
             "timeout": 3000
+          },
+          {
+            "type": "command",
+            "command": "node {{CLAUDE_HOME}}/hooks/dist/package-install-guard.mjs",
+            "timeout": 10000
           }
         ]
       },
@@ -188,6 +193,11 @@
           {
             "type": "command",
             "command": "node {{CLAUDE_HOME}}/hooks/dist/ralph-progress-inject.mjs",
+            "timeout": 3000
+          },
+          {
+            "type": "command",
+            "command": "node {{CLAUDE_HOME}}/hooks/dist/sentry-error-context.mjs",
             "timeout": 3000
           },
           {
@@ -378,6 +388,16 @@
             "type": "command",
             "command": "node {{CLAUDE_HOME}}/hooks/dist/test-run-tracker.mjs",
             "timeout": 5000
+          },
+          {
+            "type": "command",
+            "command": "node {{CLAUDE_HOME}}/hooks/dist/sentry-deploy-release.mjs",
+            "timeout": 5000
+          },
+          {
+            "type": "command",
+            "command": "node {{CLAUDE_HOME}}/hooks/dist/linear-branch-context.mjs",
+            "timeout": 3000
           }
         ]
       },
