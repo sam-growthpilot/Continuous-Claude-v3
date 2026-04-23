@@ -2,8 +2,8 @@
 /**
  * Ralph Delegation Enforcer Hook
  *
- * Blocks Edit/Write/Bash tools when Ralph mode is active.
- * Forces delegation to agents via Task tool.
+ * Logs activity and updates heartbeat when Ralph mode is active.
+ * Does NOT block Edit/Write/Bash tools.
  *
  * Runs on PreToolUse:Edit, PreToolUse:Write, PreToolUse:Bash
  */
@@ -36,21 +36,13 @@ function readStdin(): string {
   return readFileSync(0, 'utf-8');
 }
 
-function makeBlockOutput(reason: string): void {
-  const output = {
-    hookSpecificOutput: {
-      hookEventName: 'PreToolUse',
-      permissionDecision: 'deny',
-      permissionDecisionReason: reason
-    }
-  };
-  console.log(JSON.stringify(output));
-}
-
 function makeAllowOutput(): void {
   console.log(JSON.stringify({}));
 }
 
+// Kept for future use if strict per-context blocking is added back.
+// Gate on CLAUDE_AGENT_ID absence (orchestrator) vs presence (agent context)
+// once Claude Code surfaces that env var reliably.
 function isTestCommand(command: string): boolean {
   const testPatterns = [
     /\bnpm\s+(run\s+)?test/i,
@@ -73,6 +65,16 @@ function isTestCommand(command: string): boolean {
 }
 
 async function main() {
+  // SOFT ENFORCEMENT (2026-04-23): Ralph-delegation-enforcer logs activity
+  // but does NOT block tools. The hook cannot distinguish orchestrator from
+  // sub-agents using the same session_id, so blocking caused broad collateral
+  // damage (agents blocked from code edits, tests blocked, workarounds via
+  // heredoc). Enforcement of "Ralph orchestrates, agents implement" is now
+  // convention-only - maintained by prompts + CLAUDE.md, not by this hook.
+  // If strict blocking is needed later, gate it on CLAUDE_AGENT_ID being
+  // absent (orchestrator context) vs present (agent context) - once Claude
+  // Code surfaces that env var reliably.
+
   try {
     // Periodic cleanup of old state files (1 in 100 calls)
     if (Math.random() < 0.01) {
@@ -106,7 +108,7 @@ async function main() {
 
     const storyId = ralphStatus.storyId;
 
-    // Update heartbeat — unified state uses ralph-state-v2.py, legacy uses temp file
+    // Update heartbeat - unified state uses ralph-state-v2.py, legacy uses temp file
     // Debounce: only spawn if state.json mtime is older than 5 minutes
     if (ralphStatus.source === 'unified') {
       try {
@@ -126,123 +128,10 @@ async function main() {
       } catch { /* ignore heartbeat failures */ }
     }
 
-    log.info(`Enforcing delegation: tool=${input.tool_name}`, { storyId, sessionId, source: ralphStatus.source });
+    log.info(`Ralph active (soft-enforce, allow): tool=${input.tool_name}`, { storyId, sessionId, source: ralphStatus.source });
     try { logHook(sessionId || '', 'ralph-delegation-enforcer'); } catch { /* never break */ }
 
-    // Ralph is active - enforce delegation
-
-    // Block Edit on code files
-    if (input.tool_name === 'Edit') {
-      const filePath = input.tool_input.file_path || '';
-
-      // Allow config/doc files
-      if (isAllowedConfigFile(filePath)) {
-        makeAllowOutput();
-        return;
-      }
-
-      // Block code files
-      if (isCodeFile(filePath)) {
-        makeBlockOutput(`
-🛑 RALPH DELEGATION ENFORCER
-
-Ralph mode is active. Direct code edits are BLOCKED.
-
-**BLOCKED:** Edit on ${filePath}
-
-**INSTEAD:** Delegate to an agent:
-\`\`\`
-Task(subagent_type: kraken, prompt: |
-  Story: ${storyId}
-  Task: <what you want to change>
-  File: ${filePath}
-  ...
-)
-\`\`\`
-
-Or for quick fixes (<20 lines):
-\`\`\`
-Task(subagent_type: spark, prompt: ...)
-\`\`\`
-
-Ralph orchestrates, agents implement.
-`);
-        return;
-      }
-
-      makeAllowOutput();
-      return;
-    }
-
-    // Block Write on code files
-    if (input.tool_name === 'Write') {
-      const filePath = input.tool_input.file_path || '';
-
-      // Allow config/doc files
-      if (isAllowedConfigFile(filePath)) {
-        makeAllowOutput();
-        return;
-      }
-
-      // Block code files
-      if (isCodeFile(filePath)) {
-        makeBlockOutput(`
-🛑 RALPH DELEGATION ENFORCER
-
-Ralph mode is active. Direct code writes are BLOCKED.
-
-**BLOCKED:** Write to ${filePath}
-
-**INSTEAD:** Delegate to an agent:
-\`\`\`
-Task(subagent_type: kraken, prompt: |
-  Story: ${storyId}
-  Task: Create new file ${filePath}
-  Requirements: ...
-)
-\`\`\`
-
-Ralph orchestrates, agents implement.
-`);
-        return;
-      }
-
-      makeAllowOutput();
-      return;
-    }
-
-    // Block Bash test/lint commands
-    if (input.tool_name === 'Bash') {
-      const command = input.tool_input.command || '';
-
-      if (isTestCommand(command)) {
-        makeBlockOutput(`
-🛑 RALPH DELEGATION ENFORCER
-
-Ralph mode is active. Direct test/lint commands are BLOCKED.
-
-**BLOCKED:** ${command}
-
-**INSTEAD:** Delegate to arbiter:
-\`\`\`
-Task(subagent_type: arbiter, prompt: |
-  Story: ${storyId}
-  Task: Run tests and verify implementation
-  Files: <affected files>
-)
-\`\`\`
-
-Ralph orchestrates, agents test.
-`);
-        return;
-      }
-
-      // Allow non-test bash commands (git, tldr, etc.)
-      makeAllowOutput();
-      return;
-    }
-
-    // Allow other tools
+    // Always allow - soft enforcement only
     makeAllowOutput();
 
   } catch (err) {

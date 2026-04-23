@@ -56,13 +56,19 @@ Execute these 6 phases in sequence.
 
 ### Phase 1: Collect Data
 
-1. Call `mcp__ai-reporting__collect_all_data` with `period_days=7`
-2. Call `mcp__ai-reporting__get_previous_report` to fetch last week's report
-3. Summarize to the user:
-   - "Collected X commits across Y repos, Z roadmap items, N memory insights, M handoff sessions"
-   - Note any collectors that returned errors (graceful degradation)
+1. **Primary source — Tracker collector (new):**
+   - Call `mcp__ai-reporting__collect_weekly_work_tracker` with `period_days=7`
+   - Receive structured entries grouped by Dashboard Section
+   - Capture the `entries[].id` list (Notion page IDs) for Phase 5 mark_published step
+2. **Fallback gate:** If `entries.length < 10` OR the response contains `"skipped": ...`, the Tracker is too sparse to drive the report. Fall through to legacy collectors.
+3. **Legacy fallback (only when Tracker sparse):** Call `mcp__ai-reporting__collect_all_data` with `period_days=7` — fans out to git/github_api/roadmap/memory/handoff collectors.
+4. **Always:** Call `mcp__ai-reporting__get_previous_report` to fetch last week's report for continuity + delta computation.
+5. **Summarize to the user:**
+   - When Tracker primary: "Tracker has N entries across X sections — Deep Dive: M, Integration: P, ..."
+   - When fallback: "Tracker sparse (N<10 entries); using legacy collectors. Collected X commits across Y repos, Z roadmap items..."
+   - Note any collector errors (graceful degradation).
 
-Store collected data and previous report for Phase 3.
+Store collected data + the Tracker page-ID list + the previous report for Phase 3.
 
 ### Phase 2: Interview (Data Gaps Only)
 
