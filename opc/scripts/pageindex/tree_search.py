@@ -6,10 +6,18 @@ instead of vector similarity (~50%).
 """
 import json
 import asyncio
+import logging
+from asyncio import to_thread
 from typing import Optional, List, Dict, Any
 from dataclasses import dataclass
 
 from .claude_llm import claude_complete, claude_complete_async, map_openai_model_to_claude
+
+logger = logging.getLogger(__name__)
+
+# Threshold above which we escalate tree-search answering to the RLM wrapper.
+# Matches RLMPolicy.min_context_chars default.
+RLM_ESCALATION_THRESHOLD = 300_000
 
 
 @dataclass
@@ -276,3 +284,68 @@ def format_search_results(results: List[SearchResult], include_text: bool = Fals
             lines.append(f"   Content:\n   {text_preview}")
 
     return "\n".join(lines)
+
+
+def _format_answer_prompt(question: str, tree_blob: str) -> str:
+    """Format a question + tree blob for a direct-answer prompt."""
+    return (
+        f"Answer the following question using only the provided tree/document data.\n\n"
+        f"QUESTION: {question}\n\n"
+        f"TREE DATA:\n{tree_blob}\n"
+    )
+
+
+async def tree_search_answer(
+    question: str,
+    tree_blob: str,
+    model: str = "sonnet",
+) -> str:
+    """Answer a tree-search question. Escalates to RLM for massive trees.
+
+    For small/medium tree blobs (< RLM_ESCALATION_THRESHOLD chars), uses
+    the fast vanilla Claude path via ``claude_complete_async``.
+
+    For large blobs (>= threshold), routes through the Docker-sandboxed
+    RLM wrapper (``scripts.core.rlm_client.rlm_complete``). The RLM
+    wrapper itself gates on its own ``min_context_chars`` policy and
+    falls back to vanilla Claude on error.
+
+    The RLM import is guarded/lazy so that a missing ``rlms`` install
+    does not break this module at load time -- small-blob callers
+    continue to work unaffected.
+    """
+    if len(tree_blob) < RLM_ESCALATION_THRESHOLD:
+        return await claude_complete_async(
+            _format_answer_prompt(question, tree_blob),
+            model=model,
+        )
+
+    # Large blob: escalate. Guard the import so a missing rlms package
+    # doesn't take down the module -- fall back to vanilla in that case.
+    try:
+        from scripts.core.rlm_client import rlm_complete, RLMPolicy, RLMResult
+    except Exception as exc:  # noqa: BLE001 -- missing deps, partial envs
+        logger.warning(
+            "tree_search_answer: rlm_client unavailable (%s) -- "
+            "falling back to vanilla Claude", exc,
+        )
+        return await claude_complete_async(
+            _format_answer_prompt(question, tree_blob),
+            model=model,
+        )
+
+    # Sync-only upstream API -- run in threadpool to not block the loop.
+    result: RLMResult = await to_thread(
+        rlm_complete,
+        question,
+        tree_blob,
+        policy=RLMPolicy(
+            sandbox="docker",
+            max_depth=1,
+            max_budget_usd=2.00,
+            min_context_chars=RLM_ESCALATION_THRESHOLD,
+        ),
+        model=model,
+    )
+    logger.info("tree_search_answer via %s path", result.path)
+    return result.answer
