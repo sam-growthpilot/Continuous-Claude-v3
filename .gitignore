@@ -180,3 +180,30 @@ opc/README.md
 opc/LICENSE
 opc/.git/
 opc/.python-version
+
+# Scratch / experimental artifacts (per-session work, not shareable)
+.scratch/
+
+# Large or one-off artifacts (kept on disk, not in git)
+fourth-transformation/
+test-screenshots/
+ai-report-card/
+presentations/
+
+# Orphan screenshot artifacts (one-off dashboard/landing-page review captures)
+review-*.png
+insights-*.png
+projects-*.png
+workbook-*.png
+x-article-*
+
+# Tool state directories (machine-local)
+.opencli/
+.playwright-mcp/
+.serena/
+.continues-handoff.md
+
+# Scheduled-task and ralph runtime locks (machine-specific state)
+.claude/scheduled_tasks.lock
+.ralph/agent-output.json
+.ralph/state.json
