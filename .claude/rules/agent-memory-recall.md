@@ -1,20 +1,17 @@
 # Agent Memory Recall
 
-Before starting implementation tasks, agents should check for relevant learnings.
+**This content has been consolidated into the canonical memory skill.**
 
-## When to Recall
+See: `.claude/skills/memory/SKILL.md`
 
-Agents (kraken, architect, phoenix, spark) should consider running:
+## Summary (for continuity)
 
-```bash
-cd $CLAUDE_OPC_DIR && PYTHONPATH=. uv run python scripts/core/recall_learnings.py --query "<task keywords>" --k 3 --text-only
-```
+Before starting implementation tasks, agents (kraken, architect, phoenix,
+spark) should check the archival memory for relevant prior learnings.
+Especially useful when implementing features similar to past work, working
+with hooks/skills/wizard code, or debugging errors that may have been solved
+before.
 
-This is especially useful when:
-- Implementing features similar to past work
-- Working with hooks, skills, or wizard code
-- Debugging errors that may have been solved before
-
-## Quick Check
-
-If the memory-awareness hook showed a MEMORY MATCH in context, the learning is likely relevant. Use the provided `/recall` skill for full content.
+If the memory-awareness hook showed a `MEMORY MATCH` in context, follow up
+with `/recall` for the full content. Canonical skill covers commands,
+options, and scoring guidance.
