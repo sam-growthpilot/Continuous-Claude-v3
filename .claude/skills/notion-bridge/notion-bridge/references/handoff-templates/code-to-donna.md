@@ -5,6 +5,8 @@
 **Date:** YYYY-MM-DD
 **Priority:** High | Mid | Low
 **Status:** 🟡 Unread | ✅ Read (surfaced to Dave)
+**Commits:** {{commit_shas}}
+**Tracker-Row:** {{tracker_row_url}}
 
 ---
 

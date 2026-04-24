@@ -997,32 +997,6 @@
       "evalTier": "verified",
       "evalDate": "2026-03-07"
     },
-    "reference-sdk": {
-      "type": "domain",
-      "enforcement": "suggest",
-      "priority": "medium",
-      "description": "Check reference SDK implementations using btca ask",
-      "promptTriggers": {
-        "keywords": [
-          "btca ask",
-          "reference SDK",
-          "check Vercel",
-          "check Anthropic SDK",
-          "how does SDK",
-          "SDK implementation",
-          "reference implementation"
-        ],
-        "intentPatterns": [
-          "(check|how does).*?(SDK|Vercel|Anthropic)",
-          "(reference|other).*?(SDK|implementation)",
-          "btca.*?(ask|check)",
-          "(how|what).*?(SDK|library).*?(do|implement|handle)"
-        ]
-      },
-      "evalScore": 100,
-      "evalTier": "verified",
-      "evalDate": "2026-03-07"
-    },
     "search-router": {
       "type": "domain",
       "enforcement": "suggest",

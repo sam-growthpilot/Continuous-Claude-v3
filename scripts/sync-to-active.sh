@@ -35,7 +35,8 @@ done
 
 $VERBOSE && echo "Syncing: $REPO_CLAUDE → $ACTIVE_CLAUDE" || true
 
-SYNC_DIRS="hooks/src rules agents skills docs"
+# hooks/src excluded: dist/*.mjs is what runs; copying src stomps mtimes and breaks hook-dist-freshness.
+SYNC_DIRS="rules agents skills docs"
 
 NEVER_SYNC="CLAUDE.md RULES.md .env .credentials.json settings.json history.jsonl knowledge-tree.json"
 
