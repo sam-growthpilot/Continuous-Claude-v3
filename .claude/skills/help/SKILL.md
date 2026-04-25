@@ -107,7 +107,7 @@ Spawn via Task tool with subagent_type.
 | Agent | Purpose | Model |
 |-------|---------|-------|
 | kraken | TDD implementation, refactoring | sonnet |
-| spark | Quick fixes, lightweight changes | haiku |
+| spark | Quick fixes, lightweight changes | sonnet |
 
 ### Review & Validation
 | Agent | Purpose | Model |
@@ -188,6 +188,8 @@ Display active hooks:
 ## Active Hooks
 
 Hooks extend Claude's behavior at key lifecycle points.
+
+> **Note:** the table below is illustrative — hook names drift as the system evolves. For the live registered list, run `/health-check hooks` or read `~/.claude/settings.json`. The Phase 1 telemetry tracer (SYSTEM-ROADMAP.md) will eventually replace this with a generated catalog.
 
 ### Session Lifecycle
 | Hook | Event | Purpose |

@@ -1,10 +1,16 @@
 ---
 name: skill-creator
-description: Guide for creating effective skills for Claude Code (CLI/IDE) and Claude.ai (web/desktop app). Use when users want to create or update skills that extend Claude's capabilities with specialized knowledge, workflows, or tool integrations. Covers platform differences, script execution, discovery optimization, and quality assurance.
+description: "[DEPRECATED — use skill-forge instead] Legacy skill-creation guide. Preserved for reference only. New skill creation should use skill-forge."
 license: Complete terms in LICENSE.txt
 ---
 
-# Skill Creator
+> **DEPRECATED — use `skill-forge` instead.**
+>
+> This skill is preserved for reference but should not be used for new skill creation. The canonical skill-creation workflow lives at `.claude/skills/skill-forge/SKILL.md`. See `SYSTEM-ROADMAP.md` decision #12 for context.
+>
+> The 17 broken `references/*.md` pointers below (brand_guidelines.md, api_docs.md, schema.md, etc.) are template examples — files the original skill-creator instructed Claude to *write*, not files that must already exist. They have been retained to keep this document a faithful snapshot of the legacy workflow.
+
+# Skill Creator (Legacy)
 
 This skill provides comprehensive guidance for creating effective skills that work across Claude Code and Claude.ai platforms.
 
