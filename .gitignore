@@ -210,5 +210,6 @@ x-article-*
 
 # Scheduled-task and ralph runtime locks (machine-specific state)
 .claude/scheduled_tasks.lock
-.ralph/agent-output.json
-.ralph/state.json
+# Match .ralph/ anywhere in the tree (root, opc/, project subdirs, ...).
+# Anchored patterns like ".ralph/state.json" only catch the root copy.
+.ralph/
