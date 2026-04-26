@@ -566,6 +566,53 @@ def check_opc_env_file() -> CheckResult:
                  metadata={"bytes": size})
 
 
+def check_tldr_daemon_running() -> CheckResult:
+    """`tldr daemon status` reports whether the long-running tldr daemon
+    is up. The daemon caches call graphs / embeddings so subsequent
+    queries skip cold-start. Phase 5 of system-coherence will codify
+    tldr as the canonical code-context lookup; this check makes the
+    "is it running?" signal observable now.
+
+    Note: `tldr daemon status` exits 0 in both running and not-running
+    states, so we parse the output text rather than the return code.
+    """
+    start = time.perf_counter()
+    p = _run(["tldr", "daemon", "status"], timeout=5)
+    dur = int((time.perf_counter() - start) * 1000)
+    if p.returncode != 0:
+        return _warn(
+            "tldr-daemon-running", "infrastructure",
+            f"tldr daemon status exit={p.returncode}: "
+            f"{(p.stderr or p.stdout).strip()[:200]}",
+            severity="LOW",
+            remediation="tldr daemon start  (or `pip install --upgrade tldr`)",
+            duration_ms=dur,
+        )
+    out = (p.stdout or "").strip()
+    low = out.lower()
+    if "not running" in low or "stopped" in low:
+        return _warn(
+            "tldr-daemon-running", "infrastructure",
+            f"tldr daemon is not running: {out[:200]}",
+            severity="LOW",
+            remediation="tldr daemon start",
+            duration_ms=dur,
+        )
+    if "running" in low:
+        return _pass(
+            "tldr-daemon-running", "infrastructure",
+            f"tldr daemon running: {out[:200]}",
+            duration_ms=dur,
+        )
+    # Unexpected output -- don't fail the whole check, but flag it.
+    return _warn(
+        "tldr-daemon-running", "infrastructure",
+        f"unrecognized tldr daemon status output: {out[:200]}",
+        severity="LOW",
+        duration_ms=dur,
+    )
+
+
 # ---- 2. Hooks --------------------------------------------------------------
 
 
@@ -2519,6 +2566,8 @@ def build_runner(output_dir: Path | None = None,
                check_claude_opc_dir)
     r.register("opc-env-file-present", "infrastructure",
                check_opc_env_file)
+    r.register("tldr-daemon-running", "infrastructure",
+               check_tldr_daemon_running)
 
     # 2. Hooks
     r.register("hook-dist-freshness", "hooks",
