@@ -71,9 +71,11 @@ statsig/
 # Archives (historical, not needed to operate)
 opc/scripts/archive/
 .claude/hooks/archive/
-.claude/hooks/_archived/
 .claude/skills/_archived/
 .claude/agents/_archived/
+# .claude/hooks/_archived/ is intentionally tracked (Phase 2 archive batches);
+# it preserves prototype hooks for revival. esbuild and sync-to-active.sh skip
+# it because their globs are top-level only.
 
 # OPC internal caches
 opc/.claude/cache/
