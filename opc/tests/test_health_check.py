@@ -451,3 +451,345 @@ def test_compute_canary_timeout_ceiling(tmp_path):
         history.open("a").write(_make_canary_pass_line(200_000) + "\n")
     result = compute_canary_timeout(history_path=history)
     assert result == 300.0
+
+
+# ---------------------------------------------------------------------------
+# hook-runtime category helpers
+# ---------------------------------------------------------------------------
+
+
+def _make_trace_line(
+    *,
+    name: str = "memory-awareness",
+    event: str = "PreToolUse",
+    duration_ms: int = 50,
+    exit_code: int = 0,
+    ts: str | None = None,
+    error: str | None = None,
+) -> str:
+    """Build a hook-trace.jsonl line."""
+    if ts is None:
+        ts = "2026-04-25T12:00:00.000Z"
+    return json.dumps({
+        "ts": ts,
+        "name": name,
+        "event": event,
+        "durationMs": duration_ms,
+        "exitCode": exit_code,
+        "sessionId": "test-session",
+        "error": error,
+    })
+
+
+def test_parse_hook_trace_missing_file_returns_empty(tmp_path):
+    """Missing trace file -> empty list (no exception)."""
+    from scripts.health_check import parse_hook_trace
+
+    result = parse_hook_trace(trace_path=tmp_path / "nonexistent.jsonl")
+    assert result == []
+
+
+def test_parse_hook_trace_filters_by_since_days(tmp_path):
+    """Lines older than since_days are excluded."""
+    from datetime import datetime, timedelta, timezone
+    from scripts.health_check import parse_hook_trace
+
+    trace = tmp_path / "hook-trace.jsonl"
+    now = datetime.now(timezone.utc)
+    recent = (now - timedelta(days=2)).isoformat().replace("+00:00", "Z")
+    ancient = (now - timedelta(days=30)).isoformat().replace("+00:00", "Z")
+    with trace.open("a", encoding="utf-8") as f:
+        f.write(_make_trace_line(name="recent", ts=recent) + "\n")
+        f.write(_make_trace_line(name="ancient", ts=ancient) + "\n")
+
+    result = parse_hook_trace(trace_path=trace, since_days=7)
+    names = [e["name"] for e in result]
+    assert "recent" in names
+    assert "ancient" not in names
+
+
+def test_parse_hook_trace_skips_malformed_lines(tmp_path):
+    """Malformed JSON lines are skipped silently; valid lines preserved."""
+    from scripts.health_check import parse_hook_trace
+
+    trace = tmp_path / "hook-trace.jsonl"
+    with trace.open("w", encoding="utf-8") as f:
+        f.write(_make_trace_line(name="ok-1") + "\n")
+        f.write("this is not json\n")
+        f.write("{partial: not-quoted-json}\n")
+        f.write("\n")  # blank line
+        f.write(_make_trace_line(name="ok-2") + "\n")
+
+    result = parse_hook_trace(trace_path=trace, since_days=365)
+    names = sorted(e["name"] for e in result)
+    assert names == ["ok-1", "ok-2"]
+
+
+def test_aggregate_by_hook_counts_fires_errors_durations():
+    """aggregate_by_hook returns per-hook fires/errors/durations."""
+    from scripts.health_check import aggregate_by_hook
+
+    events = [
+        {"name": "hook-a", "exitCode": 0, "durationMs": 50,
+         "ts": "2026-04-20T10:00:00.000Z"},
+        {"name": "hook-a", "exitCode": 0, "durationMs": 70,
+         "ts": "2026-04-21T10:00:00.000Z"},
+        {"name": "hook-a", "exitCode": 1, "durationMs": 100,
+         "ts": "2026-04-22T10:00:00.000Z"},
+        {"name": "hook-b", "exitCode": 0, "durationMs": 25,
+         "ts": "2026-04-22T10:00:00.000Z"},
+    ]
+    agg = aggregate_by_hook(events)
+    assert set(agg.keys()) == {"hook-a", "hook-b"}
+    assert agg["hook-a"]["fires"] == 3
+    assert agg["hook-a"]["errors"] == 1
+    assert sorted(agg["hook-a"]["durations_ms"]) == [50, 70, 100]
+    assert agg["hook-b"]["fires"] == 1
+    assert agg["hook-b"]["errors"] == 0
+    assert agg["hook-a"]["first_fire"] is not None
+    assert agg["hook-a"]["last_fire"] is not None
+
+
+def test_get_registered_hooks_extracts_basenames(tmp_path):
+    """settings.json command paths -> set of bare hook names (no .mjs, no dirs)."""
+    from scripts.health_check import get_registered_hooks
+
+    settings = {
+        "hooks": {
+            "PreToolUse": [
+                {
+                    "matcher": "Agent",
+                    "hooks": [
+                        {
+                            "type": "command",
+                            "command": (
+                                "node C:/Users/david.hayes/.claude/hooks/"
+                                "dist/agent-validate.mjs"
+                            ),
+                        },
+                        {
+                            "type": "command",
+                            "command": (
+                                "node ~/.claude/hooks/dist/no-haiku-enforcer.mjs"
+                            ),
+                        },
+                    ],
+                },
+            ],
+            "PostToolUse": [
+                {
+                    "matcher": "Edit",
+                    "hooks": [
+                        {
+                            "type": "command",
+                            "command": "node /some/path/memory-awareness.mjs",
+                        },
+                    ],
+                },
+            ],
+        },
+    }
+    settings_path = tmp_path / "settings.json"
+    settings_path.write_text(json.dumps(settings), encoding="utf-8")
+
+    names = get_registered_hooks(settings_path=settings_path)
+    assert "agent-validate" in names
+    assert "no-haiku-enforcer" in names
+    assert "memory-awareness" in names
+    # No .mjs, no dirs
+    for n in names:
+        assert not n.endswith(".mjs")
+        assert "/" not in n
+        assert "\\" not in n
+
+
+def test_compute_unfired_hooks_insufficient_history():
+    """If history span < min_history_days, has_sufficient_history=False."""
+    from scripts.health_check import compute_unfired_hooks
+
+    registered = {"hook-a", "hook-b", "hook-c"}
+    aggregated = {
+        "hook-a": {
+            "fires": 5, "errors": 0, "durations_ms": [10],
+            "first_fire": "2026-04-25T10:00:00.000Z",
+            "last_fire": "2026-04-25T15:00:00.000Z",
+        },
+    }
+    # Same-day events span 5 hours -> < 3 days
+    events = [
+        {"name": "hook-a", "exitCode": 0, "durationMs": 10,
+         "ts": "2026-04-25T10:00:00.000Z"},
+        {"name": "hook-a", "exitCode": 0, "durationMs": 10,
+         "ts": "2026-04-25T15:00:00.000Z"},
+    ]
+    unfired, sufficient = compute_unfired_hooks(
+        registered, aggregated, min_history_days=3, events=events,
+    )
+    assert sufficient is False
+
+
+def test_compute_unfired_hooks_sufficient_history_returns_unfired():
+    """With >=3 days of history, returns the registered-but-unfired list."""
+    from scripts.health_check import compute_unfired_hooks
+
+    registered = {"hook-a", "hook-b", "hook-c", "hook-d"}
+    aggregated = {
+        "hook-a": {
+            "fires": 5, "errors": 0, "durations_ms": [10],
+            "first_fire": "2026-04-20T10:00:00.000Z",
+            "last_fire": "2026-04-25T15:00:00.000Z",
+        },
+        "hook-b": {
+            "fires": 1, "errors": 0, "durations_ms": [10],
+            "first_fire": "2026-04-22T10:00:00.000Z",
+            "last_fire": "2026-04-22T10:00:00.000Z",
+        },
+    }
+    events = [
+        {"name": "hook-a", "exitCode": 0, "durationMs": 10,
+         "ts": "2026-04-20T10:00:00.000Z"},
+        {"name": "hook-a", "exitCode": 0, "durationMs": 10,
+         "ts": "2026-04-25T15:00:00.000Z"},
+    ]
+    unfired, sufficient = compute_unfired_hooks(
+        registered, aggregated, min_history_days=3, events=events,
+    )
+    assert sufficient is True
+    assert set(unfired) == {"hook-c", "hook-d"}
+
+
+def test_hook_runtime_integration_all_subchecks(tmp_path):
+    """Feed fixture jsonl + settings -> verify all 4 sub-checks fire."""
+    from datetime import datetime, timedelta, timezone
+    from scripts.health_check import check_hook_runtime
+
+    trace = tmp_path / "hook-trace.jsonl"
+    settings_path = tmp_path / "settings.json"
+
+    now = datetime.now(timezone.utc)
+    # 5 days of trace data so fire-rate has sufficient history
+    days = [(now - timedelta(days=i)).isoformat().replace("+00:00", "Z")
+            for i in range(5, 0, -1)]
+    lines = []
+    # hook-a: many fires, mostly clean (>=10 fires triggers timing/error analysis)
+    for i in range(15):
+        lines.append(_make_trace_line(
+            name="hook-a", duration_ms=50 + i, exit_code=0, ts=days[i % 5],
+        ))
+    # hook-b: many fires, high error rate (>5%)
+    for i in range(15):
+        lines.append(_make_trace_line(
+            name="hook-b", duration_ms=100, exit_code=(1 if i < 5 else 0),
+            ts=days[i % 5],
+        ))
+    # hook-zero: registered but never fired -> goes via settings only
+    trace.write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+    settings = {
+        "hooks": {
+            "PreToolUse": [
+                {
+                    "matcher": "Agent",
+                    "hooks": [
+                        {"type": "command",
+                         "command": "node ~/.claude/hooks/dist/hook-a.mjs"},
+                        {"type": "command",
+                         "command": "node ~/.claude/hooks/dist/hook-b.mjs"},
+                        {"type": "command",
+                         "command": "node ~/.claude/hooks/dist/hook-zero.mjs"},
+                    ],
+                },
+            ],
+        },
+    }
+    settings_path.write_text(json.dumps(settings), encoding="utf-8")
+
+    results = check_hook_runtime(
+        trace_path=trace, settings_path=settings_path,
+    )
+    by_name = {r.name: r for r in results}
+
+    # Must produce 4 sub-checks
+    assert "hook-trace-file-present" in by_name
+    assert "hook-fire-rate" in by_name
+    assert "hook-error-rate" in by_name
+    assert "hook-timing-p95" in by_name
+
+    # All in hook-runtime category
+    for r in results:
+        assert r.category == "hook-runtime"
+
+    # Trace file present -> PASS
+    assert by_name["hook-trace-file-present"].status == "PASS"
+
+    # Fire-rate: hook-zero registered but no fires AND >=3 days history -> WARN
+    fr = by_name["hook-fire-rate"]
+    assert fr.status == "WARN"
+    assert fr.severity == "MEDIUM"
+    assert "hook-zero" in fr.evidence
+
+    # Error-rate: hook-b has 5/15 = 33% errors -> WARN HIGH
+    er = by_name["hook-error-rate"]
+    assert er.status == "WARN"
+    assert er.severity == "HIGH"
+    assert "hook-b" in er.evidence
+
+    # Timing P95: PASS, INFO severity
+    tp = by_name["hook-timing-p95"]
+    assert tp.status == "PASS"
+    assert tp.severity == "INFO"
+
+
+def test_hook_runtime_skips_when_trace_missing(tmp_path):
+    """Trace file missing -> hook-trace-file-present SKIPs (not WARN)."""
+    from scripts.health_check import check_hook_runtime
+
+    settings_path = tmp_path / "settings.json"
+    settings_path.write_text(json.dumps({"hooks": {}}), encoding="utf-8")
+
+    results = check_hook_runtime(
+        trace_path=tmp_path / "missing.jsonl",
+        settings_path=settings_path,
+    )
+    by_name = {r.name: r for r in results}
+    assert by_name["hook-trace-file-present"].status == "SKIP"
+    assert by_name["hook-trace-file-present"].severity == "INFO"
+
+
+def test_hook_runtime_fail_safe_on_unhandled_exception(tmp_path, monkeypatch):
+    """Any unhandled exception in helpers -> single FAIL with severity LOW."""
+    from scripts.health_check import check_hook_runtime
+    import scripts.health_check as hc
+
+    # Force parse_hook_trace to raise
+    def boom(*args, **kwargs):
+        raise RuntimeError("synthetic-boom")
+
+    monkeypatch.setattr(hc, "parse_hook_trace", boom)
+
+    settings_path = tmp_path / "settings.json"
+    settings_path.write_text(json.dumps({"hooks": {}}), encoding="utf-8")
+
+    trace = tmp_path / "hook-trace.jsonl"
+    trace.write_text("", encoding="utf-8")
+
+    results = check_hook_runtime(
+        trace_path=trace, settings_path=settings_path,
+    )
+    # exactly one FAIL result, severity LOW, mentions error
+    assert len(results) == 1
+    r = results[0]
+    assert r.status == "FAIL"
+    assert r.severity == "LOW"
+    assert "synthetic-boom" in r.evidence
+
+
+def test_hook_runtime_registered_in_build_runner(tmp_path):
+    """build_runner must register hook-runtime category checks."""
+    from scripts.health_check import build_runner, CATEGORY_ORDER
+
+    assert "hook-runtime" in CATEGORY_ORDER
+    runner = build_runner(output_dir=tmp_path, quiet=True)
+    # The runner stores _Registration per check; categories should include hook-runtime
+    cats = {reg.category for reg in runner._registrations}
+    assert "hook-runtime" in cats
