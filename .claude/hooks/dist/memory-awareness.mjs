@@ -396,7 +396,7 @@ function checkMemoryRelevance(intent, projectDir) {
     "--query",
     searchTerm,
     "--k",
-    "3",
+    "5",
     "--json",
     "--text-only"
   ], {
@@ -406,7 +406,7 @@ function checkMemoryRelevance(intent, projectDir) {
       ...process.env,
       PYTHONPATH: opcDir
     },
-    timeout: 2e3,
+    timeout: 5e3,
     killSignal: "SIGKILL"
   });
   if (result.status !== 0 || !result.stdout) {
@@ -417,7 +417,14 @@ function checkMemoryRelevance(intent, projectDir) {
     if (!data.results || data.results.length === 0) {
       return null;
     }
-    const results = data.results.slice(0, 3).map((r) => {
+    const PROACTIVE_INJECTION_FLOOR = 0.05;
+    const filtered = data.results.filter(
+      (r) => (r.score ?? 0) >= PROACTIVE_INJECTION_FLOOR
+    );
+    if (filtered.length === 0) {
+      return null;
+    }
+    const results = filtered.slice(0, 3).map((r) => {
       const content = r.content || "";
       const preview = content.split("\n").filter((l) => l.trim().length > 0).map((l) => l.trim()).join(" ").slice(0, 120);
       return {
@@ -428,7 +435,7 @@ function checkMemoryRelevance(intent, projectDir) {
       };
     });
     return {
-      count: data.results.length,
+      count: filtered.length,
       results
     };
   } catch {

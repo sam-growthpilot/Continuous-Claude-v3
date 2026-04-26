@@ -213,10 +213,15 @@ function checkMemoryRelevance(intent: string, projectDir: string): MemoryMatch |
     .replace(/\s+/g, ' ')
     .trim();
 
+  // Phase 4 system-coherence: keep text-only (cold-start safe; hybrid RRF
+  // takes >30s on first run while BGE loads, blowing past the hook timeout)
+  // but apply a TypeScript-side score threshold to raise the proactive-
+  // injection floor. ts_rank scales 0.0001-0.1; ILIKE fallback hits 0.1.
+  // PROACTIVE_INJECTION_FLOOR (below) is the bar.
   const result = spawnSync('uv', [
     'run', 'python', 'scripts/core/recall_learnings.py',
     '--query', searchTerm,
-    '--k', '3',
+    '--k', '5',
     '--json',
     '--text-only'
   ], {
@@ -226,7 +231,7 @@ function checkMemoryRelevance(intent: string, projectDir: string): MemoryMatch |
       ...process.env,
       PYTHONPATH: opcDir
     },
-    timeout: 2000,
+    timeout: 5000,
     killSignal: 'SIGKILL',
   });
 
@@ -241,11 +246,20 @@ function checkMemoryRelevance(intent: string, projectDir: string): MemoryMatch |
       return null;
     }
 
-    // ts_rank returns small values (0.0001-0.1), ILIKE fallback returns 0.1
-    // Any match from FTS is relevant enough to show
+    // Phase 4 system-coherence: raise proactive-injection bar.
+    // text-only mode returns ts_rank (~0.0001-0.1) or 0.1 for ILIKE fallback.
+    // Floor 0.05 admits strong FTS hits + ILIKE matches, filters weak rank
+    // noise that previously polluted the MEMORY MATCH block.
+    const PROACTIVE_INJECTION_FLOOR = 0.05;
+    const filtered = data.results.filter(
+      (r: any) => (r.score ?? 0) >= PROACTIVE_INJECTION_FLOOR
+    );
+    if (filtered.length === 0) {
+      return null;
+    }
 
-    // Extract structured results with better previews
-    const results: LearningResult[] = data.results.slice(0, 3).map((r: any) => {
+    // Extract structured previews from the top 3 surviving matches
+    const results: LearningResult[] = filtered.slice(0, 3).map((r: any) => {
       const content = r.content || '';
       // Get first meaningful line up to 120 chars
       const preview = content
@@ -264,7 +278,7 @@ function checkMemoryRelevance(intent: string, projectDir: string): MemoryMatch |
     });
 
     return {
-      count: data.results.length,
+      count: filtered.length,
       results
     };
   } catch {
