@@ -34,6 +34,9 @@ history.jsonl
 
 # Claude cache and state
 .claude/cache/
+# Hook telemetry trace (system-coherence Phase 1) -- explicit, redundant with .claude/cache/ above.
+.claude/cache/hook-trace.jsonl
+.claude/cache/hook-trace.jsonl.lock
 .claude/state/
 .claude/statsig/
 .claude/debug/

@@ -96,6 +96,63 @@ function logHook(sessionId, hookName) {
   writeFileSync(filePath, JSON.stringify(activity), { encoding: "utf-8" });
 }
 
+// src/hook-trace.ts
+import { appendFileSync, mkdirSync as mkdirSync2 } from "fs";
+import { join as join3 } from "path";
+import { homedir } from "os";
+function getTracePath() {
+  const dir = join3(homedir(), ".claude", "cache");
+  mkdirSync2(dir, { recursive: true });
+  return join3(dir, "hook-trace.jsonl");
+}
+function getSessionId() {
+  return process.env.CLAUDE_SESSION_ID || String(process.pid);
+}
+var defaultWriter = (r) => appendFileSync(getTracePath(), JSON.stringify(r) + "\n", "utf-8");
+var activeWriter = defaultWriter;
+function writeRecord(r) {
+  try {
+    activeWriter(r);
+  } catch {
+  }
+}
+function buildRecord(name, event, startedAt, exitCode, error) {
+  const errMsg = error == null ? null : error instanceof Error ? error.message || String(error) : String(error);
+  return {
+    ts: (/* @__PURE__ */ new Date()).toISOString(),
+    name,
+    event,
+    durationMs: Date.now() - startedAt,
+    exitCode,
+    sessionId: getSessionId(),
+    error: errMsg
+  };
+}
+function traceHook(name, event, fn) {
+  const startedAt = Date.now();
+  let result;
+  try {
+    result = fn();
+  } catch (err) {
+    writeRecord(buildRecord(name, event, startedAt, 1, err));
+    throw err;
+  }
+  if (result && typeof result.then === "function") {
+    return result.then(
+      (v) => {
+        writeRecord(buildRecord(name, event, startedAt, 0, null));
+        return v;
+      },
+      (e) => {
+        writeRecord(buildRecord(name, event, startedAt, 1, e));
+        throw e;
+      }
+    );
+  }
+  writeRecord(buildRecord(name, event, startedAt, 0, null));
+  return result;
+}
+
 // src/memory-awareness.ts
 function readStdin() {
   return readFileSync2(0, "utf-8");
@@ -421,6 +478,6 @@ Use /recall "${intent}" for full content. Disclose if helpful.`;
     outputContinue();
   }
 }
-main().catch(() => {
+traceHook("memory-awareness", "UserPromptSubmit", () => main()).catch(() => {
   outputContinue();
 });
