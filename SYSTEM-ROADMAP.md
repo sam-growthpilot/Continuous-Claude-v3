@@ -16,7 +16,7 @@ Reliability > latency. Paranoid review > speed. Goal: every hook, skill, and age
 
 | Phase | Status | Description |
 |-------|--------|-------------|
-| 1 — Telemetry + Hygiene Foundation | in_progress | Hook-trace tracer, weekly digest, adaptive canary timeout, memory dedup backfill, doc drift fixes, this file |
+| 1 — Telemetry + Hygiene Foundation | **complete** (2026-04-25) | Hook-trace tracer ✅ + weekly digest ✅ + adaptive canary timeout ✅ + memory dedup backfill ✅ + doc drift fixes ✅ + this file ✅. Commits: a68e169, 81464f8, ed495a9, 9b7b5b7, d5662c3. 78 unit tests pass; live health check clean; trace utility deployed to `~/.claude/hooks/dist/`. |
 | 2 — Per-Hook Cleanup Audit | pending | Read-and-classify all 60 zombie .mjs + 31 source-only files. No bulk delete. Preserve sentry/linear placeholders |
 | 3 — Structural Reorganization | pending | `src/lib/` for shared modules; frontmatter `kind` field for every hook (gate / injector / orchestrator / telemetry) |
 | 4 — Memory + Routing Reliability | pending | Split `session-start-parallel`; raise memory-recall threshold; preview-then-inject; embed-and-match skill router; tree + bridge health checks |

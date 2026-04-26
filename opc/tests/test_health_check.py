@@ -793,3 +793,140 @@ def test_hook_runtime_registered_in_build_runner(tmp_path):
     # The runner stores _Registration per check; categories should include hook-runtime
     cats = {reg.category for reg in runner._registrations}
     assert "hook-runtime" in cats
+
+
+# ---------------------------------------------------------------------------
+# git-remote-sync (compares HEAD to fork/main backup)
+# ---------------------------------------------------------------------------
+
+
+def _git_remote_run_factory(branch: str = "main",
+                            rev_stdout: str = "0\t0",
+                            rev_returncode: int = 0,
+                            rev_stderr: str = ""):
+    """Build a fake _run that responds to rev-parse and rev-list."""
+    captured: list[list[str]] = []
+
+    def fake(cmd, **kwargs):
+        captured.append(list(cmd))
+        ns = MagicMock()
+        if "rev-parse" in cmd:
+            ns.returncode = 0
+            ns.stdout = branch + "\n"
+            ns.stderr = ""
+        elif "rev-list" in cmd:
+            ns.returncode = rev_returncode
+            ns.stdout = rev_stdout
+            ns.stderr = rev_stderr
+        else:
+            ns.returncode = 0
+            ns.stdout = ""
+            ns.stderr = ""
+        return ns
+
+    return fake, captured
+
+
+def test_git_remote_sync_in_sync():
+    """0 ahead, 0 behind fork/main -> PASS."""
+    from scripts.health_check import check_git_remote_sync
+
+    fake, _ = _git_remote_run_factory(rev_stdout="0\t0")
+    with patch("scripts.health_check._run", side_effect=fake):
+        r = check_git_remote_sync()
+    assert r.status == "PASS"
+    assert "in sync" in r.evidence
+    assert r.metadata["ahead"] == 0
+    assert r.metadata["behind"] == 0
+    assert r.metadata["ref"] == "fork/main"
+
+
+def test_git_remote_sync_ahead_warns_for_backup_gap():
+    """Ahead of fork/main -> WARN (push needed for backup).
+
+    This is the key behavior the old `git status -sb` parser missed.
+    """
+    from scripts.health_check import check_git_remote_sync
+
+    fake, _ = _git_remote_run_factory(rev_stdout="0\t5",
+                                      branch="feature/system-coherence")
+    with patch("scripts.health_check._run", side_effect=fake):
+        r = check_git_remote_sync()
+    assert r.status == "WARN"
+    assert r.severity == "LOW"
+    assert "ahead" in r.evidence
+    assert "5" in r.evidence
+    assert "push" in r.evidence.lower()
+    assert "feature/system-coherence" in r.evidence
+    assert r.metadata["ahead"] == 5
+    assert r.metadata["behind"] == 0
+
+
+def test_git_remote_sync_behind_warns():
+    """Behind fork/main -> WARN."""
+    from scripts.health_check import check_git_remote_sync
+
+    fake, _ = _git_remote_run_factory(rev_stdout="3\t0")
+    with patch("scripts.health_check._run", side_effect=fake):
+        r = check_git_remote_sync()
+    assert r.status == "WARN"
+    assert "behind" in r.evidence
+    assert "3" in r.evidence
+    assert r.metadata["behind"] == 3
+    assert r.metadata["ahead"] == 0
+
+
+def test_git_remote_sync_diverged_warns():
+    """Both ahead and behind -> WARN diverged."""
+    from scripts.health_check import check_git_remote_sync
+
+    fake, _ = _git_remote_run_factory(rev_stdout="2\t4")
+    with patch("scripts.health_check._run", side_effect=fake):
+        r = check_git_remote_sync()
+    assert r.status == "WARN"
+    assert "diverged" in r.evidence
+    assert "4 ahead" in r.evidence
+    assert "2 behind" in r.evidence
+
+
+def test_git_remote_sync_skips_when_fork_missing():
+    """rev-list nonzero -> SKIP rather than crash."""
+    from scripts.health_check import check_git_remote_sync
+
+    fake, _ = _git_remote_run_factory(rev_returncode=128,
+                                      rev_stdout="",
+                                      rev_stderr="fatal: ambiguous argument")
+    with patch("scripts.health_check._run", side_effect=fake):
+        r = check_git_remote_sync()
+    assert r.status == "SKIP"
+    assert "fork/main" in r.evidence
+
+
+def test_git_remote_sync_uses_rev_list_against_fork_main():
+    """The check MUST compare to fork/main, not just rely on git status -sb.
+
+    Regression guard: previous implementation used `git status -sb` which
+    silently passed when the branch had no upstream tracking, hiding ahead
+    state from the fork backup remote.
+    """
+    from scripts.health_check import check_git_remote_sync
+
+    fake, captured = _git_remote_run_factory(rev_stdout="0\t0")
+    with patch("scripts.health_check._run", side_effect=fake):
+        check_git_remote_sync()
+
+    # Find the rev-list invocation
+    rev_list_cmds = [c for c in captured if "rev-list" in c]
+    assert len(rev_list_cmds) == 1, (
+        "expected exactly one git rev-list call, got: " + str(captured))
+    cmd = rev_list_cmds[0]
+    assert "--left-right" in cmd
+    assert "--count" in cmd
+    assert any("fork/main...HEAD" in arg for arg in cmd), (
+        "rev-list must compare against fork/main, got: " + str(cmd))
+
+    # And we must NOT be using `git status -sb` for the sync determination.
+    status_sb = [c for c in captured
+                 if "status" in c and "-sb" in c]
+    assert not status_sb, (
+        "must not use 'git status -sb' for fork backup delta: " + str(captured))

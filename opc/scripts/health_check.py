@@ -2274,21 +2274,75 @@ def check_git_uncommitted() -> CheckResult:
                  dur, metadata=metadata)
 
 
+# Backup remote convention: origin = upstream (parcadei, never push), fork = backup
+# (Rev4nchist, always push). The "real" sync delta is HEAD vs fork/main.
+GIT_BACKUP_REF = "fork/main"
+
+
 def check_git_remote_sync() -> CheckResult:
+    """Compare HEAD to the fork backup ref to surface unpushed/unpulled state.
+
+    PASS  -- HEAD is in sync with fork/main
+    WARN  -- ahead (push pending, backup gap), behind (pull/rebase needed),
+             or diverged (both)
+    SKIP  -- fork/main is missing (e.g., fresh clone without remote configured)
+
+    Uses ``git rev-list --left-right --count`` against ``GIT_BACKUP_REF``
+    rather than ``git status -sb`` because the latter only inspects the
+    current branch's upstream, which may be unset or pointed at the wrong
+    remote (origin = parcadei, never pushed).
+    """
     start = time.perf_counter()
-    p = _run(["git", "status", "-sb"],
-             cwd=REPO_ROOT, timeout=15, shell=True)
+    branch_p = _run(["git", "rev-parse", "--abbrev-ref", "HEAD"],
+                    cwd=REPO_ROOT, timeout=10, shell=True)
+    branch = branch_p.stdout.strip() if branch_p.returncode == 0 else "?"
+
+    rev_p = _run(["git", "rev-list", "--left-right", "--count",
+                  f"{GIT_BACKUP_REF}...HEAD"],
+                 cwd=REPO_ROOT, timeout=15, shell=True)
     dur = int((time.perf_counter() - start) * 1000)
-    if p.returncode != 0:
-        return _skip("git-remote-sync", "git", "git status failed")
-    first = p.stdout.splitlines()[0] if p.stdout.splitlines() else ""
-    if "behind" in first or "diverged" in first:
-        return _warn("git-remote-sync", "git",
-                     f"branch state: {first}",
-                     severity="LOW",
+
+    if rev_p.returncode != 0:
+        # fork/main missing or rev-list failed -- can't compute delta.
+        stderr = (rev_p.stderr or "").strip().splitlines()
+        reason = stderr[0] if stderr else f"exit {rev_p.returncode}"
+        return _skip("git-remote-sync", "git",
+                     f"cannot resolve {GIT_BACKUP_REF}: {reason}",
                      duration_ms=dur)
+
+    parts = rev_p.stdout.strip().split()
+    if len(parts) != 2:
+        return _skip("git-remote-sync", "git",
+                     f"unexpected rev-list output: {rev_p.stdout!r}",
+                     duration_ms=dur)
+    try:
+        behind, ahead = int(parts[0]), int(parts[1])
+    except ValueError:
+        return _skip("git-remote-sync", "git",
+                     f"unparseable rev-list output: {rev_p.stdout!r}",
+                     duration_ms=dur)
+
+    metadata = {"branch": branch, "ahead": ahead, "behind": behind,
+                "ref": GIT_BACKUP_REF}
+
+    if behind > 0 and ahead > 0:
+        return _warn("git-remote-sync", "git",
+                     f"diverged from {GIT_BACKUP_REF}: "
+                     f"{ahead} ahead, {behind} behind ({branch})",
+                     severity="LOW", duration_ms=dur, metadata=metadata)
+    if behind > 0:
+        return _warn("git-remote-sync", "git",
+                     f"behind {GIT_BACKUP_REF} by {behind} ({branch}): "
+                     f"pull/rebase needed",
+                     severity="LOW", duration_ms=dur, metadata=metadata)
+    if ahead > 0:
+        return _warn("git-remote-sync", "git",
+                     f"ahead of {GIT_BACKUP_REF} by {ahead} ({branch}): "
+                     f"push to fork for backup",
+                     severity="LOW", duration_ms=dur, metadata=metadata)
     return _pass("git-remote-sync", "git",
-                 f"branch: {first}", dur)
+                 f"in sync with {GIT_BACKUP_REF} ({branch})",
+                 duration_ms=dur, metadata=metadata)
 
 
 # ---- 13. ROADMAP -----------------------------------------------------------
@@ -2429,8 +2483,11 @@ def build_runner(output_dir: Path | None = None,
                _make_sync_check("sync-drift-rules", "rules", "*.md"))
     r.register("sync-drift-agents", "sync",
                _make_sync_check("sync-drift-agents", "agents", "*.md"))
-    r.register("sync-drift-hooks-src", "sync",
-               _make_sync_check("sync-drift-hooks-src", "hooks/src", "*.ts"))
+    # NB: hooks/src is deliberately excluded from sync-to-active.sh -- the
+    # active dir uses repo-built dist/*.mjs, not src. Comparing src would
+    # always flag drift (a phantom WARN). The real invariant -- "hooks/src
+    # never appears in SYNC_DIRS" -- is asserted by tests/test_sync_to_active.py.
+    # See SYSTEM-ROADMAP.md backlog item: "Hook re-stale root cause hardening".
 
     # 10. External APIs
     r.register("anthropic-dev-api-reachable", "external",
