@@ -37,6 +37,8 @@ history.jsonl
 # Hook telemetry trace (system-coherence Phase 1) -- explicit, redundant with .claude/cache/ above.
 .claude/cache/hook-trace.jsonl
 .claude/cache/hook-trace.jsonl.lock
+# Memory dedup runtime artifacts -- explicit, redundant with .claude/cache/ above.
+.claude/cache/memory-dedup-log.jsonl
 .claude/state/
 .claude/statsig/
 .claude/debug/
