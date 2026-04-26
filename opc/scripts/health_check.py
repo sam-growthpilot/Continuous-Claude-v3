@@ -25,6 +25,7 @@ import json
 import os
 import re
 import socket
+import statistics
 import subprocess
 import sys
 import time
@@ -220,6 +221,7 @@ class HealthCheckRunner:
                 "counts": counts,
                 "duration_ms": int(duration * 1000),
                 "hostname": socket.gethostname(),
+                "results": [r.to_dict() for r in results],
             }) + "\n")
 
         return json_path, md_path
@@ -817,6 +819,65 @@ def check_hook_vitest() -> CheckResult:
 
 # ---- 3. Memory -------------------------------------------------------------
 
+_CANARY_HISTORY_PATH = DEFAULT_OUTPUT_DIR / "history.jsonl"
+_CANARY_TIMEOUT_FLOOR = 90.0
+_CANARY_TIMEOUT_CEILING = 300.0
+_CANARY_MIN_PASS_RECORDS = 5
+_CANARY_HISTORY_TAIL = 50
+
+
+def compute_canary_timeout(history_path: Path | None = None) -> float:
+    """Return adaptive timeout (seconds) for memory-canary-roundtrip.
+
+    Uses P95 of the last 10 PASS records * 2, clamped to [90, 300].
+    Falls back to the floor if fewer than 5 PASS records exist.
+
+    Args:
+        history_path: Override the default history.jsonl path (for tests).
+
+    Returns:
+        Timeout in seconds (float).
+    """
+    path = history_path if history_path is not None else _CANARY_HISTORY_PATH
+    if not path or not path.exists():
+        return _CANARY_TIMEOUT_FLOOR
+
+    # Read last N lines without loading the full file
+    try:
+        raw_lines = path.read_text(encoding="utf-8").splitlines()
+    except OSError:
+        return _CANARY_TIMEOUT_FLOOR
+    tail = raw_lines[-_CANARY_HISTORY_TAIL:]
+
+    pass_durations: list[float] = []
+    for line in tail:
+        if not line.strip():
+            continue
+        try:
+            record = json.loads(line)
+        except (json.JSONDecodeError, ValueError):
+            continue
+        for result in record.get("results", []):
+            if (
+                result.get("name") == "memory-canary-roundtrip"
+                and result.get("status") == "PASS"
+                and isinstance(result.get("duration_ms"), (int, float))
+            ):
+                pass_durations.append(float(result["duration_ms"]))
+
+    # Only use the last 10 PASS records
+    recent = pass_durations[-10:]
+    if len(recent) < _CANARY_MIN_PASS_RECORDS:
+        return _CANARY_TIMEOUT_FLOOR
+
+    # P95 via statistics.quantiles (n=20 gives 5th percentile steps; index 18 = 95th)
+    p95_ms = statistics.quantiles(recent, n=20)[18]
+    adaptive = max(
+        _CANARY_TIMEOUT_FLOOR,
+        min(_CANARY_TIMEOUT_CEILING, (p95_ms / 1000.0) * 2),
+    )
+    return adaptive
+
 
 def _run_python_script(args: list[str], timeout: int = 60) -> tuple[int, str, str]:
     """Run a core Python script via uv, from opc dir with PYTHONPATH=."""
@@ -903,7 +964,8 @@ def check_memory_canary_roundtrip() -> CheckResult:
             pass  # best-effort cleanup
 
     try:
-        # 1. Store via store_learning.py
+        # 1. Store via store_learning.py (adaptive timeout from P95 history)
+        _store_timeout = int(compute_canary_timeout())
         rc, stdout, stderr = _run_python_script([
             "scripts/core/store_learning.py",
             "--session-id", "health-check",
@@ -912,7 +974,7 @@ def check_memory_canary_roundtrip() -> CheckResult:
             "--context", "health check canary",
             "--tags", "scope:global,canary,health-check",
             "--confidence", "medium",
-        ], timeout=90)
+        ], timeout=_store_timeout)
         steps.append(f"store_rc={rc}")
         if rc != 0:
             asyncio.run(_cleanup())

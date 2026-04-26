@@ -15,6 +15,7 @@ import pytest
 from scripts.health_check import (
     CheckResult,
     HealthCheckRunner,
+    compute_canary_timeout,
     compute_exit_code,
     render_markdown,
     CATEGORY_ORDER,
@@ -394,3 +395,59 @@ def test_vitest_check_uses_output_file(tmp_path):
                 hooks_pkg.unlink(missing_ok=True)
         except OSError:
             pass
+
+
+# ---------------------------------------------------------------------------
+# compute_canary_timeout
+# ---------------------------------------------------------------------------
+
+
+def _make_canary_pass_line(duration_ms: float) -> str:
+    """Build a history.jsonl line with a single memory-canary-roundtrip PASS."""
+    return json.dumps({
+        "timestamp": "2026-01-01T00:00:00+00:00",
+        "results": [
+            {
+                "name": "memory-canary-roundtrip",
+                "status": "PASS",
+                "duration_ms": duration_ms,
+            }
+        ],
+    })
+
+
+def test_compute_canary_timeout_no_history_file(tmp_path):
+    """No history file -> floor (90.0)."""
+    result = compute_canary_timeout(history_path=tmp_path / "nonexistent.jsonl")
+    assert result == 90.0
+
+
+def test_compute_canary_timeout_fewer_than_5_pass_records(tmp_path):
+    """<5 PASS records -> floor (90.0), adaptive logic does not engage."""
+    history = tmp_path / "history.jsonl"
+    for dur in [20000, 25000, 30000, 22000]:  # 4 records
+        history.open("a").write(_make_canary_pass_line(dur) + "\n")
+    result = compute_canary_timeout(history_path=history)
+    assert result == 90.0
+
+
+def test_compute_canary_timeout_within_bounds(tmp_path):
+    """>=5 PASS records, P95*2 within [90, 300] -> clamped adaptive value."""
+    history = tmp_path / "history.jsonl"
+    # 6 records, all 50 000 ms (50s) -> P95 = 50 000 ms -> *2 = 100s (within bounds)
+    for _ in range(6):
+        history.open("a").write(_make_canary_pass_line(50_000) + "\n")
+    result = compute_canary_timeout(history_path=history)
+    assert 90.0 <= result <= 300.0
+    # P95 of 6 identical values is 50000ms; *2 / 1000 = 100s
+    assert result == pytest.approx(100.0, abs=1.0)
+
+
+def test_compute_canary_timeout_ceiling(tmp_path):
+    """P95*2 exceeds 300s -> ceiling (300.0)."""
+    history = tmp_path / "history.jsonl"
+    # 6 records, all 200 000 ms (200s) -> P95*2 = 400s -> clamped to 300
+    for _ in range(6):
+        history.open("a").write(_make_canary_pass_line(200_000) + "\n")
+    result = compute_canary_timeout(history_path=history)
+    assert result == 300.0
