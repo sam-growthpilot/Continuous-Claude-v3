@@ -7,6 +7,8 @@ description: Full development cycle browser automation for viewing, debugging, t
 
 Comprehensive browser automation covering interaction, performance analysis, and scripted testing. Use the lightest tier that gets the job done.
 
+**Companion agent:** `sentinel` — when full multi-role E2E/UAT driving is needed (login as admin/editor/viewer, RBAC verification, console capture, accessibility audit), delegate to the sentinel agent which loads this skill before acting.
+
 ## 1. Decision Tree
 
 ### Quick Selector
