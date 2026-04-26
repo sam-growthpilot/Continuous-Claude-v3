@@ -3,23 +3,23 @@
 Source: `scripts/audit_hook_state.mjs` (read-only) →
 `.claude/cache/hook-audit-2026-04-26.json` (full per-file rows).
 
-## Totals
+## Totals (post-batch-2)
 
-| Metric | Count |
-|---|---|
-| `dist/*.mjs` | 132 |
-| `src/*.ts` (top-level, excl. `shared/`, `__tests__/`) | 102 |
-| Registered commands in `~/.claude/settings.json` | 70 |
+| Metric | Initial | Current |
+|---|---|---|
+| `dist/*.mjs` | 132 | 102 |
+| `src/*.ts` (top-level, excl. `shared/`, `__tests__/`, `_archived/`) | 102 | 102 |
+| Registered commands in `~/.claude/settings.json` | 70 | 70 |
 
 ## Classification summary
 
-| Kind | Count | Meaning |
-|---|---|---|
-| **LIVE** | 70 | Registered + has source. No action. |
-| **STUB-NEEDED-LATER** | 0 | (None — sentry/linear placeholders all have source.) |
-| **ZOMBIE** | 30 | Orphan `.mjs` (no source, not registered). Candidates for delete. |
-| **SOURCE-ONLY** | 27 | Has source, not registered, not imported. Archive or wire per-file. |
-| **LIB** | 5 | Has source + imported by ≥1 hook. Phase 3 candidates for `src/lib/`. |
+| Kind | Initial | Post-batch-2 | Meaning |
+|---|---|---|---|
+| **LIVE** | 70 | 70 | Registered + has source. Untouched. |
+| **STUB-NEEDED-LATER** | 0 | 0 | (None — sentry/linear placeholders all have source.) |
+| **ZOMBIE** | 30 | **0** | All archived to `_archived/2026-04-26-{agent-teams-prototype,orphan-experiments}/`. |
+| **SOURCE-ONLY** | 27 | 27 | Batch 3 target — has source, not registered. |
+| **LIB** | 5 | 5 | Phase 3 candidates for `src/lib/`. |
 
 > The session-start `Hook Health` monitor flagged `sentry-error-context`,
 > `sentry-deploy-release`, and `linear-branch-context` as MISSING. That's a
@@ -54,9 +54,12 @@ No source, not registered, not imported. Safe to delete *if* the eyeball pass
 confirms each is genuinely unused. Group A (clear v4 swarm experiments) is the
 lowest-risk batch; Group B (generic-named) needs a manual look.
 
-### Group A — v4 swarm/coordination experiments (clear delete)
+### Group A — v4 swarm/coordination experiments (17 files, clear archive)
 Inherited from a prior multi-agent design that was abandoned. None are
-referenced by any current hook or settings.json entry.
+referenced by any current hook or settings.json entry. These appear to be
+prototypes for what is now the official Claude Code "Agent Teams" feature
+(https://code.claude.com/docs/en/agent-teams), so we archive (not delete) for
+future revival.
 
 - `agent-state-broadcast`
 - `composition-gate-hook`
@@ -64,7 +67,6 @@ referenced by any current hook or settings.json entry.
 - `phase-gate`
 - `post-task-complete`
 - `pre-edit-context`
-- `pre-tool-use-broadcast` (also has SOURCE-ONLY — see below)
 - `resource-gate`
 - `session-end-cleanup-swarms`
 - `stop-coordinator`
@@ -76,6 +78,10 @@ referenced by any current hook or settings.json entry.
 - `subagent-stop-continuity`
 - `subagent-stop-swarm`
 - `test-multi-agent`
+
+> Note: `pre-tool-use-broadcast` was originally listed here but is correctly
+> SOURCE-ONLY (it has a `.ts` source). It belongs in the SOURCE-ONLY archive
+> batch (batch 3), not the ZOMBIE archive batch.
 
 ### Group B — needs eyeball before delete
 Generic names or feature-flavored. Read the `.mjs` for any unique logic before
@@ -140,23 +146,40 @@ unregistered. Decide per-hook whether to register or archive.
 
 ---
 
-## Apply plan (gated on user approval)
+## Apply plan — non-destructive archive (gated on user approval)
 
-1. **Phase 2a — Group A ZOMBIE delete (18 files):** straightforward. One commit
-   `chore(hooks): delete v4 swarm-experiment dist orphans`.
-2. **Phase 2b — Group B ZOMBIE eyeball + delete (13 files):** read each `.mjs`
-   to confirm no unique logic before removing. One commit per surprise found,
-   else one bulk commit.
-3. **Phase 2c — SOURCE-ONLY decisions:** per-row decisions. Likely-WIRE bucket
-   needs a separate "register or archive" judgment (probably archive — the plan
-   prefers paranoid mode). Phase 4 candidates stay in place.
-4. **Phase 2d — `_archived/` move:** move agreed SOURCE-ONLY entries to
-   `.claude/hooks/src/_archived/<name>.ts` (excluded by audit and esbuild).
-5. **Verification:** re-run `node scripts/audit_hook_state.mjs`; expect 0
-   ZOMBIE, only Phase 4 candidates in SOURCE-ONLY, LIB unchanged. Then `npm run
-   build` + `bash scripts/sync-to-active.sh` + the weekly health check.
+Strategy: **archive, do not delete.** All hook artifacts move to
+`.claude/hooks/_archived/<date>-<group>/` with a revival README. The
+`_archived/` tree is excluded by esbuild (top-level `src/*.ts` glob) and by the
+sync script (`hooks/*.mjs` top-level glob). Audit script also excludes it.
+
+1. **Batch 1 — `agent-teams-prototype/` (17 ZOMBIE Group A `.mjs`):**
+   `git mv` to `.claude/hooks/_archived/2026-04-26-agent-teams-prototype/dist/`.
+   These are v4 swarm/subagent prototypes that prefigure Claude Code's official
+   Agent Teams feature; archive preserves them for revival when we adopt that
+   API. One commit: `chore(hooks): archive 17 v4 agent-teams-prototype swarm hooks`.
+2. **Batch 2 — `orphan-experiments/` (13 ZOMBIE Group B `.mjs`):** eyeball each
+   `.mjs` for unique logic, then `git mv` to
+   `.claude/hooks/_archived/2026-04-26-orphan-experiments/dist/`. One commit
+   per surprise, else one bulk commit.
+3. **Batch 3 — `source-only-experiments/` (~18 SOURCE-ONLY `.ts` + companion
+   `.mjs`):** per-file decisions. The 6 likely-WIRE candidates and 3 Phase 4
+   candidates stay in place. The remaining ~18 archive together to
+   `.claude/hooks/_archived/2026-04-26-source-only-experiments/{src,dist}/`.
+4. **Verification:** re-run `node scripts/audit_hook_state.mjs` after each
+   batch; expect ZOMBIE → 13 → 0 and SOURCE-ONLY shrinking to ~9 (likely-WIRE
+   + Phase 4 candidates only). LIB unchanged.
 
 LIB moves stay deferred to **Phase 3** per the plan.
+
+### Revival recipe (in each archive group's README)
+
+```bash
+cd .claude/hooks/_archived/<date>-<group>
+mv dist/*.mjs ../../dist/
+[ -d src ] && mv src/*.ts ../../src/
+cd ../../.. && npm --prefix .claude/hooks run build
+```
 
 ---
 
