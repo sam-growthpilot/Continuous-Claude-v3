@@ -20,7 +20,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import * as os from 'os';
 
-import { traceHook, getTracePath, __setTraceWriter } from '../hook-trace.js';
+import { traceHook, getTracePath, __setTraceWriter } from '../lib/hook-trace.js';
 
 // ---------------------------------------------------------------------------
 // Per-test isolation

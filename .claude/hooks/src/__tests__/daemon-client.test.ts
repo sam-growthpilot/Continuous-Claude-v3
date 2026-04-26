@@ -23,7 +23,7 @@ import {
   getConnectionInfo,
   DaemonQuery,
   DaemonResponse,
-} from '../daemon-client.js';
+} from '../lib/daemon-client.js';
 
 // Test fixtures — use platform temp dir
 const TEST_PROJECT_DIR = join(tmpdir(), 'daemon-client-test');

@@ -6,7 +6,7 @@
  */
 
 import { readFileSync } from 'fs';
-import { queryDaemonSync, trackHookActivitySync } from './daemon-client.js';
+import { queryDaemonSync, trackHookActivitySync } from './lib/daemon-client.js';
 
 interface HookInput {
   tool_name: string;

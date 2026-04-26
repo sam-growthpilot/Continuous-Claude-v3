@@ -17,7 +17,7 @@ import { spawnSync } from 'child_process';
 import { getOpcDir } from './shared/opc-path.js';
 import { outputContinue } from './shared/output.js';
 import { logHook } from './shared/session-activity.js';
-import { traceHook } from './hook-trace.js';
+import { traceHook } from './lib/hook-trace.js';
 
 interface UserPromptSubmitInput {
   session_id: string;

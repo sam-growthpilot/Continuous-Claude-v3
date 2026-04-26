@@ -8,7 +8,7 @@
 import { describe, it, expect } from 'vitest';
 import type { SkillRulesConfig } from '../shared/skill-router-types.js';
 import { CircularDependencyError } from '../shared/skill-router-types.js';
-import { topologicalSort } from '../skill-router.js';
+import { topologicalSort } from '../lib/skill-router.js';
 
 describe('Topological Sort', () => {
   it('should return empty array for empty graph', () => {

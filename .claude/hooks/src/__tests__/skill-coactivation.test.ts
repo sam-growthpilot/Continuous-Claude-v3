@@ -7,7 +7,7 @@
 
 import { describe, it, expect, vi } from 'vitest';
 import type { SkillRulesConfig } from '../shared/skill-router-types.js';
-import { resolveCoActivation } from '../skill-router.js';
+import { resolveCoActivation } from '../lib/skill-router.js';
 
 describe('Co-activation Resolution', () => {
   it('should return empty array for skill with no coActivate field', () => {

@@ -1,7 +1,7 @@
 // src/arch-context-inject.ts
 import { readFileSync as readFileSync2, existsSync as existsSync2 } from "fs";
 
-// src/daemon-client.ts
+// src/lib/daemon-client.ts
 import { existsSync, readFileSync, writeFileSync, unlinkSync, mkdirSync } from "fs";
 import { execSync, spawnSync } from "child_process";
 import { join, resolve } from "path";

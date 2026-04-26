@@ -30,7 +30,7 @@ vi.mock('fs', async () => {
 });
 
 // Mock transcript-parser
-vi.mock('../transcript-parser.js', () => ({
+vi.mock('../lib/transcript-parser.js', () => ({
   parseTranscript: vi.fn(() => ({
     lastTodos: [],
     recentToolCalls: [],

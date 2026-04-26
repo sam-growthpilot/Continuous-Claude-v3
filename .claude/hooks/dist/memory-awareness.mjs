@@ -96,7 +96,7 @@ function logHook(sessionId, hookName) {
   writeFileSync(filePath, JSON.stringify(activity), { encoding: "utf-8" });
 }
 
-// src/hook-trace.ts
+// src/lib/hook-trace.ts
 import { appendFileSync, mkdirSync as mkdirSync2 } from "fs";
 import { join as join3 } from "path";
 import { homedir } from "os";

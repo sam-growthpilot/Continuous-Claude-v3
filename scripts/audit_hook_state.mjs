@@ -2,7 +2,7 @@
 // Read-only classifier for the hook landscape.
 //
 // For every .mjs in .claude/hooks/dist/ and every .ts in .claude/hooks/src/
-// (excluding shared/, __tests__/, _archived/), classify into one of:
+// (excluding shared/, __tests__/, _archived/, lib/), classify into one of:
 //
 //   LIVE              registered + has source           -- runs as designed
 //   STUB-NEEDED-LATER registered + NO source            -- placeholder (sentry, linear)
@@ -23,7 +23,7 @@ const SRC_DIR = join(REPO, ".claude/hooks/src");
 const DIST_DIR = join(REPO, ".claude/hooks/dist");
 const SETTINGS = join(ACTIVE, "settings.json");
 
-const EXCLUDE_SRC_DIRS = new Set(["shared", "__tests__", "_archived"]);
+const EXCLUDE_SRC_DIRS = new Set(["shared", "__tests__", "_archived", "lib"]);
 
 function listDirSafe(p) {
   try {
@@ -51,8 +51,8 @@ function listTs(dir) {
     }
     if (s.isDirectory()) {
       if (EXCLUDE_SRC_DIRS.has(entry)) continue;
-      // We only want top-level hooks; subdirs like shared/ are excluded above.
-      // Don't recurse — Phase 3 will introduce src/lib/ but it's not here yet.
+      // We only want top-level hooks; subdirs (shared/, lib/, _archived/) are
+      // excluded above. Don't recurse into other subdirs either.
       continue;
     }
     if (entry.endsWith(".ts") && !entry.endsWith(".d.ts")) {

@@ -3,23 +3,23 @@
 Source: `scripts/audit_hook_state.mjs` (read-only) →
 `.claude/cache/hook-audit-2026-04-26.json` (full per-file rows).
 
-## Totals (post-batch-2)
+## Totals (current state — post Phase 2 batches 1+2 + Phase 3 lib move)
 
 | Metric | Initial | Current |
 |---|---|---|
-| `dist/*.mjs` | 132 | 102 |
-| `src/*.ts` (top-level, excl. `shared/`, `__tests__/`, `_archived/`) | 102 | 102 |
+| `dist/*.mjs` | 132 | 97 |
+| `src/*.ts` (top-level, excl. `shared/`, `__tests__/`, `_archived/`, `lib/`) | 102 | 97 |
 | Registered commands in `~/.claude/settings.json` | 70 | 70 |
 
 ## Classification summary
 
-| Kind | Initial | Post-batch-2 | Meaning |
-|---|---|---|---|
-| **LIVE** | 70 | 70 | Registered + has source. Untouched. |
-| **STUB-NEEDED-LATER** | 0 | 0 | (None — sentry/linear placeholders all have source.) |
-| **ZOMBIE** | 30 | **0** | All archived to `_archived/2026-04-26-{agent-teams-prototype,orphan-experiments}/`. |
-| **SOURCE-ONLY** | 27 | 27 | Batch 3 target — has source, not registered. |
-| **LIB** | 5 | 5 | Phase 3 candidates for `src/lib/`. |
+| Kind | Initial | Current | Status | Meaning |
+|---|---|---|---|---|
+| **LIVE** | 70 | 70 | — | Registered + has source. Untouched throughout. |
+| **STUB-NEEDED-LATER** | 0 | 0 | — | (None — sentry/linear placeholders all have source.) |
+| **ZOMBIE** | 30 | **0** | Batch 1 (17) + Batch 2 (13) archived | All in `_archived/2026-04-26-{agent-teams-prototype,orphan-experiments}/`. |
+| **SOURCE-ONLY** | 27 | 27 | Batch 3 deferred | Has source, not registered. Decisions still per-file. |
+| **LIB** | 5 | **0** | Phase 3 complete | Moved to `src/lib/`; bundled into importers (26 import sites updated, 5 stale dist `.mjs` removed). |
 
 > The session-start `Hook Health` monitor flagged `sentry-error-context`,
 > `sentry-deploy-release`, and `linear-branch-context` as MISSING. That's a

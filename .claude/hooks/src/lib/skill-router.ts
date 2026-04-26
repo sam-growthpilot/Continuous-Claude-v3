@@ -29,7 +29,7 @@ import {
     SkillRule,
     SkillLookupResult,
     CircularDependencyError,
-} from './shared/skill-router-types.js';
+} from '../shared/skill-router-types.js';
 
 // =============================================================================
 // Configuration Constants

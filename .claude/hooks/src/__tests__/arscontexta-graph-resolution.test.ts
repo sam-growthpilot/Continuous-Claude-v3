@@ -15,7 +15,7 @@ import {
   resolveCoActivation,
   getLoadingMode,
   buildEnhancedLookupResult,
-} from '../skill-router.js';
+} from '../lib/skill-router.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = resolve(__filename, '..');

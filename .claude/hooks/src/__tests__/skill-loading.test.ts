@@ -7,7 +7,7 @@
 
 import { describe, it, expect, vi } from 'vitest';
 import type { SkillRulesConfig } from '../shared/skill-router-types.js';
-import { getLoadingMode } from '../skill-router.js';
+import { getLoadingMode } from '../lib/skill-router.js';
 
 describe('Loading Mode', () => {
   it('should return "lazy" as default loading mode', () => {

@@ -114,7 +114,7 @@ function logHook(sessionId, hookName) {
   writeFileSync(filePath, JSON.stringify(activity), { encoding: "utf-8" });
 }
 
-// src/skill-validation-prompt.ts
+// src/lib/skill-validation-prompt.ts
 var AMBIGUOUS_KEYWORDS = /* @__PURE__ */ new Set([
   "commit",
   "push",
@@ -206,7 +206,7 @@ function shouldValidateWithLLM(match) {
   return false;
 }
 
-// src/skill-router.ts
+// src/lib/skill-router.ts
 import { readFileSync as readFileSync3, existsSync as existsSync3, readdirSync, statSync } from "fs";
 import { join as join3 } from "path";
 
@@ -219,7 +219,7 @@ var CircularDependencyError = class extends Error {
   }
 };
 
-// src/skill-router.ts
+// src/lib/skill-router.ts
 var PROMPT_WEIGHTS = {
   multiple_files: 0.2,
   task_conjunctions: 0.15,

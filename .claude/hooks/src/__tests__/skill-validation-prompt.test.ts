@@ -15,7 +15,7 @@ import {
   buildValidationPrompt,
   parseValidationResponse,
   SkillMatch,
-} from '../skill-validation-prompt.js';
+} from '../lib/skill-validation-prompt.js';
 
 describe('Prompt-Based Skill Validation', () => {
   describe('shouldValidateWithLLM', () => {

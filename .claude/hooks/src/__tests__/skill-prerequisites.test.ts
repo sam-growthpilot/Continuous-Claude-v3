@@ -11,7 +11,7 @@ import { CircularDependencyError } from '../shared/skill-router-types.js';
 import {
   resolvePrerequisites,
   detectCircularDependency,
-} from '../skill-router.js';
+} from '../lib/skill-router.js';
 
 describe('Prerequisite Resolution', () => {
   it('should return empty arrays for skill with no prerequisites', () => {
