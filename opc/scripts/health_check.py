@@ -2367,6 +2367,135 @@ def check_roadmap_present() -> CheckResult:
 
 
 # ===========================================================================
+# Bridge (Notion HQ <-> Claude Code) -- Phase 4 system-coherence
+#
+# These checks are deliberately file-system level. The plan called for a live
+# "pages-resolve / queue-fresh" check, but health_check.py runs as a CLI and
+# cannot reach the claude.ai Notion MCP server (that's session-scoped). What
+# we *can* catch from disk: the skill is missing, the documented page IDs got
+# garbled, or the Notion MCP entry vanished from MCP config. A live HTTP
+# probe needs an internal Notion API token + integration grant; track that
+# as a Phase 4 follow-up if the offline checks prove insufficient.
+# ===========================================================================
+
+
+# Stable Notion page IDs for the bridge. Hyphenated UUID form is what Notion
+# emits; the unhyphenated 32-char form is what gets pasted into URLs and into
+# memory entries. Tolerate either when scanning text.
+BRIDGE_HQ_PAGE_ID_HYPH = "30e76fd7-ac82-81e9-9fe1-c0b257088b34"
+BRIDGE_HQ_PAGE_ID_FLAT = "30e76fd7ac8281e99fe1c0b257088b34"
+BRIDGE_ARCHIVE_PAGE_ID_HYPH = "30e76fd7-ac82-8125-8cd9-d281aa873298"
+BRIDGE_ARCHIVE_PAGE_ID_FLAT = "30e76fd7ac8281258cd9d281aa873298"
+
+
+def _bridge_skill_path() -> Path:
+    return CLAUDE_DIR / "skills" / "notion-bridge" / "notion-bridge" / "SKILL.md"
+
+
+def check_bridge_skill_present() -> CheckResult:
+    """The notion-bridge skill must exist; it's the contract Claude follows
+    when reading/writing the HQ page."""
+    start = time.perf_counter()
+    skill = _bridge_skill_path()
+    if not skill.exists():
+        return _fail(
+            "bridge-skill-present", "bridge",
+            f"missing {skill.relative_to(REPO_ROOT)}",
+            severity="HIGH",
+            duration_ms=int((time.perf_counter() - start) * 1000),
+        )
+    size = skill.stat().st_size
+    dur = int((time.perf_counter() - start) * 1000)
+    if size < 200:
+        return _warn(
+            "bridge-skill-present", "bridge",
+            f"SKILL.md exists but suspiciously small ({size} bytes)",
+            severity="MEDIUM", duration_ms=dur,
+        )
+    return _pass(
+        "bridge-skill-present", "bridge",
+        f"SKILL.md present ({size} bytes)",
+        dur, metadata={"bytes": size, "path": str(skill)},
+    )
+
+
+def check_bridge_page_ids_stable() -> CheckResult:
+    """The HQ + Archive page IDs must still be referenced in the skill or its
+    references/. Catches accidental edits, deletions, or ID rotations that
+    would silently break every bridge read/write."""
+    start = time.perf_counter()
+    skill_dir = _bridge_skill_path().parent
+    if not skill_dir.exists():
+        return _skip(
+            "bridge-page-ids-stable", "bridge",
+            "skill dir missing -- depends on bridge-skill-present",
+        )
+    blob_parts: list[str] = []
+    for p in skill_dir.rglob("*.md"):
+        try:
+            blob_parts.append(p.read_text(encoding="utf-8", errors="ignore"))
+        except OSError:
+            continue
+    blob = "\n".join(blob_parts)
+    missing: list[str] = []
+    if (BRIDGE_HQ_PAGE_ID_HYPH not in blob and
+            BRIDGE_HQ_PAGE_ID_FLAT not in blob):
+        missing.append("HQ")
+    if (BRIDGE_ARCHIVE_PAGE_ID_HYPH not in blob and
+            BRIDGE_ARCHIVE_PAGE_ID_FLAT not in blob):
+        missing.append("Archive")
+    dur = int((time.perf_counter() - start) * 1000)
+    if missing:
+        return _fail(
+            "bridge-page-ids-stable", "bridge",
+            f"page IDs missing from skill: {', '.join(missing)}",
+            severity="HIGH", duration_ms=dur,
+            metadata={"missing": missing},
+        )
+    return _pass(
+        "bridge-page-ids-stable", "bridge",
+        "HQ + Archive IDs present in skill text",
+        dur,
+    )
+
+
+def check_bridge_mcp_configured() -> CheckResult:
+    """At least one MCP config file must reference the Notion server; if not,
+    Claude has no way to talk to the bridge at runtime."""
+    start = time.perf_counter()
+    candidates = [
+        Path.home() / ".mcp.json",
+        Path.home() / ".claude.json",
+        Path.home() / ".claude" / "mcp.json",
+    ]
+    seen_in: list[str] = []
+    for cfg in candidates:
+        if not cfg.exists():
+            continue
+        try:
+            text = cfg.read_text(encoding="utf-8", errors="ignore")
+        except OSError:
+            continue
+        # Look for either the cloud server alias or any entry that mentions
+        # `notion` as a server key.
+        if "claude.ai Notion" in text or '"notion"' in text or "notion-mcp" in text:
+            seen_in.append(cfg.name)
+    dur = int((time.perf_counter() - start) * 1000)
+    if not seen_in:
+        return _warn(
+            "bridge-mcp-configured", "bridge",
+            "no Notion MCP entry found in ~/.mcp.json, ~/.claude.json, or "
+            "~/.claude/mcp.json -- bridge writes will fail",
+            severity="MEDIUM", duration_ms=dur,
+        )
+    return _pass(
+        "bridge-mcp-configured", "bridge",
+        f"Notion MCP entry found in: {', '.join(seen_in)}",
+        dur, metadata={"configs": seen_in},
+    )
+
+
+# ===========================================================================
 # Registration
 # ===========================================================================
 
@@ -2505,6 +2634,13 @@ def build_runner(output_dir: Path | None = None,
 
     # 13. Roadmap
     r.register("roadmap-present", "roadmap", check_roadmap_present)
+
+    # 14. Bridge (Notion HQ <-> Claude Code) -- Phase 4 system-coherence
+    r.register("bridge-skill-present", "bridge", check_bridge_skill_present)
+    r.register("bridge-page-ids-stable", "bridge",
+               check_bridge_page_ids_stable)
+    r.register("bridge-mcp-configured", "bridge",
+               check_bridge_mcp_configured)
 
     return r
 
