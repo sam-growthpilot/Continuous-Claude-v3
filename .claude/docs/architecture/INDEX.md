@@ -33,10 +33,12 @@
         ▼           ▼           ▼           ▼           ▼
 ┌──────────┐ ┌──────────┐ ┌──────────┐ ┌──────────┐ ┌──────────┐
 │  MEMORY  │ │  HOOKS   │ │  AGENTS  │ │ PAGEINDEX│ │ WORKFLOWS│
-│PostgreSQL│ │92 src,23 │ │31 agents │ │Doc search│ │Ralph/    │
-│+pgvector │ │registered│ │Task tool │ │LLM reason│ │Maestro   │
+│PostgreSQL│ │TS source │ │ Task tool│ │Doc search│ │Ralph/    │
+│+pgvector │ │ → dist   │ │ delegate │ │LLM reason│ │Maestro   │
 └──────────┘ └──────────┘ └──────────┘ └──────────┘ └──────────┘
 ```
+
+For current inventory: see [agent-skill-map.md](../agent-skill-map.md), [hook-catalog.md](quick-ref/hook-catalog.md), [hook-audit-2026-04.md](../hook-audit-2026-04.md).
 
 ## Cross-References
 

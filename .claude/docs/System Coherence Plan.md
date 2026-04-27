@@ -2,9 +2,9 @@
 
 ## Context
 
-Continuous Claude (CCv3) is a context-management orchestration system. Its purpose is to ensure the *right* skills, agents, hooks, and context fire at the *right* moment so tasks execute reliably with the correct expertise. Today the system has substantial infrastructure (92 hook sources, 70 registered, 33 agents, 138 skills, PostgreSQL + pgvector memory, TLDR daemon, Notion bridge, MCP servers) but several reliability gaps surfaced from the recent Friday health check + hook audit:
+Continuous Claude (CCv3) is a context-management orchestration system. Its purpose is to ensure the *right* skills, agents, hooks, and context fire at the *right* moment so tasks execute reliably with the correct expertise. Today the system has substantial infrastructure (extensive hook ecosystem, agent roster, skill catalog, PostgreSQL + pgvector memory, TLDR daemon, Notion bridge, MCP servers — see [agent-skill-map.md](agent-skill-map.md) and [hook-audit-2026-04.md](hook-audit-2026-04.md) for current inventory) but several reliability gaps surfaced from the recent Friday health check + hook audit:
 
-- **Observability gap**: We can verify a hook is *registered* but not whether it *fired*, *errored silently*, or *injected the wrong context*. With 70 hooks, drift goes undetected for weeks.
+- **Observability gap**: We can verify a hook is *registered* but not whether it *fired*, *errored silently*, or *injected the wrong context*. At this scale, drift goes undetected for weeks.
 - **Hook source confusion**: 5 shared library modules masquerade as orphan hooks; 60 zombie `.mjs` exist without sources; 3 registered hooks have no source (sentry/linear placeholders for future work).
 - **Memory recall noise**: proactive injection scorer is too permissive; recall returns marginally relevant matches and erodes trust in the system's most important capability.
 - **Routing brittleness**: skill activation is keyword-only — semantically equivalent prompts miss the right skill.
@@ -30,7 +30,7 @@ The user's stated north star: *"context management, activating the correct skill
 | 8 | Rollback pace | **4 commits, panic-revert ready.** Health check between phases. |
 | 9 | Skill routing | **Embed-and-match.** Reuse BGE; no per-prompt LLM call. |
 | 10 | Tool-tier policy | **Adopt + audit.** Write policy doc; audit existing overlaps. |
-| 11 | Hook scope | **Codify gate vs orchestrator.** Frontmatter `kind` field; reclassify all 70 hooks. |
+| 11 | Hook scope | **Codify gate vs orchestrator.** Frontmatter `kind` field; reclassify all hooks. |
 | 12 | create-better-skills refs | **Deprecated.** `skill-forge` is canonical going forward; refs are dead, not bugs. |
 | 13 | Agent vs skill composition | **Dedicated Phase 5 + design doc.** Needs scout map + architect design before any refactor. Gated by user approval. |
 | 14 | Knowledge tree health | **Add freshness + completeness checks.** WARN if >7d old or line-count drops >20%. |
@@ -295,7 +295,7 @@ The whole work is complete when **all four signals are green**:
 
 1. **RLM Production Adoption** — separate plan, MVP-ready (Docker prebake done, wrapper designed). Not in scope for this work; track as next ROADMAP item after Phase 5 design approval. Prior plan content for reference: `rlms` library wrapper at `opc/scripts/core/rlm_client.py`, Docker sandbox `continuous-claude/rlm-sandbox:3.11`, max_depth=1, `min_context_chars=300_000`.
 2. **Agent/skill execution phase** — emerges from Phase 5 design doc. Estimated 2-3 days once approved.
-3. **`tools:` field missing on 7 agents** (braintrust-analyst, debug-agent, onboard, etc.) — minor health WARN; fix in Phase 2 cleanup or as standalone hygiene PR.
+3. **`tools:` field missing on several agents** (braintrust-analyst, debug-agent, onboard, etc.) — minor health WARN; fix in Phase 2 cleanup or as standalone hygiene PR.
 4. **`qlty` CLI exit=1** — investigate config; LOW priority WARN.
 5. **142 uncommitted changes** — most are this work-in-progress (skills archive, hook fixes); will resolve naturally as Phases land.
 
@@ -394,7 +394,7 @@ Inventory correction: the previous pass had wrong skill names. The actual TLDR-p
 | `tldr-deep` | NO | Body says "type `/tldr-deep <function>`"; manual only |
 | `tldr-stats` | NO + **broken on Windows** (uses `python3` which triggers MS Store alias) | |
 
-**The actual TLDR system is the 9 hooks**, not the skills:
+**The actual TLDR system is the hook layer**, not the skills:
 
 | Hook | Behavior |
 |---|---|
@@ -410,11 +410,11 @@ Inventory correction: the previous pass had wrong skill names. The actual TLDR-p
 
 All 9 talk to the daemon/CLI directly. **The skill layer is not the load-bearing path**; the hooks are. `tldr-code` acts as a "user-prompted teaching layer" that suggests CLI commands. There is no design intent visible in the codebase that the un-wired sub-skills should be load-bearing.
 
-**Fix C1:** Archive `tldr-router`, `tldr-overview`, `tldr-deep` (redundant with `tldr-code` + the 9 hooks).
+**Fix C1:** Archive `tldr-router`, `tldr-overview`, `tldr-deep` (redundant with `tldr-code` + the TLDR hook layer).
 
 **Fix C2:** Fix `tldr-stats` (`python3` → `python` for Windows) and wire it into `skill-rules.json` with keywords like `["tldr stats", "token usage", "session cost"]`. Session token usage is a real telemetry signal with no other interface.
 
-**Fix C3:** Add a one-paragraph note to `tldr-code/SKILL.md` clarifying that it is the canonical entry point and the 9 hooks cover automatic injection — so future sessions don't try to add new sub-skills.
+**Fix C3:** Add a one-paragraph note to `tldr-code/SKILL.md` clarifying that it is the canonical entry point and the TLDR hook layer covers automatic injection — so future sessions don't try to add new sub-skills.
 
 ---
 
