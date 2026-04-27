@@ -16,6 +16,8 @@ User Request
     └── "review/audit/check/verify" ────→ REVIEW
 ```
 
+> For richer routing logic that factors in **file count, parallelism, context isolation, and tool ACL**, see [Composition Design — §2 Decision Tree](../composition-design.md#2-decision-tree). This page covers task-type detection; the composition design covers when to spawn an agent vs run a skill vs combine the two.
+
 ---
 
 ## Research

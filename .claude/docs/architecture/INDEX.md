@@ -57,6 +57,12 @@ For current inventory: see [agent-skill-map.md](../agent-skill-map.md), [hook-ca
 - [Agent Orchestration](subsystems/agents.md) - When to use which agent
 - [Workflows](subsystems/workflows.md) - Ralph, Maestro, compound workflows
 
+**Phase 5 design docs (../):**
+- [Agent x Skill Map](../agent-skill-map.md) - Cross-reference of agents and skills with routing coverage gaps
+- [Composition Design](../composition-design.md) - "Skills own behavior, agents own isolation" + decision tree (§2) + R1-R10 status
+- [Tool-Tier Policy](../tool-tier-policy.md) - Hooks vs MCPs vs skills decision rules
+- [Hook Audit (2026-04)](../hook-audit-2026-04.md) - Phase 2/3/5c audit decisions and open follow-ups
+
 **Comprehensive Documentation (continuous-claude/docs/):**
 - [ARCHITECTURE.md](file:///C:/Users/david.hayes/continuous-claude/docs/ARCHITECTURE.md) - Full system architecture with TLDR analysis
 - [memory-architecture.md](file:///C:/Users/david.hayes/continuous-claude/docs/memory-architecture.md) - Complete memory system with Mermaid diagrams

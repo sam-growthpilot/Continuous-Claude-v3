@@ -188,19 +188,18 @@ No other workflow orchestrators exhibit re-entrancy. `ralph` has its own delegat
 
 Each item below is a *recommendation* with explicit blast radius, risk, and reversibility. None of these execute in this design phase. They are the input to a Phase 5c plan that the user approves separately.
 
-### R1 — Dedup `sleuth` vs `debug-agent`
+### R1 — Dedup `sleuth` vs `debug-agent` [DONE — Option A]
 
 **Problem.** Both agents investigate bugs. Both load `systematic-debugging` skill. The `fix` skill uses sleuth for deep forensics and debug-agent as general fallback but this distinction lives only in `fix/SKILL.md` prose. In practice the routing is ambiguous and both get recommended for the same prompt class.
 
-**Options.**
-- **Option A (preferred):** Keep both, codify the split in their frontmatter `description` so the routing is observable: sleuth = Deep bug forensics with file-level reproduction; debug-agent = General root-cause analysis for unclear bugs. Update `fix/SKILL.md` prose to match. No agent removal.
-- **Option B:** Archive `debug-agent`, route everything to sleuth. Sleuth prompt is denser and covers debug-agent territory. Agents that name `debug-agent` directly (e.g. references in `fix`, `maestro` skills) need updates.
-- **Option C:** Archive `sleuth`, keep debug-agent as canonical. sleuth body is more specialized; folding it loses some forensics depth.
+**Resolution (Option A applied, commit `76482f2`).** Both agents kept. Frontmatter `description` fields rewritten to make the split observable:
+- sleuth = "Deep bug forensics with file-level reproduction. Use when the bug is multi-file, intermittent, or needs evidence-grade root cause analysis with traced code paths."
+- debug-agent = "General root-cause analysis for unclear or single-file bugs. Use as the default investigator when the failure mode is not yet localized."
 
-**Blast radius (A):** 2 frontmatter changes + 1 doc paragraph in `fix/SKILL.md`.
-**Blast radius (B):** Archive 1 agent file + update ~5 references across skills + update `proactive-delegation.md` table.
-**Risk (A):** None — additive clarity. **Risk (B):** Medium — agents that name debug-agent fail silently. **Risk (C):** Same as B.
-**Reversibility:** All three are `git revert`. Recommend **A**.
+Each agent's frontmatter cross-references the other ("Pairs with the systematic-debugging skill. For multi-file forensics or evidence-grade reproduction, prefer sleuth." / "For unclear or single-file bugs, prefer debug-agent."). `fix/SKILL.md` prose aligned. No agent removal.
+
+**Blast radius:** 2 frontmatter changes + 1 doc paragraph in `fix/SKILL.md`.
+**Reversibility:** `git revert 76482f2`.
 
 ### R2 — `judge` and `liaison` discoverability
 
@@ -238,32 +237,30 @@ Each item below is a *recommendation* with explicit blast radius, risk, and reve
 
 **Resolution (Option A applied):** Hook renamed to `agent-model-guard.ts`. Hook behavior unchanged; file name moved. `~/.claude/settings.json` registration updated to `agent-model-guard.mjs` via Node.js atomic write.
 
-### R6 — Phantom agents in the map
+### R6 — Phantom agents in the map [DONE — Option B]
 
 **Problem.** The Phase 5a scout deliverable lists three agents that **do not exist** on disk: `principal-reviewer`, `wizard`, `agent-factory`. This is a documentation defect.
 
-**Options.**
-- **Option A (preferred):** Update `.claude/docs/agent-skill-map.md` to remove the phantom rows. Add a Phantom-agents-removed note explaining they are not present.
-- **Option B:** Create the three missing agents because they cover real gaps:
-  - `wizard` — CCv3 setup wizard. There is `wizard.py` in the repo root; an agent companion would make setup conversational.
-  - `agent-factory` — scaffold new agents. Could be useful when expanding the agent set.
-  - `principal-reviewer` — senior-eng review pass. Distinct from `critic` (feature review) and `review-agent` (synthesis).
+**Resolution (Option B applied, commit `420119f`).** All three agents created on disk to cover the real gaps:
+- `wizard.md` — CCv3 setup wizard companion to `wizard.py`.
+- `agent-factory.md` — scaffolds new agents; useful when expanding the roster.
+- `principal-reviewer.md` — senior-eng review pass; distinct from `critic` (feature review) and `review-agent` (synthesis). Tools restricted to read-only (no Edit/Write).
 
-**Recommendation.** Pick **A** for the map fix immediately. **B** is a separate feature decision — file three new ROADMAP items and decide per-agent in a future cycle.
+The agent x skill map (`agent-skill-map.md`) was updated to reflect the new agents in the same change. **Open follow-up:** none of the three are wired into `task-router.ts` or `skill-rules.json` — they are reachable only by explicit `subagent_type` name. Wiring is deferred as a separate task and tracked in `hook-audit-2026-04.md` Phase 5c addendum (LOW severity).
 
-**Blast radius (A):** 4 row deletions in the map.
-**Risk (A):** None.
-**Reversibility:** Trivial.
+**Blast radius:** 3 new agent files + 1 map update.
+**Reversibility:** `git revert 420119f`.
 
-### R7 — `maestro` re-entrancy guard
+### R7 — `maestro` re-entrancy guard [DONE]
 
 **Problem.** `maestro-detector` hook recommends `/maestro` on complexity signals even when a maestro session is already active.
 
-**Recommendation.** Add a check to `maestro-detector.ts`: if the maestro state file (`.claude/maestro-state.json`) exists and is fresh (mtime < session window), skip the suggestion. This is a hook-level fix, not an agent or skill change.
+**Resolution (commit `a429634`).** `isMaestroActive()` check added to `maestro-detector.ts`: if the maestro state file (`.claude/maestro-state.json`) exists with mtime within a 30-minute window, the suggestion is skipped. Fail-open on missing state file. Test coverage added.
 
-**Blast radius:** ~10 lines added to `maestro-detector.ts` + test case.
-**Risk:** Low — additive guard.
-**Reversibility:** `git revert` of the hook source + rebuild.
+**Latent edge case (tracked, low risk).** Long-running maestro sessions that cross the 30-min window without state-file mtime refresh could re-fire the detector. Not addressed in this commit; see `hook-audit-2026-04.md` Phase 5c addendum.
+
+**Blast radius:** ~30 lines in `maestro-detector.ts` + test.
+**Reversibility:** `git revert a429634` + rebuild.
 
 ### R8 — `neonctl` skill needs no companion agent
 
@@ -274,14 +271,21 @@ Each item below is a *recommendation* with explicit blast radius, risk, and reve
 **Blast radius:** ~5 lines in `deployer.md`.
 **Risk:** None.
 
-### R9 — Memory sub-skill consolidation verification
+### R9 — Memory sub-skill consolidation verification [VERIFY-TASK, NOT YET CLOSED]
 
-**Problem.** Five skills cover memory: `memory` (canonical), `recall`, `remember`, `recall-reasoning`, `memory-curate`. The agent x skill map already flags this and notes the canonical-skill consolidation is in place. Worth verifying nothing further is needed.
+**Problem.** Five skills cover memory: `memory` (canonical), `recall`, `remember`, `recall-reasoning`, `memory-curate`. The agent x skill map flags this and notes a canonical-skill consolidation is in place.
 
-**Recommendation.** Read the four sub-skills (`recall/SKILL.md`, `remember/SKILL.md`, `recall-reasoning/SKILL.md`, `memory-curate/SKILL.md`) and confirm each is a thin pointer to `memory/SKILL.md` per the canonical-consolidation pattern. If any are still long-form, fold them in. If all four are pointers, this is already done — close the item.
+**Verification finding (2026-04-27).** The sub-skills are **not** thin pointers — each carries its own body (commands, examples, scoring guidance specific to its surface). The `memory` skill is canonical-by-convention (it is the reference doc the rules link to), not by mechanical inclusion. The arrangement is functional today: `recall` = query helper, `remember` = store helper, `recall-reasoning` = reasoning-search, `memory-curate` = audit/cleanup, and `memory` = the spec all four cite.
 
-**Blast radius:** 0-4 file edits depending on what verification finds.
-**Risk:** None — folding-in pattern is well-established.
+**Status.** Reframed as a verify-task, not a code-change item. Decide separately whether to:
+- **(a)** leave as-is — keeps skill-router keyword distinctiveness, costs duplication risk if `memory/SKILL.md` and a sub-skill body drift.
+- **(b)** thin the sub-skills to one-line pointers — loses keyword surface for skill-router activation but eliminates drift risk.
+- **(c)** fold them entirely into `memory/SKILL.md` and delete — most aggressive; requires re-registering skill-router keywords on `memory`.
+
+**No action required for Phase 5c.** This is an open design choice for a future cycle.
+
+**Blast radius:** 0 (option a) up to ~4 file edits (b) or 4 deletions (c).
+**Risk:** Option (a) drift risk only. Option (b)/(c) lose router activation surface unless skill-rules.json updated in step.
 
 ### R10 — `principal-reviewer` undiscoverability
 
@@ -289,36 +293,38 @@ Each item below is a *recommendation* with explicit blast radius, risk, and reve
 
 ---
 
-## 6. Open Questions for User
+## 6. Open Questions for User — Phase 5c resolution log
 
-1. **Recommendation R1 (sleuth/debug-agent dedup).** Choose Option A (clarify both, keep both) vs B (archive debug-agent) vs C (archive sleuth). The default proposal is A.
-2. **Recommendation R5 (nameclash).** [DONE] Hook renamed to `agent-model-guard`. Settings.json updated.
-3. **Recommendation R6.** Should phantom agents (`principal-reviewer`, `wizard`, `agent-factory`) be (A) deleted from docs, or (B) created as real agents? Default is A; B is a separate feature decision.
-4. **Recommendation R7 (maestro re-entrancy).** Approve adding the guard to `maestro-detector.ts`?
-5. **Out of scope confirmation.** This document does not propose changes to `ralph` enforcement, the `tldr-code` canonical-entry-point arrangement, or any of the 9 TLDR hooks. Confirm these are stable.
-6. **Phase 5c sequencing.** Once approved, what order should R1-R10 execute? Default proposal: R3 (doc-only) -> R6 (doc-only) -> R4 (cross-ref) -> R8 (neonctl) -> R2 (workflow refs) -> R7 (re-entrancy guard) -> R5 (rename) -> R1 (sleuth dedup, last because most opinionated) -> R9 (verification).
+1. **Recommendation R1 (sleuth/debug-agent dedup).** [DONE — Option A] Both agents kept; frontmatter `description` fields rewritten to make routing observable. Commit `76482f2`.
+2. **Recommendation R5 (nameclash).** [DONE] Hook renamed to `agent-model-guard.ts`; `~/.claude/settings.json` and 4 mirrored settings files updated. Commit `dd6c602` + pre-push followup.
+3. **Recommendation R6 (phantom agents).** [DONE — Option B] All three agents created on disk (`wizard.md`, `agent-factory.md`, `principal-reviewer.md`). Commit `420119f`. Wiring into `task-router.ts`/`skill-rules.json` deferred as a separate follow-up.
+4. **Recommendation R7 (maestro re-entrancy).** [DONE] 30-min mtime window guard added to `maestro-detector.ts`. Commit `a429634`.
+5. **Out of scope confirmation.** This document does not propose changes to `ralph` enforcement, the `tldr-code` canonical-entry-point arrangement, or any of the 9 TLDR hooks. Confirmed stable.
+6. **Phase 5c sequencing.** Executed: R1 → R5 → R6 → R7 in commits `76482f2`, `dd6c602`, `420119f`, `a429634` on branch `feature/system-coherence`. R2/R3/R4/R8 remain as doc-only follow-ups (not blocking). R9 reframed as verify-task (no action required).
 
 ---
 
-## 7. Success Criteria
+## 7. Success Criteria — Phase 5c status
 
-This composition design is *successful* when, post-Phase-5c execution:
-
-- [ ] Every agent on disk has a row in the pairing table that is true.
-- [ ] No phantom agents in the map (R6 closed).
-- [ ] No nameclash between hooks and agents (R5 closed).
-- [ ] `maestro-detector` does not recommend maestro inside a maestro session (R7 closed).
-- [ ] Every workflow orchestrator skill that has a companion agent declares it explicitly (R2-R4 closed).
-- [ ] Memory sub-skills are confirmed-thin pointers (R9 closed).
-- [ ] Sleuth and debug-agent have observably-distinct routing (R1 closed in whichever option chosen).
-- [ ] The decision tree in section 2 is referenced by the next session-onboarding pass (it lives in `.claude/docs/` so future agents can read it).
+- [ ] Every agent on disk has a row in the pairing table that is true. *(Open: pairing table updated for R6 agents but not yet re-validated end-to-end.)*
+- [x] No phantom agents in the map (R6 closed — agents created on disk, commit `420119f`).
+- [x] No nameclash between hooks and agents (R5 closed — hook renamed `agent-model-guard.ts`, commit `dd6c602`).
+- [x] `maestro-detector` does not recommend maestro inside a maestro session (R7 closed — commit `a429634`).
+- [ ] Every workflow orchestrator skill that has a companion agent declares it explicitly (R2-R4 closed). *(Open: doc-only follow-ups not yet scheduled.)*
+- [ ] Memory sub-skills are confirmed-thin pointers (R9 closed). *(Reframed as verify-task — see R9 above. No action required for Phase 5c.)*
+- [x] Sleuth and debug-agent have observably-distinct routing (R1 closed — Option A applied, commit `76482f2`).
+- [ ] The decision tree in section 2 is referenced by the next session-onboarding pass (lives in `.claude/docs/` so future agents can read it).
 
 ---
 
 ## 8. References
 
 - Plan: `C:/Users/david.hayes/.claude/plans/i-have-a-new-abstract-quail.md` (Phase 5)
-- Map: `.claude/docs/agent-skill-map.md` (post-`f9c7c59`)
+- Companion docs:
+  - [`.claude/docs/agent-skill-map.md`](./agent-skill-map.md) — full pairing inventory + routing coverage gaps
+  - [`.claude/docs/tool-tier-policy.md`](./tool-tier-policy.md) — hooks vs MCPs vs skills decision rules (companion to this doc's §2 decision tree)
+  - [`.claude/docs/hook-audit-2026-04.md`](./hook-audit-2026-04.md) — Phase 2/3/5c audit decisions and open follow-ups
+  - [`.claude/docs/architecture/DECISION-TREES.md`](./architecture/DECISION-TREES.md) — task-type detection (links forward to §2 above)
 - Archive READMEs (gitignored): `.claude/agents/_archived/2026-04-26-duplicates/README.md`, `.claude/skills/_archived/2026-04-26-tldr-cleanup/README.md`
 - Rules: `.claude/rules/proactive-delegation.md`, `.claude/rules/use-scout-not-explore.md`, `.claude/rules/no-haiku.md`, `.claude/rules/agent-model-selection.md`
 - Hooks: `.claude/hooks/src/ralph-delegation-enforcer.ts`, `.claude/hooks/src/maestro-detector.ts`, `.claude/hooks/src/agent-model-guard.ts`, `.claude/hooks/src/skill-router.ts`

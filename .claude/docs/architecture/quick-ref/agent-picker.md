@@ -2,6 +2,8 @@
 
 ## By Task Type
 
+> **Note on Model column:** Values shown reflect historical pinning. Per `.claude/rules/agent-model-selection.md` and `.claude/rules/no-haiku.md`, the convention is to **omit the `model` parameter** when spawning (the agent inherits from the parent — usually Opus). The column is a hint about typical use, not enforcement. See [Model Rules](#model-rules) below.
+
 | Need | Agent | Model | Notes |
 |------|-------|-------|-------|
 | **Research** |

@@ -202,6 +202,8 @@ Recorded after the Phase 5c R1-R9 ship, during pre-fork-push review.
 
 ### R5 rename — agent-validate → agent-model-guard
 
+> See `composition-design.md` §5 R5 for design context.
+
 - Source renamed: `.claude/hooks/src/agent-validate.ts` → `agent-model-guard.ts` (commit `dd6c602`).
 - Active config (`~/.claude/settings.json`) updated by Node.js atomic write at ship time.
 - **Pre-push followup applied 2026-04-27:** the rename was incomplete — repo `.claude/settings.json:25`, `.claude/settings.json.template:25`, `.claude/worktrees/lucid-hellman/.claude/settings.json:25`, `.claude/worktrees/distracted-booth/.claude/settings.json:25`, and `hook-health-monitor.test.ts:154` still referenced `agent-validate.mjs`. All five fixed in the same pre-push commit; bootstrap from `BOOTSTRAP.md` now registers the correct hook.
@@ -209,11 +211,15 @@ Recorded after the Phase 5c R1-R9 ship, during pre-fork-push review.
 
 ### R6 phantom agents — created (Option B)
 
+> See `composition-design.md` §5 R6 for design context.
+
 - Three previously-fictional agents now exist on disk: `wizard.md`, `agent-factory.md`, `principal-reviewer.md` (commit `420119f`).
 - Frontmatter validated; `principal-reviewer` correctly omits Edit/Write per architect spec.
 - Open follow-up: none of the three are wired into `task-router.ts` or `skill-rules.json` — reachable only by explicit name. Tracked in `agent-skill-map.md` Routing Coverage Gaps.
 
 ### R7 maestro-detector re-entrancy guard
+
+> See `composition-design.md` §5 R7 for design context.
 
 - 30-min mtime window check in `isMaestroActive()` (commit `a429634`). Fail-open on missing state file.
 - Latent edge case noted: long maestro sessions crossing the 30-min window without state-file mtime refresh could re-fire the detector. Low risk in practice; not addressed in this commit.
