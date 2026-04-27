@@ -8,6 +8,7 @@
 
 import * as fs from 'fs';
 import * as path from 'path';
+import * as os from 'os';
 
 // ============================================
 // Types
@@ -112,11 +113,16 @@ function extractDistPath(command: string): string | null {
   const match = command.match(/^node\s+(.+\.mjs)\s*$/);
   if (!match) return null;
 
-  const filePath = match[1].trim();
+  let filePath = match[1].trim();
 
   // Must be in a hooks/dist/ directory
   const normalized = filePath.replace(/\\/g, '/');
   if (!normalized.includes('hooks/dist/')) return null;
+
+  // Expand leading ~/ or ~\ to the user's home directory so existsSync resolves correctly
+  if (filePath.startsWith('~/') || filePath.startsWith('~\\')) {
+    filePath = path.join(os.homedir(), filePath.slice(2));
+  }
 
   return filePath;
 }

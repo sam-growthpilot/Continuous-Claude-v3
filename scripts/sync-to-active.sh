@@ -74,6 +74,24 @@ for dir in $SYNC_DIRS; do
     copy_dir "$dir"
 done
 
+# Sync top-level .claude/*.md files (canonical entry points / redirect stubs)
+for src_file in "$REPO_CLAUDE"/*.md; do
+    [[ ! -f "$src_file" ]] && continue
+    base=$(basename "$src_file")
+    skip_file=false
+    for skip in $NEVER_SYNC; do
+        [[ "$base" == "$skip" ]] && skip_file=true && break
+    done
+    $skip_file && continue
+    dst_file="$ACTIVE_CLAUDE/$base"
+    if $DRY_RUN; then
+        echo "[DRY RUN] Would copy: $src_file -> $dst_file"
+    else
+        cp "$src_file" "$dst_file"
+        $VERBOSE && echo "Copied: $base" || true
+    fi
+done
+
 for pattern in "hooks/*.sh" "hooks/*.py" "hooks/*.mjs" "hooks/*.ps1" "hooks/package.json" "hooks/tsconfig.json"; do
     for src_file in $REPO_CLAUDE/$pattern; do
         [[ ! -f "$src_file" ]] && continue
