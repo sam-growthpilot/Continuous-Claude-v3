@@ -12,7 +12,7 @@ import {
   resolveCoActivation,
   getLoadingMode,
   buildEnhancedLookupResult,
-} from '../lib/skill-router.js';
+} from '../skill-router.js';
 
 describe('Integration: Full Flow', () => {
   const testRules: SkillRulesConfig = {

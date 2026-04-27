@@ -37,8 +37,6 @@ Safe refactoring with review gates.
 | 4 | **plan-reviewer** | Review changes for correctness | Review report |
 | 5 | **arbiter** | Verify all tests still pass | Test report |
 
-**Optional companion:** spawn `judge` in parallel with `plan-reviewer` (step 4) when the refactor is high-stakes — cross-module, public API changes, or performance-critical paths. judge applies a senior-eng transformation lens that complements plan-reviewer's correctness check.
-
 ## Refactoring Principles
 
 1. **Tests first**: Ensure adequate test coverage before refactoring

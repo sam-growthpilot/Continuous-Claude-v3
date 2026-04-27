@@ -39,7 +39,7 @@ Last updated: 2026-03-21
 | Hook | Matcher | Description |
 |------|---------|-------------|
 | pre-plan-memory | EnterPlanMode | Recall relevant memories before planning |
-| agent-validate | Agent | Validate agent type and configuration |
+| agent-model-guard | Agent | Validate agent type and configuration |
 | explore-to-scout | Agent | Redirect Explore agent to scout |
 | no-haiku-enforcer | Agent | Block haiku model selection for agents |
 | navigator-validate | Agent | Validate navigator agent configuration |

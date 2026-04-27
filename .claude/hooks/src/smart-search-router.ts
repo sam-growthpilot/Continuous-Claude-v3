@@ -12,7 +12,7 @@
 import { existsSync, mkdirSync, writeFileSync, readFileSync } from 'fs';
 import { execSync } from 'child_process';
 import { join } from 'path';
-import { queryDaemonSync, DaemonResponse, trackHookActivitySync } from './lib/daemon-client.js';
+import { queryDaemonSync, DaemonResponse, trackHookActivitySync } from './daemon-client.js';
 import { logHook } from './shared/session-activity.js';
 
 interface GrepInput {

@@ -14,10 +14,10 @@ import {
     shouldValidateWithLLM,
     buildValidationPrompt,
     SkillMatch,
-} from './lib/skill-validation-prompt.js';
+} from './skill-validation-prompt.js';
 
 // Import graph resolution from skill-router
-import { buildEnhancedLookupResult } from './lib/skill-router.js';
+import { buildEnhancedLookupResult } from './skill-router.js';
 import type { SkillRulesConfig } from './shared/skill-router-types.js';
 
 interface HookInput {

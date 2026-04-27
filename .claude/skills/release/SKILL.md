@@ -37,8 +37,6 @@ Structured release preparation to ship with confidence.
 | 4 | **herald** | Version bump, changelog generation | Updated version files |
 | 5 | **scribe** | Release notes, documentation | RELEASE.md, docs |
 
-**Optional companion:** spawn `liaison` in parallel with step 3 (`review-agent`) when the release touches external API contracts or cross-service boundaries. liaison applies an integration/API review lens distinct from review-agent's synthesis pass.
-
 ## Why This Order?
 
 1. **Security first**: Catch vulnerabilities before they ship

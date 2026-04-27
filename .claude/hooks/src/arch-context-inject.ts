@@ -9,7 +9,7 @@
  */
 
 import { readFileSync, existsSync } from 'fs';
-import { queryDaemonSync, trackHookActivitySync } from './lib/daemon-client.js';
+import { queryDaemonSync, trackHookActivitySync } from './daemon-client.js';
 
 interface HookInput {
   session_id: string;

@@ -11,7 +11,7 @@
 
 import { readFileSync, existsSync, statSync } from 'fs';
 import { basename, extname } from 'path';
-import { queryDaemonSync, DaemonResponse, trackHookActivitySync } from './lib/daemon-client';
+import { queryDaemonSync, DaemonResponse, trackHookActivitySync } from './daemon-client';
 
 // Search context from smart-search-router
 interface SearchContext {

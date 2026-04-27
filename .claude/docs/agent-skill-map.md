@@ -190,9 +190,9 @@ Generated: 2026-04-26 | Branch: feature/system-coherence
 | skill-activation-prompt | UserPromptSubmit | Dynamic via skill-rules.json with LLM validation | RECOMMEND | Matching skill for the prompt |
 | maestro-detector | UserPromptSubmit | Complexity signals (multi-step, orchestrate) | SUGGEST | Recommends /maestro |
 | react-perf-context | PostToolUse(Read) | Reading .tsx files | INJECT CONTEXT | Auto-loads react-perf skill context |
-| agent-validate | PreToolUse(Task) | model=haiku detected | HARD BLOCK | Denies haiku model selection |
+| agent-model-guard | PreToolUse(Task) | model=haiku detected | HARD BLOCK | Denies haiku model selection |
 | agent-verification | PostToolUse(Task) | All agent completions | VERIFY | Checks agent output quality |
-| no-haiku-enforcer | PreToolUse(Task) | model=haiku detected | HARD BLOCK | Redundant enforcement with agent-validate |
+| no-haiku-enforcer | PreToolUse(Task) | model=haiku detected | HARD BLOCK | Redundant enforcement with agent-model-guard |
 
 ### Routing Coverage Gaps
 
@@ -226,7 +226,7 @@ These agents have NO hook routing — only reachable by explicit name:
 
 10. **No neonctl companion agent.** The neonctl skill has no companion agent. All other infrastructure CLIs (vercel-cli, railway-cli, sentry-cli) are wrapped by the deployer agent. Neon Postgres operations bypass the agent safety layer.
 
-11. **validate-agent and agent-validate hook share confusingly similar names.** validate-agent.md validates task output quality post-completion. The agent-validate.ts hook validates model selection at invocation time. These are different concerns with nearly identical names.
+11. **validate-agent agent and agent-model-guard hook.** validate-agent.md validates task output quality post-completion. The agent-model-guard.ts hook blocks haiku model selection at invocation time. Nameclash resolved by R5 rename (was agent-validate.ts).
 
 12. **perplexity and firecrawl skills are orphaned.** Both were removed from oracle agent and CLAUDE.md primary pathways (per memory entry, 2026-03-09). The skill files still exist in the active skill directory but nothing routes to them. They should be archived.
 
