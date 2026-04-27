@@ -1,248 +1,312 @@
 # Agent & Skill Map — CCv3
-Generated: 2026-04-26 | Branch: feature/system-coherence
+Generated: 2026-04-27 | Branch: feature/system-coherence | Phase 5c step 10 refresh
 
 ## Counts
 
 | Entity | Count |
 |--------|-------|
-| Agents (repo) | 33 |
-| Skills (active, repo) | 109 |
-| Global-only agents | 0 |
-| Global-only skills | 0 |
-| Repo skills NOT in global | 2 (find-skills, vercel-cli) |
-| Hook files (src) | 100 |
+| Agents (active in `.claude/agents/`) | 35 (+ 1 deprecated stub: session-analyst.md — canonical archived to `_archived/2026-04-26-duplicates/`) |
+| Agents (archived) | 1 (session-analyst, plus README) |
+| Skills (active, substantive SKILL.md) | ~102 |
+| Workflow orchestrator skills | 14 |
+| Hooks (src) | 100+ |
+
+---
+
 ## Agents
 
-| Name | Model | Purpose | Key Tools | Skill Mentions | Mentioned-By Skills |
-|------|-------|---------|-----------|----------------|---------------------|
-| aegis | (inherit) | Security audit | Bash, Read, Glob, Grep, WebFetch | security | release |
-| agent-factory | (inherit) | Scaffold new agents | Write, Read, Bash, Glob, Grep | — | — |
-| architect | (inherit) | System design and planning | Read, Glob, Grep, Write, Bash | — | build, refactor, migrate, maestro |
+Active agents are `.claude/agents/*.md` excluding `_archived/`. The `session-analyst.md` file remains at the repo root as a deprecated stub — its canonical copy lives at `_archived/2026-04-26-duplicates/session-analyst.md`. `braintrust-analyst` is the canonical retro-analysis agent.
+
+| Name | Model | Purpose | Key Tools | Companion Skill | Surfaced By |
+|------|-------|---------|-----------|-----------------|-------------|
+| aegis | opus | Security vulnerability audit | Read, Bash, Grep, Glob | — | release, security |
+| agent-factory | opus | Scaffold new agent .md files (validate frontmatter, draft, hand off for review) | Read, Write, Glob, Grep, Bash | sub-agents / agent-development (optional) | — |
+| agentica-agent | sonnet | Build Python agents with Agentica SDK | Bash, Read, Write, Edit, Glob, Grep | `agentica-sdk/SKILL.md` | — |
 | arbiter | (inherit) | Test execution and validation | Bash, Read, Glob, Grep | — | fix, build, refactor, release, tdd |
-| atlas | (inherit) | Test suite runner and reporter | Bash, Read, Glob, Grep | — | release |
-| braintrust-analyst | (inherit) | Braintrust eval analysis | Bash, Read | braintrust-tracing | — |
-| critic | (inherit) | Code review (critical lens) | Read, Glob, Grep | — | review |
-| debug-agent | (inherit) | Bug investigation and root cause | Bash, Read, Glob, Grep | systematic-debugging | fix, maestro |
-| deployer | (inherit) | Vercel/Railway/Sentry deployments | Bash, Read | vercel-cli, railway-cli, sentry-cli | release, build |
-| diagnose | (inherit) | Deep diagnostic analysis | Bash, Read, Glob, Grep | — | fix |
-| herald | (inherit) | Changelog and release notes writer | Write, Read | — | release |
-| kraken | (inherit) | Complex implementation via TDD | Bash, Read, Glob, Grep, Write | — | fix, build, refactor, tdd, maestro |
-| maestro | (inherit) | Multi-step orchestration conductor | Task, Bash, Read, Glob, Grep, Write | maestro | maestro |
-| onboard | (inherit) | Project onboarding | Read, Glob, Grep, Bash | onboard | — |
-| oracle | (inherit) | External research (web/docs/APIs) | WebFetch, WebSearch, Bash, Read | exa, opencli, github-search | fix, build, migrate, maestro |
-| phoenix | (inherit) | Refactor strategy and brownfield analysis | Read, Glob, Grep, Write | — | refactor, migrate |
-| plan-agent | (inherit) | Implementation planning | Read, Glob, Grep, Write | create_plan (BROKEN PATH) | refactor, migrate, release |
-| plan-reviewer | (inherit) | Plan quality gate | Read | — | refactor, review |
-| principal-reviewer | (inherit) | Senior engineer code review | Read, Glob, Grep | — | (none — undiscoverable) |
-| profiler | (inherit) | Performance profiling | Bash, Read, Glob, Grep | — | build, maestro |
-| ralph | (inherit) | Autonomous dev orchestrator | Task, Bash, Read, Glob, Grep, Write | ralph | ralph |
-| react-perf-reviewer | (inherit) | React performance review | Read, Glob, Grep | react-perf | — |
-| review-agent | (inherit) | Synthesis code reviewer | Read, Glob, Grep | — | review, release |
-| scribe | (inherit) | Documentation and handoffs | Write, Read | create_handoff, continuity_ledger | release, maestro |
-| scout | (inherit) | Codebase exploration and mapping | Read, Glob, Grep, Bash | — | build, fix, explore, migrate, maestro |
-| session-analyst | (inherit) | Session outcome analysis | Bash, Read | — | — |
-| sleuth | (inherit) | Deep bug forensics | Bash, Read, Glob, Grep | systematic-debugging | fix |
-| spark | (inherit) | Lightweight fixes and quick tweaks | Bash, Read, Glob, Grep, Write | — | fix, build |
-| surveyor | (inherit) | Migration scope assessment | Read, Glob, Grep, Bash | — | migrate |
-| ui-compliance-reviewer | (inherit) | UI/UX standards compliance review | Read, Glob, Grep | ui-audit | — |
-| validate-agent | (inherit) | Validates agent/task output quality | Read, Bash | — | — |
-| wizard | (inherit) | CCv3 setup and configuration | Bash, Read, Write | — | — |
+| architect | (inherit) | System design and planning | Read, Glob, Grep, Write, Bash | — | build, refactor, migrate, maestro |
+| atlas | (inherit) | Full E2E and test-suite runner | Bash, Read, Glob, Grep | — | release |
+| braintrust-analyst | opus | Braintrust session log retro-analysis (canonical) | Bash, Read | `braintrust-analyze/SKILL.md` | — |
+| critic | (inherit) | Feature/implementation code review | Read, Glob, Grep | — | review |
+| debug-agent | (inherit) | General root-cause analysis for unclear or single-file bugs (R1) | Bash, Read, Glob, Grep | `systematic-debugging/SKILL.md` | fix, maestro |
+| deployer | sonnet | Vercel/Railway/Sentry/Linear/Neon deployments | Bash, Read, Glob, Grep, WebFetch | `vercel-cli`, `railway-cli`, `sentry-cli`, `neonctl` (R8 conditional) | release, build |
+| herald | (inherit) | Changelog and version bump writer | Write, Read, Edit, Bash, Grep, Glob | — | release |
+| judge | sonnet | Refactoring quality review — behavior preservation verdict | Read, Grep, Glob | — | refactor (optional companion, R2) |
+| kraken | (inherit) | Complex implementation via TDD | Bash, Read, Edit, Write, Glob, Grep | — | fix, build, refactor, tdd, maestro |
+| liaison | sonnet | Integration / external API review | Read, Grep, Glob | — | release (optional companion, R2) |
+| maestro | (inherit) | Multi-step orchestration conductor | Read, Bash, Grep, Glob, Task, Skill, AskUserQuestion | `maestro/SKILL.md` | maestro |
+| memory-extractor | sonnet | Extract perception changes from session transcripts | Bash, Read | — | — |
+| onboard | (inherit) | Brownfield onboarding — initial continuity ledger | Read, Glob, Grep, Bash | `onboard/SKILL.md` | build (brownfield), explore |
+| oracle | (inherit) | External research — web, docs, APIs (7-tool stack) | WebSearch, Bash, Read | `exa`, `opencli`, `github-search` | fix, build, migrate, maestro |
+| pathfinder | opus | External repository research and analysis | Read, Bash, Grep, Glob | — | — |
+| phoenix | opus | Refactoring planning AND migration planning | Read, Bash, Grep, Glob | — | refactor, migrate |
+| plan-agent | (inherit) | Implementation planning agent | Read, Glob, Grep, Write | `plan-agent/SKILL.md` | refactor, migrate, release, build |
+| plan-reviewer | (inherit) | Plan quality gate before code changes | Read, Grep, Glob | — | refactor, review |
+| principal-reviewer | opus | Senior/staff review — architecture, security, blast radius | Read, Glob, Grep, Bash (NO Edit/Write — review-only) | — | — (no hook routing yet) |
+| profiler | (inherit) | Performance profiling, race conditions, memory issues | Read, Bash, Grep, Glob | — | build, maestro |
+| react-perf-reviewer | (inherit) | React/Next.js performance code review | Read, Grep, Glob | `react-perf/SKILL.md` | (PostToolUse-injected via react-perf-context hook) |
+| review-agent | (inherit) | Synthesis code reviewer — final release approval | All tools | — | review, release |
+| scout | (inherit) | Codebase exploration and pattern finding | Read, Grep, Glob, Bash | — | build, fix, explore, migrate, maestro |
+| scribe | (inherit) | Documentation, handoffs, session summaries | Read, Write, Glob, Grep | `create_handoff/SKILL.md`, `continuity_ledger/SKILL.md` | release, maestro |
+| sentinel | sonnet | Browser QA — multi-role E2E and UAT | Bash, Read, Write, Glob, Grep | `browser-dev-cycle/SKILL.md` (bidirectional, R4) | browser-dev-cycle |
+| session-analyst | opus | DEPRECATED — use braintrust-analyst | Bash, Read | `braintrust-analyze/SKILL.md` (duplicate) | — |
+| sleuth | opus | Deep bug forensics — multi-file, evidence-grade reproduction (R1) | Read, Bash, Grep, Glob | `systematic-debugging/SKILL.md` | fix |
+| spark | (inherit) | Lightweight fixes and quick tweaks | Read, Edit, Write, Bash, Grep, Glob | — | fix, build |
+| surveyor | (inherit) | Migration and upgrade review | Read, Grep, Glob | — | migrate |
+| ui-compliance-reviewer | (inherit) | UI compliance and accessibility code review | Read, Grep, Glob | `ui-audit/SKILL.md` | — |
+| validate-agent | (inherit) | Validates plan tech choices against current best practices | All tools | — | — |
+| wizard | opus | CCv3 setup on fresh machines — drives wizard.py and verify-setup.sh | Bash, Read, Write, Glob, Grep | — (reads BOOTSTRAP.md and wizard.py directly) | — |
+
+---
+
 ## Skills
 
-### Workflow Orchestrators (14 skills)
+### Workflow Orchestrators (14)
 
-| Skill | Trigger Keywords | Purpose | Agent Mentions | Companion Agent? |
-|-------|-----------------|---------|----------------|-----------------|
-| build | build, implement, feature, greenfield, brownfield | Full feature build pipeline | scout, oracle, architect, kraken, spark, profiler, arbiter, deployer | Yes (architect+kraken) |
-| fix | fix, bug, broken, failing, error, debug | Bug resolution pipeline | sleuth, debug-agent, diagnose, spark, kraken, arbiter | Yes (sleuth+spark) |
-| explore | explore, understand, map, architecture | Codebase exploration | scout | Yes (scout) |
-| ralph | /ralph, autonomous, GSD | Autonomous dev orchestrator | ralph | Yes (ralph) |
-| maestro | /maestro, orchestrate, multi-step | Multi-agent orchestration | maestro, architect, kraken, spark, oracle, scout, debug-agent, profiler, scribe | Yes (maestro) |
-| refactor | refactor, restructure, reorganize | Refactor pipeline | phoenix, plan-agent, kraken, plan-reviewer, arbiter | Yes (phoenix+kraken) |
-| migrate | migrate, migration, upgrade, port | Migration pipeline | oracle, phoenix, plan-agent, kraken, surveyor | Yes (phoenix+surveyor) |
-| release | release, ship, deploy, launch | Release pipeline | aegis, atlas, review-agent, herald, scribe, deployer | Yes (aegis+herald) |
-| review | /review, code review, PR | Code review workflow | critic, plan-reviewer, review-agent | Yes (critic+review-agent) |
-| security | security audit, vulnerability | Security review | aegis | Yes (aegis) |
-| tdd | TDD, test-driven, red-green | TDD cycle | kraken, arbiter | Yes (kraken) |
-| test | /test, test suite, test run | Test execution wrapper | arbiter, atlas | Yes (arbiter) |
-| premortem | premortem, risk, pre-mortem | Risk analysis before implementation | — | No |
-| plan-mode | plan, think through, /plan | Plan mode guidance | plan-agent | Yes (plan-agent) |
+| Skill | Trigger | Companion Agents | Notes |
+|-------|---------|------------------|-------|
+| build | build, implement, feature | scout, oracle, architect, kraken, spark, profiler, arbiter, deployer | 4 modes: greenfield, brownfield, tdd, refactor |
+| fix | fix, bug, broken, debug | sleuth (deep forensics), debug-agent (general), kraken, oracle, arbiter | "Investigator selection" subsection codifies sleuth/debug-agent split (R1) |
+| explore | explore, understand, map | scout, onboard | quick / deep / architecture |
+| ralph | /ralph, autonomous | ralph workflow | GSD lifecycle |
+| maestro | /maestro, orchestrate | maestro, architect, kraken, spark, oracle, scout, debug-agent, profiler, scribe | 5 patterns; phase-gated |
+| refactor | refactor, restructure | phoenix, plan-agent, kraken, plan-reviewer, arbiter, judge (optional, R2) | judge optional companion for high-stakes architecture refactors |
+| migrate | migrate, upgrade, port | oracle, phoenix, plan-agent, kraken, surveyor | Research → analyze → plan → implement → review |
+| release | release, ship, deploy, launch | aegis, atlas, review-agent, herald, scribe, deployer, liaison (optional, R2) | liaison optional for cross-service / external-API releases |
+| review | /review, code review, PR | critic, plan-reviewer, review-agent | (principal-reviewer reachable but not hook-routed) |
+| security | security audit, vulnerability | aegis | Wraps aegis with structured reporting |
+| tdd | TDD, test-driven, red-green | kraken, arbiter | Red → Green → Refactor |
+| test | test suite, test run | arbiter, atlas | Routes to runner |
+| premortem | premortem, risk | — | Structured risk checklist; no agent spawn |
+| plan-mode | plan, /plan | plan-agent | Plan mode entry |
 
-### Memory System (5 skills)
+### Memory System (5)
 
-| Skill | Trigger Keywords | Purpose | Agent Mentions | Companion Agent? |
-|-------|-----------------|---------|----------------|-----------------|
-| memory | memory, recall, remember, store learning | Master memory skill (canonical) | — | No |
-| recall | /recall, find memory, what did we | Recall from PostgreSQL+pgvector | — | No |
-| remember | /remember, store this, save learning | Store to memory system | — | No |
-| recall-reasoning | recall reasoning, why did we | Recall with chain-of-thought | — | No |
-| memory-curate | curate memory, clean memory | Memory quality management | — | No |
+R9 closed: these are 4 distinct slash-command skills, not thin pointers. `memory` is the master router; the four sub-skills implement separate operations.
 
-### Session Continuity (3 skills)
+| Skill | Trigger | Notes |
+|-------|---------|-------|
+| memory | memory, recall, remember, store learning | Master router |
+| recall | /recall, find memory | PostgreSQL+pgvector hybrid RRF |
+| remember | /remember, store this | Store learning to memory |
+| recall-reasoning | recall reasoning, why did we | Distinct backend (artifact_query.py + reasoning files), NOT pgvector |
+| memory-curate | curate memory | Quality management, deduplication |
 
-| Skill | Trigger Keywords | Purpose | Agent Mentions | Companion Agent? |
-|-------|-----------------|---------|----------------|-----------------|
-| create_handoff | handoff, end session, wrap up | Create YAML handoff doc | scribe | Yes (scribe) |
-| resume_handoff | resume, continue from handoff | Resume from handoff doc | — | No |
-| continuity_ledger | ledger, continuity | Session ledger management | scribe | Yes (scribe) |
+### Session Continuity (3)
 
-### Debugging (3 guardrail skills)
+| Skill | Companion Agent |
+|-------|-----------------|
+| create_handoff | scribe |
+| resume_handoff | — |
+| continuity_ledger | scribe |
 
-| Skill | Trigger Keywords | Purpose | Agent Mentions | Companion Agent? |
-|-------|-----------------|---------|----------------|-----------------|
-| systematic-debugging | bug, error, fix, debug | Systematic debugging framework (GUARDRAIL — 1x/session block) | debug-agent, sleuth | Yes (debug-agent+sleuth) |
-| databases | SQL, postgres, database, migration, query | Database operations skill (GUARDRAIL — 1x/session block) | — | No |
-| code-review | PR, review, merge, complete | Code review framework (GUARDRAIL — 1x/session block) | critic, review-agent | Yes (critic+review-agent) |
-### Infrastructure and Ops (8 skills)
+### Debugging Guardrails (3 — block 1x/session before relevant work)
 
-| Skill | Trigger Keywords | Purpose | Agent Mentions | Companion Agent? |
-|-------|-----------------|---------|----------------|-----------------|
-| vercel-cli | vercel, deploy | Vercel CLI usage guide | deployer | Yes (deployer) |
-| railway-cli | railway, deploy | Railway CLI usage guide | deployer | Yes (deployer) |
-| neonctl | neon, neonctl, postgres | Neon Postgres CLI guide | — | No (gap) |
-| sentry-cli | sentry, error tracking | Sentry CLI usage guide | deployer | Yes (deployer) |
-| docker | docker, container | Docker operations | — | No |
-| git | git, commit, branch | Git operations | — | No |
-| linearis | linear, issue, ticket | Linear issue management | — | No |
-| gh | github, PR, pull request | GitHub CLI | — | No |
+| Skill | Trigger | Companion Agents |
+|-------|---------|------------------|
+| systematic-debugging | bug, error, fix, debug | sleuth, debug-agent (R1 split documented) |
+| databases | SQL, postgres, query, migration | — |
+| code-review | PR, review, merge, complete | critic, review-agent |
 
-### Skill and Agent Development (7 skills)
+### Infrastructure / Ops (8)
 
-| Skill | Trigger Keywords | Purpose | Agent Mentions | Companion Agent? |
-|-------|-----------------|---------|----------------|-----------------|
-| hook-scaffold | hook scaffold, new hook | Scaffold new hook TypeScript file | — | No |
-| hook-audit | hook audit, hook health | Audit hook registration and health | — | No |
-| sync-drift | sync drift, out of sync | Detect ~/.claude vs repo drift | — | No |
-| find-skills | find skill, which skill | Skill discovery and routing | — | No |
-| project-registry | project registry, which project | Project registry queries | — | No |
-| knowledge-tree | knowledge tree, nav | Knowledge tree queries | — | No |
-| onboard | onboard, new project | Project onboarding workflow | onboard | Yes (onboard) |
+| Skill | Companion Agent |
+|-------|-----------------|
+| vercel-cli | deployer |
+| railway-cli | deployer |
+| neonctl | deployer (R8 conditional — wired in deployer.md) |
+| sentry-cli | deployer |
+| docker | — |
+| git | — |
+| linearis | — |
+| gh | — |
 
-### Codebase Analysis (7 skills)
+### Codebase Analysis (3 active families post-cleanup)
 
-| Skill | Trigger Keywords | Purpose | Agent Mentions | Companion Agent? |
-|-------|-----------------|---------|----------------|-----------------|
-| tldr-structure | tldr structure | TLDR structure subcommand guide | — | No (undiscoverable) |
-| tldr-search | tldr search | TLDR search subcommand guide | — | No (undiscoverable) |
-| tldr-impact | tldr impact | TLDR impact subcommand guide | — | No (undiscoverable) |
-| tldr-dead | tldr dead | TLDR dead code subcommand guide | — | No (undiscoverable) |
-| tldr-arch | tldr arch | TLDR architecture subcommand guide | — | No (undiscoverable) |
-| ast-grep-find | ast-grep, AST search | AST structural pattern search | — | No |
-| morph-search | morph, fast search | Fast text search via morph harness | — | No |
+| Skill | Trigger | Notes |
+|-------|---------|-------|
+| tldr-code | debug, refactor, complexity, call graph, data flow, analyze | Canonical TLDR entry. 9 hooks auto-inject context. |
+| tldr-stats | tldr stats, token usage, session cost | Wired into skill-rules.json (Phase 5a deep-dive C2). Python `python3` → `python` fix. |
+| ast-grep-find | ast-grep, AST search | — |
 
-### Research Tools (5 skills)
+Archived in `_archived/2026-04-26-tldr-cleanup/`: `tldr-router`, `tldr-overview`, `tldr-deep` (no activation path).
 
-| Skill | Trigger Keywords | Purpose | Agent Mentions | Companion Agent? |
-|-------|-----------------|---------|----------------|-----------------|
-| mcp-guidance | MCP, tool use | MCP tool selection guide | — | No |
-| opencli | opencli, web data | OpenCLI adapter usage | oracle | Yes (oracle) |
-| github-search | github search, find repo | GitHub search via harness | oracle | Yes (oracle) |
-| exa | exa, semantic search | Exa search engine usage | oracle | Yes (oracle) |
-| braintrust-tracing | braintrust, eval, trace | Braintrust eval platform | braintrust-analyst | Yes (braintrust-analyst) |
-### Frontend and UI (6 skills)
+### Research (5)
 
-| Skill | Trigger Keywords | Purpose | Agent Mentions | Companion Agent? |
-|-------|-----------------|---------|----------------|-----------------|
-| frontend-design | design, UI, component | Frontend design pipeline | — | No |
-| react-perf | react performance, memo, render | React perf review methodology | react-perf-reviewer | Yes (react-perf-reviewer) |
-| browser-dev-cycle | browser, playwright | Browser automation workflow | — | No |
-| ui-audit | UI audit, accessibility | UI compliance standards | ui-compliance-reviewer | Yes (ui-compliance-reviewer) |
-| paper-design | paper, artboard | Paper.design MCP integration | — | No |
-| shadcnspace | shadcn, component library | Shadcn Space premium blocks | — | No |
+| Skill | Companion Agent |
+|-------|-----------------|
+| mcp-guidance | — |
+| opencli | oracle |
+| github-search | oracle |
+| exa | oracle |
+| braintrust-tracing | braintrust-analyst |
 
-### Project Management (3 skills)
+### Frontend / UI (6)
 
-| Skill | Trigger Keywords | Purpose | Agent Mentions | Companion Agent? |
-|-------|-----------------|---------|----------------|-----------------|
-| notion-bridge | notion, bridge, Eve | Notion MCP bridge to Claude.ai | — | No |
-| roadmap | roadmap, goal, ROADMAP.md | ROADMAP.md management | — | No |
-| prd | PRD, product requirements | PRD creation and management | — | No |
+| Skill | Companion Agent |
+|-------|-----------------|
+| frontend-design | — |
+| react-perf | react-perf-reviewer |
+| browser-dev-cycle | sentinel (bidirectional, R4) |
+| ui-audit | ui-compliance-reviewer |
+| paper-design | — |
+| shadcnspace | — |
 
-### Quality and Testing (2 skills)
+### Skill / Agent Development (8)
 
-| Skill | Trigger Keywords | Purpose | Agent Mentions | Companion Agent? |
-|-------|-----------------|---------|----------------|-----------------|
-| personas | persona | Persona loading framework | — | No |
-| qlty | quality, lint, qlty | Qlty code quality CLI | — | No |
+| Skill | Companion Agent |
+|-------|-----------------|
+| hook-scaffold | — |
+| hook-audit | — |
+| sync-drift | — |
+| find-skills | — |
+| project-registry | — |
+| knowledge-tree | — |
+| onboard | onboard |
+| agent-development | agent-factory (Phase 5c new) |
 
-### Agentica Platform (1 skill)
+### Project Management (3)
 
-| Skill | Trigger Keywords | Purpose | Agent Mentions | Companion Agent? |
-|-------|-----------------|---------|----------------|-----------------|
-| agentica | agentica, agent deployment | Agentica platform deployment | — | No |
+| Skill | Companion Agent |
+|-------|-----------------|
+| notion-bridge | — |
+| roadmap | — |
+| prd | — |
 
-### Meta and Reference (3 skills)
+### Quality / Testing (3)
 
-| Skill | Trigger Keywords | Purpose | Agent Mentions | Companion Agent? |
-|-------|-----------------|---------|----------------|-----------------|
-| claude-code-guide | claude code, how to use | CCv3 usage reference guide | — | No |
-| health-check | health check, system health | System health diagnostic | — | No |
-| create-plan | (none — no hook fires it) | Plan creation methodology (ORPHANED) | plan-agent (broken path) | Yes but broken |
-## Cross-Reference: Hooks That Route Agents and Skills
+| Skill | Companion Agent |
+|-------|-----------------|
+| personas | — |
+| qlty | — |
+| health-check | — |
 
-| Hook | Event | Trigger | Action | Target |
-|------|-------|---------|--------|--------|
-| explore-to-scout | PreToolUse(Task) | subagent_type=Explore | HARD BLOCK | Forces scout instead |
-| task-router | UserPromptSubmit | Keyword detection (research/implement/debug/etc.) | RECOMMEND only | oracle, kraken, spark, architect, phoenix, debug-agent, sleuth, profiler, arbiter, scribe |
-| guardrail-enforcer | UserPromptSubmit | bug/error/fix/debug | SOFT BLOCK (1x per session) | Requires systematic-debugging skill |
-| guardrail-enforcer | UserPromptSubmit | SQL/postgres/migration/query | SOFT BLOCK (1x per session) | Requires databases skill |
-| guardrail-enforcer | UserPromptSubmit | PR/review/merge/complete | SOFT BLOCK (1x per session) | Requires code-review skill |
-| skill-activation-prompt | UserPromptSubmit | Dynamic via skill-rules.json with LLM validation | RECOMMEND | Matching skill for the prompt |
-| maestro-detector | UserPromptSubmit | Complexity signals (multi-step, orchestrate) | SUGGEST | Recommends /maestro |
-| react-perf-context | PostToolUse(Read) | Reading .tsx files | INJECT CONTEXT | Auto-loads react-perf skill context |
-| agent-model-guard | PreToolUse(Task) | model=haiku detected | HARD BLOCK | Denies haiku model selection |
-| agent-verification | PostToolUse(Task) | All agent completions | VERIFY | Checks agent output quality |
-| no-haiku-enforcer | PreToolUse(Task) | model=haiku detected | HARD BLOCK | Redundant enforcement with agent-model-guard |
+### Agentica (3)
+
+| Skill | Companion Agent |
+|-------|-----------------|
+| agentica | — |
+| agentica-sdk | agentica-agent |
+| agentica-server | — |
+
+### Meta / Reference (3)
+
+| Skill | Companion Agent | Notes |
+|-------|-----------------|-------|
+| claude-code-guide | — | — |
+| create-plan | plan-agent | Path bug fixed in Phase 5a deep-dive A1 |
+| ralph | ralph workflow | Lifecycle playbook |
+
+---
+
+## Cross-Reference Index
+
+### Agent → Companion Skill (load on invocation)
+
+| Agent | Skill |
+|-------|-------|
+| agentica-agent | `agentica-sdk/SKILL.md` |
+| braintrust-analyst | `braintrust-analyze/SKILL.md` |
+| debug-agent | `systematic-debugging/SKILL.md` |
+| deployer | `vercel-cli`, `railway-cli`, `sentry-cli`, `neonctl` (conditional, R8) |
+| maestro | `maestro/SKILL.md` |
+| onboard | `onboard/SKILL.md` |
+| plan-agent | `plan-agent/SKILL.md` (Phase 5a deep-dive A1 fixed broken `create_plan` path) |
+| react-perf-reviewer | `react-perf/SKILL.md` |
+| scribe | `create_handoff/SKILL.md`, `continuity_ledger/SKILL.md` |
+| sentinel | `browser-dev-cycle/SKILL.md` (R4 bidirectional callout) |
+| sleuth | `systematic-debugging/SKILL.md` |
+| ui-compliance-reviewer | `ui-audit/SKILL.md` |
+
+### Skill → Companion Agent (documented in skill body)
+
+| Skill | Agent | Reason |
+|-------|-------|--------|
+| browser-dev-cycle | sentinel | R4 — bidirectional callout for full UAT |
+| code-review | critic, review-agent | Guardrail loaded before invoking |
+| neonctl | deployer | R8 — Neon ops conditional in deployer |
+| react-perf | react-perf-reviewer | Hook auto-injects on `.tsx` read |
+| refactor | judge (optional) | R2 — high-stakes architecture refactors |
+| release | liaison (optional) | R2 — cross-service / external API releases |
+| systematic-debugging | sleuth, debug-agent | R1 — sleuth for forensics, debug-agent as general fallback |
+| ui-audit | ui-compliance-reviewer | Skill loaded by agent |
+
+### Workflow → Agent Sequence (with checkpoints)
+
+| Workflow | Sequence |
+|----------|----------|
+| build (greenfield) | discovery-interview → plan-agent → validate-agent → kraken/implement_plan → commit → describe_pr |
+| build (brownfield) | onboard → oracle → plan-agent → validate-agent → kraken |
+| build (tdd) | plan-agent → kraken (TDD) → arbiter |
+| fix (bug) | sleuth (multi-file) OR debug-agent (general) → [user confirm] → kraken → arbiter → commit |
+| fix (hook) | debug-hooks → [user confirm] → kraken → test |
+| fix (deps / pr-comments) | oracle / scout → plan-agent → [user confirm] → kraken → commit |
+| refactor | phoenix → plan-agent → kraken → plan-reviewer → arbiter (+judge optional) |
+| migrate | oracle → phoenix → plan-agent → kraken → surveyor |
+| release | aegis → atlas → review-agent → herald → scribe → deployer (+liaison optional) |
+| explore (deep) | onboard → scout |
+| explore (architecture) | tldr-code (arch subcommand) |
+| review | critic → plan-reviewer → review-agent (+principal-reviewer optional, high-stakes) |
+
+---
+
+## Hooks That Route Between Agents and Skills
+
+| Hook | Event | Action |
+|------|-------|--------|
+| explore-to-scout | PreToolUse(Task) | HARD BLOCK on subagent_type=Explore — forces scout |
+| task-router | UserPromptSubmit | RECOMMEND agent based on keyword detection |
+| guardrail-enforcer | UserPromptSubmit | SOFT BLOCK 1x/session — requires systematic-debugging / databases / code-review skills |
+| skill-activation-prompt | UserPromptSubmit | RECOMMEND skill via skill-rules.json + LLM validation |
+| maestro-detector | UserPromptSubmit | SUGGEST /maestro for multi-step prompts (R7 — re-entrancy guard added 2026-04-26) |
+| react-perf-context | PostToolUse(Read) | INJECT — auto-loads react-perf skill on .tsx read |
+| agent-model-guard | PreToolUse(Task) | HARD BLOCK on `model: haiku` (renamed from `agent-validate.ts` in R5, 2026-04-26) |
+| no-haiku-enforcer | PreToolUse(Task) | HARD BLOCK on haiku — redundant safety alongside agent-model-guard |
+| agent-verification | PostToolUse(Task) | VERIFY agent output quality |
+| plan-exit-tracker | PostToolUse(ExitPlanMode) | WRITE state file on plan approval |
+| plan-to-ralph-enforcer | PreToolUse(Edit/Write) | HARD BLOCK code edits when plan approved + Ralph not active |
 
 ### Routing Coverage Gaps
 
-These agents have NO hook routing — only reachable by explicit name:
-- principal-reviewer
-- wizard
+Agents reachable only by explicit name (no UserPromptSubmit hook routing):
+- principal-reviewer (Phase 5c new — suggested addition: review workflow high-stakes path)
+- wizard (Phase 5c new — entry is documentation-driven via BOOTSTRAP.md)
+- agent-factory (Phase 5c new — invoked by user when scaffolding)
 - validate-agent
-- agent-factory
-- session-analyst
-- braintrust-analyst (has skill but no UserPromptSubmit hook routing)
+- braintrust-analyst (companion skill exists; no UserPromptSubmit routing)
+- memory-extractor
+- pathfinder
+- liaison (optional companion in release skill body only)
+- judge (optional companion in refactor skill body only)
 
-## Gaps and Overlaps
+---
 
-1. **plan-agent loads a broken skill path.** The agent definition references `skills/create_plan/SKILL.md` (underscore). The actual directory is `create-plan` (hyphen). Every workflow that chains through plan-agent — refactor, migrate, release — silently gets no methodology context injected. Fix: rename the path in plan-agent.md.
+## Phase 5c Changes Reflected
 
-2. **braintrust-analyst and session-analyst are functional duplicates.** Both analyze Braintrust/session trace data with nearly identical tool sets. No routing rule distinguishes them. The system carries two agents doing the same job — one should be archived or they should be merged with differentiated roles.
+This map was regenerated as Step 10 of Phase 5c. Changes since the Phase 5a map:
 
-3. **Five TLDR sub-skills are undiscoverable.** tldr-structure, tldr-search, tldr-impact, tldr-dead, and tldr-arch have no hook that fires them. CLAUDE.md references the tldr CLI directly by subcommand name, bypassing the skill layer entirely. These skills exist as documentation artifacts but are never auto-loaded.
+1. **Agents +3, deprecated 1**:
+   - Added: `wizard.md`, `agent-factory.md`, `principal-reviewer.md` (R6, Option B — created rather than deleted)
+   - Deprecated: `session-analyst.md` (canonical archived to `_archived/2026-04-26-duplicates/`; stub remains at root pending follow-up)
+2. **Hook rename (R5)**: `agent-validate.ts` → `agent-model-guard.ts` (8 cross-refs updated, dist rebuilt, settings.json updated)
+3. **R1 codified**: `sleuth` and `debug-agent` descriptions now point at each other for the inverse case; `fix/SKILL.md` has Investigator selection subsection
+4. **R2 (judge/liaison discoverability)**: optional-companion callouts added to `refactor/SKILL.md` and `release/SKILL.md`
+5. **R4 (sentinel ↔ browser-dev-cycle)**: bidirectional companion callouts confirmed
+6. **R7 (maestro re-entrancy)**: `isMaestroActive()` guard added with 30-min mtime check; fail-open on read errors
+7. **R8 (deployer ↔ neonctl)**: deployer.md has conditional Neon section + neonctl-safety reference
+8. **R9 closed**: 4 memory sub-skills are distinct slash commands (recall-reasoning uses different backend)
+9. **TLDR cleanup (Phase 5a addendum)**: `tldr-router`, `tldr-overview`, `tldr-deep` archived; `tldr-code` canonical; `tldr-stats` wired with `python3` → `python` fix
 
-4. **debug-agent and sleuth are near-duplicates with undocumented distinction.** Both investigate bugs. The fix skill uses sleuth for deep forensics and debug-agent as general fallback, but this distinction only lives in fix/SKILL.md — no hook enforces or documents the split. In practice both get recommended for the same problem class.
+---
 
-5. **maestro fires on itself.** The maestro-detector hook activates on complexity signals and recommends /maestro. If the user is already running a maestro session, the hook will suggest maestro again. No guard against this re-entrancy.
+## Open Items
 
-6. **pioneer agent is missing.** The build skill SKILL.md references a pioneer agent for greenfield scaffolding. No pioneer.md file exists in the agents directory. The greenfield build path has no dedicated scaffolding agent.
+1. **session-analyst stub** still at `.claude/agents/session-analyst.md` despite canonical move to archive — delete or convert to one-line redirect.
+2. **principal-reviewer hook routing**: not surfaced by any UserPromptSubmit hook; consider adding as conditional review-workflow step for high-stakes changes.
+3. **Phase 4.2** (skill embed-router fallback) deferred — scheduled remote agent fires 2026-05-10 to revisit BGE-vs-TF-IDF decision.
+4. **perplexity-search / firecrawl-scrape** — removed from oracle and primary pathways, but skill directories still exist; archive candidate.
+5. **plan-agent path bug** — fixed at A1 to point at `plan-agent/SKILL.md` (was broken `create_plan/SKILL.md`).
+6. **Documentation drift watch**: `help/SKILL.md` and `wiring/SKILL.md` still reference deleted hooks per Phase 1 gap log; out of scope for Phase 5c but tracked.
 
-7. **principal-reviewer is completely undiscoverable.** The agent exists but appears in no skill and has no hook routing. It can only be invoked by typing the agent name explicitly. No workflow surfaces it.
+---
 
-8. **onboard is a dual-entity with circular references.** Both onboard.md (agent) and skills/onboard/SKILL.md exist, each referencing the other. The agent loads the skill; the skill mentions the agent. Authorship and primary ownership are ambiguous.
-
-9. **health-check and mot overlap in purpose.** Both skills cover system health diagnostics. health-check is the current primary skill. mot (monitoring over time) is an older pattern. The relationship, precedence, and whether mot should be archived are undocumented.
-
-10. **No neonctl companion agent.** The neonctl skill has no companion agent. All other infrastructure CLIs (vercel-cli, railway-cli, sentry-cli) are wrapped by the deployer agent. Neon Postgres operations bypass the agent safety layer.
-
-11. **validate-agent agent and agent-model-guard hook.** validate-agent.md validates task output quality post-completion. The agent-model-guard.ts hook blocks haiku model selection at invocation time. Nameclash resolved by R5 rename (was agent-validate.ts).
-
-12. **perplexity and firecrawl skills are orphaned.** Both were removed from oracle agent and CLAUDE.md primary pathways (per memory entry, 2026-03-09). The skill files still exist in the active skill directory but nothing routes to them. They should be archived.
-
-## Sync Drift (Repo vs Global)
-
-Skills present in repo (`continuous-claude/.claude/skills/`) but NOT in global (`~/.claude/skills/`):
-
-| Skill | Status | Action Needed |
-|-------|--------|---------------|
-| find-skills | Repo only | Run `bash scripts/sync-to-active.sh` |
-| vercel-cli | Repo only | Run `bash scripts/sync-to-active.sh` |
-
-All 33 agents are present in both repo and global.
-All other skills are in sync.
-
-**Command to fix:**
-```
-bash C:/Users/david.hayes/continuous-claude/scripts/sync-to-active.sh
-```
+*Source: regenerated from `.claude/agents/` and `.claude/skills/` enumeration plus Phase 5b composition-design and Phase 5c execution commits. Last refresh: 2026-04-27 (Phase 5c step 10).*
