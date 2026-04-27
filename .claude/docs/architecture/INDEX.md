@@ -69,6 +69,6 @@ For current inventory: see [agent-skill-map.md](../agent-skill-map.md), [hook-ca
 - [hooks/README.md](file:///C:/Users/david.hayes/continuous-claude/docs/hooks/README.md) - Full hook reference (718 lines)
 - [agents/README.md](file:///C:/Users/david.hayes/continuous-claude/docs/agents/README.md) - Agent selection guide (750 lines)
 
-**User Guides:**
-- [CONTINUOUS-CLAUDE-GUIDE.md](../../CONTINUOUS-CLAUDE-GUIDE.md) - User guide with essential commands
-- [CONTINUOUS-CLAUDE-CHEATSHEET.md](../../CONTINUOUS-CLAUDE-CHEATSHEET.md) - Windows cheat sheet
+**User Guides (in this dir):**
+- [user-guide.md](user-guide.md) - User guide with essential commands and auto-started capabilities
+- [cheatsheet.md](cheatsheet.md) - Windows cheat sheet (PowerShell command reference)
