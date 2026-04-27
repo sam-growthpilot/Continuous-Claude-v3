@@ -1,7 +1,8 @@
 #!/usr/bin/env node
 
 // src/maestro-detector.ts
-import { readFileSync } from "fs";
+import { readFileSync, statSync } from "fs";
+import { join } from "path";
 
 // src/shared/output.ts
 function outputContinue() {
@@ -32,6 +33,18 @@ var COMPLEXITY_SIGNALS = [
   { name: "cross_cutting", pattern: /\b(across|throughout|all|every)\s+(the\s+)?(codebase|project|system|modules?)/i, weight: 0.2 }
 ];
 var COMPLEXITY_THRESHOLD = 0.65;
+var SESSION_WINDOW_MS = 30 * 60 * 1e3;
+function isMaestroActive(projectDir) {
+  try {
+    const dir = projectDir ?? (process.env.CLAUDE_PROJECT_DIR || process.cwd());
+    const stateFile = join(dir, ".claude", "maestro-state.json");
+    const stat = statSync(stateFile);
+    const ageMsec = Date.now() - stat.mtimeMs;
+    return ageMsec < SESSION_WINDOW_MS;
+  } catch {
+    return false;
+  }
+}
 function readStdin() {
   return readFileSync(0, "utf-8");
 }
@@ -122,6 +135,10 @@ async function main() {
       outputContinue();
       return;
     }
+    if (isMaestroActive()) {
+      outputContinue();
+      return;
+    }
     if (/^(what|how|why|where|when|can you|could you|is there)\s/i.test(prompt) && prompt.length < 100) {
       outputContinue();
       return;
@@ -139,3 +156,8 @@ async function main() {
   }
 }
 main();
+export {
+  analyzeComplexity,
+  countProcessPhases,
+  isMaestroActive
+};
