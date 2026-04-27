@@ -40,6 +40,12 @@ from rlm.core.types import ModelUsageSummary, UsageSummary
 
 logger = logging.getLogger(__name__)
 
+# Windows CreateProcess imposes a ~32K-character cmdline limit. With other
+# argv elements (path, --model, --system-prompt, --bare, etc.) we conservatively
+# threshold the prompt at 24K -- larger prompts route through stdin instead.
+# See _run() for the WinError 206 disambiguation that catches threshold misses.
+_MAX_ARGV_PROMPT_CHARS = 24000
+
 
 class ClaudeCliClient(BaseLM):
     """LM Client that shells out to `claude -p` for every completion.
@@ -83,8 +89,9 @@ class ClaudeCliClient(BaseLM):
     # ------------------------------------------------------------------ public
     def completion(self, prompt: str | list[dict[str, Any]], model: str | None = None) -> str:
         flattened, system_prompt = self._prepare_prompt(prompt)
-        argv = self._build_argv(flattened, system_prompt, model)
-        stdout = self._run(argv)
+        use_stdin = len(flattened) > _MAX_ARGV_PROMPT_CHARS
+        argv = self._build_argv(flattened, system_prompt, model, use_stdin_for_prompt=use_stdin)
+        stdout = self._run(argv, stdin_input=flattened if use_stdin else None)
         return self._parse_stdout(stdout, model or self.model_name or "unknown")
 
     async def acompletion(
@@ -152,7 +159,8 @@ class ClaudeCliClient(BaseLM):
         raise ValueError(f"Invalid prompt type: {type(prompt)}")
 
     def _build_argv(
-        self, flattened_prompt: str, system_prompt: str | None, model: str | None
+        self, flattened_prompt: str, system_prompt: str | None, model: str | None,
+        use_stdin_for_prompt: bool = False,
     ) -> list[str]:
         argv: list[str] = [self.cli_path, "-p"]
         if self.bare:
@@ -169,15 +177,28 @@ class ClaudeCliClient(BaseLM):
         if self.max_budget_usd is not None:
             argv.extend(["--max-budget-usd", str(self.max_budget_usd)])
 
-        # Prompt must be the last positional arg.
-        argv.append(flattened_prompt)
+        # Prompt routing: small prompts go as the last positional arg; large
+        # prompts (above _MAX_ARGV_PROMPT_CHARS) are piped via stdin instead to
+        # avoid Windows CreateProcess argv-length overflow. The caller decides
+        # which path and pipes the prompt via subprocess.run(input=...).
+        if not use_stdin_for_prompt:
+            argv.append(flattened_prompt)
         return argv
 
-    def _run(self, argv: list[str]) -> str:
-        logger.debug("ClaudeCliClient: invoking %s (prompt_len=%d)", argv[0], len(argv[-1]))
+    def _run(self, argv: list[str], stdin_input: str | None = None) -> str:
+        prompt_len = (
+            len(stdin_input) if stdin_input is not None
+            else (len(argv[-1]) if argv else 0)
+        )
+        via = "stdin" if stdin_input is not None else "argv"
+        logger.debug(
+            "ClaudeCliClient: invoking %s (prompt_len=%d, via=%s)",
+            argv[0], prompt_len, via,
+        )
         try:
             proc = subprocess.run(
                 argv,
+                input=stdin_input,
                 capture_output=True,
                 text=True,
                 encoding="utf-8",
@@ -190,6 +211,18 @@ class ClaudeCliClient(BaseLM):
                 f"claude -p timed out after {self.timeout}s"
             ) from exc
         except FileNotFoundError as exc:
+            # On Windows, FileNotFoundError covers two distinct failures:
+            #   winerror=2   -> ENOENT, binary genuinely not at argv[0]
+            #   winerror=206 -> "filename or extension is too long" = argv overflow
+            # completion() thresholds at _MAX_ARGV_PROMPT_CHARS, so a 206 here
+            # means our threshold is too lax for this argv shape. Surface the
+            # accurate diagnosis instead of the misleading "CLI not found".
+            if getattr(exc, "winerror", None) == 206:
+                raise RuntimeError(
+                    "claude -p subprocess argv exceeded Windows CreateProcess "
+                    "limit (~32K). Prompt should have been routed via stdin "
+                    "-- lower _MAX_ARGV_PROMPT_CHARS in rlm_claude_cli_client.py."
+                ) from exc
             raise RuntimeError(
                 f"claude CLI not found at '{argv[0]}'. Install Claude Code or set cli_path."
             ) from exc
