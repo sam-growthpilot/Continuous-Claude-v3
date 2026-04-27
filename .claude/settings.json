@@ -22,7 +22,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "node C:/Users/david.hayes/.claude/hooks/dist/agent-validate.mjs",
+            "command": "node C:/Users/david.hayes/.claude/hooks/dist/agent-model-guard.mjs",
             "timeout": 3000
           },
           {

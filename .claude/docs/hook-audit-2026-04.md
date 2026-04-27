@@ -193,3 +193,39 @@ cd ../../.. && npm --prefix .claude/hooks run build
 - `~/.claude/settings.json` is authoritative for "registered" because the repo
   copy is intentionally not synced (per `.claude/rules/sync-known-gaps.md`).
 - Full per-file JSON: `.claude/cache/hook-audit-2026-04-26.json`.
+
+---
+
+## Phase 5c addendum (2026-04-27)
+
+Recorded after the Phase 5c R1-R9 ship, during pre-fork-push review.
+
+### R5 rename — agent-validate → agent-model-guard
+
+- Source renamed: `.claude/hooks/src/agent-validate.ts` → `agent-model-guard.ts` (commit `dd6c602`).
+- Active config (`~/.claude/settings.json`) updated by Node.js atomic write at ship time.
+- **Pre-push followup applied 2026-04-27:** the rename was incomplete — repo `.claude/settings.json:25`, `.claude/settings.json.template:25`, `.claude/worktrees/lucid-hellman/.claude/settings.json:25`, `.claude/worktrees/distracted-booth/.claude/settings.json:25`, and `hook-health-monitor.test.ts:154` still referenced `agent-validate.mjs`. All five fixed in the same pre-push commit; bootstrap from `BOOTSTRAP.md` now registers the correct hook.
+- **Naming caveat:** the new name `agent-model-guard` is misleading — the hook validates agent file *existence* (checks `subagent_type` resolves to a real `.md` file), it does NOT block haiku model selection. The actual haiku gate is `no-haiku-enforcer.ts`. Doc descriptions in `agent-skill-map.md:262` and `composition-design.md:237` corrected in the same commit. The filename was kept (instead of renaming again to `agent-existence-guard.ts`) to avoid a rename-of-a-rename.
+
+### R6 phantom agents — created (Option B)
+
+- Three previously-fictional agents now exist on disk: `wizard.md`, `agent-factory.md`, `principal-reviewer.md` (commit `420119f`).
+- Frontmatter validated; `principal-reviewer` correctly omits Edit/Write per architect spec.
+- Open follow-up: none of the three are wired into `task-router.ts` or `skill-rules.json` — reachable only by explicit name. Tracked in `agent-skill-map.md` Routing Coverage Gaps.
+
+### R7 maestro-detector re-entrancy guard
+
+- 30-min mtime window check in `isMaestroActive()` (commit `a429634`). Fail-open on missing state file.
+- Latent edge case noted: long maestro sessions crossing the 30-min window without state-file mtime refresh could re-fire the detector. Low risk in practice; not addressed in this commit.
+
+### Open follow-ups (after fork push)
+
+| Item | Severity | Source |
+|---|---|---|
+| Reconcile `agent-skill-map.md` counts (claims 35/102, actual 36/~136) | MEDIUM | scout review 2026-04-27 |
+| 9 map-claimed skills don't exist on disk: `docker`, `git`, `linearis`, `gh`, `frontend-design`, `prd`, `agentica`, `claude-code-guide`, `create-plan` | MEDIUM | scout review 2026-04-27 |
+| `session-analyst.md` stub still present despite Phase 5a addendum claiming archived; `_archived/2026-04-26-duplicates/` has the canonical copy | MEDIUM | scout review 2026-04-27 |
+| TLDR active dirs `tldr-router/`, `tldr-deep/`, `tldr-overview/` still present despite Phase 5a addendum claiming archived (archive copies in `_archived/2026-04-26-tldr-cleanup/`) | HIGH | scout review 2026-04-27 — pending separate cleanup commit |
+| `debug-agent.md:16` loads `skills/debug/SKILL.md` but map claims companion is `systematic-debugging/SKILL.md` (pre-Phase-5c drift) | LOW | principal-reviewer 2026-04-27 |
+| Wire `principal-reviewer` into the `review` skill body for high-stakes path | LOW | principal-reviewer 2026-04-27 |
+| RLM vanilla path on Windows broken for >~30K char corpora — argv overflow + misleading error in `rlm_claude_cli_client.py:179-193` | MEDIUM | RLM component test 2026-04-27 |

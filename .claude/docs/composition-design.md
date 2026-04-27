@@ -234,7 +234,7 @@ Each item below is a *recommendation* with explicit blast radius, risk, and reve
 
 ### R5 — Resolve `validate-agent` x `agent-validate` nameclash [DONE]
 
-**Problem.** `.claude/agents/validate-agent.md` (the agent that validates other agent outputs) and `.claude/hooks/src/agent-validate.ts` (the hook that blocks haiku model selection) had nearly identical names but different concerns.
+**Problem.** `.claude/agents/validate-agent.md` (the agent that validates other agent outputs) and `.claude/hooks/src/agent-validate.ts` (the hook that validates agent file existence before spawn) had nearly identical names but different concerns. Note: the hook never blocked haiku — that was always `no-haiku-enforcer.ts`. The renamed file `agent-model-guard.ts` is historical naming and behaves identically to its predecessor (existence check on `subagent_type`).
 
 **Resolution (Option A applied):** Hook renamed to `agent-model-guard.ts`. Hook behavior unchanged; file name moved. `~/.claude/settings.json` registration updated to `agent-model-guard.mjs` via Node.js atomic write.
 

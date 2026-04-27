@@ -259,8 +259,8 @@ Archived in `_archived/2026-04-26-tldr-cleanup/`: `tldr-router`, `tldr-overview`
 | skill-activation-prompt | UserPromptSubmit | RECOMMEND skill via skill-rules.json + LLM validation |
 | maestro-detector | UserPromptSubmit | SUGGEST /maestro for multi-step prompts (R7 — re-entrancy guard added 2026-04-26) |
 | react-perf-context | PostToolUse(Read) | INJECT — auto-loads react-perf skill on .tsx read |
-| agent-model-guard | PreToolUse(Task) | HARD BLOCK on `model: haiku` (renamed from `agent-validate.ts` in R5, 2026-04-26) |
-| no-haiku-enforcer | PreToolUse(Task) | HARD BLOCK on haiku — redundant safety alongside agent-model-guard |
+| agent-model-guard | PreToolUse(Task) | HARD BLOCK on unknown `subagent_type` (agent file existence check; renamed from `agent-validate.ts` in R5, 2026-04-26 — name is historical, behavior is existence validation, not model gating) |
+| no-haiku-enforcer | PreToolUse(Task) | HARD BLOCK on `model: haiku` (this is the actual haiku gate) |
 | agent-verification | PostToolUse(Task) | VERIFY agent output quality |
 | plan-exit-tracker | PostToolUse(ExitPlanMode) | WRITE state file on plan approval |
 | plan-to-ralph-enforcer | PreToolUse(Edit/Write) | HARD BLOCK code edits when plan approved + Ralph not active |
