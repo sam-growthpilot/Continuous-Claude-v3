@@ -106,83 +106,142 @@ function readRegistry(projectDir) {
   return null;
 }
 
-// src/post-plan-roadmap.ts
+// src/shared/roadmap-parser.ts
+var SECTION_PREFIXES = [
+  // Order matters: more specific first.
+  { key: "sessions", prefix: "## recent planning" },
+  { key: "current", prefix: "## current" },
+  { key: "completed", prefix: "## completed" },
+  { key: "planned", prefix: "## planned" }
+];
+function detectSection(strippedLower) {
+  for (const { key, prefix } of SECTION_PREFIXES) {
+    if (strippedLower.startsWith(prefix)) {
+      return key;
+    }
+  }
+  if (strippedLower.startsWith("## ")) {
+    return null;
+  }
+  return void 0;
+}
+function bucketize(rawPriority) {
+  const p = rawPriority.toLowerCase();
+  if (p.includes("high")) return "high";
+  if (p.includes("low")) return "low";
+  return "medium";
+}
 function parseRoadmap(content) {
   const result = {
     current: null,
     completed: [],
     planned: [],
-    sessions: []
+    sessions: [],
+    rawContent: content,
+    rawSections: /* @__PURE__ */ new Map()
   };
+  if (!content) return result;
   const lines = content.split("\n");
   let section = null;
-  let currentTitle = null;
-  for (const line of lines) {
+  let sectionStart = -1;
+  const closeSection = (endLine) => {
+    if (section && sectionStart >= 0) {
+      result.rawSections.set(section, { start: sectionStart, end: endLine });
+    }
+  };
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i];
     const stripped = line.trim();
-    if (stripped.toLowerCase().startsWith("## current")) {
-      section = "current";
-      continue;
-    } else if (stripped.toLowerCase().startsWith("## completed")) {
-      section = "completed";
-      continue;
-    } else if (stripped.toLowerCase().startsWith("## planned")) {
-      section = "planned";
-      continue;
-    } else if (stripped.toLowerCase().startsWith("## recent planning")) {
-      section = "sessions";
-      continue;
-    } else if (stripped.startsWith("## ")) {
-      section = null;
+    const lower = stripped.toLowerCase();
+    const detected = detectSection(lower);
+    const isAnyH2 = stripped.startsWith("## ");
+    const isKnownH2 = typeof detected === "string";
+    const isUnrelatedH2 = detected === null;
+    if (isKnownH2) {
+      closeSection(i);
+      section = detected;
+      sectionStart = i;
       continue;
     }
-    if (section === "current" && stripped.startsWith("**") && stripped.endsWith("**")) {
-      currentTitle = stripped.replace(/\*\*/g, "").trim();
-      result.current = { title: currentTitle, description: "", started: "" };
-    } else if (section === "current" && result.current && stripped.startsWith("-")) {
-      const text = stripped.slice(1).trim();
-      if (text.toLowerCase().startsWith("started:")) {
-        result.current.started = text.replace(/^started:\s*/i, "");
-      } else if (result.current.description) {
-        result.current.description += "; " + text;
-      } else {
-        result.current.description = text;
+    if (isUnrelatedH2) {
+      closeSection(i);
+      section = null;
+      sectionStart = -1;
+      continue;
+    }
+    if (section === "current") {
+      if (stripped.startsWith("**") && stripped.endsWith("**") && stripped.length >= 4) {
+        const title = stripped.replace(/\*\*/g, "").trim();
+        if (title.length > 0) {
+          result.current = { title };
+        }
+        continue;
+      }
+      const checkboxCurrent = stripped.match(/^-\s*\[\s*\]\s*(.+)$/);
+      if (checkboxCurrent && !result.current) {
+        result.current = { title: checkboxCurrent[1].trim() };
+        continue;
+      }
+      if (result.current && stripped.startsWith("- ")) {
+        const text = stripped.slice(2).trim();
+        if (/^started:/i.test(text)) {
+          result.current.started = text.replace(/^started:\s*/i, "").trim();
+        } else if (/^progress:/i.test(text)) {
+          result.current.progress = text.replace(/^progress:\s*/i, "").trim();
+        } else {
+          if (result.current.description) {
+            result.current.description = `${result.current.description}; ${text}`;
+          } else {
+            result.current.description = text;
+          }
+        }
+        continue;
       }
     }
     if (section === "completed") {
-      const match = stripped.match(/^-\s*\[x\]\s*(.+?)(?:\s*\(([^)]+)\))?$/i);
-      if (match) {
+      const m = stripped.match(/^-\s*\[x\]\s*(.+?)(?:\s*\(([^)]+)\))?$/i);
+      if (m) {
         result.completed.push({
-          title: match[1].trim(),
-          completed: match[2] || ""
+          title: m[1].trim(),
+          completed: m[2] || ""
         });
       }
+      continue;
     }
     if (section === "planned") {
-      const match = stripped.match(/^-\s*\[\s*\]\s*(.+?)(?:\s*\(([^)]+)\))?$/i);
-      if (match) {
-        let priority = "medium";
-        const prio = match[2] || "";
-        if (prio.toLowerCase().includes("high")) priority = "high";
-        if (prio.toLowerCase().includes("low")) priority = "low";
-        result.planned.push({ title: match[1].trim(), priority });
-      }
-    }
-    if (section === "sessions" && stripped.startsWith("### ")) {
-      const sessionMatch = stripped.match(/^###\s*(\d{4}-\d{2}-\d{2}):\s*(.+)$/);
-      if (sessionMatch) {
-        result.sessions.push({
-          date: sessionMatch[1],
-          title: sessionMatch[2].trim(),
-          decisions: []
+      const m = stripped.match(/^-\s*\[\s*\]\s*(.+?)(?:\s*\(([^)]+)\))?$/);
+      if (m) {
+        const rawPriority = m[2] || "normal";
+        result.planned.push({
+          title: m[1].trim(),
+          priority: rawPriority,
+          priorityBucket: bucketize(rawPriority)
         });
       }
-    } else if (section === "sessions" && result.sessions.length > 0 && stripped.startsWith("-")) {
-      const lastSession = result.sessions[result.sessions.length - 1];
-      lastSession.decisions.push(stripped.slice(1).trim());
+      continue;
+    }
+    if (section === "sessions") {
+      const sessHeader = stripped.match(/^###\s*(\d{4}-\d{2}-\d{2}):\s*(.+)$/);
+      if (sessHeader) {
+        result.sessions.push({
+          date: sessHeader[1],
+          title: sessHeader[2].trim(),
+          decisions: []
+        });
+        continue;
+      }
+      if (result.sessions.length > 0 && stripped.startsWith("-")) {
+        const last = result.sessions[result.sessions.length - 1];
+        last.decisions.push(stripped.slice(1).trim());
+      }
+      continue;
     }
   }
+  closeSection(lines.length);
   return result;
 }
+
+// src/post-plan-roadmap.ts
 function generateRoadmap(sections) {
   const lines = ["# Project Roadmap", ""];
   lines.push("## Current Focus");
@@ -211,7 +270,8 @@ function generateRoadmap(sections) {
   lines.push("## Planned");
   if (sections.planned.length > 0) {
     for (const item of sections.planned) {
-      lines.push(`- [ ] ${item.title} (${item.priority} priority)`);
+      const bucket = item.priorityBucket || "medium";
+      lines.push(`- [ ] ${item.title} (${bucket} priority)`);
     }
   } else {
     lines.push("_No planned items yet._");
@@ -539,7 +599,9 @@ async function main() {
       current: null,
       completed: [],
       planned: [],
-      sessions: []
+      sessions: [],
+      rawContent: "",
+      rawSections: /* @__PURE__ */ new Map()
     };
   }
   const planInfo = extractPlanInfo(planContent, latestPlanPath);

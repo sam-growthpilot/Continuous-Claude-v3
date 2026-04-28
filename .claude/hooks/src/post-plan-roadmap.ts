@@ -14,6 +14,11 @@ import * as path from 'path';
 import { spawn } from 'child_process';
 import * as os from 'os';
 import { getProjectIdentity, isContentRelevantToProject } from './shared/project-relevance.js';
+import {
+  parseRoadmap,
+  type RoadmapDoc,
+  type PlanningSession as SharedPlanningSession,
+} from './shared/roadmap-parser.js';
 
 interface PostToolUseInput {
   tool_name: string;
@@ -22,107 +27,9 @@ interface PostToolUseInput {
   tool_result?: string;
 }
 
-interface PlanningSession {
-  date: string;
-  title: string;
-  summary?: string;
-  decisions: string[];
-  steps?: string[];
-  verification?: string[];
-  files?: string[];
-}
-
-interface RoadmapSection {
-  current: { title: string; description: string; started: string } | null;
-  completed: Array<{ title: string; completed: string }>;
-  planned: Array<{ title: string; priority: string }>;
-  sessions: PlanningSession[];
-}
-
-function parseRoadmap(content: string): RoadmapSection {
-  const result: RoadmapSection = {
-    current: null,
-    completed: [],
-    planned: [],
-    sessions: []
-  };
-
-  const lines = content.split('\n');
-  let section: string | null = null;
-  let currentTitle: string | null = null;
-
-  for (const line of lines) {
-    const stripped = line.trim();
-
-    if (stripped.toLowerCase().startsWith('## current')) {
-      section = 'current';
-      continue;
-    } else if (stripped.toLowerCase().startsWith('## completed')) {
-      section = 'completed';
-      continue;
-    } else if (stripped.toLowerCase().startsWith('## planned')) {
-      section = 'planned';
-      continue;
-    } else if (stripped.toLowerCase().startsWith('## recent planning')) {
-      section = 'sessions';
-      continue;
-    } else if (stripped.startsWith('## ')) {
-      section = null;
-      continue;
-    }
-
-    if (section === 'current' && stripped.startsWith('**') && stripped.endsWith('**')) {
-      currentTitle = stripped.replace(/\*\*/g, '').trim();
-      result.current = { title: currentTitle, description: '', started: '' };
-    } else if (section === 'current' && result.current && stripped.startsWith('-')) {
-      const text = stripped.slice(1).trim();
-      if (text.toLowerCase().startsWith('started:')) {
-        result.current.started = text.replace(/^started:\s*/i, '');
-      } else if (result.current.description) {
-        result.current.description += '; ' + text;
-      } else {
-        result.current.description = text;
-      }
-    }
-
-    if (section === 'completed') {
-      const match = stripped.match(/^-\s*\[x\]\s*(.+?)(?:\s*\(([^)]+)\))?$/i);
-      if (match) {
-        result.completed.push({
-          title: match[1].trim(),
-          completed: match[2] || ''
-        });
-      }
-    }
-
-    if (section === 'planned') {
-      const match = stripped.match(/^-\s*\[\s*\]\s*(.+?)(?:\s*\(([^)]+)\))?$/i);
-      if (match) {
-        let priority = 'medium';
-        const prio = match[2] || '';
-        if (prio.toLowerCase().includes('high')) priority = 'high';
-        if (prio.toLowerCase().includes('low')) priority = 'low';
-        result.planned.push({ title: match[1].trim(), priority });
-      }
-    }
-
-    if (section === 'sessions' && stripped.startsWith('### ')) {
-      const sessionMatch = stripped.match(/^###\s*(\d{4}-\d{2}-\d{2}):\s*(.+)$/);
-      if (sessionMatch) {
-        result.sessions.push({
-          date: sessionMatch[1],
-          title: sessionMatch[2].trim(),
-          decisions: []
-        });
-      }
-    } else if (section === 'sessions' && result.sessions.length > 0 && stripped.startsWith('-')) {
-      const lastSession = result.sessions[result.sessions.length - 1];
-      lastSession.decisions.push(stripped.slice(1).trim());
-    }
-  }
-
-  return result;
-}
+// PlanningSession + parseRoadmap moved to shared/roadmap-parser.ts (Phase 3A).
+type PlanningSession = SharedPlanningSession;
+type RoadmapSection = RoadmapDoc;
 
 function generateRoadmap(sections: RoadmapSection): string {
   const lines: string[] = ['# Project Roadmap', ''];
@@ -155,7 +62,9 @@ function generateRoadmap(sections: RoadmapSection): string {
   lines.push('## Planned');
   if (sections.planned.length > 0) {
     for (const item of sections.planned) {
-      lines.push(`- [ ] ${item.title} (${item.priority} priority)`);
+      // priorityBucket is normalized 'high' | 'medium' | 'low' (Phase 3A shared parser).
+      const bucket = item.priorityBucket || 'medium';
+      lines.push(`- [ ] ${item.title} (${bucket} priority)`);
     }
   } else {
     lines.push('_No planned items yet._');
@@ -559,7 +468,9 @@ async function main() {
       current: null,
       completed: [],
       planned: [],
-      sessions: []
+      sessions: [],
+      rawContent: '',
+      rawSections: new Map(),
     };
   }
 
