@@ -64,6 +64,7 @@ docs/_internal/
 
 # ROADMAP contains session-specific planning data (auto-updated by hooks)
 ROADMAP.md
+ROADMAP.archive.md
 
 # Statsig telemetry
 statsig/
