@@ -52,10 +52,16 @@ def get_tree(project_dir: str, max_age_seconds: int = 300) -> dict[str, Any] | N
     # Check if tree exists and is fresh
     if tree_path.exists():
         try:
+            content = tree_path.read_text(encoding='utf-8')
+            tree = json.loads(content)
+            # Content-based stale marker (set by invalidate_tree / TS hook)
+            # takes precedence over mtime: a freshly-touched file may still be
+            # logically stale if a watched source file changed.
+            if isinstance(tree, dict) and tree.get("_stale"):
+                return regenerate_tree(project_dir)
             age = time.time() - tree_path.stat().st_mtime
             if age < max_age_seconds:
-                content = tree_path.read_text(encoding='utf-8')
-                return json.loads(content)
+                return tree
         except (OSError, json.JSONDecodeError):
             pass  # Regenerate on error
 
@@ -96,26 +102,44 @@ def regenerate_tree(project_dir: str) -> dict[str, Any] | None:
 
 
 def invalidate_tree(project_dir: str) -> bool:
-    """Mark tree as needing regeneration by deleting it.
+    """Mark tree as needing regeneration via in-place stale marker.
 
-    The next call to get_tree() will regenerate.
+    The next call to get_tree() will see the _stale flag and regenerate. The
+    file is preserved on disk so consumers always have a fallback to read
+    instead of a missing-file race window.
 
     Args:
         project_dir: Path to project root
 
     Returns:
-        True if tree was deleted, False if it didn't exist
+        True if the stale marker was written, False if no tree existed
+        or the write failed.
     """
     tree_path = get_tree_path(project_dir)
 
-    if tree_path.exists():
-        try:
-            tree_path.unlink()
-            return True
-        except OSError:
-            return False
+    if not tree_path.exists():
+        return False
 
-    return False
+    invalidated_at = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+
+    try:
+        existing = json.loads(tree_path.read_text(encoding='utf-8'))
+        if not isinstance(existing, dict):
+            existing = {}
+    except (OSError, json.JSONDecodeError):
+        existing = {}
+
+    existing["_stale"] = True
+    existing["_invalidated_at"] = invalidated_at
+
+    try:
+        tree_path.write_text(
+            json.dumps(existing, indent=2, ensure_ascii=False),
+            encoding='utf-8',
+        )
+        return True
+    except OSError:
+        return False
 
 
 def is_tree_stale(project_dir: str, max_age_seconds: int = 300) -> bool:
@@ -131,6 +155,13 @@ def is_tree_stale(project_dir: str, max_age_seconds: int = 300) -> bool:
     tree_path = get_tree_path(project_dir)
 
     if not tree_path.exists():
+        return True
+
+    try:
+        content = json.loads(tree_path.read_text(encoding='utf-8'))
+        if isinstance(content, dict) and content.get("_stale"):
+            return True
+    except (OSError, json.JSONDecodeError):
         return True
 
     try:
@@ -203,7 +234,7 @@ if __name__ == "__main__":
 
     elif args.command == "invalidate":
         if invalidate_tree(str(project)):
-            print("Tree invalidated")
+            print("Tree marked stale (file preserved for fallback reads)")
         else:
             print("No tree to invalidate")
 
