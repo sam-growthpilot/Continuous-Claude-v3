@@ -16,6 +16,7 @@ Usage:
 
 from __future__ import annotations
 
+import asyncio
 import json
 import os
 import re
@@ -27,11 +28,25 @@ from typing import Any
 # Add parent to path for imports
 sys.path.insert(0, str(Path(__file__).parent))
 
+# Import the v2 storage entrypoint. v1 (`store_learning`) has a different
+# signature (worked/failed/decisions/patterns) that does not match the
+# call site below; v2 takes (session_id, content, learning_type, ...).
+#
+# The previous version of this file imported a non-existent `LearningType`
+# symbol, which raised ImportError. The except-clause then set BOTH
+# `store_learning` and `LearningType` to None, and the storage branch was
+# silently skipped -- L2 (session-end) learnings never reached postgres.
+# That bug is the reason this file was rewritten; do NOT reintroduce a
+# silent-None ImportError swallow here.
 try:
-    from store_learning import store_learning, LearningType
-except ImportError:
-    store_learning = None
-    LearningType = None
+    from store_learning import store_learning_v2 as _store_learning_v2
+except ImportError as e:
+    # Re-raise with context so a future regression is loud, not silent.
+    raise ImportError(
+        f"lazy_memory cannot import store_learning_v2 from store_learning: {e}. "
+        "This used to be silently swallowed -- see Phase 1 of the memory "
+        "remediation plan. Fix the import path or the store_learning module."
+    ) from e
 
 # Perception change signal patterns (from extract_thinking_blocks.py)
 PERCEPTION_SIGNALS = [
@@ -369,20 +384,41 @@ def extract_session_learnings(
             if len(learnings) >= max_learnings:
                 break
 
-    # Store if requested
-    if store and store_learning and learnings:
+    # Store if requested. We call store_learning_v2 (an async function) via
+    # asyncio.run() per learning. Failures are visible on stderr -- never
+    # silently swallowed. If a future maintainer wants to skip storage, they
+    # must pass store=False explicitly; reverting this branch to a no-op
+    # is the bug we just fixed.
+    if store and learnings:
         for learning in learnings:
             try:
-                store_learning(
-                    session_id=session_id,
-                    learning_type=learning['type'],
-                    content=learning['content'],
-                    context=learning['context'],
-                    tags=learning['tags'],
-                    confidence=learning['confidence'],
+                result = asyncio.run(
+                    _store_learning_v2(
+                        session_id=session_id,
+                        content=learning['content'],
+                        learning_type=learning['type'],
+                        context=learning['context'],
+                        tags=learning['tags'],
+                        confidence=learning['confidence'],
+                        project_dir=project_dir,
+                    )
                 )
+                if not result.get('success'):
+                    # store_learning_v2 returned a failure dict (e.g. backend
+                    # unavailable). Surface it explicitly.
+                    print(
+                        f"Failed to store learning (session={session_id}): "
+                        f"{result.get('error', 'unknown error')}",
+                        file=sys.stderr,
+                    )
             except Exception as e:
-                print(f"Failed to store learning: {e}", file=sys.stderr)
+                # Any unexpected exception (e.g. asyncio loop issue, DB outage,
+                # embedding service crash) must be visible. We do NOT re-raise
+                # so a single failed learning doesn't prevent storing the rest.
+                print(
+                    f"Failed to store learning (session={session_id}): {e}",
+                    file=sys.stderr,
+                )
 
     return learnings
 
