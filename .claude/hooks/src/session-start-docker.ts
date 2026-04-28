@@ -1,14 +1,17 @@
 /**
- * SessionStart Hook - Ensures PostgreSQL Docker container and daemons are running.
+ * SessionStart Hook - Ensures the PostgreSQL Docker container is running.
  *
  * This hook:
  * 1. Checks if continuous-claude-postgres container is running
  * 2. If not, starts it via docker compose
  * 3. Waits for it to be healthy before continuing
- * 4. Spawns tree_daemon for current project (if not running)
- * 5. Spawns memory_daemon globally (if not running)
  *
- * Part of the memory system infrastructure.
+ * Note: Earlier revisions of this header claimed this hook also spawns
+ * `tree_daemon` and `memory_daemon`. Neither daemon exists in the repo --
+ * the knowledge tree is regenerated on demand via stale-marker hooks
+ * (`tree-invalidate.ts` + `session-start-init-check.ts`), and learning
+ * extraction runs on-demand via `lazy_memory.py` at session end. This
+ * hook only ensures Postgres is reachable.
  */
 
 import { execSync, spawn } from 'child_process';

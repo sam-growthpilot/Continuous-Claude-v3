@@ -111,17 +111,17 @@ docker exec continuous-claude-postgres psql -U claude -d continuous_claude -c \
   "SELECT file_path, session_id FROM file_claims ORDER BY claimed_at DESC LIMIT 10;"
 ```
 
-### Memory Daemon Status
+### L2 Memory Extraction (session-end)
+
+There is no persistent memory daemon. Learning extraction runs once at session end via the `session-end-extract` hook, which invokes `opc/scripts/core/lazy_memory.py`.
 
 ```bash
-# Check if running
-cat ~/.claude/memory-daemon.pid && tasklist | grep $(cat ~/.claude/memory-daemon.pid)
+# Manually extract from a transcript file (debug)
+cd $CLAUDE_OPC_DIR && PYTHONPATH=. uv run python scripts/core/lazy_memory.py < transcript.json
 
-# View recent log
-tail -20 ~/.claude/memory-daemon.log
-
-# Restart if needed
-cd ~/.claude/scripts/core/core && uv run python memory_daemon.py start
+# Confirm extraction landed
+docker exec continuous-claude-postgres psql -U claude -d continuous_claude -c \
+  "SELECT created_at, metadata->>'type' AS type, LEFT(content, 80) FROM archival_memory ORDER BY created_at DESC LIMIT 5;"
 ```
 
 ---
@@ -279,16 +279,17 @@ docker exec continuous-claude-postgres psql -U claude -d continuous_claude -c \
 # If low, manually store some learnings from current session
 ```
 
-### Daemon not extracting
+### L2 extraction not landing
 ```bash
-# Check daemon log
-tail -30 ~/.claude/memory-daemon.log
-
 # Verify PostgreSQL is running
 docker ps | grep continuous-claude-postgres
 
-# Restart daemon
-cd ~/.claude/scripts/core/core && uv run python memory_daemon.py start
+# Run lazy_memory.py manually against the latest transcript to surface errors
+cd $CLAUDE_OPC_DIR && PYTHONPATH=. uv run python scripts/core/lazy_memory.py < /path/to/transcript.json
+
+# Check whether the most recent learnings are showing up
+docker exec continuous-claude-postgres psql -U claude -d continuous_claude -c \
+  "SELECT COUNT(*) FILTER (WHERE created_at > NOW() - INTERVAL '24 hours') AS last_24h FROM archival_memory;"
 ```
 
 ### Multiple sessions conflict warning
@@ -354,8 +355,8 @@ The post-plan-roadmap hook checks plans in 3 locations (in order):
 | `~/.claude/docker/.env` | PostgreSQL port configuration |
 | `~/.claude/projects/` | Session JSONL files |
 | `~/.claude/thoughts/shared/handoffs/` | Handoff documents |
-| `~/.claude/scripts/core/` | recall_learnings.py, store_learning.py |
-| `~/.claude/scripts/core/core/` | tree_daemon.py, knowledge_tree.py |
+| `$CLAUDE_OPC_DIR/scripts/core/` | recall_learnings.py, store_learning.py, lazy_memory.py |
+| `$CLAUDE_OPC_DIR/scripts/core/` | knowledge_tree.py, query_tree.py, tree_schema.py, lazy_tree.py |
 | `{project}/.claude/knowledge-tree.json` | Project navigation map |
 | `{project}/ROADMAP.md` | Project goals tracking |
 | `{project}/tasks/` | PRD and task files |

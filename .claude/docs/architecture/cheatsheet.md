@@ -4,17 +4,16 @@
 
 > **See also:** [Architecture Index](INDEX.md) for system overview and navigation, [User Guide](user-guide.md) for the conceptual companion to this command reference.
 
-## Memory Daemon
+## L2 Memory Extraction (session-end)
+
+There is no persistent `memory_daemon.py` -- extraction runs once at session end via the `session-end-extract` hook, which invokes `opc/scripts/core/lazy_memory.py`. Earlier docs that referenced `memory_daemon.py` / `start-memory-daemon.ps1` / the `ClaudeMemoryDaemon` scheduled task are obsolete; that daemon was never built.
 
 ```powershell
-# Check status
-python C:\Users\<username>\.claude\scripts\core\core\memory_daemon.py status
+# Manually replay extraction against a saved transcript (debug)
+cd $env:CLAUDE_OPC_DIR ; $env:PYTHONPATH = "." ; uv run python scripts/core/lazy_memory.py < transcript.json
 
-# Start manually
-C:\Users\<username>\.claude\scripts\start-memory-daemon.ps1
-
-# Stop
-python C:\Users\<username>\.claude\scripts\core\core\memory_daemon.py stop
+# Confirm learnings landed
+& "C:\Program Files\Docker\Docker\resources\bin\docker.exe" exec continuous-claude-postgres psql -U claude -d continuous_claude -c "SELECT created_at, metadata->>'type' AS type, LEFT(content, 80) FROM archival_memory ORDER BY created_at DESC LIMIT 5;"
 ```
 
 ## Docker Services (PostgreSQL - Port 5432)
@@ -40,19 +39,17 @@ python C:\Users\<username>\.claude\scripts\core\core\memory_daemon.py stop
 
 ## Task Scheduler (Auto-Start)
 
+The `ClaudeMemoryDaemon` scheduled task (and `setup-task-scheduler.ps1`) targeted a daemon that does not exist. If that task was ever registered on this machine, remove it:
+
 ```powershell
-# View task
-Get-ScheduledTask -TaskName 'ClaudeMemoryDaemon'
+# Inspect (likely "task does not exist")
+Get-ScheduledTask -TaskName 'ClaudeMemoryDaemon' -ErrorAction SilentlyContinue
 
-# Run now
-Start-ScheduledTask -TaskName 'ClaudeMemoryDaemon'
-
-# Remove auto-start
-Unregister-ScheduledTask -TaskName 'ClaudeMemoryDaemon' -Confirm:$false
-
-# Re-create auto-start
-C:\Users\<username>\.claude\scripts\setup-task-scheduler.ps1
+# Remove if present
+Unregister-ScheduledTask -TaskName 'ClaudeMemoryDaemon' -Confirm:$false -ErrorAction SilentlyContinue
 ```
+
+The only currently-scheduled task in this system is `CCv3-Blocklist-Update` (daily 9am, see `package-install-safety.md`).
 
 ## Hooks
 
@@ -74,14 +71,14 @@ echo '{}' | node C:\Users\<username>\.claude\hooks\dist\session-register.mjs
 | `session-start-docker.mjs` | SessionStart | Auto-start PostgreSQL container |
 | `session-register.mjs` | SessionStart | Register in coordination DB |
 | `session-start-continuity.mjs` | SessionStart | Load handoff ledger |
-| `session-start-tree-daemon.ps1` | SessionStart | Start knowledge tree watcher |
-| `session-start-memory-daemon.ps1` | SessionStart | **Auto-start memory daemon** |
+| `session-start-init-check.mjs` | SessionStart | Regenerate `knowledge-tree.json` if missing/stale |
+| `tree-invalidate.mjs` | PostToolUse:Edit\|Write | Mark `knowledge-tree.json` stale on file changes |
 | `memory-awareness.mjs` | UserPromptSubmit | Auto-inject relevant memories |
 | `pageindex-watch.mjs` | PostToolUse:Write\|Edit | Rebuild PageIndex on .md changes |
 | `pre-compact-extract.mjs` | PreCompact | Extract learnings before compression |
 | `smarter-everyday.mjs` | PostToolUse | Detect problem resolution patterns |
 | `user-confirmation-detector.mjs` | UserPromptSubmit | Capture "it's fixed" signals |
-| `session-end-extract.mjs` | SessionEnd | Final learning extraction sweep |
+| `session-end-extract.mjs` | SessionEnd | Final learning extraction (calls `lazy_memory.py`) |
 | `maestro-state-manager.mjs` | UserPromptSubmit | Track maestro workflow state |
 | `ralph-delegation-enforcer.mjs` | PreToolUse:Task | Enforce ralph routing (**BLOCKS**) |
 | `git-memory-check.mjs` | PreToolUse:Bash | Check memory before git (**BLOCKS**) |
@@ -109,19 +106,19 @@ bash scripts/sync-claude.sh --from-repo
 ## Knowledge Tree
 
 ```powershell
-# Check daemon status
-cd ~/.claude/scripts/core/core; uv run python tree_daemon.py --project . --status
-
-# Regenerate manually
-cd ~/.claude/scripts/core/core; uv run python knowledge_tree.py --project .
+# Regenerate manually (no daemon by design -- hooks invalidate on edit)
+cd $env:CLAUDE_OPC_DIR; uv run python scripts/core/knowledge_tree.py --project <project-dir> --verbose
 
 # Query tree
-cd ~/.claude/scripts/core/core; uv run python query_tree.py --project . --describe
-cd ~/.claude/scripts/core/core; uv run python query_tree.py --project . --query "where to add API"
+cd $env:CLAUDE_OPC_DIR; uv run python scripts/core/query_tree.py --project <project-dir> --describe
+cd $env:CLAUDE_OPC_DIR; uv run python scripts/core/query_tree.py --project <project-dir> --query "where to add API"
+
+# Validate after regen
+cd $env:CLAUDE_OPC_DIR; uv run python scripts/core/tree_schema.py --validate <project-dir>/.claude/knowledge-tree.json
 ```
 
 **Output:** `{project}/.claude/knowledge-tree.json`
-**Daemon:** Auto-starts on session, debounces 2s on file changes
+**Regeneration:** On demand via `tree-invalidate.ts` (stale-mark) + `session-start-init-check.ts` (regen). No persistent daemon.
 
 ## ROADMAP
 
@@ -157,8 +154,7 @@ The post-plan-roadmap hook checks 3 locations (in order):
 ## Rollback
 
 ```powershell
-# Stop everything first
-python C:\Users\<username>\.claude\scripts\core\core\memory_daemon.py stop
+# Stop Postgres (no separate memory daemon to stop -- L2 extraction is hook-driven)
 & "C:\Program Files\Docker\Docker\resources\bin\docker.exe" compose -f "C:\Users\<username>\.claude\docker\docker-compose.yml" down
 
 # Restore from backup
@@ -175,7 +171,7 @@ Copy-Item "C:\Users\<username>\claude-archives\superClaude-v4.1.0-20260110-17571
 | `.claude\scripts\pageindex\` | PageIndex CLI and tree search |
 | `.claude\agents\` | Agent definitions (53 files) |
 | `.claude\skills\` | Skill definitions (383 files) |
-| `.claude\scripts\core\core\` | Memory daemon, TLDR |
+| `opc\scripts\core\` | `lazy_memory.py`, `store_learning.py`, `recall_learnings.py`, `knowledge_tree.py` |
 | `.claude\docker\` | PostgreSQL compose |
 | `.claude\commands\` | SuperClaude commands (preserved) |
 | `thoughts\shared\handoffs\` | Session handoffs |
@@ -205,14 +201,11 @@ The system loads DATABASE_URL in this order:
 3. `~/.claude/.env` (supplements only)
 
 ```powershell
-# Check if daemon is running
-python C:\Users\<username>\.claude\scripts\core\core\memory_daemon.py status
-
 # Check Docker
 & "C:\Program Files\Docker\Docker\resources\bin\docker.exe" ps
 
-# Check hook logs (if any errors)
-Get-Content C:\Users\<username>\.claude\memory-daemon.log -Tail 20
+# Confirm L2 extraction is landing rows
+& "C:\Program Files\Docker\Docker\resources\bin\docker.exe" exec continuous-claude-postgres psql -U claude -d continuous_claude -c "SELECT COUNT(*) FILTER (WHERE created_at > NOW() - INTERVAL '24 hours') AS last_24h FROM archival_memory;"
 
 # Verify settings.json is valid JSON
 Get-Content C:\Users\<username>\.claude\settings.json | ConvertFrom-Json

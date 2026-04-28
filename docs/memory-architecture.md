@@ -15,15 +15,12 @@ flowchart TB
     subgraph Hooks["🪝 Hooks Layer (.claude/hooks/)"]
         direction TB
         H1[session-register.ts<br/>SessionStart]
-        H2[session-start-tree-daemon.sh<br/>SessionStart]
+        H2[session-start-init-check.ts<br/>SessionStart]
         H3[memory-awareness.ts<br/>UserPromptSubmit]
         H4[file-claims.ts<br/>PreToolUse:Edit]
         H5[pre-compact-continuity.ts<br/>PreCompact]
-    end
-
-    subgraph Daemons["⚙️ Background Daemons"]
-        MD[memory_daemon.py<br/>Learning Extraction]
-        TD[tree_daemon.py<br/>Tree Updates]
+        H6[tree-invalidate.ts<br/>PostToolUse:Edit]
+        H7[lazy_memory.py<br/>SessionEnd]
     end
 
     subgraph PostgreSQL["🐘 PostgreSQL (Docker)"]
@@ -49,7 +46,7 @@ flowchart TB
         direction TB
         KT1[knowledge_tree.py<br/>Generate Tree]
         KT2[query_tree.py<br/>Query Tree]
-        KT3[tree_daemon.py<br/>Watch & Update]
+        KT3[lazy_tree.py<br/>On-demand wrapper]
     end
 
     subgraph LocalFiles["📁 Local Files"]
@@ -70,11 +67,11 @@ flowchart TB
     H1 -->|"INSERT"| T1
     H1 -->|"SELECT peers"| T1
     H1 -->|"Write"| F3
-    H2 -->|"Launch"| TD
+    H2 -->|"Regen if stale/missing"| KT1
 
-    %% Tree Daemon Flow
-    TD -->|"Watch"| F2
-    TD -->|"Generate"| KT1
+    %% Tree Regen Flow (no daemon -- on demand)
+    CC -->|"3. Edit"| H6
+    H6 -->|"Mark stale"| F1
     KT1 -->|"Write"| F1
     KT1 -->|"Parse"| F2
 
@@ -105,9 +102,10 @@ flowchart TB
     S3 -->|"Index"| SQ1
     S3 -->|"Read"| F4
 
-    %% Memory Daemon Flow
-    MD -->|"Poll stale sessions"| T1
-    MD -->|"Extract learnings"| T2
+    %% Memory Extraction Flow (no persistent daemon -- runs at session end)
+    CC -->|"5. SessionEnd"| H7
+    H7 -->|"Extract learnings"| S2
+    S2 -->|"INSERT via store_learning_v2"| T2
 
     %% Query Tree Flow
     KT2 -->|"Read"| F1
@@ -130,17 +128,19 @@ flowchart TB
 | Hook | Event | Action |
 |------|-------|--------|
 | **session-register** | SessionStart | Register in PostgreSQL, detect peers |
-| **session-start-tree-daemon** | SessionStart | Launch tree daemon for project |
+| **session-start-init-check** | SessionStart | Regenerate knowledge-tree.json if missing/stale |
 | **memory-awareness** | UserPromptSubmit | Search learnings, inject relevant context |
+| **tree-invalidate** | PostToolUse:Edit | Mark knowledge-tree.json stale on file changes |
 | **file-claims** | PreToolUse:Edit | Check/claim file locks |
 | **pre-compact-continuity** | PreCompact | Create handoff documents |
+| **lazy_memory** | SessionEnd | Extract session learnings, persist via store_learning_v2 |
 
-### Daemons
+### On-demand workers (no persistent daemons)
 
-| Daemon | Purpose | Interval |
-|--------|---------|----------|
-| **memory_daemon.py** | Extract learnings from stale sessions | 60s polling |
-| **tree_daemon.py** | Update knowledge tree on file changes | 500ms debounce |
+The earlier design called for `memory_daemon.py` (poll-based learning extraction) and `tree_daemon.py` (file-watch knowledge tree updates). Neither was built; both are replaced by the on-demand hooks above:
+
+- Memory: `lazy_memory.py` runs once at session end (much cheaper than 60s polling)
+- Tree: `tree-invalidate` marks stale on edit; `session-start-init-check` regenerates on read
 
 ### Search System
 
@@ -164,7 +164,7 @@ score = 1/(60 + text_rank) + 1/(60 + vector_rank)
 ### A. Session Start
 ```
 Claude starts → session-register → INSERT sessions → SELECT peers → Inject "Peer sessions" message
-             → session-start-tree-daemon → Launch tree_daemon → Generate/update knowledge-tree.json
+             → session-start-init-check → If knowledge-tree.json missing/stale → Run knowledge_tree.py
 ```
 
 ### B. User Prompt

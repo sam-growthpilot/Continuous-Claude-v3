@@ -2,6 +2,26 @@
 
 Persistent semantic memory for storing and recalling learnings across sessions.
 
+## Schema (authoritative -- 2026-04)
+
+The actual `archival_memory` table in PostgreSQL (per `\d archival_memory`):
+
+| Column | Type | Notes |
+|--------|------|-------|
+| `id` | uuid | PK, `gen_random_uuid()` |
+| `session_id` | text | NOT NULL |
+| `agent_id` | text | nullable |
+| `content` | text | NOT NULL |
+| `metadata` | jsonb | holds `type`, `tags`, `confidence`, `context`, `source`, etc. |
+| `embedding` | vector(1024) | BGE-large-en-v1.5; HNSW index `m=16, ef=64` |
+| `created_at` | timestamptz | NOT NULL, default `now()` |
+| `project_id` | text | nullable |
+| `scope` | text | default `'PROJECT'`; values: `PROJECT`, `GLOBAL` |
+
+`type`, `tags`, `confidence`, `context` are NOT top-level columns -- they live inside `metadata` jsonb.
+
+**Older schema blocks below describe a legacy/SQLite shape (`worked/failed/decisions/patterns` columns, `embedding VECTOR(1536)`) that is no longer accurate for the active PostgreSQL backend.** They are retained for historical reference; treat the table above as authoritative.
+
 ## Overview
 
 The memory system provides cross-session knowledge persistence through:

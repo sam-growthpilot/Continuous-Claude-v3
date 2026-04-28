@@ -197,7 +197,7 @@ The built-in deny mechanism provides a clear error that the model can act on. Co
 
 | Hook | Purpose | Replaceable? |
 |------|---------|--------------|
-| `agent-validate.mjs` | General validation logic | No - custom validation beyond type blocking |
+| `agent-model-guard.mjs` | General validation logic | No - custom validation beyond type blocking |
 | `navigator-validate.mjs` | Navigator-specific checks | No - custom logic |
 | `task-router.mjs` | Task routing decisions | No - routing, not blocking |
 | `maestro-enforcer.mjs` | Maestro workflow phase gating | No - stateful enforcement |
@@ -464,7 +464,7 @@ Same pattern for `architect.json`, `kraken.json`, `sleuth.json`, `maestro.json`.
        {
          "matcher": "Task",
          "hooks": [
-           { "command": "agent-validate.mjs", ... },
+           { "command": "agent-model-guard.mjs", ... },
 -          { "command": "explore-to-scout.mjs", ... },
            { "command": "no-haiku-enforcer.mjs", ... },
            ...
@@ -492,7 +492,7 @@ For reference, the current 7-hook chain that runs on every `Task` call:
 
 | Order | Hook | Purpose | Replaceable by Task Deny? |
 |-------|------|---------|---------------------------|
-| 1 | `agent-validate.mjs` | General validation | No |
+| 1 | `agent-model-guard.mjs` | General validation | No |
 | 2 | `explore-to-scout.mjs` | Redirect Explore→scout | **Yes (Phase 1)** |
 | 3 | `no-haiku-enforcer.mjs` | Block model=haiku | No (model, not type) |
 | 4 | `navigator-validate.mjs` | Navigator checks | No |
