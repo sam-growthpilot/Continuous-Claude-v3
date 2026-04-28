@@ -709,6 +709,95 @@ class MemoryServicePG:
                 for row in rows
             ]
 
+    async def search_vector_for_dedup(
+        self,
+        query_embedding: list[float],
+        scope: str = "PROJECT",
+        project_id: str | None = None,
+        limit: int = 1,
+    ) -> list[dict[str, Any]]:
+        """Search for near-duplicate vectors at the project/global level.
+
+        Phase 4C: dedup must be project-scoped, not session-scoped, otherwise
+        identical content from different sessions creates duplicates. The
+        scoping rule:
+            scope == "GLOBAL"  -> match across ALL global rows
+                                  (no project_id filter, no session filter)
+            scope == "PROJECT" -> match within the same project_id
+                                  (no session filter; cross-session within
+                                  the same project)
+
+        Args:
+            query_embedding: Query embedding (normalized to 1024 dims)
+            scope: PROJECT (default) or GLOBAL
+            project_id: Required when scope == "PROJECT"; ignored for GLOBAL
+            limit: Max results (typically 1 for dedup checks)
+
+        Returns:
+            List of matching rows with cosine similarity score, ordered by
+            similarity DESC.
+        """
+        padded_query = self._pad_embedding(query_embedding)
+
+        async with get_connection() as conn:
+            await init_pgvector(conn)
+
+            conditions = ["embedding IS NOT NULL"]
+            params: list[Any] = [padded_query]
+            param_idx = 2
+
+            if scope == "GLOBAL":
+                conditions.append(f"scope = ${param_idx}")
+                params.append("GLOBAL")
+                param_idx += 1
+            else:
+                # PROJECT scope -- require project_id match.
+                conditions.append(f"scope = ${param_idx}")
+                params.append("PROJECT")
+                param_idx += 1
+                if project_id is not None:
+                    conditions.append(f"project_id = ${param_idx}")
+                    params.append(project_id)
+                    param_idx += 1
+                else:
+                    # No project_id and PROJECT scope -- match rows where
+                    # project_id is NULL (unknown-project bucket). Don't span
+                    # across projects.
+                    conditions.append("project_id IS NULL")
+
+            params.append(limit)
+
+            where_clause = " AND ".join(conditions)
+            sql = f"""
+                SELECT
+                    id,
+                    content,
+                    metadata,
+                    created_at,
+                    scope,
+                    project_id,
+                    1 - (embedding <=> $1::vector) as similarity
+                FROM archival_memory
+                WHERE {where_clause}
+                ORDER BY embedding <=> $1::vector
+                LIMIT ${param_idx}
+            """
+
+            rows = await conn.fetch(sql, *params)
+
+            return [
+                {
+                    "id": row["id"],
+                    "content": row["content"],
+                    "metadata": json.loads(row["metadata"]) if row["metadata"] else {},
+                    "created_at": row["created_at"],
+                    "scope": row["scope"],
+                    "project_id": row["project_id"],
+                    "similarity": row["similarity"],
+                }
+                for row in rows
+            ]
+
     async def search_vector_with_filter(
         self,
         query_embedding: list[float],

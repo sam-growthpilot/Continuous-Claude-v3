@@ -283,9 +283,23 @@ async def store_learning_v2(
         embedder = get_embedder()
         embedding = await embedder.embed(content)
 
-        # Deduplication check: search for similar existing memories
+        # Classify scope if not explicitly provided. Phase 4C: we need this
+        # BEFORE dedup so the dedup search can scope by project_id, not by
+        # the current session_id.
+        final_scope = scope or classify_scope(content, tags, context)
+        project_id = get_project_id(project_dir) if project_dir else None
+
+        # Deduplication check (Phase 4C: scoped by project_id, not session_id).
+        # GLOBAL learnings dedup across ALL global rows. PROJECT learnings
+        # dedup within the same project_id (or within the NULL-project bucket
+        # when project_dir wasn't provided).
         try:
-            existing = await memory.search_vector(embedding, limit=1)
+            existing = await memory.search_vector_for_dedup(
+                embedding,
+                scope=final_scope,
+                project_id=project_id,
+                limit=1,
+            )
             if existing and len(existing) > 0:
                 top_match = existing[0]
                 similarity = top_match.get("similarity", 0)
@@ -300,10 +314,6 @@ async def store_learning_v2(
         except Exception:
             # If search fails, proceed with storing (don't block on dedup errors)
             pass
-
-        # Classify scope if not explicitly provided
-        final_scope = scope or classify_scope(content, tags, context)
-        project_id = get_project_id(project_dir) if project_dir else None
 
         # Build metadata
         metadata = {
