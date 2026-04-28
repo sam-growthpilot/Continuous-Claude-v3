@@ -277,6 +277,7 @@ async def search_learnings_hybrid_rrf(
         List of learnings with RRF scores
     """
     from db.embedding_service import EmbeddingService
+    from db.memory_service_pg import build_rrf_sql
     from db.postgres_pool import get_pool, init_pgvector
 
     pool = await get_pool()
@@ -288,67 +289,33 @@ async def search_learnings_hybrid_rrf(
     finally:
         await embedder.aclose()
 
+    # Filter to learning-typed entries (or untyped legacy rows), with content
+    # length and a known agent-failure exclusion. Phase 3B: WHERE-only fragment;
+    # the shared builder appends the FTS @@ tsquery and embedding-NOT-NULL clauses
+    # to each ranking CTE.
+    learnings_where = (
+        "(metadata->>'type' IS NULL OR metadata->>'type' IN ("
+        "'session_learning', 'WORKING_SOLUTION', 'ERROR_FIX', "
+        "'ARCHITECTURAL_DECISION', 'CODEBASE_PATTERN', 'FAILED_APPROACH', "
+        "'USER_PREFERENCE', 'OPEN_THREAD'))"
+        " AND LENGTH(content) >= 50"
+        " AND content NOT LIKE 'Agent ''%'' failed when given task:%'"
+    )
+
     async with pool.acquire() as conn:
         await init_pgvector(conn)
 
-        # RRF query across all sessions for learnings
+        # RRF query across all sessions for learnings, via shared builder.
+        sql = build_rrf_sql(
+            where_clause=learnings_where,
+            text_query_param=1,
+            embedding_param=2,
+            rrf_k_param=3,
+            limit_param=4,
+            extra_select=["a.session_id", "c.fts_rank", "c.vec_rank"],
+        )
         rows = await conn.fetch(
-            """
-            WITH fts_ranked AS (
-                SELECT
-                    id,
-                    ROW_NUMBER() OVER (
-                        ORDER BY ts_rank(
-                            to_tsvector('english', content),
-                            plainto_tsquery('english', $1)
-                        ) DESC
-                    ) as fts_rank
-                FROM archival_memory
-                WHERE (metadata->>'type' IS NULL OR metadata->>'type' IN (
-                    'session_learning', 'WORKING_SOLUTION', 'ERROR_FIX',
-                    'ARCHITECTURAL_DECISION', 'CODEBASE_PATTERN', 'FAILED_APPROACH',
-                    'USER_PREFERENCE', 'OPEN_THREAD'))
-                AND to_tsvector('english', content) @@ plainto_tsquery('english', $1)
-                AND LENGTH(content) >= 50
-                AND content NOT LIKE 'Agent ''%'' failed when given task:%'
-            ),
-            vector_ranked AS (
-                SELECT
-                    id,
-                    ROW_NUMBER() OVER (ORDER BY embedding <=> $2::vector) as vec_rank
-                FROM archival_memory
-                WHERE (metadata->>'type' IS NULL OR metadata->>'type' IN (
-                    'session_learning', 'WORKING_SOLUTION', 'ERROR_FIX',
-                    'ARCHITECTURAL_DECISION', 'CODEBASE_PATTERN', 'FAILED_APPROACH',
-                    'USER_PREFERENCE', 'OPEN_THREAD'))
-                AND embedding IS NOT NULL
-                AND LENGTH(content) >= 50
-                AND content NOT LIKE 'Agent ''%'' failed when given task:%'
-            ),
-            combined AS (
-                SELECT
-                    COALESCE(f.id, v.id) as id,
-                    COALESCE(1.0 / ($3 + f.fts_rank), 0) +
-                    COALESCE(1.0 / ($3 + v.vec_rank), 0) as rrf_score,
-                    f.fts_rank,
-                    v.vec_rank
-                FROM fts_ranked f
-                FULL OUTER JOIN vector_ranked v ON f.id = v.id
-            )
-            SELECT
-                a.id,
-                a.session_id,
-                a.content,
-                a.metadata,
-                a.created_at,
-                c.rrf_score,
-                c.fts_rank,
-                c.vec_rank
-            FROM combined c
-            JOIN archival_memory a ON a.id = c.id
-            ORDER BY c.rrf_score DESC
-            LIMIT $4
-            """,
+            sql,
             query,
             str(query_embedding),
             rrf_k,

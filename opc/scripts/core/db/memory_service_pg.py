@@ -60,6 +60,111 @@ def generate_memory_id() -> str:
     return str(uuid4())
 
 
+def build_rrf_sql(
+    where_clause: str,
+    text_query_param: int,
+    embedding_param: int,
+    rrf_k_param: int,
+    limit_param: int,
+    extra_select: list[str] | None = None,
+) -> str:
+    """Build a Reciprocal Rank Fusion SQL query against archival_memory.
+
+    Phase 3B (memory remediation): a single source of truth for RRF SQL.
+    Both `MemoryServicePG.search_hybrid_rrf` (per-session) and
+    `recall_learnings.search_learnings_hybrid_rrf` (global learnings) use
+    this builder so the rank-fusion math stays in lockstep.
+
+    The generated SQL has the shape::
+
+        WITH fts_ranked AS (
+            SELECT id, ROW_NUMBER() OVER (ORDER BY ts_rank(...)) as fts_rank
+            FROM archival_memory
+            WHERE <where_clause>
+              AND to_tsvector('english', content) @@ plainto_tsquery('english', $T)
+        ),
+        vector_ranked AS (
+            SELECT id, ROW_NUMBER() OVER (ORDER BY embedding <=> $E::vector) as vec_rank
+            FROM archival_memory
+            WHERE <where_clause>
+              AND embedding IS NOT NULL
+        ),
+        combined AS (
+            SELECT COALESCE(f.id, v.id) as id,
+                   COALESCE(1.0/($K+f.fts_rank), 0) + COALESCE(1.0/($K+v.vec_rank), 0) as rrf_score,
+                   f.fts_rank, v.vec_rank
+            FROM fts_ranked f FULL OUTER JOIN vector_ranked v ON f.id = v.id
+        )
+        SELECT a.id, a.content, a.metadata, a.created_at, c.rrf_score, <extra_select>
+        FROM combined c JOIN archival_memory a ON a.id = c.id
+        ORDER BY c.rrf_score DESC
+        LIMIT $L
+
+    Args:
+        where_clause: SQL fragment applied to BOTH ranking CTEs. Use $1, $2,
+            ... for parameters owned by the caller (e.g. session_id, agent_id,
+            metadata-type filter). Must NOT include the FTS @@ tsquery clause
+            or the embedding-IS-NOT-NULL clause -- this builder adds those.
+        text_query_param: 1-based parameter index for the text query string.
+        embedding_param: 1-based parameter index for the query embedding (vector).
+        rrf_k_param: 1-based parameter index for the RRF constant k.
+        limit_param: 1-based parameter index for the LIMIT.
+        extra_select: Optional extra columns to project in the final SELECT
+            (e.g., ['a.session_id', 'c.fts_rank', 'c.vec_rank']).
+
+    Returns:
+        Parameterized SQL string. Caller is responsible for binding parameters
+        in the order matching the indices passed in.
+    """
+    extras_sql = ""
+    if extra_select:
+        extras_sql = ",\n            " + ",\n            ".join(extra_select)
+
+    return f"""
+        WITH fts_ranked AS (
+            SELECT
+                id,
+                ROW_NUMBER() OVER (
+                    ORDER BY ts_rank(
+                        to_tsvector('english', content),
+                        plainto_tsquery('english', ${text_query_param})
+                    ) DESC
+                ) as fts_rank
+            FROM archival_memory
+            WHERE {where_clause}
+            AND to_tsvector('english', content) @@ plainto_tsquery('english', ${text_query_param})
+        ),
+        vector_ranked AS (
+            SELECT
+                id,
+                ROW_NUMBER() OVER (ORDER BY embedding <=> ${embedding_param}::vector) as vec_rank
+            FROM archival_memory
+            WHERE {where_clause}
+            AND embedding IS NOT NULL
+        ),
+        combined AS (
+            SELECT
+                COALESCE(f.id, v.id) as id,
+                COALESCE(1.0 / (${rrf_k_param} + f.fts_rank), 0) +
+                COALESCE(1.0 / (${rrf_k_param} + v.vec_rank), 0) as rrf_score,
+                f.fts_rank,
+                v.vec_rank
+            FROM fts_ranked f
+            FULL OUTER JOIN vector_ranked v ON f.id = v.id
+        )
+        SELECT
+            a.id,
+            a.content,
+            a.metadata,
+            a.created_at,
+            c.rrf_score{extras_sql}
+        FROM combined c
+        JOIN archival_memory a ON a.id = c.id
+        ORDER BY c.rrf_score DESC
+        LIMIT ${limit_param}
+    """.strip()
+
+
 @dataclass
 class ArchivalFact:
     """A fact stored in archival memory."""
@@ -799,51 +904,17 @@ class MemoryServicePG:
         async with get_connection() as conn:
             await init_pgvector(conn)
 
-            # RRF query using CTEs for separate rankings
+            # RRF SQL is built by the shared builder so per-session search and
+            # the global learnings recall stay rank-fusion-equivalent.
+            sql = build_rrf_sql(
+                where_clause="session_id = $1 AND agent_id IS NOT DISTINCT FROM $2",
+                text_query_param=3,
+                embedding_param=4,
+                rrf_k_param=5,
+                limit_param=6,
+            )
             rows = await conn.fetch(
-                """
-                WITH fts_ranked AS (
-                    SELECT
-                        id,
-                        ROW_NUMBER() OVER (
-                            ORDER BY ts_rank(
-                                to_tsvector('english', content),
-                                plainto_tsquery('english', $3)
-                            ) DESC
-                        ) as fts_rank
-                    FROM archival_memory
-                    WHERE session_id = $1
-                    AND agent_id IS NOT DISTINCT FROM $2
-                    AND to_tsvector('english', content) @@ plainto_tsquery('english', $3)
-                ),
-                vector_ranked AS (
-                    SELECT
-                        id,
-                        ROW_NUMBER() OVER (ORDER BY embedding <=> $4::vector) as vec_rank
-                    FROM archival_memory
-                    WHERE session_id = $1
-                    AND agent_id IS NOT DISTINCT FROM $2
-                    AND embedding IS NOT NULL
-                ),
-                combined AS (
-                    SELECT
-                        COALESCE(f.id, v.id) as id,
-                        COALESCE(1.0 / ($5 + f.fts_rank), 0) +
-                        COALESCE(1.0 / ($5 + v.vec_rank), 0) as rrf_score
-                    FROM fts_ranked f
-                    FULL OUTER JOIN vector_ranked v ON f.id = v.id
-                )
-                SELECT
-                    a.id,
-                    a.content,
-                    a.metadata,
-                    a.created_at,
-                    c.rrf_score
-                FROM combined c
-                JOIN archival_memory a ON a.id = c.id
-                ORDER BY c.rrf_score DESC
-                LIMIT $6
-            """,
+                sql,
                 self.session_id,
                 self.agent_id,
                 text_query,
