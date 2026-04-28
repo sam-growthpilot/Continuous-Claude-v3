@@ -45,6 +45,30 @@ if global_env.exists():
 load_dotenv()
 
 
+# Phase 3C: singleton EmbeddingService cache.
+#
+# Loading the BAAI/bge-large-en-v1.5 model takes ~1.2s and a few hundred MB
+# of RAM. project_memory was previously building a fresh EmbeddingService on
+# every search_local_vector / search_global call. The pattern below mirrors
+# store_learning.get_embedder() and ensures the model loads at most once
+# per process.
+_embedder = None
+
+
+def get_embedder():
+    """Get or create singleton EmbeddingService(provider="local").
+
+    Lazy-initialized -- the BGE model is only loaded the first time something
+    actually needs an embedding. Returns the same instance on every subsequent
+    call so the SentenceTransformer weights stay cached.
+    """
+    global _embedder
+    if _embedder is None:
+        from db.embedding_service import EmbeddingService
+        _embedder = EmbeddingService(provider="local")
+    return _embedder
+
+
 def get_project_id(project_dir: str) -> str:
     """Generate stable project ID from absolute path."""
     abs_path = str(Path(project_dir).resolve())
@@ -332,7 +356,9 @@ def search_local_topics(project_dir: str, query: str, k: int = 5) -> list[dict]:
 async def search_local_vector(project_dir: str, query: str, k: int = 5) -> list[dict]:
     """Vector search in local handoff embeddings."""
     try:
-        from db.embedding_service import EmbeddingService
+        # Imported here so the module can still load when sentence-transformers
+        # is missing; get_embedder() does the lazy import.
+        from db.embedding_service import EmbeddingService  # noqa: F401
     except ImportError:
         return []
 
@@ -342,7 +368,9 @@ async def search_local_vector(project_dir: str, query: str, k: int = 5) -> list[
     if not handoffs_dir.exists():
         return []
 
-    embedder = EmbeddingService(provider="local")
+    # Phase 3C: use the singleton so the BGE model loads once per process,
+    # not once per query.
+    embedder = get_embedder()
     query_embedding = await embedder.embed(query)
 
     results = []
@@ -376,7 +404,7 @@ async def search_global(query: str, k: int = 5) -> list[dict]:
     """Search global learnings (scope=GLOBAL) in PostgreSQL."""
     try:
         from db.memory_factory import create_memory_service
-        from db.embedding_service import EmbeddingService
+        from db.embedding_service import EmbeddingService  # noqa: F401
     except ImportError:
         return []
 
@@ -385,7 +413,8 @@ async def search_global(query: str, k: int = 5) -> list[dict]:
         return []
 
     try:
-        embedder = EmbeddingService(provider="local")
+        # Phase 3C: singleton so the BGE model only loads once per process.
+        embedder = get_embedder()
         query_embedding = await embedder.embed(query)
 
         memory = await create_memory_service(backend="postgres", session_id="global-search")
