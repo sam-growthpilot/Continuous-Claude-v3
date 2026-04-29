@@ -285,7 +285,18 @@ def _get_dsn() -> str | None:
 
 
 async def _fetch_pairs(threshold: float, limit: int) -> list[tuple[Any, Any, float]]:
-    """Fetch all pairs >= threshold within the most recent `limit` entries."""
+    """Fetch all pairs >= threshold within the most recent `limit` entries.
+
+    Phase A3 (C3) of CodeRabbit remediation: pair candidates are now scoped by
+    `scope` and `project_id` so the dedup script cannot cluster two rows that
+    came from different projects (or that mix GLOBAL and PROJECT memories).
+    Pre-fix, two near-identical PROJECT memories from different projects could
+    pair up and one would be deleted under --apply -- cross-project data
+    destruction. The WHERE clause below makes only same-scope, same-project
+    rows eligible:
+        * GLOBAL <-> GLOBAL,            OR
+        * PROJECT <-> PROJECT with a.project_id = b.project_id.
+    """
     import asyncpg  # type: ignore
 
     dsn = _get_dsn()
@@ -298,7 +309,7 @@ async def _fetch_pairs(threshold: float, limit: int) -> list[tuple[Any, Any, flo
         rows = await conn.fetch(
             """
             WITH recent AS (
-              SELECT id, embedding FROM archival_memory
+              SELECT id, embedding, scope, project_id FROM archival_memory
               WHERE embedding IS NOT NULL
               ORDER BY created_at DESC
               LIMIT $1
@@ -308,6 +319,14 @@ async def _fetch_pairs(threshold: float, limit: int) -> list[tuple[Any, Any, flo
             FROM recent a
             JOIN recent b ON a.id < b.id
             WHERE 1 - (a.embedding <=> b.embedding) >= $2
+              AND (
+                (a.scope = 'GLOBAL' AND b.scope = 'GLOBAL')
+                OR (
+                  a.scope = 'PROJECT'
+                  AND b.scope = 'PROJECT'
+                  AND a.project_id = b.project_id
+                )
+              )
             ORDER BY sim DESC
             """,
             limit,
