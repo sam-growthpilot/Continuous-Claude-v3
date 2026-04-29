@@ -14,6 +14,8 @@
  */
 
 import { readFileSync } from 'fs';
+import { homedir } from 'node:os';
+import { join } from 'node:path';
 import { getProject } from './shared/session-id.js';
 import type { SessionStartInput, HookOutput } from './shared/types.js';
 import { runCommand } from './lib/run-command.js';
@@ -38,7 +40,7 @@ export async function main(): Promise<void> {
     // Empty/invalid stdin is fine for SessionStart
   }
 
-  const hooksDir = 'C:/Users/david.hayes/.claude/hooks';
+  const hooksDir = join(homedir(), '.claude', 'hooks').replace(/\\/g, '/');
 
   const result = await runCommand(
     'tree-daemon',

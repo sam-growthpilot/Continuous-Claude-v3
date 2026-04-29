@@ -1,5 +1,7 @@
 // src/session-start-memory-loaders.ts
 import { readFileSync } from "fs";
+import { homedir } from "node:os";
+import { join } from "node:path";
 
 // src/shared/session-id.ts
 function getProject() {
@@ -69,7 +71,7 @@ async function main() {
     JSON.parse(stdinContent);
   } catch {
   }
-  const hooksDir = "C:/Users/david.hayes/.claude/hooks";
+  const hooksDir = join(homedir(), ".claude", "hooks").replace(/\\/g, "/");
   const result = await runCommand(
     "memory-daemon",
     "powershell",

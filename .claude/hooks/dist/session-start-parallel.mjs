@@ -1,6 +1,8 @@
 // src/session-start-parallel.ts
 import { readFileSync as readFileSync2 } from "fs";
 import { spawn } from "child_process";
+import { homedir } from "node:os";
+import { join as join3 } from "node:path";
 
 // src/shared/db-utils-pg.ts
 import { spawnSync } from "child_process";
@@ -323,7 +325,7 @@ async function main() {
   } catch {
     input = {};
   }
-  const hooksDir = "C:/Users/david.hayes/.claude/hooks";
+  const hooksDir = join3(homedir(), ".claude", "hooks").replace(/\\/g, "/");
   const distDir = `${hooksDir}/dist`;
   const results = await Promise.all([
     // Inline task (no subprocess)

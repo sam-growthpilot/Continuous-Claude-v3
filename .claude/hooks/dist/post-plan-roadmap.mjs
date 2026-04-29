@@ -8,6 +8,7 @@ import { spawn } from "child_process";
 // src/shared/project-relevance.ts
 import * as fs from "fs";
 import * as path from "path";
+import { homedir } from "node:os";
 function getProjectIdentity(projectDir) {
   const resolvedDir = path.resolve(projectDir);
   const dirName = path.basename(resolvedDir);
@@ -89,9 +90,10 @@ function isContentRelevantToProject(content, identity) {
   return { relevant: true, confidence: "low", reason: "no cross-project signals" };
 }
 function readRegistry(projectDir) {
+  const ccv3Dir = process.env.CLAUDE_CCV3_DIR || path.join(homedir(), "continuous-claude");
   const candidates = [
     path.join(projectDir, ".claude", "project-registry.json"),
-    "C:/Users/david.hayes/continuous-claude/.claude/project-registry.json"
+    path.join(ccv3Dir, ".claude", "project-registry.json")
   ];
   for (const candidate of candidates) {
     try {

@@ -12,6 +12,7 @@
 
 import * as fs from 'fs';
 import * as path from 'path';
+import { homedir } from 'node:os';
 
 export interface ProjectIdentity {
   dirName: string;
@@ -177,9 +178,10 @@ export function isContentRelevantToProject(content: string, identity: ProjectIde
  * Returns null if not found or unparseable.
  */
 function readRegistry(projectDir: string): Registry | null {
+  const ccv3Dir = process.env.CLAUDE_CCV3_DIR || path.join(homedir(), 'continuous-claude');
   const candidates = [
     path.join(projectDir, '.claude', 'project-registry.json'),
-    'C:/Users/david.hayes/continuous-claude/.claude/project-registry.json',
+    path.join(ccv3Dir, '.claude', 'project-registry.json'),
   ];
 
   for (const candidate of candidates) {

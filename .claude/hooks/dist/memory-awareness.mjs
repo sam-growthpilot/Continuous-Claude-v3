@@ -96,63 +96,6 @@ function logHook(sessionId, hookName) {
   writeFileSync(filePath, JSON.stringify(activity), { encoding: "utf-8" });
 }
 
-// src/lib/hook-trace.ts
-import { appendFileSync, mkdirSync as mkdirSync2 } from "fs";
-import { join as join3 } from "path";
-import { homedir } from "os";
-function getTracePath() {
-  const dir = join3(homedir(), ".claude", "cache");
-  mkdirSync2(dir, { recursive: true });
-  return join3(dir, "hook-trace.jsonl");
-}
-function getSessionId() {
-  return process.env.CLAUDE_SESSION_ID || String(process.pid);
-}
-var defaultWriter = (r) => appendFileSync(getTracePath(), JSON.stringify(r) + "\n", "utf-8");
-var activeWriter = defaultWriter;
-function writeRecord(r) {
-  try {
-    activeWriter(r);
-  } catch {
-  }
-}
-function buildRecord(name, event, startedAt, exitCode, error) {
-  const errMsg = error == null ? null : error instanceof Error ? error.message || String(error) : String(error);
-  return {
-    ts: (/* @__PURE__ */ new Date()).toISOString(),
-    name,
-    event,
-    durationMs: Date.now() - startedAt,
-    exitCode,
-    sessionId: getSessionId(),
-    error: errMsg
-  };
-}
-function traceHook(name, event, fn) {
-  const startedAt = Date.now();
-  let result;
-  try {
-    result = fn();
-  } catch (err) {
-    writeRecord(buildRecord(name, event, startedAt, 1, err));
-    throw err;
-  }
-  if (result && typeof result.then === "function") {
-    return result.then(
-      (v) => {
-        writeRecord(buildRecord(name, event, startedAt, 0, null));
-        return v;
-      },
-      (e) => {
-        writeRecord(buildRecord(name, event, startedAt, 1, e));
-        throw e;
-      }
-    );
-  }
-  writeRecord(buildRecord(name, event, startedAt, 0, null));
-  return result;
-}
-
 // src/memory-awareness.ts
 function readStdin() {
   return readFileSync2(0, "utf-8");
@@ -396,7 +339,7 @@ function checkMemoryRelevance(intent, projectDir) {
     "--query",
     searchTerm,
     "--k",
-    "5",
+    "3",
     "--json",
     "--text-only"
   ], {
@@ -406,7 +349,7 @@ function checkMemoryRelevance(intent, projectDir) {
       ...process.env,
       PYTHONPATH: opcDir
     },
-    timeout: 5e3,
+    timeout: 2e3,
     killSignal: "SIGKILL"
   });
   if (result.status !== 0 || !result.stdout) {
@@ -417,14 +360,7 @@ function checkMemoryRelevance(intent, projectDir) {
     if (!data.results || data.results.length === 0) {
       return null;
     }
-    const PROACTIVE_INJECTION_FLOOR = 0.05;
-    const filtered = data.results.filter(
-      (r) => (r.score ?? 0) >= PROACTIVE_INJECTION_FLOOR
-    );
-    if (filtered.length === 0) {
-      return null;
-    }
-    const results = filtered.slice(0, 3).map((r) => {
+    const results = data.results.slice(0, 3).map((r) => {
       const content = r.content || "";
       const preview = content.split("\n").filter((l) => l.trim().length > 0).map((l) => l.trim()).join(" ").slice(0, 120);
       return {
@@ -435,7 +371,7 @@ function checkMemoryRelevance(intent, projectDir) {
       };
     });
     return {
-      count: filtered.length,
+      count: data.results.length,
       results
     };
   } catch {
@@ -485,6 +421,6 @@ Use /recall "${intent}" for full content. Disclose if helpful.`;
     outputContinue();
   }
 }
-traceHook("memory-awareness", "UserPromptSubmit", () => main()).catch(() => {
+main().catch(() => {
   outputContinue();
 });
