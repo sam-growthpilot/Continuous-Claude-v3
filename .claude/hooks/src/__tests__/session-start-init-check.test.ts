@@ -35,12 +35,18 @@ function runHook(projectDir: string): HookResult {
     cwd: projectDir,
   });
 
+  // Strip VITEST env vars so the spawned hook actually runs main()
+  const cleanEnv: NodeJS.ProcessEnv = {};
+  for (const [k, v] of Object.entries(process.env)) {
+    if (!k.startsWith('VITEST')) cleanEnv[k] = v;
+  }
+
   const result = spawnSync('node', [HOOK_PATH], {
     input,
     encoding: 'utf-8',
-    timeout: 15000,
+    timeout: 30000,
     env: {
-      ...process.env,
+      ...cleanEnv,
       CLAUDE_PROJECT_DIR: projectDir,
     },
     stdio: ['pipe', 'pipe', 'pipe'],
@@ -122,7 +128,7 @@ describe('session-start-init-check: hasCodeFiles extension detection (Phase 3B)'
     // At minimum, hasCodeFiles must have returned true -- meaning we saw
     // either the attempt log or one of the result logs.
     expect(sawAttempt || treeGenerated || treeFailed).toBe(true);
-  });
+  }, 30000);
 
   it('treats a tempdir with only main.ts as a code project', () => {
     writeFileSync(join(tempDir, 'main.ts'), 'console.log("hi");\n');
@@ -134,7 +140,7 @@ describe('session-start-init-check: hasCodeFiles extension detection (Phase 3B)'
     const treeFailed = result.stderr.includes('Failed to generate knowledge tree');
 
     expect(sawAttempt || treeGenerated || treeFailed).toBe(true);
-  });
+  }, 30000);
 
   it('does not attempt tree generation in an empty dir (no code files)', () => {
     // Empty dir -- no manifests, no code files

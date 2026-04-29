@@ -5,8 +5,12 @@
  * PostToolUse hook on ExitPlanMode. When ExitPlanMode is used, writes a
  * state file marking that a plan has been approved.
  *
- * State file: $TEMP/claude-plan-approved-<sessionId>.json
+ * State file: $TEMP/claude-plan-approved-<projectId>-<sessionId>.json
  * Content:    { "approved": true, "timestamp": <epoch ms>, "sessionId": "<id>" }
+ *
+ * Phase 4 (cross-project isolation): state files are scoped by both
+ * projectId and sessionId. Two terminals editing different projects
+ * with the same sessionId no longer collide.
  *
  * Uses session-isolated state paths and atomic writes.
  * Always outputs {} to stdout (PostToolUse hooks don't block).
@@ -14,7 +18,11 @@
  */
 
 import { readFileSync } from 'fs';
-import { getStatePathWithMigration } from './shared/session-isolation.js';
+import {
+  getStatePathWithMigration,
+  getProjectScopedStatePath,
+} from './shared/session-isolation.js';
+import { getProjectId } from './shared/project-id.js';
 import { writeStateWithLock } from './shared/atomic-write.js';
 import { createLogger } from './shared/logger.js';
 import { logHook } from './shared/session-activity.js';
@@ -74,7 +82,16 @@ export function handlePlanExit(input: any): void {
 
     const sessionId = input.session_id || 'unknown';
     const state = buildPlanApprovedState(sessionId);
-    const statePath = getStatePathWithMigration('plan-approved', input.session_id);
+    // Phase 4: write project-scoped state. Both reader (plan-to-ralph-enforcer)
+    // and writer must agree on the projectId, derived from CLAUDE_PROJECT_DIR
+    // (or CWD). Falls back through the migration helper on the read side.
+    const projectDir = process.env.CLAUDE_PROJECT_DIR || process.cwd();
+    const projectId = getProjectId(projectDir);
+    const statePath = getProjectScopedStatePath(
+      'plan-approved',
+      projectId,
+      input.session_id,
+    );
 
     writeStateWithLock(statePath, JSON.stringify(state, null, 2));
 

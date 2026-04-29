@@ -21,10 +21,21 @@ docker exec continuous-claude-postgres psql -U claude -d continuous_claude -c \
 docker exec continuous-claude-postgres psql -U claude -d continuous_claude -c \
   "SELECT id, project, working_on, last_heartbeat FROM sessions ORDER BY last_heartbeat DESC LIMIT 10;"
 
-# File claims
+# File claims (audit-style: ALL projects)
 docker exec continuous-claude-postgres psql -U claude -d continuous_claude -c \
-  "SELECT file_path, session_id, claimed_at FROM file_claims ORDER BY claimed_at DESC LIMIT 10;"
+  "SELECT file_path, project, session_id, claimed_at FROM file_claims ORDER BY claimed_at DESC LIMIT 10;"
+
+# File claims (project-scoped: read-side coordination)
+# IMPORTANT: every claim/read should filter by project so claims from other
+# projects don't false-positive on identical file_path values.
+docker exec continuous-claude-postgres psql -U claude -d continuous_claude -c \
+  "SELECT file_path, session_id, claimed_at FROM file_claims WHERE project = '<project_dir>' ORDER BY claimed_at DESC LIMIT 10;"
 ```
+
+The composite primary key on `file_claims` is `(file_path, project)` so the
+project filter is required to read or write a single canonical row. The
+hooks layer (`shared/db-utils-pg.ts:checkFileClaim` / `claimFile`) already
+includes `project` in its SQL; the snippets above are for ad-hoc psql.
 
 ## Testing Cross-Terminal Coordination
 

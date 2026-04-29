@@ -18,7 +18,11 @@
  */
 
 import { readFileSync } from 'fs';
-import { getStatePathWithMigration } from './shared/session-isolation.js';
+import {
+  getStatePathWithMigration,
+  getProjectScopedStatePathWithMigration,
+} from './shared/session-isolation.js';
+import { getProjectId } from './shared/project-id.js';
 import { readStateWithLock } from './shared/atomic-write.js';
 import { isRalphActive } from './shared/state-schema.js';
 import { createLogger } from './shared/logger.js';
@@ -139,11 +143,20 @@ async function main() {
     const sessionId = input.session_id || '';
     const filePath = input.tool_input?.file_path || '';
     const projectDir = process.env.CLAUDE_PROJECT_DIR || process.cwd();
+    const projectId = getProjectId(projectDir);
 
-    // Read plan-approved state
+    // Read plan-approved state.
+    // Phase 4: state path is now scoped to (projectId, sessionId) so a stale
+    // approval from project A cannot bleed into project B even if both
+    // sessions share an ID. Migration helper falls back to the legacy
+    // session-only path for one hour to preserve in-flight approvals.
     let planApproved = false;
     try {
-      const statePath = getStatePathWithMigration('plan-approved', sessionId);
+      const statePath = getProjectScopedStatePathWithMigration(
+        'plan-approved',
+        projectId,
+        sessionId,
+      );
       const content = readStateWithLock(statePath);
       if (content) {
         const state = JSON.parse(content);

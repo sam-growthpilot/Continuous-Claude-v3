@@ -89,6 +89,63 @@ export function getStatePathWithMigration(baseName: string, sessionId?: string):
 }
 
 /**
+ * Get project-scoped state file path.
+ *
+ * Phase 4 (cross-project isolation): some hook state must NOT bleed across
+ * projects even when the sessionId is shared. Filename layout:
+ *
+ *   $TEMP/claude-<baseName>-<projectId>-<sessionId>.json
+ *
+ * @param baseName  - State family name (e.g. "plan-approved")
+ * @param projectId - 16-char sha256(absPath) (use shared/project-id.ts)
+ * @param sessionId - Optional session ID (default: getSessionId())
+ */
+export function getProjectScopedStatePath(
+  baseName: string,
+  projectId: string,
+  sessionId?: string,
+): string {
+  const sid = sessionId || getSessionId();
+  const safeSid = sid.replace(/[^a-zA-Z0-9-_]/g, '_').substring(0, 32);
+  const safePid = projectId.replace(/[^a-zA-Z0-9]/g, '').substring(0, 16);
+  return join(tmpdir(), `claude-${baseName}-${safePid}-${safeSid}.json`);
+}
+
+/**
+ * Project-aware variant of getStatePathWithMigration.
+ *
+ * Falls back through:
+ *   1. project-scoped path (if it exists)
+ *   2. legacy session-only path within 1 hour (continuity)
+ *   3. project-scoped path (new sessions)
+ */
+export function getProjectScopedStatePathWithMigration(
+  baseName: string,
+  projectId: string,
+  sessionId?: string,
+): string {
+  const scoped = getProjectScopedStatePath(baseName, projectId, sessionId);
+  const legacySession = getSessionStatePath(baseName, sessionId);
+
+  if (existsSync(scoped)) return scoped;
+
+  // Continuity: a session-only state file written by an older build of the
+  // hook within the last hour is still honored, but only for the SAME
+  // session. This avoids stale state surviving across project switches.
+  if (existsSync(legacySession)) {
+    try {
+      const stat = statSync(legacySession);
+      const oneHourAgo = Date.now() - 60 * 60 * 1000;
+      if (stat.mtimeMs > oneHourAgo) return legacySession;
+    } catch {
+      // fall through
+    }
+  }
+
+  return scoped;
+}
+
+/**
  * Clean up old state files.
  *
  * Removes state files older than maxAge (default 24 hours).

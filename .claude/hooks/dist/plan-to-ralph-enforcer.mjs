@@ -19,26 +19,33 @@ function getSessionStatePath(baseName, sessionId) {
   const safeSid = sid.replace(/[^a-zA-Z0-9-_]/g, "_").substring(0, 32);
   return join(tmpdir(), `claude-${baseName}-${safeSid}.json`);
 }
-function getLegacyStatePath(baseName) {
-  return join(tmpdir(), `claude-${baseName}.json`);
+function getProjectScopedStatePath(baseName, projectId, sessionId) {
+  const sid = sessionId || getSessionId();
+  const safeSid = sid.replace(/[^a-zA-Z0-9-_]/g, "_").substring(0, 32);
+  const safePid = projectId.replace(/[^a-zA-Z0-9]/g, "").substring(0, 16);
+  return join(tmpdir(), `claude-${baseName}-${safePid}-${safeSid}.json`);
 }
-function getStatePathWithMigration(baseName, sessionId) {
-  const sessionPath = getSessionStatePath(baseName, sessionId);
-  const legacyPath = getLegacyStatePath(baseName);
-  if (existsSync(sessionPath)) {
-    return sessionPath;
-  }
-  if (existsSync(legacyPath)) {
+function getProjectScopedStatePathWithMigration(baseName, projectId, sessionId) {
+  const scoped = getProjectScopedStatePath(baseName, projectId, sessionId);
+  const legacySession = getSessionStatePath(baseName, sessionId);
+  if (existsSync(scoped)) return scoped;
+  if (existsSync(legacySession)) {
     try {
-      const stat = statSync(legacyPath);
+      const stat = statSync(legacySession);
       const oneHourAgo = Date.now() - 60 * 60 * 1e3;
-      if (stat.mtimeMs > oneHourAgo) {
-        return legacyPath;
-      }
+      if (stat.mtimeMs > oneHourAgo) return legacySession;
     } catch {
     }
   }
-  return sessionPath;
+  return scoped;
+}
+
+// src/shared/project-id.ts
+import { createHash } from "node:crypto";
+import { resolve } from "node:path";
+function getProjectId(projectDir) {
+  const absPath = resolve(projectDir);
+  return createHash("sha256").update(absPath).digest("hex").substring(0, 16);
 }
 
 // src/shared/atomic-write.ts
@@ -388,9 +395,14 @@ async function main() {
     const sessionId = input.session_id || "";
     const filePath = input.tool_input?.file_path || "";
     const projectDir = process.env.CLAUDE_PROJECT_DIR || process.cwd();
+    const projectId = getProjectId(projectDir);
     let planApproved = false;
     try {
-      const statePath = getStatePathWithMigration("plan-approved", sessionId);
+      const statePath = getProjectScopedStatePathWithMigration(
+        "plan-approved",
+        projectId,
+        sessionId
+      );
       const content = readStateWithLock(statePath);
       if (content) {
         const state = JSON.parse(content);
