@@ -23,7 +23,10 @@ import { join, resolve } from 'path';
 import { tmpdir } from 'os';
 import { fileURLToPath } from 'url';
 
-import { getProjectScopedStatePath } from '../shared/session-isolation.js';
+import {
+  getProjectScopedStatePath,
+  getSessionStatePath,
+} from '../shared/session-isolation.js';
 import { getProjectId } from '../shared/project-id.js';
 
 const __filename = fileURLToPath(import.meta.url);
@@ -101,6 +104,13 @@ afterEach(() => {
       // best effort
     }
   }
+  // Also clean up any legacy session-only state file
+  const legacy = getSessionStatePath('plan-approved', SESSION);
+  try {
+    if (existsSync(legacy)) rmSync(legacy, { force: true });
+  } catch {
+    // best effort
+  }
 });
 
 describe('plan-to-ralph-enforcer: project-scoped state (Phase 4B)', () => {
@@ -143,5 +153,35 @@ describe('plan-to-ralph-enforcer: project-scoped state (Phase 4B)', () => {
 
     const decision = output.hookSpecificOutput?.permissionDecision;
     expect(decision).toBe('deny');
+  });
+
+  it('does not honor a legacy session-only state file (C2: migration fallback removed)', { timeout: 15000 }, () => {
+    // Phase A2 (C2) fix: getProjectScopedStatePathWithMigration used to fall
+    // back to a session-only path when the project-scoped file was missing
+    // and the legacy file's mtime was within an hour. That fallback let a
+    // reused sessionId resurrect plan-approved state across project switches
+    // — re-opening exactly the leak Phase 4 was supposed to close.
+    //
+    // Setup: write a FRESH legacy session-only state file (no project-scoped
+    // file at all). Then fire the enforcer in PROJECT_B touching a .ts file.
+    //
+    // Pre-fix behavior: the migration helper would see the legacy file with
+    // a recent mtime and read it -> deny.
+    // Post-fix behavior: the helper ignores the legacy file -> allow.
+    const legacy = getSessionStatePath('plan-approved', SESSION);
+    writeFileSync(legacy, JSON.stringify({
+      approved: true,
+      timestamp: Date.now(),
+      sessionId: SESSION,
+    }));
+    // Sanity: confirm we wrote the legacy file (the test would be vacuous
+    // otherwise).
+    expect(existsSync(legacy)).toBe(true);
+
+    const codeFileB = join(PROJECT_B, 'feature.ts');
+    const output = runHookForProject(PROJECT_B, codeFileB);
+
+    const decision = output.hookSpecificOutput?.permissionDecision;
+    expect(decision).not.toBe('deny');
   });
 });

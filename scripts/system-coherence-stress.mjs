@@ -22,7 +22,7 @@ import { spawn, spawnSync } from 'node:child_process';
 import { writeFile, readFile, mkdir, rm } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
 import { tmpdir, hostname } from 'node:os';
-import { join } from 'node:path';
+import { join, resolve } from 'node:path';
 import { createHash } from 'node:crypto';
 
 import {
@@ -538,22 +538,46 @@ async function probe6_file_claims_cross_project() {
   );
 }
 
+/**
+ * Probe 7 -- cross-project hook state isolation.
+ *
+ * After Phase A2 (C2), plan-approved state is keyed by (projectId, sessionId)
+ * and the legacy session-only fallback is gone. So writing a project-scoped
+ * state file for project A and then firing the enforcer under project B
+ * MUST NOT deny -- B has no plan-approved state of its own.
+ *
+ * Pre-fix behavior (with the migration window still in place): identical
+ * sessionId across the two projects could resurrect A's approval into B
+ * via the legacy session-only path -> deny.
+ * Post-fix behavior: B sees no state, returns allow.
+ */
 async function probe7_hook_state_collision() {
-  const stateFile = join(tmpdir(), 'claude-plan-approved-stress-test-collision.json');
+  const session = 'stress-test-collision';
+
+  // Set up two synthetic project dirs
+  const projA = join(tmpdir(), 'ccv3-stress-projA');
+  const projB = join(tmpdir(), 'ccv3-stress-projB');
+  await mkdir(projA, { recursive: true });
+  await mkdir(projB, { recursive: true });
+
+  // Compute project A's projectId the same way getProjectId() does:
+  //   sha256(path.resolve(absPath)).hex.slice(0, 16)
+  const projAId = createHash('sha256').update(resolve(projA)).digest('hex').slice(0, 16);
+  const safeSid = session.replace(/[^a-zA-Z0-9-_]/g, '_').slice(0, 32);
+  const stateFile = join(tmpdir(), `claude-plan-approved-${projAId}-${safeSid}.json`);
   await writeFile(
     stateFile,
-    JSON.stringify({ approved: true, project: 'stress-project-A', timestamp: Date.now() })
+    JSON.stringify({ approved: true, timestamp: Date.now(), sessionId: session })
   );
 
   const input = {
-    session_id: 'stress-test-collision',
+    session_id: session,
     tool_name: 'Edit',
-    tool_input: { file_path: 'C:/some/proj-B/file.ts', content: 'x' },
+    tool_input: { file_path: join(projB, 'file.ts'), content: 'x' },
     hook_event_name: 'PreToolUse',
   };
-  // Simulate calling from project B
-  const projB = join(tmpdir(), 'ccv3-stress-projB');
-  await mkdir(projB, { recursive: true });
+
+  // Fire enforcer pretending to be in project B
   const env = { ...process.env, CLAUDE_PROJECT_DIR: projB };
   const r = runHook('plan-to-ralph-enforcer', input, { env, cwd: projB, timeout: 15_000 });
 
@@ -566,10 +590,8 @@ async function probe7_hook_state_collision() {
     decision = 'parse-fail';
   }
 
-  // Today's behavior: state is keyed only on session_id, so the stale state from
-  // project A bleeds into project B's enforcement decision -> denies.
-  // Pass = enforcer recognizes the cross-project mismatch (i.e., does NOT deny based
-  // on stale state). Today this fails because the state has no project component.
+  // Pass = enforcer recognizes the cross-project mismatch (does NOT deny
+  // based on stale state from project A).
   const passed = decision !== 'deny';
 
   return probeResult(
@@ -579,7 +601,7 @@ async function probe7_hook_state_collision() {
     'SOFT-by-convention',
     'MEDIUM',
     passed,
-    { stateFile, projB, hookExit: r.code, stdoutPreview: r.stdout.slice(0, 200) }
+    { stateFile, projA, projB, hookExit: r.code, stdoutPreview: r.stdout.slice(0, 200) }
   );
 }
 
@@ -617,9 +639,15 @@ async function cleanup({ keepSeeds = false } = {}) {
     dockerPsql(
       `DELETE FROM file_claims WHERE file_path LIKE '/tmp/stress-shared%' OR project IN ('stress-A','stress-B');`
     );
-    // Probe 7 cleanup
+    // Probe 7 cleanup -- project-scoped state file from probe7_hook_state_collision
     try {
-      await rm(join(tmpdir(), 'claude-plan-approved-stress-test-collision.json'), { force: true });
+      const projA = join(tmpdir(), 'ccv3-stress-projA');
+      const projAId = createHash('sha256').update(resolve(projA)).digest('hex').slice(0, 16);
+      const safeSid = 'stress-test-collision'.replace(/[^a-zA-Z0-9-_]/g, '_').slice(0, 32);
+      await rm(
+        join(tmpdir(), `claude-plan-approved-${projAId}-${safeSid}.json`),
+        { force: true }
+      );
     } catch {}
   }
 

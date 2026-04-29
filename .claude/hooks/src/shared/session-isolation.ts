@@ -112,37 +112,23 @@ export function getProjectScopedStatePath(
 }
 
 /**
- * Project-aware variant of getStatePathWithMigration.
+ * Project-aware state path resolver.
  *
- * Falls back through:
- *   1. project-scoped path (if it exists)
- *   2. legacy session-only path within 1 hour (continuity)
- *   3. project-scoped path (new sessions)
+ * Phase A2 (C2) — the legacy session-only fallback was removed. Previously,
+ * when no project-scoped file existed, this helper would honor a session-only
+ * state file whose mtime was within the last hour. That re-opened exactly
+ * the cross-project leak Phase 4B was meant to close: a reused sessionId
+ * could resurrect plan-approved state across project switches.
+ *
+ * Now: always returns the project-scoped path. Callers that previously read
+ * a legacy file under the migration window will see "no state" and fail open.
  */
 export function getProjectScopedStatePathWithMigration(
   baseName: string,
   projectId: string,
   sessionId?: string,
 ): string {
-  const scoped = getProjectScopedStatePath(baseName, projectId, sessionId);
-  const legacySession = getSessionStatePath(baseName, sessionId);
-
-  if (existsSync(scoped)) return scoped;
-
-  // Continuity: a session-only state file written by an older build of the
-  // hook within the last hour is still honored, but only for the SAME
-  // session. This avoids stale state surviving across project switches.
-  if (existsSync(legacySession)) {
-    try {
-      const stat = statSync(legacySession);
-      const oneHourAgo = Date.now() - 60 * 60 * 1000;
-      if (stat.mtimeMs > oneHourAgo) return legacySession;
-    } catch {
-      // fall through
-    }
-  }
-
-  return scoped;
+  return getProjectScopedStatePath(baseName, projectId, sessionId);
 }
 
 /**

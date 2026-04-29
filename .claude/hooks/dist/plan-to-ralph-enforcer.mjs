@@ -6,18 +6,12 @@ import { readFileSync as readFileSync4 } from "fs";
 // src/shared/session-isolation.ts
 import { tmpdir, hostname } from "os";
 import { join } from "path";
-import { existsSync, readdirSync, statSync, unlinkSync } from "fs";
 function getSessionId() {
   if (process.env.CLAUDE_SESSION_ID) {
     return process.env.CLAUDE_SESSION_ID;
   }
   const host = hostname().replace(/[^a-zA-Z0-9]/g, "").substring(0, 8);
   return `${host}-${process.pid}`;
-}
-function getSessionStatePath(baseName, sessionId) {
-  const sid = sessionId || getSessionId();
-  const safeSid = sid.replace(/[^a-zA-Z0-9-_]/g, "_").substring(0, 32);
-  return join(tmpdir(), `claude-${baseName}-${safeSid}.json`);
 }
 function getProjectScopedStatePath(baseName, projectId, sessionId) {
   const sid = sessionId || getSessionId();
@@ -26,18 +20,7 @@ function getProjectScopedStatePath(baseName, projectId, sessionId) {
   return join(tmpdir(), `claude-${baseName}-${safePid}-${safeSid}.json`);
 }
 function getProjectScopedStatePathWithMigration(baseName, projectId, sessionId) {
-  const scoped = getProjectScopedStatePath(baseName, projectId, sessionId);
-  const legacySession = getSessionStatePath(baseName, sessionId);
-  if (existsSync(scoped)) return scoped;
-  if (existsSync(legacySession)) {
-    try {
-      const stat = statSync(legacySession);
-      const oneHourAgo = Date.now() - 60 * 60 * 1e3;
-      if (stat.mtimeMs > oneHourAgo) return legacySession;
-    } catch {
-    }
-  }
-  return scoped;
+  return getProjectScopedStatePath(baseName, projectId, sessionId);
 }
 
 // src/shared/project-id.ts
@@ -52,17 +35,17 @@ function getProjectId(projectDir) {
 import {
   writeFileSync,
   renameSync as renameSync2,
-  unlinkSync as unlinkSync2,
-  existsSync as existsSync3,
+  unlinkSync,
+  existsSync as existsSync2,
   openSync,
   closeSync,
   readFileSync,
-  statSync as statSync3,
+  statSync as statSync2,
   constants
 } from "fs";
 
 // src/shared/logger.ts
-import { appendFileSync, existsSync as existsSync2, mkdirSync, statSync as statSync2, renameSync } from "fs";
+import { appendFileSync, existsSync, mkdirSync, statSync, renameSync } from "fs";
 import { join as join2 } from "path";
 import { homedir } from "os";
 var LOG_DIR = join2(homedir(), ".claude", "logs");
@@ -79,14 +62,14 @@ function shouldLog(level) {
   return LEVEL_ORDER[level] >= LEVEL_ORDER[MIN_LEVEL];
 }
 function ensureLogDir() {
-  if (!existsSync2(LOG_DIR)) {
+  if (!existsSync(LOG_DIR)) {
     mkdirSync(LOG_DIR, { recursive: true });
   }
 }
 function rotateIfNeeded() {
   try {
-    if (existsSync2(LOG_FILE)) {
-      const stat = statSync2(LOG_FILE);
+    if (existsSync(LOG_FILE)) {
+      const stat = statSync(LOG_FILE);
       if (stat.size > MAX_LOG_SIZE) {
         const rotated = LOG_FILE + ".1";
         renameSync(LOG_FILE, rotated);
@@ -150,10 +133,10 @@ ${Date.now()}`, "utf-8");
     } catch (err) {
       if (err.code === "EEXIST") {
         try {
-          const stat = statSync3(lockFile);
+          const stat = statSync2(lockFile);
           if (Date.now() - stat.mtimeMs > LOCK_STALE_MS) {
             log.warn("Removing stale lock", { lockFile, ageMs: Date.now() - stat.mtimeMs });
-            unlinkSync2(lockFile);
+            unlinkSync(lockFile);
             continue;
           }
         } catch {
@@ -176,15 +159,15 @@ ${Date.now()}`, "utf-8");
 function releaseLockSync(filePath) {
   const lockFile = filePath + ".lock";
   try {
-    if (existsSync3(lockFile)) {
-      unlinkSync2(lockFile);
+    if (existsSync2(lockFile)) {
+      unlinkSync(lockFile);
     }
   } catch (err) {
     log.warn("Failed to release lock", { lockFile, error: String(err) });
   }
 }
 function readStateWithLock(filePath) {
-  if (!existsSync3(filePath)) return null;
+  if (!existsSync2(filePath)) return null;
   const locked = acquireLockSync(filePath, 2e3);
   try {
     return readFileSync(filePath, "utf-8");
@@ -199,13 +182,13 @@ function readStateWithLock(filePath) {
 }
 
 // src/shared/state-schema.ts
-import { existsSync as existsSync4, readFileSync as readFileSync2 } from "fs";
+import { existsSync as existsSync3, readFileSync as readFileSync2 } from "fs";
 import { join as join3 } from "path";
 var log2 = createLogger("state-schema");
 function readRalphUnifiedState(projectDir) {
   const dir = projectDir || process.env.CLAUDE_PROJECT_DIR || process.cwd();
   const statePath = join3(dir, ".ralph", "state.json");
-  if (!existsSync4(statePath)) return null;
+  if (!existsSync3(statePath)) return null;
   try {
     const content = readFileSync2(statePath, "utf-8");
     const state = JSON.parse(content);
@@ -231,7 +214,7 @@ function isRalphActive(projectDir) {
 }
 
 // src/shared/session-activity.ts
-import { existsSync as existsSync5, mkdirSync as mkdirSync2, readFileSync as readFileSync3, writeFileSync as writeFileSync2 } from "fs";
+import { existsSync as existsSync4, mkdirSync as mkdirSync2, readFileSync as readFileSync3, writeFileSync as writeFileSync2 } from "fs";
 import { join as join4 } from "path";
 function getHomeDir() {
   return process.env.HOME || process.env.USERPROFILE || "/tmp";
@@ -247,7 +230,7 @@ function getActivityPath(sessionId) {
 function readActivity(sessionId) {
   const filePath = getActivityPath(sessionId);
   try {
-    if (!existsSync5(filePath)) {
+    if (!existsSync4(filePath)) {
       return null;
     }
     const raw = readFileSync3(filePath, "utf-8");
