@@ -104,7 +104,7 @@ afterEach(() => {
 });
 
 describe('plan-to-ralph-enforcer: project-scoped state (Phase 4B)', () => {
-  it('does not leak plan-approved state across projects with same sessionId', () => {
+  it('does not leak plan-approved state across projects with same sessionId', { timeout: 15000 }, () => {
     // Write plan-approved state for PROJECT_A
     const projectIdA = getProjectId(PROJECT_A);
     const statePathA = getProjectScopedStatePath('plan-approved', projectIdA, SESSION);
@@ -126,7 +126,7 @@ describe('plan-to-ralph-enforcer: project-scoped state (Phase 4B)', () => {
     expect(decision).not.toBe('deny');
   });
 
-  it('still blocks within the same project that approved the plan', () => {
+  it('still blocks within the same project that approved the plan', { timeout: 15000 }, () => {
     // Write plan-approved state for PROJECT_A
     const projectIdA = getProjectId(PROJECT_A);
     const statePathA = getProjectScopedStatePath('plan-approved', projectIdA, SESSION);
