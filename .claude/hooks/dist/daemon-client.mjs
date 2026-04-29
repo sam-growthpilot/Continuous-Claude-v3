@@ -1,12 +1,9 @@
-// src/post-edit-diagnostics.ts
-import { readFileSync as readFileSync2 } from "fs";
-import { spawnSync as spawnSync2 } from "child_process";
-
 // src/daemon-client.ts
 import { existsSync, readFileSync, writeFileSync, unlinkSync, mkdirSync } from "fs";
 import { execSync, spawnSync } from "child_process";
 import { join, resolve } from "path";
 import { tmpdir } from "os";
+import * as net from "net";
 import * as crypto from "crypto";
 function getTldrTmpDir() {
   if (process.platform === "win32") {
@@ -82,6 +79,11 @@ function getConnectionInfo(projectDir) {
   } else {
     return { type: "unix", path: `${getTldrTmpDir()}/tldr-${hash}.sock` };
   }
+}
+function getSocketPath(projectDir) {
+  const resolvedPath = resolveProjectDir(projectDir);
+  const hash = crypto.createHash("md5").update(resolvedPath).digest("hex").substring(0, 8);
+  return `${getTldrTmpDir()}/tldr-${hash}.sock`;
 }
 function getStatusFile(projectDir) {
   const statusPath = join(projectDir, ".tldr", "status");
@@ -200,6 +202,85 @@ function tryStartDaemon(projectDir) {
     return false;
   }
 }
+function queryDaemon(query, projectDir) {
+  return new Promise((resolve2, reject) => {
+    if (isIndexing(projectDir)) {
+      resolve2({
+        indexing: true,
+        status: "indexing",
+        message: "Daemon is still indexing, results may be incomplete"
+      });
+      return;
+    }
+    const connInfo = getConnectionInfo(projectDir);
+    if (!isDaemonReachable(projectDir)) {
+      if (!tryStartDaemon(projectDir)) {
+        resolve2({ status: "unavailable", error: "Daemon not running and could not start" });
+        return;
+      }
+    }
+    const client = new net.Socket();
+    let data = "";
+    let resolved = false;
+    const timer = setTimeout(() => {
+      if (!resolved) {
+        resolved = true;
+        client.destroy();
+        resolve2({ status: "error", error: "timeout" });
+      }
+    }, QUERY_TIMEOUT);
+    if (connInfo.type === "tcp") {
+      client.connect(connInfo.port, connInfo.host, () => {
+        client.write(JSON.stringify(query) + "\n");
+      });
+    } else {
+      client.connect(connInfo.path, () => {
+        client.write(JSON.stringify(query) + "\n");
+      });
+    }
+    client.on("data", (chunk) => {
+      data += chunk.toString();
+      if (data.includes("\n")) {
+        if (!resolved) {
+          resolved = true;
+          clearTimeout(timer);
+          client.end();
+          try {
+            resolve2(JSON.parse(data.trim()));
+          } catch {
+            resolve2({ status: "error", error: "Invalid JSON response from daemon" });
+          }
+        }
+      }
+    });
+    client.on("error", (err) => {
+      if (!resolved) {
+        resolved = true;
+        clearTimeout(timer);
+        if (err.message.includes("ECONNREFUSED") || err.message.includes("ENOENT")) {
+          resolve2({ status: "unavailable", error: "Daemon not running" });
+        } else {
+          resolve2({ status: "error", error: err.message });
+        }
+      }
+    });
+    client.on("close", () => {
+      if (!resolved) {
+        resolved = true;
+        clearTimeout(timer);
+        if (data) {
+          try {
+            resolve2(JSON.parse(data.trim()));
+          } catch {
+            resolve2({ status: "error", error: "Incomplete response" });
+          }
+        } else {
+          resolve2({ status: "error", error: "Connection closed without response" });
+        }
+      }
+    });
+  });
+}
 function buildQueryDaemonSpawnArgs(query, connInfo) {
   const input = JSON.stringify(query) + "\n";
   if (connInfo.type === "tcp") {
@@ -284,6 +365,115 @@ function queryDaemonSync(query, projectDir) {
     return { status: "error", error: err.message || "Unknown error" };
   }
 }
+async function pingDaemon(projectDir) {
+  const response = await queryDaemon({ cmd: "ping" }, projectDir);
+  return response.status === "ok";
+}
+async function searchDaemon(pattern, projectDir, maxResults = 100) {
+  const response = await queryDaemon(
+    { cmd: "search", pattern, max_results: maxResults },
+    projectDir
+  );
+  return response.results || [];
+}
+async function impactDaemon(funcName, projectDir) {
+  const response = await queryDaemon({ cmd: "impact", func: funcName }, projectDir);
+  return response.callers || [];
+}
+async function extractDaemon(filePath, projectDir, sessionId) {
+  const response = await queryDaemon({ cmd: "extract", file: filePath, session: sessionId }, projectDir);
+  return response.result || null;
+}
+async function statusDaemon(projectDir) {
+  return queryDaemon({ cmd: "status" }, projectDir);
+}
+async function deadCodeDaemon(projectDir, entryPoints, language = "python") {
+  const response = await queryDaemon(
+    { cmd: "dead", entry_points: entryPoints, language },
+    projectDir
+  );
+  return response.result || response;
+}
+async function archDaemon(projectDir, language = "python") {
+  const response = await queryDaemon({ cmd: "arch", language }, projectDir);
+  return response.result || response;
+}
+async function cfgDaemon(filePath, funcName, projectDir, language = "python") {
+  const response = await queryDaemon(
+    { cmd: "cfg", file: filePath, function: funcName, language },
+    projectDir
+  );
+  return response.result || response;
+}
+async function dfgDaemon(filePath, funcName, projectDir, language = "python") {
+  const response = await queryDaemon(
+    { cmd: "dfg", file: filePath, function: funcName, language },
+    projectDir
+  );
+  return response.result || response;
+}
+async function sliceDaemon(filePath, funcName, line, projectDir, direction = "backward", variable) {
+  const response = await queryDaemon(
+    { cmd: "slice", file: filePath, function: funcName, line, direction, variable },
+    projectDir
+  );
+  return response;
+}
+async function callsDaemon(projectDir, language = "python") {
+  const response = await queryDaemon({ cmd: "calls", language }, projectDir);
+  return response.result || response;
+}
+async function warmDaemon(projectDir, language = "python") {
+  return queryDaemon({ cmd: "warm", language }, projectDir);
+}
+async function semanticSearchDaemon(projectDir, query, k = 10) {
+  const response = await queryDaemon(
+    { cmd: "semantic", action: "search", query, k },
+    projectDir
+  );
+  return response.results || [];
+}
+async function semanticIndexDaemon(projectDir, language = "python") {
+  return queryDaemon({ cmd: "semantic", action: "index", language }, projectDir);
+}
+async function treeDaemon(projectDir, extensions, excludeHidden = true) {
+  const response = await queryDaemon(
+    { cmd: "tree", extensions, exclude_hidden: excludeHidden },
+    projectDir
+  );
+  return response.result || response;
+}
+async function structureDaemon(projectDir, language = "python", maxResults = 100) {
+  const response = await queryDaemon(
+    { cmd: "structure", language, max_results: maxResults },
+    projectDir
+  );
+  return response.result || response;
+}
+async function contextDaemon(projectDir, entry, language = "python", depth = 2) {
+  const response = await queryDaemon(
+    { cmd: "context", entry, language, depth },
+    projectDir
+  );
+  return response.result || response;
+}
+async function importsDaemon(projectDir, filePath, language = "python") {
+  const response = await queryDaemon(
+    { cmd: "imports", file: filePath, language },
+    projectDir
+  );
+  return response.imports || [];
+}
+async function importersDaemon(projectDir, module, language = "python") {
+  return queryDaemon({ cmd: "importers", module, language }, projectDir);
+}
+function trackHookActivity(hookName, projectDir, success = true, metrics = {}) {
+  queryDaemon(
+    { cmd: "track", hook: hookName, success, metrics },
+    projectDir
+  ).catch(() => {
+  });
+}
 function trackHookActivitySync(hookName, projectDir, success = true, metrics = {}) {
   try {
     queryDaemonSync(
@@ -293,173 +483,34 @@ function trackHookActivitySync(hookName, projectDir, success = true, metrics = {
   } catch {
   }
 }
-
-// src/post-edit-diagnostics.ts
-async function main() {
-  const input = JSON.parse(readFileSync2(0, "utf-8"));
-  if (input.tool_name !== "Edit" && input.tool_name !== "Write") {
-    console.log("{}");
-    return;
-  }
-  const filePath = input.tool_input?.file_path;
-  if (!filePath) {
-    console.log("{}");
-    return;
-  }
-  const codeExtensions = [
-    // Python (has linters: pyright + ruff)
-    ".py",
-    ".pyx",
-    ".pyi",
-    // TypeScript/JavaScript (has linter: tsc --noEmit)
-    ".ts",
-    ".tsx",
-    ".js",
-    ".jsx",
-    ".mjs",
-    ".cjs",
-    // Go (TODO: add go vet)
-    ".go",
-    // Rust (TODO: add clippy)
-    ".rs",
-    // Java
-    ".java",
-    // C/C++
-    ".c",
-    ".h",
-    ".cpp",
-    ".hpp",
-    ".cc",
-    ".cxx",
-    ".hh",
-    // Ruby
-    ".rb",
-    // C#
-    ".cs"
-  ];
-  const ext = filePath.substring(filePath.lastIndexOf("."));
-  if (!codeExtensions.includes(ext)) {
-    console.log("{}");
-    return;
-  }
-  const pythonExtensions = [".py", ".pyx", ".pyi"];
-  const tsJsExtensions = [".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs"];
-  const projectDir = process.env.CLAUDE_PROJECT_DIR || process.cwd();
-  if (pythonExtensions.includes(ext)) {
-    runPythonDiagnostics(filePath, projectDir);
-  } else if (tsJsExtensions.includes(ext)) {
-    runTscDiagnostics(filePath, projectDir);
-  } else {
-    console.log("{}");
-  }
-}
-function runPythonDiagnostics(filePath, projectDir) {
-  try {
-    const response = queryDaemonSync(
-      { cmd: "diagnostics", file: filePath },
-      projectDir
-    );
-    if (response.status === "unavailable" || response.error) {
-      console.log("{}");
-      return;
-    }
-    const summary = response.summary || response;
-    const typeErrors = summary.type_errors || 0;
-    const lintIssues = summary.lint_errors || summary.lint_issues || 0;
-    const errors = response.errors || [];
-    trackHookActivitySync("post-edit-diagnostics", projectDir, true, {
-      edits_analyzed: 1,
-      type_errors: typeErrors,
-      lint_issues: lintIssues
-    });
-    if (typeErrors === 0 && lintIssues === 0) {
-      console.log("{}");
-      return;
-    }
-    const lines = [];
-    lines.push(`Diagnostics: ${typeErrors} type errors, ${lintIssues} lint issues`);
-    const maxPreviews = 5;
-    const previews = errors.slice(0, maxPreviews);
-    for (const err of previews) {
-      const location = err.column ? `${err.file}:${err.line}:${err.column}` : `${err.file}:${err.line}`;
-      lines.push(`   - ${location}: ${err.message}`);
-    }
-    if (errors.length > maxPreviews) {
-      const remaining = errors.length - maxPreviews;
-      lines.push(`   ... and ${remaining} more`);
-    }
-    const output = {
-      hookSpecificOutput: {
-        hookEventName: "PostToolUse",
-        additionalContext: lines.join("\n")
-      }
-    };
-    console.log(JSON.stringify(output));
-  } catch {
-    console.log("{}");
-  }
-}
-var TSC_LINE_REGEX = /^(.+)\((\d+),(\d+)\): (error|warning) TS(\d+): (.+)$/;
-function parseTscOutput(stdout) {
-  const diagnostics = [];
-  for (const line of stdout.split("\n")) {
-    const match = line.match(TSC_LINE_REGEX);
-    if (match) {
-      diagnostics.push({
-        file: match[1],
-        line: parseInt(match[2], 10),
-        column: parseInt(match[3], 10),
-        severity: match[4],
-        code: parseInt(match[5], 10),
-        message: match[6]
-      });
-    }
-  }
-  return diagnostics;
-}
-function runTscDiagnostics(filePath, projectDir) {
-  try {
-    const result = spawnSync2("tsc", ["--noEmit", "--pretty", "false"], {
-      cwd: projectDir,
-      timeout: 3e4,
-      encoding: "utf-8"
-    });
-    if (result.error || result.status === null) {
-      console.log("{}");
-      return;
-    }
-    const diagnostics = parseTscOutput(result.stdout || "");
-    const errorCount = diagnostics.filter((d) => d.severity === "error").length;
-    const warningCount = diagnostics.filter((d) => d.severity === "warning").length;
-    trackHookActivitySync("post-edit-diagnostics", projectDir, true, {
-      edits_analyzed: 1,
-      type_errors: errorCount,
-      lint_issues: warningCount
-    });
-    if (diagnostics.length === 0) {
-      console.log("{}");
-      return;
-    }
-    const lines = [];
-    lines.push(`Diagnostics: ${errorCount} type errors, ${warningCount} warnings`);
-    const maxPreviews = 5;
-    const previews = diagnostics.slice(0, maxPreviews);
-    for (const d of previews) {
-      lines.push(`   - ${d.file}:${d.line}:${d.column}: ${d.message}`);
-    }
-    if (diagnostics.length > maxPreviews) {
-      const remaining = diagnostics.length - maxPreviews;
-      lines.push(`   ... and ${remaining} more`);
-    }
-    const output = {
-      hookSpecificOutput: {
-        hookEventName: "PostToolUse",
-        additionalContext: lines.join("\n")
-      }
-    };
-    console.log(JSON.stringify(output));
-  } catch {
-    console.log("{}");
-  }
-}
-main().catch(() => console.log("{}"));
+export {
+  archDaemon,
+  buildQueryDaemonSpawnArgs,
+  callsDaemon,
+  cfgDaemon,
+  contextDaemon,
+  deadCodeDaemon,
+  dfgDaemon,
+  extractDaemon,
+  getConnectionInfo,
+  getSocketPath,
+  getStatusFile,
+  impactDaemon,
+  importersDaemon,
+  importsDaemon,
+  isIndexing,
+  pingDaemon,
+  queryDaemon,
+  queryDaemonSync,
+  searchDaemon,
+  semanticIndexDaemon,
+  semanticSearchDaemon,
+  sliceDaemon,
+  statusDaemon,
+  structureDaemon,
+  trackHookActivity,
+  trackHookActivitySync,
+  treeDaemon,
+  tryStartDaemon,
+  warmDaemon
+};

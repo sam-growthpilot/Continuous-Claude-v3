@@ -1,7 +1,7 @@
 // src/post-edit-notify.ts
 import { readFileSync as readFileSync2 } from "fs";
 
-// src/lib/daemon-client.ts
+// src/daemon-client.ts
 import { existsSync, readFileSync, writeFileSync, unlinkSync, mkdirSync } from "fs";
 import { execSync, spawnSync } from "child_process";
 import { join, resolve } from "path";
@@ -199,6 +199,37 @@ function tryStartDaemon(projectDir) {
     return false;
   }
 }
+function buildQueryDaemonSpawnArgs(query, connInfo) {
+  const input = JSON.stringify(query) + "\n";
+  if (connInfo.type === "tcp") {
+    const psScript = `
+$ErrorActionPreference = 'Stop'
+$payload = [Console]::In.ReadToEnd()
+$client = New-Object System.Net.Sockets.TcpClient('${connInfo.host}', ${connInfo.port})
+try {
+  $stream = $client.GetStream()
+  $writer = New-Object System.IO.StreamWriter($stream)
+  $reader = New-Object System.IO.StreamReader($stream)
+  $writer.Write($payload)
+  $writer.Flush()
+  $response = $reader.ReadLine()
+  Write-Output $response
+} finally {
+  $client.Close()
+}
+`.trim();
+    return {
+      command: "powershell.exe",
+      args: ["-NoProfile", "-NonInteractive", "-Command", psScript],
+      input
+    };
+  }
+  return {
+    command: "nc",
+    args: ["-U", connInfo.path],
+    input
+  };
+}
 function queryDaemonSync(query, projectDir) {
   if (isIndexing(projectDir)) {
     return {
@@ -214,30 +245,33 @@ function queryDaemonSync(query, projectDir) {
     }
   }
   try {
-    const input = JSON.stringify(query);
-    let result;
-    if (connInfo.type === "tcp") {
-      const psCommand = `
-        $client = New-Object System.Net.Sockets.TcpClient('${connInfo.host}', ${connInfo.port})
-        $stream = $client.GetStream()
-        $writer = New-Object System.IO.StreamWriter($stream)
-        $reader = New-Object System.IO.StreamReader($stream)
-        $writer.WriteLine('${input.replace(/'/g, "''")}')
-        $writer.Flush()
-        $response = $reader.ReadLine()
-        $client.Close()
-        Write-Output $response
-      `.trim();
-      result = execSync(`powershell -Command "${psCommand.replace(/"/g, '\\"')}"`, {
-        encoding: "utf-8",
-        timeout: QUERY_TIMEOUT
-      });
-    } else {
-      result = execSync(`echo '${input}' | nc -U "${connInfo.path}"`, {
-        encoding: "utf-8",
-        timeout: QUERY_TIMEOUT
-      });
+    const { command, args, input } = buildQueryDaemonSpawnArgs(query, connInfo);
+    const proc = spawnSync(command, args, {
+      input,
+      encoding: "utf-8",
+      timeout: QUERY_TIMEOUT
+    });
+    if (proc.error) {
+      const code = proc.error.code;
+      if (code === "ETIMEDOUT" || proc.error.killed) {
+        return { status: "error", error: "timeout" };
+      }
+      if (code === "ENOENT") {
+        return { status: "unavailable", error: "Daemon transport not available" };
+      }
+      return { status: "error", error: proc.error.message };
     }
+    if (proc.signal === "SIGTERM" || proc.killed) {
+      return { status: "error", error: "timeout" };
+    }
+    if (proc.status !== 0) {
+      const stderr = (proc.stderr || "").toString();
+      if (stderr.includes("ECONNREFUSED") || stderr.includes("ENOENT")) {
+        return { status: "unavailable", error: "Daemon not running" };
+      }
+      return { status: "error", error: stderr.trim() || `exit code ${proc.status}` };
+    }
+    const result = (proc.stdout || "").toString();
     return JSON.parse(result.trim());
   } catch (err) {
     if (err.killed) {

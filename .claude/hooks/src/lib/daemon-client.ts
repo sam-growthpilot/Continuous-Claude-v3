@@ -534,6 +534,66 @@ export function queryDaemon(query: DaemonQuery, projectDir: string): Promise<Dae
 }
 
 /**
+ * Build spawnSync arguments for the synchronous daemon query.
+ *
+ * SECURITY: this is the heart of the C1 fix. The previous implementation
+ * shell-interpolated `JSON.stringify(query)` into `echo '...' | nc ...` (Unix)
+ * and into a `powershell -Command "..."` string (Windows). A single quote,
+ * backtick, dollar sign, or newline in any field would let an attacker
+ * break out of the quoted argument and run arbitrary shell.
+ *
+ * The fix passes the JSON payload over stdin (`input`) and never embeds it
+ * in argv or a shell-interpolated string. The PowerShell script reads the
+ * payload via `[Console]::In.ReadToEnd()`, also stdin-fed.
+ *
+ * Exported for testing — the regression test asserts that `input` matches
+ * `JSON.stringify(query)` byte-for-byte and that no argv element contains
+ * a substring derived from a query field.
+ */
+export function buildQueryDaemonSpawnArgs(
+  query: DaemonQuery,
+  connInfo: ConnectionInfo,
+): { command: string; args: string[]; input: string } {
+  const input = JSON.stringify(query) + '\n';
+
+  if (connInfo.type === 'tcp') {
+    // Windows: PowerShell opens a TCP connection, reads JSON from stdin,
+    // writes it to the socket, and prints the daemon response line.
+    const psScript = `
+$ErrorActionPreference = 'Stop'
+$payload = [Console]::In.ReadToEnd()
+$client = New-Object System.Net.Sockets.TcpClient('${connInfo.host}', ${connInfo.port})
+try {
+  $stream = $client.GetStream()
+  $writer = New-Object System.IO.StreamWriter($stream)
+  $reader = New-Object System.IO.StreamReader($stream)
+  $writer.Write($payload)
+  $writer.Flush()
+  $response = $reader.ReadLine()
+  Write-Output $response
+} finally {
+  $client.Close()
+}
+`.trim();
+
+    return {
+      command: 'powershell.exe',
+      args: ['-NoProfile', '-NonInteractive', '-Command', psScript],
+      input,
+    };
+  }
+
+  // Unix: nc reads stdin and writes it to the Unix socket. spawnSync
+  // passes the socket path as a discrete argv element so it cannot
+  // smuggle in shell metacharacters.
+  return {
+    command: 'nc',
+    args: ['-U', connInfo.path!],
+    input,
+  };
+}
+
+/**
  * Query the daemon synchronously using nc (netcat) or PowerShell (Windows).
  * Fallback for contexts where async is not available.
  *
@@ -562,36 +622,39 @@ export function queryDaemonSync(query: DaemonQuery, projectDir: string): DaemonR
   }
 
   try {
-    const input = JSON.stringify(query);
-    let result: string;
+    // Pipe query JSON over stdin via spawnSync — no shell interpolation, so
+    // any payload (single quotes, backticks, dollar signs, newlines) round
+    // trips intact. See buildQueryDaemonSpawnArgs() for the argv layout.
+    const { command, args, input } = buildQueryDaemonSpawnArgs(query, connInfo);
+    const proc = spawnSync(command, args, {
+      input,
+      encoding: 'utf-8',
+      timeout: QUERY_TIMEOUT,
+    });
 
-    if (connInfo.type === 'tcp') {
-      // Windows: Use PowerShell to communicate with TCP socket
-      const psCommand = `
-        $client = New-Object System.Net.Sockets.TcpClient('${connInfo.host}', ${connInfo.port})
-        $stream = $client.GetStream()
-        $writer = New-Object System.IO.StreamWriter($stream)
-        $reader = New-Object System.IO.StreamReader($stream)
-        $writer.WriteLine('${input.replace(/'/g, "''")}')
-        $writer.Flush()
-        $response = $reader.ReadLine()
-        $client.Close()
-        Write-Output $response
-      `.trim();
-
-      result = execSync(`powershell -Command "${psCommand.replace(/"/g, '\\"')}"`, {
-        encoding: 'utf-8',
-        timeout: QUERY_TIMEOUT,
-      });
-    } else {
-      // Unix: Use nc (netcat) to communicate with Unix socket
-      // echo '{"cmd":"ping"}' | nc -U /tmp/tldr-xxx.sock
-      result = execSync(`echo '${input}' | nc -U "${connInfo.path}"`, {
-        encoding: 'utf-8',
-        timeout: QUERY_TIMEOUT,
-      });
+    if (proc.error) {
+      const code = (proc.error as NodeJS.ErrnoException).code;
+      if (code === 'ETIMEDOUT' || (proc.error as any).killed) {
+        return { status: 'error', error: 'timeout' };
+      }
+      if (code === 'ENOENT') {
+        // nc / powershell.exe not on PATH -> treat as unavailable
+        return { status: 'unavailable', error: 'Daemon transport not available' };
+      }
+      return { status: 'error', error: proc.error.message };
+    }
+    if (proc.signal === 'SIGTERM' || (proc as any).killed) {
+      return { status: 'error', error: 'timeout' };
+    }
+    if (proc.status !== 0) {
+      const stderr = (proc.stderr || '').toString();
+      if (stderr.includes('ECONNREFUSED') || stderr.includes('ENOENT')) {
+        return { status: 'unavailable', error: 'Daemon not running' };
+      }
+      return { status: 'error', error: stderr.trim() || `exit code ${proc.status}` };
     }
 
+    const result = (proc.stdout || '').toString();
     return JSON.parse(result.trim());
   } catch (err: any) {
     if (err.killed) {
