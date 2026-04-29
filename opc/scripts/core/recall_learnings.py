@@ -82,13 +82,131 @@ def get_backend() -> str:
     return "sqlite"
 
 
-async def search_learnings_text_only_postgres(query: str, k: int = 5) -> list[dict[str, Any]]:
+def _is_registered_project(abs_path: str) -> bool:
+    """Check if abs_path matches an entry in .claude/project-registry.json.
+
+    Used to decide whether to derive a project_id from CWD or fall back to
+    GLOBAL-only filtering. We treat unregistered CWDs as ambient/unsafe and
+    fail-safe rather than leaking PROJECT-scoped rows.
+    """
+    try:
+        registry_path = Path.home() / "continuous-claude" / ".claude" / "project-registry.json"
+        if not registry_path.exists():
+            return False
+        with open(registry_path, encoding="utf-8") as f:
+            registry = json.load(f)
+        norm = str(Path(abs_path).resolve()).replace("\\", "/").lower()
+        for proj in registry.get("projects", []):
+            proj_path = str(Path(proj.get("path", "")).resolve()).replace("\\", "/").lower()
+            if proj_path and (norm == proj_path or norm.startswith(proj_path + "/")):
+                return True
+    except Exception:
+        return False
+    return False
+
+
+def resolve_recall_scope(
+    project_dir: str | None = None,
+    all_projects: bool = False,
+) -> tuple[str | None, str]:
+    """Resolve project_id and recall mode for the current invocation.
+
+    Decision flow:
+      1. all_projects=True            -> ('all', 'all')           debug opt-out
+      2. CLAUDE_PROJECT_ID env set    -> (env_value, 'project')   explicit override
+      3. project_dir provided         -> (sha256(...), 'project') explicit
+      4. CWD inside registered project-> (sha256(cwd), 'project') implicit
+      5. else                          -> (None, 'global_only')   fail-safe default
+
+    Returns:
+        Tuple of (project_id, mode).
+        - mode='all'           -> drop the project_id filter entirely
+        - mode='project'       -> WHERE (scope='GLOBAL' OR (scope='PROJECT' AND project_id=?))
+        - mode='global_only'   -> WHERE scope = 'GLOBAL'
+    """
+    if all_projects:
+        return None, "all"
+
+    # Explicit env-var override (used in tests + hooks that already know project_id)
+    env_pid = os.environ.get("CLAUDE_PROJECT_ID")
+    if env_pid:
+        return env_pid, "project"
+
+    # Explicit CLI flag
+    if project_dir:
+        from project_memory import get_project_id  # type: ignore
+        return get_project_id(project_dir), "project"
+
+    # Implicit: CWD inside a registered project
+    cwd = os.getcwd()
+    if _is_registered_project(cwd):
+        from project_memory import get_project_id  # type: ignore
+        return get_project_id(cwd), "project"
+
+    # Fail-safe: GLOBAL-only when context is unclear
+    return None, "global_only"
+
+
+def _build_scope_clause(
+    mode: str,
+    project_id: str | None,
+    starting_param_idx: int,
+) -> tuple[str, list[Any], int]:
+    """Build SQL WHERE fragment + params for project_id scoping.
+
+    Args:
+        mode: One of 'all', 'project', 'global_only'.
+        project_id: 16-char project hash (only used when mode == 'project').
+        starting_param_idx: Next available 1-based param index.
+
+    Returns:
+        (clause, params_to_append, next_param_idx).
+        clause is a parenthesized SQL fragment to AND into the WHERE; empty
+        string when no constraint is needed (mode='all').
+    """
+    if mode == "all":
+        return "", [], starting_param_idx
+    if mode == "global_only":
+        return f"scope = ${starting_param_idx}", ["GLOBAL"], starting_param_idx + 1
+    # mode == 'project'
+    if project_id is None:
+        # Defensive: caller should have set project_id when mode=='project'.
+        return f"scope = ${starting_param_idx}", ["GLOBAL"], starting_param_idx + 1
+    clause = (
+        f"(scope = ${starting_param_idx} OR "
+        f"(scope = ${starting_param_idx + 1} AND project_id = ${starting_param_idx + 2}))"
+    )
+    return clause, ["GLOBAL", "PROJECT", project_id], starting_param_idx + 3
+
+
+async def search_learnings_text_only_postgres(
+    query: str,
+    k: int = 5,
+    project_id: str | None = None,
+    scope_mode: str | None = None,
+) -> list[dict[str, Any]]:
     """Fast text-only search for PostgreSQL using full-text search.
 
     Uses tsvector/tsquery with GIN index. Automatic stopword handling.
     Falls back to ILIKE if tsquery fails (e.g., all stopwords).
+
+    Cross-project isolation:
+        Filters by project_id so PROJECT-scoped rows from other projects do
+        not leak. GLOBAL-scoped rows are always visible. Pass scope_mode='all'
+        (or set --all-projects on the CLI) to drop the filter for debug.
+
+        When called without explicit args (the common library/test path), we
+        auto-resolve scope from CLAUDE_PROJECT_ID, then CWD vs project
+        registry, falling back to 'global_only' as the safe default.
     """
     from db.postgres_pool import get_pool
+
+    # Auto-resolve scope when caller didn't pass it explicitly
+    if scope_mode is None:
+        project_id, scope_mode = resolve_recall_scope()
+
+    # Build the project_id constraint
+    scope_clause, scope_params, _ = _build_scope_clause(scope_mode, project_id, 3)
 
     pool = await get_pool()
 
@@ -108,8 +226,9 @@ async def search_learnings_text_only_postgres(query: str, k: int = 5) -> list[di
             words = clean_query.split()[:1] or [query.split()[0]]
         or_query = ' | '.join(words)
 
+        scope_sql = f" AND {scope_clause}" if scope_clause else ""
         rows = await conn.fetch(
-            """
+            f"""
             SELECT
                 id,
                 session_id,
@@ -125,11 +244,13 @@ async def search_learnings_text_only_postgres(query: str, k: int = 5) -> list[di
                 AND to_tsvector('english', content) @@ to_tsquery('english', $1)
                 AND LENGTH(content) >= 50
                 AND content NOT LIKE 'Agent ''%'' failed when given task:%'
+                {scope_sql}
             ORDER BY similarity DESC, created_at DESC
             LIMIT $2
             """,
             or_query,
             k,
+            *scope_params,
         )
 
         # Fallback to ILIKE if no FTS results (query was all stopwords)
@@ -137,7 +258,7 @@ async def search_learnings_text_only_postgres(query: str, k: int = 5) -> list[di
             # Extract first word for simple substring match
             first_word = query.split()[0] if query.split() else query
             rows = await conn.fetch(
-                """
+                f"""
                 SELECT
                     id,
                     session_id,
@@ -153,11 +274,13 @@ async def search_learnings_text_only_postgres(query: str, k: int = 5) -> list[di
                     AND content ILIKE '%' || $1 || '%'
                     AND LENGTH(content) >= 50
                     AND content NOT LIKE 'Agent ''%'' failed when given task:%'
+                    {scope_sql}
                 ORDER BY created_at DESC
                 LIMIT $2
                 """,
                 first_word,
                 k,
+                *scope_params,
             )
 
     results = []
@@ -260,6 +383,8 @@ async def search_learnings_hybrid_rrf(
     provider: str = "local",
     rrf_k: int = 60,
     similarity_threshold: float = 0.0,
+    project_id: str | None = None,
+    scope_mode: str | None = None,
 ) -> list[dict[str, Any]]:
     """Hybrid RRF search combining text and vector rankings.
 
@@ -272,13 +397,24 @@ async def search_learnings_hybrid_rrf(
         provider: Embedding provider
         rrf_k: RRF constant (default 60)
         similarity_threshold: Minimum RRF score to include
+        project_id: Project hash (16-char sha256). Auto-derived when None.
+        scope_mode: 'project' | 'global_only' | 'all'. Auto-resolved when None.
 
     Returns:
         List of learnings with RRF scores
+
+    Cross-project isolation:
+        PROJECT-scoped rows from other projects are filtered out by default.
+        GLOBAL-scoped rows are always visible. Pass scope_mode='all' to drop
+        the filter (debug only).
     """
     from db.embedding_service import EmbeddingService
     from db.memory_service_pg import build_rrf_sql
     from db.postgres_pool import get_pool, init_pgvector
+
+    # Auto-resolve scope when caller didn't pass it explicitly
+    if scope_mode is None:
+        project_id, scope_mode = resolve_recall_scope()
 
     pool = await get_pool()
 
@@ -302,6 +438,14 @@ async def search_learnings_hybrid_rrf(
         " AND content NOT LIKE 'Agent ''%'' failed when given task:%'"
     )
 
+    # Phase 1 (cross-project isolation): append project_id constraint to the
+    # WHERE clause so it appears in BOTH ranking CTEs (FTS + vector). Param
+    # indices for scope start at 5 (after text_query=1, embedding=2,
+    # rrf_k=3, limit=4).
+    scope_clause, scope_params, _ = _build_scope_clause(scope_mode, project_id, 5)
+    if scope_clause:
+        learnings_where = f"{learnings_where} AND {scope_clause}"
+
     async with pool.acquire() as conn:
         await init_pgvector(conn)
 
@@ -320,6 +464,7 @@ async def search_learnings_hybrid_rrf(
             str(query_embedding),
             rrf_k,
             k * 2,  # Fetch more to allow filtering
+            *scope_params,
         )
 
     results = []
@@ -357,6 +502,8 @@ async def search_learnings_postgres(
     text_fallback: bool = True,
     similarity_threshold: float = 0.0,
     recency_weight: float = 0.0,
+    project_id: str | None = None,
+    scope_mode: str | None = None,
 ) -> list[dict[str, Any]]:
     """Search learnings using PostgreSQL (vector similarity or text fallback).
 
@@ -367,12 +514,18 @@ async def search_learnings_postgres(
         text_fallback: If True, use text search when no embeddings exist
         similarity_threshold: Minimum similarity score (0.0-1.0) to include results
         recency_weight: Weight for recency boost (0.0-1.0). 0=no boost, 0.3=30% recency
+        project_id: Project hash (16-char sha256). Auto-derived when None.
+        scope_mode: 'project' | 'global_only' | 'all'. Auto-resolved when None.
 
     Returns:
         List of matching learnings with similarity scores
     """
     from db.embedding_service import EmbeddingService
     from db.postgres_pool import get_pool
+
+    # Auto-resolve scope when caller didn't pass it explicitly
+    if scope_mode is None:
+        project_id, scope_mode = resolve_recall_scope()
 
     pool = await get_pool()
 
@@ -405,8 +558,11 @@ async def search_learnings_postgres(
             if recency_weight > 0:
                 # Combined score: (1-recency_weight)*similarity + recency_weight*recency
                 # Recency is normalized: 1.0 for newest, 0.0 for 30 days old or older
+                # Scope params start at $4 (after embedding=$1, k=$2, recency=$3)
+                scope_clause, scope_params, _ = _build_scope_clause(scope_mode, project_id, 4)
+                scope_sql = f" AND {scope_clause}" if scope_clause else ""
                 rows = await conn.fetch(
-                    """
+                    f"""
                     WITH scored AS (
                         SELECT
                             id,
@@ -424,6 +580,7 @@ async def search_learnings_postgres(
                             AND embedding IS NOT NULL
                             AND LENGTH(content) >= 50
                             AND content NOT LIKE 'Agent ''%'' failed when given task:%'
+                            {scope_sql}
                     )
                     SELECT
                         id, session_id, content, metadata, created_at, similarity, recency,
@@ -435,10 +592,14 @@ async def search_learnings_postgres(
                     str(query_embedding),
                     k,
                     recency_weight,
+                    *scope_params,
                 )
             else:
+                # Scope params start at $3 (after embedding=$1, k=$2)
+                scope_clause, scope_params, _ = _build_scope_clause(scope_mode, project_id, 3)
+                scope_sql = f" AND {scope_clause}" if scope_clause else ""
                 rows = await conn.fetch(
-                    """
+                    f"""
                     SELECT
                         id,
                         session_id,
@@ -454,17 +615,22 @@ async def search_learnings_postgres(
                         AND embedding IS NOT NULL
                         AND LENGTH(content) >= 50
                         AND content NOT LIKE 'Agent ''%'' failed when given task:%'
+                        {scope_sql}
                     ORDER BY embedding <=> $1::vector
                     LIMIT $2
                     """,
                     str(query_embedding),
                     k,
+                    *scope_params,
                 )
     elif text_fallback:
         # Fallback to text search (ILIKE) when no embeddings
+        # Scope params start at $3 (after query=$1, k=$2)
+        scope_clause, scope_params, _ = _build_scope_clause(scope_mode, project_id, 3)
+        scope_sql = f" AND {scope_clause}" if scope_clause else ""
         async with pool.acquire() as conn:
             rows = await conn.fetch(
-                """
+                f"""
                 SELECT
                     id,
                     session_id,
@@ -480,11 +646,13 @@ async def search_learnings_postgres(
                     AND content ILIKE '%' || $1 || '%'
                     AND LENGTH(content) >= 50
                     AND content NOT LIKE 'Agent ''%'' failed when given task:%'
+                    {scope_sql}
                 ORDER BY created_at DESC
                 LIMIT $2
                 """,
                 query,
                 k,
+                *scope_params,
             )
     else:
         return []
@@ -533,6 +701,8 @@ async def search_learnings(
     text_fallback: bool = True,
     similarity_threshold: float = 0.2,
     recency_weight: float = 0.0,
+    project_id: str | None = None,
+    scope_mode: str | None = None,
 ) -> list[dict[str, Any]]:
     """Search archival_memory for session learnings.
 
@@ -545,6 +715,8 @@ async def search_learnings(
         text_fallback: If True, use text search when no embeddings exist
         similarity_threshold: Minimum similarity score (default 0.2 filters garbage)
         recency_weight: Weight for recency boost (0.0-1.0). 0=no boost, 0.3=30% recency
+        project_id: Project hash (16-char sha256). Auto-derived when None.
+        scope_mode: 'project' | 'global_only' | 'all'. Auto-resolved when None.
 
     Returns:
         List of matching learnings with similarity scores
@@ -557,7 +729,11 @@ async def search_learnings(
     if backend == "sqlite":
         return await search_learnings_sqlite(query, k)
     else:
-        return await search_learnings_postgres(query, k, provider, text_fallback, similarity_threshold, recency_weight)
+        return await search_learnings_postgres(
+            query, k, provider, text_fallback,
+            similarity_threshold, recency_weight,
+            project_id=project_id, scope_mode=scope_mode,
+        )
 
 
 async def search_pageindex(query: str, k: int = 5, project_path: str | None = None) -> list[dict[str, Any]]:
@@ -685,8 +861,34 @@ async def main() -> int:
         action="store_true",
         help="Search both vector memory AND PageIndex trees",
     )
+    parser.add_argument(
+        "--project-dir",
+        default=None,
+        help=(
+            "Project directory to scope recall to. When passed, derive "
+            "project_id = sha256(abs_path)[:16] and filter PROJECT-scoped "
+            "results to that project. Defaults to CWD when CWD is inside a "
+            "registered project; falls back to GLOBAL-only otherwise."
+        ),
+    )
+    parser.add_argument(
+        "--all-projects",
+        action="store_true",
+        help=(
+            "DEBUG/AUDIT: drop the project_id filter entirely. By default, "
+            "recall is scoped to the current project (or GLOBAL-only when "
+            "context is unclear). Use this opt-out only when you need to "
+            "see learnings across projects."
+        ),
+    )
 
     args = parser.parse_args()
+
+    # Phase 1 (cross-project isolation): resolve scope once, pass to all paths.
+    project_id, scope_mode = resolve_recall_scope(
+        project_dir=args.project_dir,
+        all_projects=args.all_projects,
+    )
 
     # JSON mode: suppress human-readable output
     backend = get_backend()
@@ -715,13 +917,17 @@ async def main() -> int:
             if backend == "sqlite":
                 vector_results = await search_learnings_sqlite(args.query, args.k)
             elif args.text_only:
-                vector_results = await search_learnings_text_only_postgres(args.query, args.k)
+                vector_results = await search_learnings_text_only_postgres(
+                    args.query, args.k,
+                    project_id=project_id, scope_mode=scope_mode,
+                )
             else:
                 vector_results = await search_learnings_hybrid_rrf(
                     query=args.query,
                     k=args.k,
                     provider=args.provider,
                     similarity_threshold=args.threshold * 0.01,
+                    project_id=project_id, scope_mode=scope_mode,
                 )
 
             for r in vector_results:
@@ -740,7 +946,10 @@ async def main() -> int:
             results = await search_learnings_sqlite(args.query, args.k)
         elif args.text_only:
             # Fast text-only search (no embeddings)
-            results = await search_learnings_text_only_postgres(args.query, args.k)
+            results = await search_learnings_text_only_postgres(
+                args.query, args.k,
+                project_id=project_id, scope_mode=scope_mode,
+            )
         elif args.vector_only:
             # Vector-only search with recency boost
             results = await search_learnings(
@@ -749,6 +958,7 @@ async def main() -> int:
                 provider=args.provider,
                 similarity_threshold=args.threshold,
                 recency_weight=args.recency,
+                project_id=project_id, scope_mode=scope_mode,
             )
         else:
             # Default: Hybrid RRF search (text + vector combined)
@@ -757,6 +967,7 @@ async def main() -> int:
                 k=args.k,
                 provider=args.provider,
                 similarity_threshold=args.threshold * 0.01,  # RRF scores are ~0.01-0.03 range
+                project_id=project_id, scope_mode=scope_mode,
             )
     except Exception as e:
         if args.json:
