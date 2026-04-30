@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 
-// src/skill-router.ts
+// src/lib/skill-router.ts
 import { readFileSync, existsSync, readdirSync, statSync } from "fs";
 import { join } from "path";
 import { homedir } from "os";
@@ -14,7 +14,7 @@ var CircularDependencyError = class extends Error {
   }
 };
 
-// src/skill-router.ts
+// src/lib/skill-router.ts
 var PROMPT_WEIGHTS = {
   multiple_files: 0.2,
   task_conjunctions: 0.15,

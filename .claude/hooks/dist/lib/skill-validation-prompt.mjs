@@ -41,7 +41,7 @@ var init_project_id = __esm({
   }
 });
 
-// src/skill-validation-prompt.ts
+// src/lib/skill-validation-prompt.ts
 var AMBIGUOUS_KEYWORDS = /* @__PURE__ */ new Set([
   "commit",
   "push",

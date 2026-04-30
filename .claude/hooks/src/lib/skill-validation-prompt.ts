@@ -313,22 +313,26 @@ export function filterValidatedSkills(
   const effectiveProjectId = projectId ?? resolveProjectIdFromEnv();
   return matches.filter((match) => {
     const scopedKey = getValidationCacheKey(match.skillName, effectiveProjectId);
-    // Prefer scoped key; fall back to legacy bare-name key for backward compat.
-    const result =
-      validationResults.get(scopedKey) ?? validationResults.get(match.skillName);
+    // When we know the project, only use the project-scoped result. Falling
+    // back to a bare-name key would let one project's validation outcome leak
+    // into another project that happens to evaluate the same skill name.
+    // Only honor the legacy bare-name key when we genuinely have no project
+    // context (preserves backward compat for older callers).
+    const result = effectiveProjectId
+      ? validationResults.get(scopedKey)
+      : validationResults.get(scopedKey) ?? validationResults.get(match.skillName);
 
     // If no validation was done, keep the match
     if (!result) {
       return true;
     }
 
-    // Skip if decision is skip
-    if (result.decision === 'skip') {
-      return false;
-    }
-
-    // Skip if confidence is below threshold
-    if (result.confidence < confidenceThreshold) {
+    // Fail-open: only drop the match when the validator is *confidently*
+    // saying skip. A low-confidence skip is treated as inconclusive and the
+    // match is preserved. An 'activate' decision always keeps the match
+    // regardless of confidence — dropping a positive activation because of
+    // low confidence would silently suppress matches.
+    if (result.decision === 'skip' && result.confidence >= confidenceThreshold) {
       return false;
     }
 

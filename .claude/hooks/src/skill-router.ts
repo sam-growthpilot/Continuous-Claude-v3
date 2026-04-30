@@ -16,6 +16,7 @@
 
 import { readFileSync, existsSync, readdirSync, statSync } from 'fs';
 import { join } from 'path';
+import { homedir } from 'os';
 import {
     SkillRouterAPIInput,
     SkillRouterAPIOutput,
@@ -85,6 +86,10 @@ const KNOWN_ORCHESTRATION_PATTERNS: ReadonlySet<string> = new Set([
 const REDOS_SHAPES: RegExp[] = [
   /\([^)]*[+*][^)]*\)\s*[+*]/,           // (X+)+ , (X*)*, (X+)*, (X*)+ etc.
   /\(([^|()]+)\|\1\)\s*[+*]/,            // (a|a)+
+  // Overlapping alternations like (a|aa)+ where one branch is a prefix of another.
+  // These bypass the identical-branch check above but exhibit the same exponential
+  // backtracking on inputs like "aaaa...x".
+  /\(([^|()]+)\|(\1[^|()]*|[^|()]*\1)\)\s*[+*]/,
 ];
 
 /**
@@ -144,7 +149,7 @@ const AGENT_TYPES: Record<string, string> = {
 // =============================================================================
 
 function loadSkillRules(): SkillRulesConfig {
-    const homeDir = process.env.HOME || process.env.USERPROFILE || '';
+    const homeDir = homedir();
     const rulesPath = join(homeDir, '.claude', 'skills', 'skill-rules.json');
 
     if (!existsSync(rulesPath)) {
@@ -845,11 +850,18 @@ async function main() {
     // Read JSON from stdin
     let inputData: SkillRouterAPIInput;
 
+    if (process.stdin.isTTY) {
+        // No piped input — print usage to stderr so JSON consumers don't choke
+        // on the help text mixed into stdout.
+        console.error('skill-router: expected JSON on stdin (e.g. echo \'{"task":"..."}\' | skill-router)');
+        process.exit(2);
+    }
+
     try {
         const input = readFileSync(0, 'utf-8');
         inputData = JSON.parse(input);
     } catch {
-        console.log(JSON.stringify({ error: 'Invalid JSON input or no input provided' }));
+        console.error('skill-router: invalid JSON input or no input provided');
         process.exit(1);
     }
 
