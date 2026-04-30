@@ -13,7 +13,7 @@
 
 import { describe, it, expect, beforeAll, beforeEach, afterEach } from 'vitest';
 import { spawnSync } from 'child_process';
-import { existsSync, mkdtempSync, rmSync, writeFileSync } from 'fs';
+import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'fs';
 import { join, resolve } from 'path';
 import { tmpdir } from 'os';
 import { fileURLToPath } from 'url';
@@ -85,7 +85,7 @@ describe('session-start-init-check: .claude path skip warning (Phase 3A)', () =>
   it('emits stderr warning when projectDir contains .claude', () => {
     // Build a path that contains '.claude' but NOT 'continuous-claude'
     const claudePath = join(tempDir, '.claude', 'sub');
-    require('fs').mkdirSync(claudePath, { recursive: true });
+    mkdirSync(claudePath, { recursive: true });
 
     const result = runHook(claudePath);
 
@@ -100,7 +100,7 @@ describe('session-start-init-check: .claude path skip warning (Phase 3A)', () =>
     // continuous-claude paths bypass the .claude skip
     // Just ensure no skip warning fires for a continuous-claude path
     const ccPath = join(tempDir, 'continuous-claude-fake', '.claude');
-    require('fs').mkdirSync(ccPath, { recursive: true });
+    mkdirSync(ccPath, { recursive: true });
 
     const result = runHook(ccPath);
 

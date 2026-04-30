@@ -8,7 +8,7 @@
  * No external deps -- Node built-ins only.
  */
 
-import { mkdtemp, mkdir, writeFile, rm, copyFile, stat } from 'node:fs/promises';
+import { mkdtemp, mkdir, writeFile, rm, copyFile, stat, utimes } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -88,7 +88,12 @@ export async function backupFile(sourcePath) {
   const ts = Date.now();
   const safeName = sourcePath.replace(/[\\/:]/g, '_').slice(-80);
   const backupPath = join(tmpdir(), `ccv3-backup-${safeName}-${ts}`);
+  // Capture original timestamps before copyFile (which would set the dest's
+  // mtime to "now" and break our claim that backup/restore is byte-and-time
+  // identical to the original).
+  const srcStat = await stat(sourcePath);
   await copyFile(sourcePath, backupPath);
+  await utimes(backupPath, srcStat.atime, srcStat.mtime);
   const sha256 = await hashFile(backupPath);
   return { backupPath, sha256 };
 }
@@ -105,7 +110,12 @@ export async function restoreFile(backupPath, targetPath, expectedSha256) {
   if (!existsSync(backupPath)) {
     return { restored: false, hashMatched: false };
   }
+  // The backup carries the original mtime (see backupFile). After copying
+  // back to the target, replay those timestamps so callers can rely on
+  // "restored == bit-for-bit and time-for-time identical to original".
+  const backupStat = await stat(backupPath);
   await copyFile(backupPath, targetPath);
+  await utimes(targetPath, backupStat.atime, backupStat.mtime);
   const actualSha = await hashFile(targetPath);
   return { restored: true, hashMatched: actualSha === expectedSha256 };
 }

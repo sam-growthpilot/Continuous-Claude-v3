@@ -239,28 +239,43 @@ def reset_postgres_pool():
 
 @pytest.fixture
 def cleanup_db(canary_prefix):
-    """Remove rows tagged with this run's canary session_ids after the test."""
+    """Remove canary rows BEFORE and AFTER the test.
+
+    Pre-clean: a previously-failed run (e.g. crashed mid-test, or a
+    differently-named canary that happened to hash-collide with this one's
+    LIKE pattern) could leave stale rows that make this test pass for the
+    wrong reason or fail spuriously. Cleaning up-front guarantees the test
+    starts from a known-empty state for its canary prefix space.
+
+    Post-clean: leave the table the way we found it for the next test /
+    developer.
+    """
+
+    def _clean_sync():
+        try:
+            import asyncpg  # type: ignore
+
+            url = os.environ.get("DATABASE_URL")
+            if not url:
+                return
+
+            async def _delete():
+                conn = await asyncpg.connect(url)
+                try:
+                    await conn.execute(
+                        "DELETE FROM archival_memory WHERE session_id LIKE $1",
+                        canary_prefix + "%",
+                    )
+                finally:
+                    await conn.close()
+
+            asyncio.run(_delete())
+        except Exception:
+            pass
+
+    _clean_sync()  # pre-test
     yield
-    try:
-        import asyncpg  # type: ignore
-
-        url = os.environ.get("DATABASE_URL")
-        if not url:
-            return
-
-        async def _delete():
-            conn = await asyncpg.connect(url)
-            try:
-                await conn.execute(
-                    "DELETE FROM archival_memory WHERE session_id LIKE $1",
-                    canary_prefix + "%",
-                )
-            finally:
-                await conn.close()
-
-        asyncio.run(_delete())
-    except Exception:
-        pass
+    _clean_sync()  # post-test
 
 
 @pytest.mark.skipif(

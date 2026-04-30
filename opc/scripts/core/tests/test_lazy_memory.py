@@ -165,26 +165,27 @@ def test_extract_session_learnings_empty_returns_list(tmp_path, canary_session_i
     assert result == []
 
 
-def test_extract_session_learnings_no_thinking_blocks(tmp_path, canary_session_id):
+def test_extract_session_learnings_no_thinking_blocks(
+    tmp_path, canary_session_id, monkeypatch
+):
     """JSONL exists but contains no perception-signal thinking blocks -> []."""
-    # Make a JSONL the find logic will pick up
-    project_folder = (
-        str(tmp_path).replace("\\", "-").replace("/", "-").replace(":", "-").replace(".", "-").rstrip("-")
-    )
-    proj_dir = Path.home() / ".claude" / "projects" / project_folder
-    proj_dir.mkdir(parents=True, exist_ok=True)
-    jsonl = proj_dir / f"{canary_session_id}.jsonl"
+    # Write the JSONL into tmp_path (auto-cleaned by pytest) instead of real
+    # Path.home() / .claude / projects / ..., then redirect the lookup so the
+    # extractor finds it. Avoids polluting the developer's real home dir and
+    # eliminates inter-test races on shared paths.
+    jsonl = tmp_path / f"{canary_session_id}.jsonl"
     jsonl.write_text(
         json.dumps({"type": "assistant", "message": {"content": [{"type": "text", "text": "boring"}]}}) + "\n",
         encoding="utf-8",
     )
-    try:
-        result = lazy_memory.extract_session_learnings(
-            canary_session_id, str(tmp_path), store=False
-        )
-        assert result == []
-    finally:
-        jsonl.unlink(missing_ok=True)
+    monkeypatch.setattr(
+        lazy_memory, "find_session_jsonl", lambda sid, pd: jsonl
+    )
+
+    result = lazy_memory.extract_session_learnings(
+        canary_session_id, str(tmp_path), store=False
+    )
+    assert result == []
 
 
 # ---------------------------------------------------------------------------
