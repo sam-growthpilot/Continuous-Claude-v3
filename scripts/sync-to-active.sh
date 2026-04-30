@@ -75,6 +75,9 @@ for dir in $SYNC_DIRS; do
 done
 
 # Sync top-level .claude/*.md files (canonical entry points / redirect stubs)
+# mkdir -p the target root first -- a fresh-install machine may not have ~/.claude/
+# yet, and `cp file dir/` requires the dir to exist.
+$DRY_RUN || mkdir -p "$ACTIVE_CLAUDE"
 for src_file in "$REPO_CLAUDE"/*.md; do
     [[ ! -f "$src_file" ]] && continue
     base=$(basename "$src_file")

@@ -21,7 +21,7 @@
 import { spawn, spawnSync } from 'node:child_process';
 import { writeFile, readFile, mkdir, rm } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
-import { tmpdir, hostname } from 'node:os';
+import { tmpdir, hostname, homedir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { createHash } from 'node:crypto';
 
@@ -38,10 +38,13 @@ import {
 // Constants & flags
 // ---------------------------------------------------------------------------
 
-const REPO_ROOT = 'C:/Users/david.hayes/continuous-claude';
-const HOOKS_DIST = 'C:/Users/david.hayes/.claude/hooks/dist';
-const SKILL_EVAL = 'C:/Users/david.hayes/.claude/skills/_eval';
-const LINKMAP = 'C:/Users/david.hayes/Projects/LinkMap';
+// REPO_ROOT defaults to the harness's own repo (this file lives at <repo>/scripts/).
+// HOME-derived paths use homedir() so the harness runs unchanged on any workstation.
+const HOME = process.env.HOME || process.env.USERPROFILE || homedir();
+const REPO_ROOT = process.env.CCV3_REPO_ROOT || resolve(process.cwd());
+const HOOKS_DIST = process.env.CCV3_HOOKS_DIST || join(HOME, '.claude', 'hooks', 'dist').replace(/\\/g, '/');
+const SKILL_EVAL = process.env.CCV3_SKILL_EVAL || join(HOME, '.claude', 'skills', '_eval').replace(/\\/g, '/');
+const LINKMAP = process.env.CCV3_LINKMAP || join(HOME, 'Projects', 'LinkMap').replace(/\\/g, '/');
 const PG_CONTAINER = 'continuous-claude-postgres';
 const TS = new Date().toISOString();
 const TS_SHORT = new Date().toISOString().slice(0, 10);
@@ -984,11 +987,16 @@ async function main() {
 
     if (FLAGS.freshProjectOnly) {
       // Skip everything else; the finally block writes the report.
-      return;
+      // Note: we deliberately set a flag here rather than return-ing, so that
+      // execution falls through to the outer exit-code computation below.
+      // A bare `return;` from inside the try block would skip the
+      // probe-outcome check after finally and always exit 0, masking probe
+      // FAILures under --fresh-project-only.
+      state.skipExistingHarnesses = true;
     }
 
     // ---- Existing-harness domains ----
-    if (!FLAGS.isolationOnly) {
+    if (!state.skipExistingHarnesses && !FLAGS.isolationOnly) {
       if (!FLAGS.quick) {
         state.vitest = await runVitestBaseline();
         state.pytest = await runPytestBaseline();
@@ -998,7 +1006,9 @@ async function main() {
     }
 
     // ---- Domain 8: isolation probes ----
-    state.isolation = await runIsolationProbes();
+    if (!state.skipExistingHarnesses) {
+      state.isolation = await runIsolationProbes();
+    }
   } catch (err) {
     log(`Fatal error: ${err.message}`);
     state.fatalError = err.message;

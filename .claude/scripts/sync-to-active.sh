@@ -49,6 +49,28 @@ copy_dir() {
 
     $DRY_RUN || mkdir -p "$dst_path"
 
+    # Prefer rsync --delete for one-shot copy + cleanup of stale files.
+    # Falls back to manual copy + post-pass deletion if rsync is unavailable.
+    if command -v rsync &> /dev/null; then
+        if $DRY_RUN; then
+            rsync -a --delete --dry-run \
+                --exclude='*.pid' --exclude='*.lock' \
+                --exclude='.tldr/' --exclude='node_modules/' \
+                --exclude='cache/' --exclude='dist/' \
+                "$src_path/" "$dst_path/" 2>/dev/null \
+                | sed -n 's/^/[DRY RUN] /p'
+        else
+            rsync -a --delete \
+                --exclude='*.pid' --exclude='*.lock' \
+                --exclude='.tldr/' --exclude='node_modules/' \
+                --exclude='cache/' --exclude='dist/' \
+                "$src_path/" "$dst_path/"
+            $VERBOSE && echo "rsync'd: $dir (with --delete)" || true
+        fi
+        return 0
+    fi
+
+    # Fallback: copy each source file, then delete dest files with no source.
     while IFS= read -r src_file; do
         local rel="${src_file#$src_path/}"
         local dst_file="$dst_path/$rel"
@@ -68,6 +90,20 @@ copy_dir() {
             $VERBOSE && echo "Copied: $dir/$rel" || true
         fi
     done < <(find "$src_path" -type f ! -name "*.pid" ! -name "*.lock" ! -path "*/.tldr/*" ! -path "*/node_modules/*" ! -path "*/cache/*" ! -path "*/dist/*" 2>/dev/null)
+
+    # Post-pass: delete destination files that no longer exist in the source.
+    # This mirrors `rsync --delete` semantics so removals in the repo propagate.
+    while IFS= read -r dst_file; do
+        local rel="${dst_file#$dst_path/}"
+        local src_file="$src_path/$rel"
+        [[ -f "$src_file" ]] && continue
+        if $DRY_RUN; then
+            echo "[DRY RUN] Would delete (orphan): $dst_file"
+        else
+            rm -f "$dst_file"
+            $VERBOSE && echo "Deleted (orphan): $dir/$rel" || true
+        fi
+    done < <(find "$dst_path" -type f ! -name "*.pid" ! -name "*.lock" ! -path "*/.tldr/*" ! -path "*/node_modules/*" ! -path "*/cache/*" ! -path "*/dist/*" 2>/dev/null)
 }
 
 for dir in $SYNC_DIRS; do

@@ -15,9 +15,11 @@
 
 import { readFileSync, readdirSync, statSync, existsSync } from "node:fs";
 import { join, basename } from "node:path";
+import { homedir } from "node:os";
 
-const REPO = process.env.REPO || "C:/Users/david.hayes/continuous-claude";
-const ACTIVE = process.env.ACTIVE || "C:/Users/david.hayes/.claude";
+const HOME = homedir();
+const REPO = process.env.REPO || join(HOME, "continuous-claude");
+const ACTIVE = process.env.ACTIVE || join(HOME, ".claude");
 
 const SRC_DIR = join(REPO, ".claude/hooks/src");
 const DIST_DIR = join(REPO, ".claude/hooks/dist");
