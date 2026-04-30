@@ -2,8 +2,9 @@
 
 // src/lib/skill-router.ts
 import { readFileSync, existsSync, readdirSync, statSync } from "fs";
-import { join } from "path";
+import { join, resolve } from "path";
 import { homedir } from "os";
+import { fileURLToPath } from "url";
 
 // src/shared/skill-router-types.ts
 var CircularDependencyError = class extends Error {
@@ -572,10 +573,15 @@ async function main() {
     console.error("skill-router: invalid JSON input or no input provided");
     process.exit(1);
   }
+  if (!inputData || typeof inputData !== "object" || Array.isArray(inputData) || typeof inputData.task !== "string" || inputData.task.trim().length === 0) {
+    console.error('skill-router: input must be an object with a non-empty "task" string');
+    process.exit(1);
+  }
   const result = route(inputData);
   console.log(JSON.stringify(result, null, 2));
 }
-if (process.argv[1] && process.argv[1].includes("skill-router")) {
+var isDirectExecution = typeof process.argv[1] === "string" && resolve(process.argv[1]) === fileURLToPath(import.meta.url);
+if (isDirectExecution) {
   main().catch((err) => {
     console.error("Error:", err);
     process.exit(1);

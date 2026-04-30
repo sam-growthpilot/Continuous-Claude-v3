@@ -1,5 +1,6 @@
 // src/lib/transcript-parser.ts
 import * as fs from "fs";
+import { pathToFileURL } from "url";
 function parseTranscript(transcriptPath) {
   const summary = {
     lastTodos: [],
@@ -44,11 +45,15 @@ function parseTranscript(transcriptPath) {
           if (toolName === "TodoWrite" || toolName.toLowerCase().includes("todowrite")) {
             const input = entry.tool_input;
             if (input?.todos) {
-              lastTodoState = input.todos.map((t, idx) => ({
-                id: t.id || `todo-${idx}`,
-                content: t.content || "",
-                status: t.status || "pending"
-              }));
+              lastTodoState = input.todos.map((t, idx) => {
+                const rawStatus = t.status;
+                const status = rawStatus === "pending" || rawStatus === "in_progress" || rawStatus === "completed" ? rawStatus : "pending";
+                return {
+                  id: t.id || `todo-${idx}`,
+                  content: t.content || "",
+                  status
+                };
+              });
             }
           }
           if (toolName === "Edit" || toolName === "Write" || toolName.toLowerCase().includes("edit") || toolName.toLowerCase().includes("write")) {
@@ -251,7 +256,7 @@ function generateAutoHandoff(summary, sessionName) {
   }
   return lines.join("\n");
 }
-var isMainModule = import.meta.url === `file://${process.argv[1]}`;
+var isMainModule = Boolean(process.argv[1]) && import.meta.url === pathToFileURL(process.argv[1]).href;
 if (isMainModule) {
   const args = process.argv.slice(2);
   if (args.length === 0) {

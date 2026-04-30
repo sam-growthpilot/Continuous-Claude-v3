@@ -12,6 +12,9 @@
  * 3. Response parsing utilities
  */
 
+import { createHash } from 'node:crypto';
+import { resolve as resolvePath } from 'node:path';
+
 /**
  * Represents a skill match that may need validation
  */
@@ -290,9 +293,15 @@ function resolveProjectIdFromEnv(): string | undefined {
       return mod.getActiveProjectId() as string;
     }
   } catch {
-    // shared/project-id may not be importable in pure unit tests
+    // shared/project-id may not be importable in pure unit tests;
+    // fall through to the deterministic-hash fallback below.
   }
-  return undefined;
+  // Mirror shared/project-id.ts's deterministic fallback so a runtime
+  // resolver fault doesn't silently revert to bare-name (cross-project)
+  // cache lookups in filterValidatedSkills. Returning undefined here would
+  // re-enable the very cross-project leak this module was hardened against.
+  const dir = process.env.CLAUDE_PROJECT_DIR || process.cwd();
+  return createHash('sha256').update(resolvePath(dir)).digest('hex').substring(0, 16);
 }
 
 /**

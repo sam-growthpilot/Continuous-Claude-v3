@@ -42,6 +42,8 @@ var init_project_id = __esm({
 });
 
 // src/skill-validation-prompt.ts
+import { createHash as createHash2 } from "node:crypto";
+import { resolve as resolvePath } from "node:path";
 var AMBIGUOUS_KEYWORDS = /* @__PURE__ */ new Set([
   "commit",
   "push",
@@ -208,7 +210,8 @@ function resolveProjectIdFromEnv() {
     }
   } catch {
   }
-  return void 0;
+  const dir = process.env.CLAUDE_PROJECT_DIR || process.cwd();
+  return createHash2("sha256").update(resolvePath(dir)).digest("hex").substring(0, 16);
 }
 function filterValidatedSkills(matches, validationResults, confidenceThreshold = 0.5, projectId) {
   const effectiveProjectId = projectId ?? resolveProjectIdFromEnv();

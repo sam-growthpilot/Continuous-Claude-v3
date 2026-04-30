@@ -6,6 +6,7 @@
  */
 
 import * as fs from 'fs';
+import { pathToFileURL } from 'url';
 
 // ============================================================================
 // Type Definitions
@@ -131,11 +132,23 @@ export function parseTranscript(transcriptPath: string): TranscriptSummary {
           if (toolName === 'TodoWrite' || toolName.toLowerCase().includes('todowrite')) {
             const input = entry.tool_input as TodoWriteInput | undefined;
             if (input?.todos) {
-              lastTodoState = input.todos.map((t, idx) => ({
-                id: t.id || `todo-${idx}`,
-                content: t.content || '',
-                status: (t.status as TodoItem['status']) || 'pending'
-              }));
+              lastTodoState = input.todos.map((t, idx) => {
+                // Whitelist allowed status values; the type system can't
+                // protect us from a transcript that contains arbitrary
+                // strings (corrupt JSONL, schema drift, etc.).
+                const rawStatus = t.status as unknown;
+                const status: TodoItem['status'] =
+                  rawStatus === 'pending' ||
+                  rawStatus === 'in_progress' ||
+                  rawStatus === 'completed'
+                    ? rawStatus
+                    : 'pending';
+                return {
+                  id: t.id || `todo-${idx}`,
+                  content: t.content || '',
+                  status,
+                };
+              });
             }
           }
 
@@ -401,8 +414,13 @@ export function generateAutoHandoff(summary: TranscriptSummary, sessionName: str
 // ============================================================================
 
 // Allow running as CLI for testing: npx tsx transcript-parser.ts /path/to/transcript.jsonl
-// ES module compatible entry point check
-const isMainModule = import.meta.url === `file://${process.argv[1]}`;
+// ES module compatible entry point check. Build the comparison via
+// pathToFileURL() so platform-specific quirks (Windows drive letters,
+// percent-encoded spaces) don't make a hand-built `file://...` string
+// silently fail to match.
+const isMainModule =
+  Boolean(process.argv[1]) &&
+  import.meta.url === pathToFileURL(process.argv[1]).href;
 
 if (isMainModule) {
   const args = process.argv.slice(2);

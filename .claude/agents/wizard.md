@@ -29,11 +29,12 @@ If any of those files is missing, stop and report it — setup cannot proceed wi
 ### Phase 1: Preflight
 
 1. Confirm Git is installed: `git --version`
-2. Confirm Python is installed and >= 3.11: `python --version` (use `python` on Windows, never `python3`)
+2. Confirm Python is installed and >= 3.11. The command name differs by platform: use `python --version` on Windows (where `python3` triggers the Microsoft Store alias and fails), and `python3 --version` on Linux/macOS (where `python` may be missing or pinned to 2.x).
 3. Confirm Docker is installed and running: `docker info`
 4. Confirm Node.js is installed: `node --version`
 5. Confirm Bash is available: `bash --version` (Windows users: this requires Git Bash or WSL; downstream phases shell out to bash and will fail without it)
 6. Confirm the user is operating from the cloned repo: `git rev-parse --show-toplevel`
+7. Confirm this is a fresh installation: `~/.claude/CLAUDE.md` must NOT already exist. If it does, stop and ask the user before proceeding -- running the wizard on an already-configured machine can overwrite working config.
 
 If any preflight check fails, halt and tell the user what to install before continuing. Do not proceed to wizard.py if the preflight fails.
 
@@ -57,6 +58,8 @@ If any preflight check fails, halt and tell the user what to install before cont
 
 After verification passes:
 
+The smoke tests below reference `$CLAUDE_OPC_DIR` and `$CLAUDE_PROJECT_DIR`. wizard.py exports those into the user's shell profile, but the *current* shell session won't see them until the profile is re-sourced. Before running these tests, either open a new terminal session, or source the profile (`. ~/.bashrc` / `. ~/.zshrc`) so the variables resolve. If they're still empty, fall back to absolute paths (`$HOME/continuous-claude` and `$HOME/continuous-claude/opc`) and tell the user to open a fresh shell next time.
+
 1. Test memory: `cd "$CLAUDE_OPC_DIR" && PYTHONPATH=. uv run python scripts/core/recall_learnings.py --query "test" --k 1 --text-only`
 2. Test hooks built: `ls "$CLAUDE_PROJECT_DIR/.claude/hooks/dist/"*.mjs | head -5`
 3. Test sync: `bash "$CLAUDE_PROJECT_DIR/scripts/sync-to-active.sh" --verbose 2>&1 | tail -20`
@@ -67,13 +70,13 @@ After verification passes:
 - Do not modify `wizard.py`, `BOOTSTRAP.md`, or `verify-setup.sh` (they are source-of-truth artifacts)
 - Do not skip preflight when the user is impatient — failures cost more later
 - Do not invent API keys or credentials. If the wizard asks for them, escalate to the user.
-- Do not run on an already-configured machine without explicit user approval (it can overwrite working config). Check for existence of `~/.claude/CLAUDE.md` and stop if it exists.
+- Do not run on an already-configured machine without explicit user approval. Phase 1 step 7 enforces this -- if `~/.claude/CLAUDE.md` exists, halt rather than proceed.
 
 ## Output Convention
 
 Write a structured setup report to:
 
-```
+```text
 $CLAUDE_PROJECT_DIR/.claude/cache/agents/wizard/latest-output.md
 ```
 

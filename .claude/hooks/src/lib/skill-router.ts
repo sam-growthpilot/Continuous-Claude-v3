@@ -15,8 +15,9 @@
  */
 
 import { readFileSync, existsSync, readdirSync, statSync } from 'fs';
-import { join } from 'path';
+import { join, resolve } from 'path';
 import { homedir } from 'os';
+import { fileURLToPath } from 'url';
 import {
     SkillRouterAPIInput,
     SkillRouterAPIOutput,
@@ -865,12 +866,33 @@ async function main() {
         process.exit(1);
     }
 
+    // Validate payload shape before routing. JSON.parse accepts arrays,
+    // strings, numbers, and {"task": ""} -- all of which would silently
+    // produce empty/garbage routing decisions downstream.
+    if (
+        !inputData ||
+        typeof inputData !== 'object' ||
+        Array.isArray(inputData) ||
+        typeof (inputData as { task?: unknown }).task !== 'string' ||
+        (inputData as { task: string }).task.trim().length === 0
+    ) {
+        console.error('skill-router: input must be an object with a non-empty "task" string');
+        process.exit(1);
+    }
+
     const result = route(inputData);
     console.log(JSON.stringify(result, null, 2));
 }
 
-// Only run CLI if executed directly
-if (process.argv[1] && process.argv[1].includes('skill-router')) {
+// Only run CLI if executed directly. Use a strict file-URL comparison so
+// importing this module from another bundle never triggers main(); a
+// substring check on argv[1] would fire for any path containing
+// 'skill-router' (including symlinks, build artifacts, or test wrappers).
+const isDirectExecution =
+    typeof process.argv[1] === 'string' &&
+    resolve(process.argv[1]) === fileURLToPath(import.meta.url);
+
+if (isDirectExecution) {
     main().catch(err => {
         console.error('Error:', err);
         process.exit(1);

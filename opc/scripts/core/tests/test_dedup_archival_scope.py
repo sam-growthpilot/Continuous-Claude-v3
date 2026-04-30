@@ -185,8 +185,22 @@ def cleanup_db(canary_prefix):
                 await conn.close()
 
         asyncio.run(_delete())
-    except Exception:
+    except ModuleNotFoundError:
+        # asyncpg not available in this environment -- the test itself
+        # would have skipped, so there is nothing to clean up.
         pass
+    except Exception as exc:  # pragma: no cover -- surfaced via warnings
+        # A bare `pass` here can hide real teardown regressions and leave
+        # canary rows behind that pollute future runs of this same test.
+        # Surface it via warnings.warn so pytest reports it without the
+        # fixture itself failing (which would mask the underlying test
+        # outcome the user actually cares about).
+        import warnings
+        warnings.warn(
+            f"cleanup_db: failed to delete canary rows for "
+            f"{canary_prefix!r}: {exc!r}",
+            stacklevel=1,
+        )
 
 
 @pytest.mark.skipif(
@@ -205,10 +219,14 @@ def test_fetch_pairs_does_not_cluster_cross_project_rows(
     """
     import asyncpg  # type: ignore
 
-    url = (
-        os.environ.get("OPC_POSTGRES_URL")
-        or os.environ.get("DATABASE_URL")
-    )
+    # Use the same DSN resolution order as dedup_mod._fetch_pairs() so
+    # seeding and the assertion target the same database. Hand-rolling the
+    # lookup here drifted out of sync with the module (which also accepts
+    # AGENTICA_POSTGRES_URL between OPC and DATABASE), and the diverging
+    # answers can vacuously satisfy the assertion when env vars differ.
+    url = dedup_mod._get_dsn()
+    if not url:
+        pytest.skip("no Postgres DSN env var (OPC_POSTGRES_URL/DATABASE_URL/AGENTICA_POSTGRES_URL)")
 
     project_a = "phase-a3-project-A-" + uuid.uuid4().hex[:8]
     project_b = "phase-a3-project-B-" + uuid.uuid4().hex[:8]
