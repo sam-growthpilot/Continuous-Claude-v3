@@ -208,6 +208,56 @@ export function parseTranscript(transcriptPath: string): TranscriptSummary {
 // ============================================================================
 
 /**
+ * Escape a dynamic value for safe embedding inside a YAML double-quoted string.
+ * Handles: backslash, double-quote, control chars, unprintables, and the
+ * non-printable characters YAML 1.2 forbids in flow scalars.
+ *
+ * Use as: `key: "${yamlSafe(value)}"` -- the surrounding quotes are caller-supplied.
+ * Returns an empty string for null/undefined.
+ */
+function yamlSafe(value: unknown): string {
+  if (value === null || value === undefined) return '';
+  const s = typeof value === 'string' ? value : String(value);
+  let out = '';
+  for (let i = 0; i < s.length; i++) {
+    const ch = s.charCodeAt(i);
+    // YAML 1.2 double-quoted: \\, \", \t, \n, \r, \0, \b, \f
+    if (ch === 0x5c) { out += '\\\\'; continue; }      // backslash
+    if (ch === 0x22) { out += '\\"'; continue; }       // double quote
+    if (ch === 0x09) { out += '\\t'; continue; }       // tab
+    if (ch === 0x0a) { out += '\\n'; continue; }       // newline
+    if (ch === 0x0d) { out += '\\r'; continue; }       // carriage return
+    if (ch === 0x00) { out += '\\0'; continue; }       // null
+    if (ch === 0x08) { out += '\\b'; continue; }       // backspace
+    if (ch === 0x0c) { out += '\\f'; continue; }       // form feed
+    // Other C0/C1 controls: drop or hex-escape
+    if (ch < 0x20 || (ch >= 0x7f && ch < 0xa0)) {
+      out += '\\x' + ch.toString(16).padStart(2, '0');
+      continue;
+    }
+    out += s[i];
+  }
+  return out;
+}
+
+/**
+ * Escape a dynamic value for safe embedding inside a YAML plain scalar
+ * (no surrounding quotes). Strips/quotes characters that would break parsing
+ * (`:`, `#`, leading `-`, control chars, leading/trailing whitespace).
+ * Returns the value wrapped in double quotes when escaping is needed.
+ */
+function yamlScalar(value: unknown): string {
+  if (value === null || value === undefined) return '""';
+  const s = typeof value === 'string' ? value : String(value);
+  // If the value is empty or contains chars that can confuse YAML, emit a quoted form.
+  // We're conservative: any char outside [A-Za-z0-9 _./-] triggers quoting.
+  if (s.length === 0 || /[^A-Za-z0-9 _./\-]/.test(s) || /^\s|\s$/.test(s) || /^[-?@`!&*|>'%,\[\]\{\}#]/.test(s)) {
+    return `"${yamlSafe(s)}"`;
+  }
+  return s;
+}
+
+/**
  * Generate a YAML auto-handoff document from a transcript summary.
  * Uses the same format as /create_handoff for consistency.
  *
@@ -232,16 +282,16 @@ export function generateAutoHandoff(summary: TranscriptSummary, sessionName: str
 
   // YAML frontmatter
   lines.push('---');
-  lines.push(`session: ${sessionName}`);
-  lines.push(`date: ${dateOnly}`);
+  lines.push(`session: ${yamlScalar(sessionName)}`);
+  lines.push(`date: ${yamlScalar(dateOnly)}`);
   lines.push('status: partial');
   lines.push('outcome: PARTIAL_PLUS');
   lines.push('---');
   lines.push('');
 
   // Required fields for statusline
-  lines.push(`goal: ${goalSummary}`);
-  lines.push(`now: ${currentTask}`);
+  lines.push(`goal: ${yamlScalar(goalSummary)}`);
+  lines.push(`now: ${yamlScalar(currentTask)}`);
   lines.push('test: # No test command captured');
   lines.push('');
 
@@ -249,7 +299,7 @@ export function generateAutoHandoff(summary: TranscriptSummary, sessionName: str
   lines.push('done_this_session:');
   if (completed.length > 0) {
     completed.forEach(t => {
-      lines.push(`  - task: "${t.content.replace(/"/g, '\\"')}"`);
+      lines.push(`  - task: "${yamlSafe(t.content)}"`);
       lines.push('    files: []');
     });
   } else {
@@ -262,7 +312,7 @@ export function generateAutoHandoff(summary: TranscriptSummary, sessionName: str
   lines.push('blockers:');
   if (summary.errorsEncountered.length > 0) {
     summary.errorsEncountered.slice(0, 3).forEach(e => {
-      const safeError = e.replace(/"/g, '\\"').substring(0, 100);
+      const safeError = yamlSafe(typeof e === 'string' ? e.substring(0, 100) : String(e).substring(0, 100));
       lines.push(`  - "${safeError}"`);
     });
   } else {
@@ -274,7 +324,7 @@ export function generateAutoHandoff(summary: TranscriptSummary, sessionName: str
   lines.push('questions:');
   if (pending.length > 0) {
     pending.slice(0, 3).forEach(t => {
-      lines.push(`  - "Resume: ${t.content.replace(/"/g, '\\"')}"`);
+      lines.push(`  - "Resume: ${yamlSafe(t.content)}"`);
     });
   } else {
     lines.push('  []');
@@ -288,15 +338,15 @@ export function generateAutoHandoff(summary: TranscriptSummary, sessionName: str
 
   // Findings
   lines.push('findings:');
-  lines.push(`  - tool_calls: "${summary.recentToolCalls.length} recent tool calls"`);
-  lines.push(`  - files_modified: "${summary.filesModified.length} files changed"`);
+  lines.push(`  - tool_calls: "${yamlSafe(summary.recentToolCalls.length + ' recent tool calls')}"`);
+  lines.push(`  - files_modified: "${yamlSafe(summary.filesModified.length + ' files changed')}"`);
   lines.push('');
 
   // Worked/Failed
   lines.push('worked:');
   const successfulTools = summary.recentToolCalls.filter(t => t.success);
   if (successfulTools.length > 0) {
-    lines.push(`  - "${successfulTools.map(t => t.name).join(', ')} completed successfully"`);
+    lines.push(`  - "${yamlSafe(successfulTools.map(t => t.name).join(', ') + ' completed successfully')}"`);
   } else {
     lines.push('  []');
   }
@@ -305,7 +355,7 @@ export function generateAutoHandoff(summary: TranscriptSummary, sessionName: str
   lines.push('failed:');
   const failedTools = summary.recentToolCalls.filter(t => !t.success);
   if (failedTools.length > 0) {
-    lines.push(`  - "${failedTools.map(t => t.name).join(', ')} encountered errors"`);
+    lines.push(`  - "${yamlSafe(failedTools.map(t => t.name).join(', ') + ' encountered errors')}"`);
   } else {
     lines.push('  []');
   }
@@ -314,11 +364,11 @@ export function generateAutoHandoff(summary: TranscriptSummary, sessionName: str
   // Next steps
   lines.push('next:');
   if (inProgress.length > 0) {
-    lines.push(`  - "Continue: ${inProgress[0].content.replace(/"/g, '\\"')}"`);
+    lines.push(`  - "Continue: ${yamlSafe(inProgress[0].content)}"`);
   }
   if (pending.length > 0) {
     pending.slice(0, 2).forEach(t => {
-      lines.push(`  - "${t.content.replace(/"/g, '\\"')}"`);
+      lines.push(`  - "${yamlSafe(t.content)}"`);
     });
   }
   if (inProgress.length === 0 && pending.length === 0) {
@@ -332,7 +382,7 @@ export function generateAutoHandoff(summary: TranscriptSummary, sessionName: str
   lines.push('  modified:');
   if (summary.filesModified.length > 0) {
     summary.filesModified.slice(0, 10).forEach(f => {
-      lines.push(`    - "${f}"`);
+      lines.push(`    - "${yamlSafe(f)}"`);
     });
   } else {
     lines.push('    []');

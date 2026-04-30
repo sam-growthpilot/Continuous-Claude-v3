@@ -261,19 +261,61 @@ export async function validateSkillRelevance(
 }
 
 /**
+ * Build a project-scoped cache key for validation results.
+ *
+ * Validation outcomes can differ per project (e.g. "commit" might mean
+ * git-commit in repo A but "commit to a decision" in repo B), so we key the
+ * cache by `${skillName}::${projectId}`. Falls back to `${skillName}::global`
+ * when no project ID is available so legacy single-project callers keep
+ * working.
+ *
+ * Callers should populate `validationResults` with these composite keys.
+ */
+export function getValidationCacheKey(skillName: string, projectId?: string): string {
+  const scope = projectId && projectId.length > 0 ? projectId : 'global';
+  return `${skillName}::${scope}`;
+}
+
+/**
+ * Resolve the active project ID from the environment, mirroring
+ * shared/project-id.ts. Lazy-loaded so this module remains usable in tests
+ * that don't set up the project-id helper.
+ */
+function resolveProjectIdFromEnv(): string | undefined {
+  try {
+    // Local require avoids circular import at module load.
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    const mod = require('./shared/project-id.js');
+    if (mod && typeof mod.getActiveProjectId === 'function') {
+      return mod.getActiveProjectId() as string;
+    }
+  } catch {
+    // shared/project-id may not be importable in pure unit tests
+  }
+  return undefined;
+}
+
+/**
  * Filters matched skills based on validation results
  *
  * @param matches - Array of skill matches
- * @param validationResults - Map of skill name to validation result
+ * @param validationResults - Map keyed by `${skillName}::${projectId}` to validation result
+ *                            (legacy keys of just `skillName` are also accepted as a fallback)
  * @param confidenceThreshold - Minimum confidence to activate (default 0.5)
+ * @param projectId - Optional explicit project ID; defaults to active project
  */
 export function filterValidatedSkills(
   matches: SkillMatch[],
   validationResults: Map<string, SkillValidationResult>,
-  confidenceThreshold = 0.5
+  confidenceThreshold = 0.5,
+  projectId?: string
 ): SkillMatch[] {
+  const effectiveProjectId = projectId ?? resolveProjectIdFromEnv();
   return matches.filter((match) => {
-    const result = validationResults.get(match.skillName);
+    const scopedKey = getValidationCacheKey(match.skillName, effectiveProjectId);
+    // Prefer scoped key; fall back to legacy bare-name key for backward compat.
+    const result =
+      validationResults.get(scopedKey) ?? validationResults.get(match.skillName);
 
     // If no validation was done, keep the match
     if (!result) {

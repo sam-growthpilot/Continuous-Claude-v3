@@ -54,6 +54,55 @@ const FILE_WEIGHTS = {
 const COMPLEXITY_THRESHOLD_SUGGEST = 0.5;
 const COMPLEXITY_THRESHOLD_FORCE = 0.7;
 
+// =============================================================================
+// Pattern Safety Helpers
+// =============================================================================
+
+/** Maximum allowed regex pattern length (chars). Patterns above this are skipped. */
+const MAX_INTENT_PATTERN_LENGTH = 200;
+
+/** Whitelist of orchestration pattern names accepted from untrusted JSON input. */
+const KNOWN_ORCHESTRATION_PATTERNS: ReadonlySet<string> = new Set([
+  'swarm',
+  'hierarchical',
+  'pipeline',
+  'generator_critic',
+  'adversarial',
+  'map_reduce',
+  'jury',
+  'blackboard',
+  'chain_of_responsibility',
+  'event_driven',
+  'circuit_breaker',
+]);
+
+/**
+ * Heuristic regex shapes commonly associated with catastrophic backtracking.
+ * Reject any pattern that contains nested quantifiers like `(...+)+`, `(...*)*`,
+ * `(...+)*`, `(...*)+`, or alternations of identical branches like `(a|a)+`.
+ * Conservative: prefers false-rejects over executing a potentially evil pattern.
+ */
+const REDOS_SHAPES: RegExp[] = [
+  /\([^)]*[+*][^)]*\)\s*[+*]/,           // (X+)+ , (X*)*, (X+)*, (X*)+ etc.
+  /\(([^|()]+)\|\1\)\s*[+*]/,            // (a|a)+
+];
+
+/**
+ * Validate an intent pattern string before passing it to `new RegExp(...)`.
+ * Returns null when the pattern is safe to compile, else a short reason.
+ */
+function validateIntentPattern(pattern: unknown): string | null {
+  if (typeof pattern !== 'string') return 'pattern is not a string';
+  if (pattern.length === 0) return 'pattern is empty';
+  if (pattern.length > MAX_INTENT_PATTERN_LENGTH) {
+    return `pattern length ${pattern.length} > ${MAX_INTENT_PATTERN_LENGTH}`;
+  }
+  for (const shape of REDOS_SHAPES) {
+    if (shape.test(pattern)) return 'pattern matches known catastrophic-backtracking shape';
+  }
+  return null;
+}
+
 const PATTERN_AGENT_MAP: Record<string, string> = {
     swarm: 'research-agent',
     hierarchical: 'kraken',
@@ -575,6 +624,11 @@ function matchSkills(task: string, context: string, rules: SkillRulesConfig): Sk
         const intentPatterns = triggers.intentPatterns || [];
         let matchedIntent = false;
         for (const pattern of intentPatterns) {
+            const reason = validateIntentPattern(pattern);
+            if (reason) {
+                console.warn(`[skill-router] skipping unsafe intent pattern for skill "${skillName}": ${reason}`);
+                continue;
+            }
             try {
                 const regex = new RegExp(pattern, 'i');
                 if (regex.test(combined)) {
@@ -643,6 +697,11 @@ function matchAgents(
         const intentPatterns = triggers.intentPatterns || [];
         let matchedIntent = false;
         for (const pattern of intentPatterns) {
+            const reason = validateIntentPattern(pattern);
+            if (reason) {
+                console.warn(`[skill-router] skipping unsafe intent pattern for agent "${agentName}": ${reason}`);
+                continue;
+            }
             try {
                 const regex = new RegExp(pattern, 'i');
                 if (regex.test(combined)) {
@@ -755,8 +814,13 @@ export function route(input: SkillRouterAPIInput): SkillRouterAPIOutput {
     // Match agents
     const agents = matchAgents(task, context, rules, exclude_agents);
 
-    // Recommend pattern
-    const pattern = (current_pattern as OrchestrationPattern) ||
+    // Recommend pattern -- only honor a caller-supplied current_pattern when it
+    // matches the known orchestration whitelist; otherwise ignore it and fall back.
+    const trustedCurrentPattern =
+        typeof current_pattern === 'string' && KNOWN_ORCHESTRATION_PATTERNS.has(current_pattern)
+            ? (current_pattern as OrchestrationPattern)
+            : null;
+    const pattern = trustedCurrentPattern ||
         recommendPattern(task, context, skills, complexity.total);
 
     // Suggest Ralph for greenfield
