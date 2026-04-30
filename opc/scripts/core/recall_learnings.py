@@ -82,6 +82,20 @@ def get_backend() -> str:
     return "sqlite"
 
 
+def _resolve_registry_path() -> Path:
+    """Locate .claude/project-registry.json relative to the install root.
+
+    Phase B2: previously hardcoded as ``~/continuous-claude/.claude/...`` which
+    only worked for the original developer's username and breaks on CI / new
+    machines / non-default install paths. We instead derive the install root
+    from this file's location: ``opc/scripts/core/recall_learnings.py`` lives
+    three parents below the install root, so ``__file__.parents[3]`` is the
+    repo root and ``<root>/.claude/project-registry.json`` is the registry.
+    """
+    install_root = Path(__file__).resolve().parents[3]
+    return install_root / ".claude" / "project-registry.json"
+
+
 def _is_registered_project(abs_path: str) -> bool:
     """Check if abs_path matches an entry in .claude/project-registry.json.
 
@@ -90,7 +104,7 @@ def _is_registered_project(abs_path: str) -> bool:
     fail-safe rather than leaking PROJECT-scoped rows.
     """
     try:
-        registry_path = Path.home() / "continuous-claude" / ".claude" / "project-registry.json"
+        registry_path = _resolve_registry_path()
         if not registry_path.exists():
             return False
         with open(registry_path, encoding="utf-8") as f:
@@ -529,17 +543,27 @@ async def search_learnings_postgres(
 
     pool = await get_pool()
 
-    # First check if any learnings have embeddings
+    # First check if any learnings have embeddings *within the resolved scope*.
+    # Phase B2: the COUNT must apply the same scope-mode WHERE clause that the
+    # downstream SELECTs use; otherwise this branch sees global embeddings,
+    # picks the vector path, then the scoped SELECT returns zero rows even
+    # when text-fallback would have found matches in the current project.
+    # That manifested as "vector triggers, returns nothing, but text path
+    # would have hit" right after the Phase 1 scope filter landed.
+    scope_clause, scope_params, _ = _build_scope_clause(scope_mode, project_id, 1)
+    scope_sql = f" AND {scope_clause}" if scope_clause else ""
     async with pool.acquire() as conn:
         count_row = await conn.fetchrow(
-            """
+            f"""
             SELECT COUNT(*) as cnt FROM archival_memory
             WHERE (metadata->>'type' IS NULL OR metadata->>'type' IN (
                 'session_learning', 'WORKING_SOLUTION', 'ERROR_FIX',
                 'ARCHITECTURAL_DECISION', 'CODEBASE_PATTERN', 'FAILED_APPROACH',
                 'USER_PREFERENCE', 'OPEN_THREAD'))
                 AND embedding IS NOT NULL
-            """
+                {scope_sql}
+            """,
+            *scope_params,
         )
         has_embeddings = count_row["cnt"] > 0
 
@@ -906,13 +930,23 @@ async def main() -> int:
         print()
 
     try:
+        # Phase B2: thread --project-dir through to PageIndex so its tree
+        # discovery uses the caller's project rather than os.getcwd(). When
+        # recall is invoked from inside one project but with --project-dir
+        # pointed elsewhere (or from a hook running in a non-project CWD),
+        # the previous default silently searched whatever PageIndex trees
+        # happened to live next to the working directory.
         # PageIndex-only search
         if args.pageindex:
-            results = await search_pageindex(args.query, args.k)
+            results = await search_pageindex(
+                args.query, args.k, project_path=args.project_dir
+            )
         # Hybrid search: combine vector memory + PageIndex
         elif args.hybrid:
             vector_results = []
-            pageindex_results = await search_pageindex(args.query, args.k)
+            pageindex_results = await search_pageindex(
+                args.query, args.k, project_path=args.project_dir
+            )
 
             if backend == "sqlite":
                 vector_results = await search_learnings_sqlite(args.query, args.k)
