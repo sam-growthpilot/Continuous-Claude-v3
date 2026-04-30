@@ -231,13 +231,17 @@ if ! $DRY_RUN && command -v jq &> /dev/null; then
     ACTIVE_SETTINGS="$ACTIVE_CLAUDE/settings.json"
 
     if [[ -f "$REPO_SETTINGS" && -f "$ACTIVE_SETTINGS" ]]; then
-        # Extract mcpServers from repo and merge into active
-        MCP_SERVERS=$(jq '.mcpServers // empty' "$REPO_SETTINGS" 2>/dev/null)
+        # Extract mcpServers from repo and merge into active.
+        # Both jq calls run under `set -e`, so a malformed JSON file would
+        # abort the entire sync before reaching the cleanup paths below.
+        # The `|| MCP_SERVERS=""` and `if jq ...; then` forms keep set -e
+        # from killing the script on a non-zero jq exit -- we want a
+        # graceful skip instead.
+        MCP_SERVERS=$(jq '.mcpServers // empty' "$REPO_SETTINGS" 2>/dev/null) || MCP_SERVERS=""
         if [[ -n "$MCP_SERVERS" && "$MCP_SERVERS" != "null" ]]; then
             # Create temp file with merged content
             TEMP_SETTINGS=$(mktemp)
-            jq --argjson mcp "$MCP_SERVERS" '.mcpServers = $mcp' "$ACTIVE_SETTINGS" > "$TEMP_SETTINGS" 2>/dev/null
-            if [[ $? -eq 0 && -s "$TEMP_SETTINGS" ]]; then
+            if jq --argjson mcp "$MCP_SERVERS" '.mcpServers = $mcp' "$ACTIVE_SETTINGS" > "$TEMP_SETTINGS" 2>/dev/null && [[ -s "$TEMP_SETTINGS" ]]; then
                 mv "$TEMP_SETTINGS" "$ACTIVE_SETTINGS"
                 $VERBOSE && echo "Merged mcpServers into ~/.claude/settings.json" || true
             else
