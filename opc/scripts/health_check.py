@@ -30,6 +30,7 @@ import subprocess
 import sys
 import time
 import uuid
+from collections import deque
 from dataclasses import asdict, dataclass, field
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -984,25 +985,29 @@ def parse_hook_trace(
     cutoff = datetime.now(timezone.utc) - timedelta(days=since_days)
     events: list[dict] = []
     try:
+        # Tail the file: read the last _HOOK_TRACE_MAX_LINES lines via a
+        # bounded deque. The previous head-read approach truncated AFTER
+        # _HOOK_TRACE_MAX_LINES, so once the trace file grew past the cap
+        # it would only ever surface ancient events. Tailing keeps the
+        # window aligned with the most recent activity.
         with path.open("r", encoding="utf-8", errors="replace") as f:
-            for i, line in enumerate(f):
-                if i >= _HOOK_TRACE_MAX_LINES:
-                    break
-                line = line.strip()
-                if not line:
-                    continue
-                try:
-                    rec = json.loads(line)
-                except (json.JSONDecodeError, ValueError):
-                    continue
-                if not isinstance(rec, dict):
-                    continue
-                ts = _parse_iso8601(rec.get("ts", ""))
-                if ts is None:
-                    continue
-                if ts < cutoff:
-                    continue
-                events.append(rec)
+            tail = deque(f, maxlen=_HOOK_TRACE_MAX_LINES)
+        for line in tail:
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                rec = json.loads(line)
+            except (json.JSONDecodeError, ValueError):
+                continue
+            if not isinstance(rec, dict):
+                continue
+            ts = _parse_iso8601(rec.get("ts", ""))
+            if ts is None:
+                continue
+            if ts < cutoff:
+                continue
+            events.append(rec)
     except OSError:
         return []
     return events
@@ -2340,13 +2345,16 @@ def check_git_remote_sync() -> CheckResult:
     remote (origin = parcadei, never pushed).
     """
     start = time.perf_counter()
+    # Pass argv as a list (no shell=True) so user-controlled refs can never be
+    # interpreted as a shell metacharacter. argv-mode is also more portable on
+    # Windows where shell=True invokes cmd.exe with quoting quirks.
     branch_p = _run(["git", "rev-parse", "--abbrev-ref", "HEAD"],
-                    cwd=REPO_ROOT, timeout=10, shell=True)
+                    cwd=REPO_ROOT, timeout=10)
     branch = branch_p.stdout.strip() if branch_p.returncode == 0 else "?"
 
     rev_p = _run(["git", "rev-list", "--left-right", "--count",
                   f"{GIT_BACKUP_REF}...HEAD"],
-                 cwd=REPO_ROOT, timeout=15, shell=True)
+                 cwd=REPO_ROOT, timeout=15)
     dur = int((time.perf_counter() - start) * 1000)
 
     if rev_p.returncode != 0:

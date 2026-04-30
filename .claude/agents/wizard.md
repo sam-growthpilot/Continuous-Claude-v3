@@ -32,7 +32,8 @@ If any of those files is missing, stop and report it — setup cannot proceed wi
 2. Confirm Python is installed and >= 3.11: `python --version` (use `python` on Windows, never `python3`)
 3. Confirm Docker is installed and running: `docker info`
 4. Confirm Node.js is installed: `node --version`
-5. Confirm the user is operating from the cloned repo: `git rev-parse --show-toplevel`
+5. Confirm Bash is available: `bash --version` (Windows users: this requires Git Bash or WSL; downstream phases shell out to bash and will fail without it)
+6. Confirm the user is operating from the cloned repo: `git rev-parse --show-toplevel`
 
 If any preflight check fails, halt and tell the user what to install before continuing. Do not proceed to wizard.py if the preflight fails.
 

@@ -89,8 +89,23 @@ class ClaudeCliClient(BaseLM):
     # ------------------------------------------------------------------ public
     def completion(self, prompt: str | list[dict[str, Any]], model: str | None = None) -> str:
         flattened, system_prompt = self._prepare_prompt(prompt)
-        use_stdin = len(flattened) > _MAX_ARGV_PROMPT_CHARS
-        argv = self._build_argv(flattened, system_prompt, model, use_stdin_for_prompt=use_stdin)
+        # Decide stdin routing based on TOTAL argv length, not just the
+        # flattened prompt. A small prompt paired with a large --system-prompt
+        # can still overflow Windows CreateProcess (~32K cmdline limit) and
+        # raise WinError 206. Build the full argv first (with the prompt as
+        # the final positional) and sum char counts so we route accordingly.
+        candidate_argv = self._build_argv(
+            flattened, system_prompt, model, use_stdin_for_prompt=False
+        )
+        total_argv_chars = sum(len(part) for part in candidate_argv)
+        use_stdin = total_argv_chars > _MAX_ARGV_PROMPT_CHARS
+        argv = (
+            candidate_argv
+            if not use_stdin
+            else self._build_argv(
+                flattened, system_prompt, model, use_stdin_for_prompt=True
+            )
+        )
         stdout = self._run(argv, stdin_input=flattened if use_stdin else None)
         return self._parse_stdout(stdout, model or self.model_name or "unknown")
 
