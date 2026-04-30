@@ -1,4 +1,4 @@
-// src/transcript-parser.ts
+// src/lib/transcript-parser.ts
 import * as fs from "fs";
 function parseTranscript(transcriptPath) {
   const summary = {

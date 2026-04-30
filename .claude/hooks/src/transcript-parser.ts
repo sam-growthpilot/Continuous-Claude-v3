@@ -91,7 +91,12 @@ export function parseTranscript(transcriptPath: string): TranscriptSummary {
     return summary;
   }
 
-  const content = fs.readFileSync(transcriptPath, 'utf-8');
+  let content: string;
+  try {
+    content = fs.readFileSync(transcriptPath, 'utf-8');
+  } catch {
+    return summary;
+  }
   const lines = content.split('\n').filter(line => line.trim());
 
   const allToolCalls: ToolCall[] = [];
