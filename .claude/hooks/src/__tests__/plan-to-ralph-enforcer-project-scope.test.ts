@@ -69,13 +69,26 @@ function runHookForProject(projectDir: string, codeFile: string): HookOutput {
     stdio: ['pipe', 'pipe', 'pipe'],
   });
 
-  const stdout = (result.stdout || '').trim();
-  if (!stdout) return {};
-  try {
-    return JSON.parse(stdout);
-  } catch {
-    return {};
+  // Surface child-process failures instead of silently coercing to {}. The
+  // previous code converted spawn errors, non-zero exits, empty stdout, and
+  // JSON parse failures all into an empty object -- which made the
+  // downstream "no decision means allow" assertions pass even when the hook
+  // actually crashed, gutting this regression coverage.
+  if (result.error) {
+    throw result.error;
   }
+  if (result.status !== 0) {
+    throw new Error(
+      `Hook exited with status ${result.status}: ${(result.stderr || '').trim()}`,
+    );
+  }
+  const stdout = (result.stdout || '').trim();
+  if (!stdout) {
+    throw new Error(
+      `Hook produced no stdout: ${(result.stderr || '').trim()}`,
+    );
+  }
+  return JSON.parse(stdout);
 }
 
 beforeEach(() => {

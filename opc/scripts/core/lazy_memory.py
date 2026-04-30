@@ -367,6 +367,12 @@ def extract_session_learnings(
     if not jsonl_path or not jsonl_path.exists():
         return []
 
+    # Clamp to a sane range. The default is 10; a caller passing 10_000
+    # would otherwise fan out 10k concurrent embedding+DB calls below and
+    # spike the backend. The lower bound also rejects 0 / negatives that
+    # would silently disable extraction.
+    max_learnings = max(1, min(max_learnings, 100))
+
     # Extract thinking blocks with perception signals
     blocks = extract_thinking_blocks(jsonl_path)
 
@@ -393,19 +399,27 @@ def extract_session_learnings(
     # store=False explicitly; reverting this branch to a no-op is the bug
     # we just fixed.
     if store and learnings:
+        # Cap concurrency so the DB pool + embedding service aren't slammed
+        # by a synchronous burst. With max_learnings clamped to <=100 above
+        # and 8 here, the worst-case fan-out is 8 in-flight at a time.
+        STORE_CONCURRENCY = 8
+
         async def _store_all():
-            tasks = [
-                _store_learning_v2(
-                    session_id=session_id,
-                    content=learning['content'],
-                    learning_type=learning['type'],
-                    context=learning['context'],
-                    tags=learning['tags'],
-                    confidence=learning['confidence'],
-                    project_dir=project_dir,
-                )
-                for learning in learnings
-            ]
+            sem = asyncio.Semaphore(STORE_CONCURRENCY)
+
+            async def _bounded(learning: dict) -> Any:
+                async with sem:
+                    return await _store_learning_v2(
+                        session_id=session_id,
+                        content=learning['content'],
+                        learning_type=learning['type'],
+                        context=learning['context'],
+                        tags=learning['tags'],
+                        confidence=learning['confidence'],
+                        project_dir=project_dir,
+                    )
+
+            tasks = [_bounded(learning) for learning in learnings]
             # return_exceptions=True so one bad learning doesn't cancel the
             # rest. Each result is either the v2 result dict or an Exception.
             return await asyncio.gather(*tasks, return_exceptions=True)
