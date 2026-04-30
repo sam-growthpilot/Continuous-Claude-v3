@@ -384,39 +384,58 @@ def extract_session_learnings(
             if len(learnings) >= max_learnings:
                 break
 
-    # Store if requested. We call store_learning_v2 (an async function) via
-    # asyncio.run() per learning. Failures are visible on stderr -- never
-    # silently swallowed. If a future maintainer wants to skip storage, they
-    # must pass store=False explicitly; reverting this branch to a no-op
-    # is the bug we just fixed.
+    # Store if requested. store_learning_v2 is async, so previously each
+    # learning was awaited via its own asyncio.run() call -- N event loops,
+    # N pool reconnects, N round-trips serialized. Phase B1: bundle the
+    # whole batch into a single asyncio.run() that fans out via gather.
+    # Failures are still visible on stderr -- never silently swallowed.
+    # If a future maintainer wants to skip storage, they must pass
+    # store=False explicitly; reverting this branch to a no-op is the bug
+    # we just fixed.
     if store and learnings:
-        for learning in learnings:
-            try:
-                result = asyncio.run(
-                    _store_learning_v2(
-                        session_id=session_id,
-                        content=learning['content'],
-                        learning_type=learning['type'],
-                        context=learning['context'],
-                        tags=learning['tags'],
-                        confidence=learning['confidence'],
-                        project_dir=project_dir,
-                    )
+        async def _store_all():
+            tasks = [
+                _store_learning_v2(
+                    session_id=session_id,
+                    content=learning['content'],
+                    learning_type=learning['type'],
+                    context=learning['context'],
+                    tags=learning['tags'],
+                    confidence=learning['confidence'],
+                    project_dir=project_dir,
                 )
-                if not result.get('success'):
-                    # store_learning_v2 returned a failure dict (e.g. backend
-                    # unavailable). Surface it explicitly.
-                    print(
-                        f"Failed to store learning (session={session_id}): "
-                        f"{result.get('error', 'unknown error')}",
-                        file=sys.stderr,
-                    )
-            except Exception as e:
-                # Any unexpected exception (e.g. asyncio loop issue, DB outage,
-                # embedding service crash) must be visible. We do NOT re-raise
-                # so a single failed learning doesn't prevent storing the rest.
+                for learning in learnings
+            ]
+            # return_exceptions=True so one bad learning doesn't cancel the
+            # rest. Each result is either the v2 result dict or an Exception.
+            return await asyncio.gather(*tasks, return_exceptions=True)
+
+        try:
+            results = asyncio.run(_store_all())
+        except Exception as e:
+            # asyncio.run itself failed (loop already running, etc.).
+            # Surface and bail -- nothing was stored.
+            print(
+                f"Failed to store learnings (session={session_id}): {e}",
+                file=sys.stderr,
+            )
+            results = []
+
+        for result in results:
+            if isinstance(result, Exception):
+                # Any unexpected exception (e.g. DB outage, embedding service
+                # crash) must be visible. We do NOT re-raise so a single
+                # failed learning doesn't prevent storing the rest.
                 print(
-                    f"Failed to store learning (session={session_id}): {e}",
+                    f"Failed to store learning (session={session_id}): {result}",
+                    file=sys.stderr,
+                )
+            elif isinstance(result, dict) and not result.get('success'):
+                # store_learning_v2 returned a failure dict (e.g. backend
+                # unavailable). Surface it explicitly.
+                print(
+                    f"Failed to store learning (session={session_id}): "
+                    f"{result.get('error', 'unknown error')}",
                     file=sys.stderr,
                 )
 

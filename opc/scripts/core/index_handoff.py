@@ -16,6 +16,7 @@ import hashlib
 import json
 import os
 import sys
+import threading
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -33,7 +34,12 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 # Phase 3C: singleton EmbeddingService cache (matches store_learning.get_embedder
 # and project_memory.get_embedder). Most CLI invocations index a single handoff
 # and exit, but anything that batch-indexes (tests, future scripts) benefits.
+#
+# Phase B1: thread-safe via double-checked locking. Mirrors project_memory's
+# fix -- if a future caller batch-indexes from multiple threads, the unguarded
+# `is None` check could race and load BGE twice.
 _embedder = None
+_embedder_lock = threading.Lock()
 
 
 def get_embedder():
@@ -41,11 +47,17 @@ def get_embedder():
 
     The BGE model is ~1.2s + several hundred MB to load. This helper ensures
     the cost is paid at most once per Python process.
+
+    Thread-safe via double-checked locking: fast path skips the lock when the
+    embedder is already initialized; slow path re-checks under the lock so
+    only one thread instantiates the model.
     """
     global _embedder
     if _embedder is None:
-        from db.embedding_service import EmbeddingService
-        _embedder = EmbeddingService(provider="local")
+        with _embedder_lock:
+            if _embedder is None:
+                from db.embedding_service import EmbeddingService
+                _embedder = EmbeddingService(provider="local")
     return _embedder
 
 

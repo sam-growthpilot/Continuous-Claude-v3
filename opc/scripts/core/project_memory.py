@@ -32,6 +32,7 @@ import hashlib
 import json
 import os
 import sys
+import threading
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -52,7 +53,13 @@ load_dotenv()
 # every search_local_vector / search_global call. The pattern below mirrors
 # store_learning.get_embedder() and ensures the model loads at most once
 # per process.
+#
+# Phase B1: thread-safe via double-checked locking. Concurrent callers (e.g.
+# parallel asyncio tasks running on threadpool, or a future multi-threaded
+# indexer) could otherwise race past the `is None` check and instantiate two
+# BGE models, doubling RAM use and burning ~1.2s twice.
 _embedder = None
+_embedder_lock = threading.Lock()
 
 
 def get_embedder():
@@ -61,11 +68,17 @@ def get_embedder():
     Lazy-initialized -- the BGE model is only loaded the first time something
     actually needs an embedding. Returns the same instance on every subsequent
     call so the SentenceTransformer weights stay cached.
+
+    Thread-safe via double-checked locking: the fast path (already initialized)
+    avoids the lock entirely, and the slow path re-checks under the lock so
+    only one thread ever pays the model-load cost.
     """
     global _embedder
     if _embedder is None:
-        from db.embedding_service import EmbeddingService
-        _embedder = EmbeddingService(provider="local")
+        with _embedder_lock:
+            if _embedder is None:
+                from db.embedding_service import EmbeddingService
+                _embedder = EmbeddingService(provider="local")
     return _embedder
 
 
@@ -419,13 +432,18 @@ async def search_global(query: str, k: int = 5) -> list[dict]:
 
         memory = await create_memory_service(backend="postgres", session_id="global-search")
 
-        results = await memory.search_vector(
-            query_embedding,
-            limit=k,
-            filters={"scope": "GLOBAL"}
-        )
-
-        await memory.close()
+        # Phase B1: wrap the search in try/finally so memory.close() always
+        # runs, even when search_vector raises (timeout, connection drop,
+        # malformed embedding). Leaking the connection causes pool exhaustion
+        # under load and was a real failure mode pre-fix.
+        try:
+            results = await memory.search_vector(
+                query_embedding,
+                limit=k,
+                filters={"scope": "GLOBAL"}
+            )
+        finally:
+            await memory.close()
 
         return [{
             "id": str(r.get("id", ""))[:8],
