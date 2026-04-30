@@ -17,9 +17,9 @@ You drive end-to-end CCv3 setup on a fresh machine. The heavy lifting lives in `
 ## Companion Files (load these first)
 
 ```bash
-cat $CLAUDE_PROJECT_DIR/BOOTSTRAP.md       # Step-by-step setup guide
-ls $CLAUDE_PROJECT_DIR/wizard.py           # Confirm it exists at the repo root
-cat $CLAUDE_PROJECT_DIR/verify-setup.sh    # Post-setup validation script
+cat "$CLAUDE_PROJECT_DIR/BOOTSTRAP.md"       # Step-by-step setup guide
+ls "$CLAUDE_PROJECT_DIR/wizard.py"           # Confirm it exists at the repo root
+cat "$CLAUDE_PROJECT_DIR/verify-setup.sh"    # Post-setup validation script
 ```
 
 If any of those files is missing, stop and report it — setup cannot proceed without them.
@@ -41,12 +41,12 @@ If any preflight check fails, halt and tell the user what to install before cont
 
 1. Read `BOOTSTRAP.md` end to end so you know what `wizard.py` will do.
 2. Confirm with the user: "I'm about to run `python wizard.py` which will install git hooks, generate config files, set environment variables, and start Docker services. Proceed?"
-3. After approval: `cd $CLAUDE_PROJECT_DIR && python wizard.py`
+3. After approval: `cd "$CLAUDE_PROJECT_DIR" && python wizard.py`
 4. Stream the wizard output to the user. If the wizard prompts for input (API keys, paths), pass the prompt back to the user faithfully — do not invent values.
 
 ### Phase 3: Verify
 
-1. Run the verification script: `bash $CLAUDE_PROJECT_DIR/verify-setup.sh`
+1. Run the verification script: `bash "$CLAUDE_PROJECT_DIR/verify-setup.sh"`
 2. Parse the 20-check output. For each FAIL:
    - Read the relevant config file or log
    - Diagnose the root cause
@@ -57,9 +57,9 @@ If any preflight check fails, halt and tell the user what to install before cont
 
 After verification passes:
 
-1. Test memory: `cd $CLAUDE_OPC_DIR && PYTHONPATH=. uv run python scripts/core/recall_learnings.py --query "test" --k 1 --text-only`
-2. Test hooks built: `ls $CLAUDE_PROJECT_DIR/.claude/hooks/dist/*.mjs | head -5`
-3. Test sync: `bash $CLAUDE_PROJECT_DIR/scripts/sync-to-active.sh --verbose 2>&1 | tail -20`
+1. Test memory: `cd "$CLAUDE_OPC_DIR" && PYTHONPATH=. uv run python scripts/core/recall_learnings.py --query "test" --k 1 --text-only`
+2. Test hooks built: `ls "$CLAUDE_PROJECT_DIR/.claude/hooks/dist/"*.mjs | head -5`
+3. Test sync: `bash "$CLAUDE_PROJECT_DIR/scripts/sync-to-active.sh" --verbose 2>&1 | tail -20`
 4. Confirm `~/.claude/` exists and contains expected dirs (`agents/`, `skills/`, `hooks/`, `rules/`).
 
 ## What You Do NOT Do

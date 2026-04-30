@@ -226,15 +226,27 @@ def reset_postgres_pool():
     try:
         from db.postgres_pool import reset_pool
         reset_pool()
-    except Exception:
+    except ModuleNotFoundError:
+        # db.postgres_pool isn't on sys.path in this env -- nothing to reset,
+        # the test will skipif on DATABASE_URL anyway if it really matters.
         pass
+    except Exception as exc:  # pragma: no cover - cleanup observability
+        warnings.warn(
+            f"reset_pool() failed: {exc!r}", RuntimeWarning, stacklevel=2
+        )
     yield
     # And after, so the next test starts clean
     try:
         from db.postgres_pool import reset_pool
         reset_pool()
-    except Exception:
+    except ModuleNotFoundError:
+        # db.postgres_pool isn't on sys.path in this env -- nothing to reset,
+        # the test will skipif on DATABASE_URL anyway if it really matters.
         pass
+    except Exception as exc:  # pragma: no cover - cleanup observability
+        warnings.warn(
+            f"reset_pool() failed: {exc!r}", RuntimeWarning, stacklevel=2
+        )
 
 
 @pytest.fixture
@@ -270,8 +282,19 @@ def cleanup_db(canary_prefix):
                     await conn.close()
 
             asyncio.run(_delete())
-        except Exception:
+        except ModuleNotFoundError:
+            # asyncpg not installed in this env -- canary cleanup is a no-op
+            # and the test itself will be skipped via the DATABASE_URL guard.
             pass
+        except Exception as exc:  # pragma: no cover - cleanup observability
+            # Cleanup failures shouldn't crash the test, but they shouldn't
+            # be silent either -- a stuck DELETE means the next run starts
+            # from a dirty state and may pass for the wrong reason.
+            warnings.warn(
+                f"cleanup_db delete failed: {exc!r}",
+                RuntimeWarning,
+                stacklevel=2,
+            )
 
     _clean_sync()  # pre-test
     yield

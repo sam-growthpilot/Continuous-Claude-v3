@@ -251,7 +251,11 @@ def test_fetch_pairs_does_not_cluster_cross_project_rows(
 
         # Run the dedup _fetch_pairs at a permissive threshold + a tight
         # window covering only our two seeds.
-        pairs = await dedup_mod._fetch_pairs(threshold=0.5, limit=10)
+        # limit=500 (not 10) because _fetch_pairs scans by created_at desc;
+        # if other recent rows exist between our seeds and the head of the
+        # window, a tight limit can drop the canary pair entirely and make
+        # the assertion vacuous (negative test passes for the wrong reason).
+        pairs = await dedup_mod._fetch_pairs(threshold=0.5, limit=500)
         # Filter to pairs that involve our canary rows (by content lookup)
         # so unrelated DB churn doesn't make this flaky.
         conn = await asyncpg.connect(url)
@@ -340,7 +344,11 @@ def test_fetch_pairs_does_cluster_same_project_rows(
         finally:
             await conn.close()
 
-        pairs = await dedup_mod._fetch_pairs(threshold=0.5, limit=10)
+        # limit=500 (not 10) because _fetch_pairs scans by created_at desc;
+        # if other recent rows exist between our seeds and the head of the
+        # window, a tight limit can drop the canary pair entirely and make
+        # the assertion vacuous (negative test passes for the wrong reason).
+        pairs = await dedup_mod._fetch_pairs(threshold=0.5, limit=500)
 
         conn = await asyncpg.connect(url)
         try:

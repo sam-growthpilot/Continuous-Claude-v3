@@ -981,6 +981,12 @@ def parse_hook_trace(
     path = trace_path if trace_path is not None else DEFAULT_HOOK_TRACE_PATH
     if not path or not path.exists():
         return []
+    # Permissions can change between runs (e.g. another user wrote the trace
+    # file with restrictive umask). Skip readability failures up front so the
+    # downstream telemetry checks see an empty event list rather than a
+    # half-populated one from a partially-readable file.
+    if not os.access(path, os.R_OK):
+        return []
 
     cutoff = datetime.now(timezone.utc) - timedelta(days=since_days)
     events: list[dict] = []
