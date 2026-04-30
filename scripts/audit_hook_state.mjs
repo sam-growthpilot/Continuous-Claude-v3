@@ -65,8 +65,20 @@ function listTs(dir) {
 }
 
 function readSettings() {
-  const raw = readFileSync(SETTINGS, "utf8");
-  return JSON.parse(raw);
+  // Tolerate a missing or unreadable settings.json so this audit script can
+  // still emit JSON on a fresh checkout (no ~/.claude yet) or in CI where
+  // there is no active Claude config. Treat parse errors the same way —
+  // an empty hook map is the right default and the rest of the audit will
+  // simply report "no registered hooks".
+  try {
+    const raw = readFileSync(SETTINGS, "utf8");
+    return JSON.parse(raw);
+  } catch (err) {
+    if (err && (err.code === "ENOENT" || err.name === "SyntaxError")) {
+      return { hooks: {} };
+    }
+    throw err;
+  }
 }
 
 function collectRegisteredHookNames(settings) {
@@ -148,7 +160,11 @@ function classify({ distMjs, srcTs, registered, importsByName }) {
     const isRegistered = registered.has(name);
     const importers = importsByName.get(name) || new Set();
     // Importers that are themselves hooks shouldn't count themselves.
-    const importerCount = [...importers].filter((i) => i.split("/").pop() !== name).length;
+    // Compare full importer keys, not just basenames. Stripping the
+    // directory prefix collapses distinct paths like `nested/foo` and `foo`
+    // and would treat a real importer as a self-import, undercounting
+    // valid importers and misclassifying LIB hooks as SOURCE-ONLY.
+    const importerCount = [...importers].filter((i) => i !== name).length;
 
     let kind;
     let note = "";
