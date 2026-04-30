@@ -1248,6 +1248,35 @@ def check_hook_runtime(
             ))
             return results
 
+        # Readability check: a trace file that exists but is unreadable
+        # would silently degrade the rest of this category to SKIP/PASS via
+        # the OSError swallow inside parse_hook_trace. Fail loudly instead so
+        # the I/O problem (e.g. another user's umask, ACL change) is surfaced.
+        if not os.access(path, os.R_OK):
+            results.append(_fail(
+                "hook-trace-file-present", category,
+                f"trace file present but not readable: {path}",
+                severity="HIGH",
+                remediation=(
+                    "Check file ownership/ACLs on the hook-trace.jsonl path; "
+                    "the health checker user must have R_OK."
+                ),
+                duration_ms=int((time.perf_counter() - start) * 1000),
+            ))
+            results.append(_skip(
+                "hook-fire-rate", category,
+                "trace file unreadable — skipped",
+            ))
+            results.append(_skip(
+                "hook-error-rate", category,
+                "trace file unreadable — skipped",
+            ))
+            results.append(_skip(
+                "hook-timing-p95", category,
+                "trace file unreadable — skipped",
+            ))
+            return results
+
         results.append(_pass(
             "hook-trace-file-present", category,
             f"trace file present at {path}",
