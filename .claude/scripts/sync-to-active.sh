@@ -110,6 +110,11 @@ for dir in $SYNC_DIRS; do
     copy_dir "$dir"
 done
 
+# Ensure the active root exists before any copy attempts. On a fresh install
+# `~/.claude` may not exist yet; without this `cp` would error and abort the
+# whole sync because of `set -e`.
+$DRY_RUN || mkdir -p "$ACTIVE_CLAUDE"
+
 # Sync top-level .claude/*.md files (canonical entry points / redirect stubs)
 for src_file in "$REPO_CLAUDE"/*.md; do
     [[ ! -f "$src_file" ]] && continue
@@ -129,7 +134,10 @@ for src_file in "$REPO_CLAUDE"/*.md; do
 done
 
 for pattern in "hooks/*.sh" "hooks/*.py" "hooks/*.mjs" "hooks/*.ps1" "hooks/package.json" "hooks/tsconfig.json"; do
-    for src_file in $REPO_CLAUDE/$pattern; do
+    # Quote $REPO_CLAUDE so checkout paths containing spaces don't word-split
+    # and silently skip files. The pattern is intentionally unquoted so the
+    # shell still expands the glob.
+    for src_file in "$REPO_CLAUDE"/$pattern; do
         [[ ! -f "$src_file" ]] && continue
         rel="${src_file#$REPO_CLAUDE/}"
         dst_file="$ACTIVE_CLAUDE/$rel"
@@ -205,7 +213,13 @@ if ! $DRY_RUN && ! $SKIP_BUILD; then
         if [[ -f "build.sh" ]]; then
             bash build.sh
         elif command -v npm &> /dev/null; then
-            npm run build 2>/dev/null || echo "Warning: Hook build failed"
+            # Don't mask build failures: a successful exit here would leave
+            # stale or missing hooks/dist artifacts in place. Fail the sync
+            # so the user notices and can rebuild.
+            if ! npm run build; then
+                echo "Error: Hook build failed (npm run build)" >&2
+                exit 1
+            fi
         fi
     fi
 fi
