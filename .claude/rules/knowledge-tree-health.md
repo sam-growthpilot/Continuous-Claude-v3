@@ -22,15 +22,16 @@ cd $CLAUDE_OPC_DIR && PYTHONPATH=. uv run python scripts/core/tree_schema.py --v
 |---------|-------|-----|
 | Tree missing, no auto-regen | Hook exclusion skipped this project | Fixed in session-start-init-check.ts; manual regen if needed |
 | Unicode crash on Windows | Python emojis crash cp1252 encoding | Fixed in commit 5a36ef2; use ASCII only in scripts |
-| Tree stale after major changes | Daemon not running, hooks didn't trigger | Manual regen with command above |
+| Tree stale after major changes | Hooks didn't trigger (no watcher daemon by design) | Manual regen with command above |
 | Empty tree file (0 bytes) | Script crashed mid-write | Delete and regenerate |
 
 ## Architecture
 
-- **Hooks**: `tree-invalidate.ts` (marks stale), `session-start-init-check.ts` (auto-generates), `pageindex-watch.ts`
-- **Scripts**: `knowledge_tree.py` (generator), `query_tree.py` (queries), `tree_schema.py` (validation), `tree_daemon.py` (watcher)
+- **Hooks**: `tree-invalidate.ts` (marks stale), `session-start-init-check.ts` (auto-generates on read), `pageindex-watch.ts`
+- **Scripts**: `knowledge_tree.py` (generator), `query_tree.py` (queries), `tree_schema.py` (validation), `lazy_tree.py` (on-demand wrapper)
 - **Skill**: `.claude/skills/knowledge-tree/SKILL.md`
 - **Output**: `.claude/knowledge-tree.json`
+- **Note**: There is no persistent watcher daemon. Trees are regenerated lazily when stale-marked or missing.
 
 ## Prevention
 

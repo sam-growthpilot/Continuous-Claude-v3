@@ -89,6 +89,49 @@ export function getStatePathWithMigration(baseName: string, sessionId?: string):
 }
 
 /**
+ * Get project-scoped state file path.
+ *
+ * Phase 4 (cross-project isolation): some hook state must NOT bleed across
+ * projects even when the sessionId is shared. Filename layout:
+ *
+ *   $TEMP/claude-<baseName>-<projectId>-<sessionId>.json
+ *
+ * @param baseName  - State family name (e.g. "plan-approved")
+ * @param projectId - 16-char sha256(absPath) (use shared/project-id.ts)
+ * @param sessionId - Optional session ID (default: getSessionId())
+ */
+export function getProjectScopedStatePath(
+  baseName: string,
+  projectId: string,
+  sessionId?: string,
+): string {
+  const sid = sessionId || getSessionId();
+  const safeSid = sid.replace(/[^a-zA-Z0-9-_]/g, '_').substring(0, 32);
+  const safePid = projectId.replace(/[^a-zA-Z0-9]/g, '').substring(0, 16);
+  return join(tmpdir(), `claude-${baseName}-${safePid}-${safeSid}.json`);
+}
+
+/**
+ * Project-aware state path resolver.
+ *
+ * Phase A2 (C2) — the legacy session-only fallback was removed. Previously,
+ * when no project-scoped file existed, this helper would honor a session-only
+ * state file whose mtime was within the last hour. That re-opened exactly
+ * the cross-project leak Phase 4B was meant to close: a reused sessionId
+ * could resurrect plan-approved state across project switches.
+ *
+ * Now: always returns the project-scoped path. Callers that previously read
+ * a legacy file under the migration window will see "no state" and fail open.
+ */
+export function getProjectScopedStatePathWithMigration(
+  baseName: string,
+  projectId: string,
+  sessionId?: string,
+): string {
+  return getProjectScopedStatePath(baseName, projectId, sessionId);
+}
+
+/**
  * Clean up old state files.
  *
  * Removes state files older than maxAge (default 24 hours).

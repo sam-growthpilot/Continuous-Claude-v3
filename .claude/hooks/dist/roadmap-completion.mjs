@@ -3,6 +3,143 @@
 // src/roadmap-completion.ts
 import * as fs from "fs";
 import * as path from "path";
+
+// src/shared/roadmap-parser.ts
+var SECTION_PREFIXES = [
+  // Order matters: more specific first.
+  { key: "sessions", prefix: "## recent planning" },
+  { key: "current", prefix: "## current" },
+  { key: "completed", prefix: "## completed" },
+  { key: "planned", prefix: "## planned" }
+];
+function detectSection(strippedLower) {
+  for (const { key, prefix } of SECTION_PREFIXES) {
+    if (strippedLower.startsWith(prefix)) {
+      return key;
+    }
+  }
+  if (strippedLower.startsWith("## ")) {
+    return null;
+  }
+  return void 0;
+}
+function bucketize(rawPriority) {
+  const p = rawPriority.toLowerCase();
+  if (p.includes("high")) return "high";
+  if (p.includes("low")) return "low";
+  return "medium";
+}
+function parseRoadmap(content) {
+  const result = {
+    current: null,
+    completed: [],
+    planned: [],
+    sessions: [],
+    rawContent: content,
+    rawSections: /* @__PURE__ */ new Map()
+  };
+  if (!content) return result;
+  const lines = content.split("\n");
+  let section = null;
+  let sectionStart = -1;
+  const closeSection = (endLine) => {
+    if (section && sectionStart >= 0) {
+      result.rawSections.set(section, { start: sectionStart, end: endLine });
+    }
+  };
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i];
+    const stripped = line.trim();
+    const lower = stripped.toLowerCase();
+    const detected = detectSection(lower);
+    const isAnyH2 = stripped.startsWith("## ");
+    const isKnownH2 = typeof detected === "string";
+    const isUnrelatedH2 = detected === null;
+    if (isKnownH2) {
+      closeSection(i);
+      section = detected;
+      sectionStart = i;
+      continue;
+    }
+    if (isUnrelatedH2) {
+      closeSection(i);
+      section = null;
+      sectionStart = -1;
+      continue;
+    }
+    if (section === "current") {
+      if (stripped.startsWith("**") && stripped.endsWith("**") && stripped.length >= 4) {
+        const title = stripped.replace(/\*\*/g, "").trim();
+        if (title.length > 0) {
+          result.current = { title };
+        }
+        continue;
+      }
+      const checkboxCurrent = stripped.match(/^-\s*\[\s*\]\s*(.+)$/);
+      if (checkboxCurrent && !result.current) {
+        result.current = { title: checkboxCurrent[1].trim() };
+        continue;
+      }
+      if (result.current && stripped.startsWith("- ")) {
+        const text = stripped.slice(2).trim();
+        if (/^started:/i.test(text)) {
+          result.current.started = text.replace(/^started:\s*/i, "").trim();
+        } else if (/^progress:/i.test(text)) {
+          result.current.progress = text.replace(/^progress:\s*/i, "").trim();
+        } else {
+          if (result.current.description) {
+            result.current.description = `${result.current.description}; ${text}`;
+          } else {
+            result.current.description = text;
+          }
+        }
+        continue;
+      }
+    }
+    if (section === "completed") {
+      const m = stripped.match(/^-\s*\[x\]\s*(.+?)(?:\s*\(([^)]+)\))?$/i);
+      if (m) {
+        result.completed.push({
+          title: m[1].trim(),
+          completed: m[2] || ""
+        });
+      }
+      continue;
+    }
+    if (section === "planned") {
+      const m = stripped.match(/^-\s*\[\s*\]\s*(.+?)(?:\s*\(([^)]+)\))?$/);
+      if (m) {
+        const rawPriority = m[2] || "normal";
+        result.planned.push({
+          title: m[1].trim(),
+          priority: rawPriority,
+          priorityBucket: bucketize(rawPriority)
+        });
+      }
+      continue;
+    }
+    if (section === "sessions") {
+      const sessHeader = stripped.match(/^###\s*(\d{4}-\d{2}-\d{2}):\s*(.+)$/);
+      if (sessHeader) {
+        result.sessions.push({
+          date: sessHeader[1],
+          title: sessHeader[2].trim(),
+          decisions: []
+        });
+        continue;
+      }
+      if (result.sessions.length > 0 && stripped.startsWith("-")) {
+        const last = result.sessions[result.sessions.length - 1];
+        last.decisions.push(stripped.slice(1).trim());
+      }
+      continue;
+    }
+  }
+  closeSection(lines.length);
+  return result;
+}
+
+// src/roadmap-completion.ts
 var COMPLETION_PATTERNS = [
   /\b(done|complete|completed|finished|shipped|deployed|merged)\b/i,
   /\btask\s+(is\s+)?(done|complete|finished)\b/i,
@@ -84,67 +221,6 @@ function findRoadmapPath(projectDir) {
   }
   return null;
 }
-function parseRoadmap(content) {
-  const result = {
-    current: null,
-    completed: [],
-    planned: [],
-    rawContent: content
-  };
-  const lines = content.split("\n");
-  let section = null;
-  for (const line of lines) {
-    const stripped = line.trim();
-    if (stripped.toLowerCase().startsWith("## current")) {
-      section = "current";
-      continue;
-    } else if (stripped.toLowerCase().startsWith("## completed")) {
-      section = "completed";
-      continue;
-    } else if (stripped.toLowerCase().startsWith("## planned")) {
-      section = "planned";
-      continue;
-    } else if (stripped.startsWith("## ")) {
-      section = null;
-      continue;
-    }
-    if (section === "current") {
-      if (stripped.startsWith("**") && stripped.endsWith("**")) {
-        const title = stripped.replace(/\*\*/g, "").trim();
-        result.current = { title, description: "", started: "" };
-      } else if (result.current && stripped.startsWith("- ")) {
-        const text = stripped.slice(2).trim();
-        if (text.toLowerCase().startsWith("started:")) {
-          result.current.started = text.replace(/^started:\s*/i, "").trim();
-        } else {
-          result.current.description += (result.current.description ? "; " : "") + text;
-        }
-      } else if (stripped.startsWith("- [ ]")) {
-        const title = stripped.replace(/^-\s*\[\s*\]\s*/, "").trim();
-        result.current = { title, description: "", started: "" };
-      }
-    }
-    if (section === "completed") {
-      const match = stripped.match(/^-\s*\[x\]\s*(.+?)(?:\s*\(([^)]+)\))?$/i);
-      if (match) {
-        result.completed.push({
-          title: match[1].trim(),
-          completed: match[2] || ""
-        });
-      }
-    }
-    if (section === "planned") {
-      const match = stripped.match(/^-\s*\[\s*\]\s*(.+?)(?:\s*\(([^)]+)\))?$/);
-      if (match) {
-        result.planned.push({
-          title: match[1].trim(),
-          priority: match[2] || "normal"
-        });
-      }
-    }
-  }
-  return result;
-}
 function updateRoadmapContent(content, data) {
   if (!data.current) {
     return content;
@@ -200,10 +276,13 @@ function promoteNextPlanned(content, data) {
     return content;
   }
   const priorities = { high: 3, medium: 2, normal: 1, low: 0 };
+  const prioOf = (item) => {
+    const p = (item.priority || "normal").toLowerCase();
+    return priorities[p] ?? 1;
+  };
   let best = data.planned[0];
   for (const item of data.planned) {
-    const priority = item.priority.toLowerCase();
-    if ((priorities[priority] || 1) > (priorities[best.priority.toLowerCase()] || 1)) {
+    if (prioOf(item) > prioOf(best)) {
       best = item;
     }
   }

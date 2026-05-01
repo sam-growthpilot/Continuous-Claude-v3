@@ -2,6 +2,7 @@
 name: onboard
 description: Analyze brownfield codebase and create initial continuity ledger
 model: sonnet
+tools: [Read, Write, Bash, Grep, Glob]
 ---
 
 # Onboard Agent

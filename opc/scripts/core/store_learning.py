@@ -42,6 +42,7 @@ import asyncio
 import json
 import os
 import sys
+import warnings
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -282,9 +283,23 @@ async def store_learning_v2(
         embedder = get_embedder()
         embedding = await embedder.embed(content)
 
-        # Deduplication check: search for similar existing memories
+        # Classify scope if not explicitly provided. Phase 4C: we need this
+        # BEFORE dedup so the dedup search can scope by project_id, not by
+        # the current session_id.
+        final_scope = scope or classify_scope(content, tags, context)
+        project_id = get_project_id(project_dir) if project_dir else None
+
+        # Deduplication check (Phase 4C: scoped by project_id, not session_id).
+        # GLOBAL learnings dedup across ALL global rows. PROJECT learnings
+        # dedup within the same project_id (or within the NULL-project bucket
+        # when project_dir wasn't provided).
         try:
-            existing = await memory.search_vector(embedding, limit=1)
+            existing = await memory.search_vector_for_dedup(
+                embedding,
+                scope=final_scope,
+                project_id=project_id,
+                limit=1,
+            )
             if existing and len(existing) > 0:
                 top_match = existing[0]
                 similarity = top_match.get("similarity", 0)
@@ -299,10 +314,6 @@ async def store_learning_v2(
         except Exception:
             # If search fails, proceed with storing (don't block on dedup errors)
             pass
-
-        # Classify scope if not explicitly provided
-        final_scope = scope or classify_scope(content, tags, context)
-        project_id = get_project_id(project_dir) if project_dir else None
 
         # Build metadata
         metadata = {
@@ -345,6 +356,17 @@ async def store_learning_v2(
         return {"success": False, "error": str(e)}
 
 
+# Mapping from legacy v1 bundle categories to v2 learning types.
+# Used by the deprecated v1 entrypoint to route each category through the
+# v2 quality gate with the correct learning_type semantic.
+_V1_CATEGORY_TO_TYPE = {
+    "worked": "WORKING_SOLUTION",
+    "failed": "FAILED_APPROACH",
+    "decisions": "ARCHITECTURAL_DECISION",
+    "patterns": "CODEBASE_PATTERN",
+}
+
+
 async def store_learning(
     session_id: str,
     worked: str,
@@ -352,91 +374,110 @@ async def store_learning(
     decisions: str,
     patterns: str,
 ) -> dict:
-    """Store learning in PostgreSQL with embedding.
+    """[DEPRECATED] Legacy v1 entrypoint -- routes through store_learning_v2.
+
+    .. deprecated:: 4.0
+        Use ``store_learning_v2`` directly. This wrapper exists only for
+        back-compat with callers still on the legacy bundle interface.
+        Every category (worked/failed/decisions/patterns) is routed through
+        the v2 quality gate (``validate_learning_quality``) with the
+        appropriate ``learning_type``. NOISE inputs are now rejected
+        (previously written to Postgres unscored), and dedup applies.
 
     Args:
         session_id: Session identifier
-        worked: What worked well
-        failed: What failed or was tricky
-        decisions: Key decisions made
-        patterns: Reusable patterns
+        worked: What worked well -> WORKING_SOLUTION
+        failed: What failed or was tricky -> FAILED_APPROACH
+        decisions: Key decisions made -> ARCHITECTURAL_DECISION
+        patterns: Reusable patterns -> CODEBASE_PATTERN
 
     Returns:
-        dict with success status and memory_id
+        Aggregated dict with per-category results. Top-level ``success`` is
+        True iff all non-empty categories were either stored or skipped
+        cleanly (i.e., no transport/backend errors). Each category appears
+        as a sub-dict under ``results`` with the same shape that
+        ``store_learning_v2`` returns.
     """
-    try:
-        from db.memory_factory import (
-            create_memory_service,
-            get_default_backend,
-        )
-        from db.embedding_service import EmbeddingService
-    except ImportError as e:
-        return {"success": False, "error": f"Memory service not available: {e}"}
+    warnings.warn(
+        "store_learning() is deprecated; use store_learning_v2() directly. "
+        "Each legacy category (worked/failed/decisions/patterns) is now "
+        "routed through the v2 quality gate. NOISE inputs will be rejected.",
+        DeprecationWarning,
+        stacklevel=2,
+    )
 
-    # Build learning content
-    learning_parts = []
-    if worked and worked.lower() != "none":
-        learning_parts.append(f"What worked: {worked}")
-    if failed and failed.lower() != "none":
-        learning_parts.append(f"What failed: {failed}")
-    if decisions and decisions.lower() != "none":
-        learning_parts.append(f"Decisions: {decisions}")
-    if patterns and patterns.lower() != "none":
-        learning_parts.append(f"Patterns: {patterns}")
-
-    if not learning_parts:
-        return {"success": False, "error": "No learning content provided"}
-
-    learning_content = "\n".join(learning_parts)
-
-    # Metadata for filtering/retrieval
-    metadata = {
-        "type": "session_learning",
-        "session_id": session_id,
-        "timestamp": datetime.now(timezone.utc).isoformat(),
-        "categories": {
-            "worked": bool(worked and worked.lower() != "none"),
-            "failed": bool(failed and failed.lower() != "none"),
-            "decisions": bool(decisions and decisions.lower() != "none"),
-            "patterns": bool(patterns and patterns.lower() != "none"),
-        }
+    # Collect non-empty categories
+    legacy_bundle = {
+        "worked": worked,
+        "failed": failed,
+        "decisions": decisions,
+        "patterns": patterns,
+    }
+    populated = {
+        cat: val
+        for cat, val in legacy_bundle.items()
+        if val and val.strip().lower() != "none"
     }
 
-    # Get backend - prefer postgres if DATABASE_URL is set
-    if os.environ.get("DATABASE_URL"):
-        backend = "postgres"
-    else:
-        backend = get_default_backend()
+    if not populated:
+        return {"success": False, "error": "No learning content provided"}
 
-    try:
-        memory = await create_memory_service(
-            backend=backend,
+    # Route each category through v2. The v2 path handles:
+    #   - quality gate (rejects NOISE, including too-short content)
+    #   - embedding via singleton
+    #   - dedup
+    #   - scope classification
+    results: dict[str, dict] = {}
+    any_stored = False
+    any_error = False
+    for category, value in populated.items():
+        learning_type = _V1_CATEGORY_TO_TYPE[category]
+        result = await store_learning_v2(
             session_id=session_id,
+            content=value,
+            learning_type=learning_type,
+            context=f"v1_legacy:{category}",
+            tags=[f"v1_legacy", category],
         )
+        results[category] = result
+        if result.get("success") and not result.get("skipped"):
+            any_stored = True
+        if not result.get("success"):
+            any_error = True
 
-        # Generate embedding (uses singleton to avoid 1.5GB model reload)
-        embedder = get_embedder()
-        embedding = await embedder.embed(learning_content)
+    # Aggregate top-level shape -- preserve back-compat fields where possible.
+    aggregated: dict = {
+        "success": not any_error,
+        "results": results,
+        "categories_processed": list(populated.keys()),
+        "deprecated": True,
+    }
 
-        # Store with embedding for semantic search
-        memory_id = await memory.store(
-            learning_content,
-            metadata=metadata,
-            embedding=embedding,
-        )
+    # If exactly one category was stored, surface its memory_id at top level
+    # for callers expecting v1's single-row shape.
+    stored_ids = [
+        (cat, r.get("memory_id"))
+        for cat, r in results.items()
+        if r.get("success") and not r.get("skipped") and r.get("memory_id")
+    ]
+    if len(stored_ids) == 1:
+        aggregated["memory_id"] = stored_ids[0][1]
+    elif stored_ids:
+        aggregated["memory_ids"] = {cat: mid for cat, mid in stored_ids}
 
-        await memory.close()
+    if any_stored:
+        # Pull backend/embedding_dim from the first successful store
+        for r in results.values():
+            if r.get("success") and not r.get("skipped"):
+                if "backend" in r:
+                    aggregated["backend"] = r["backend"]
+                if "embedding_dim" in r:
+                    aggregated["embedding_dim"] = r["embedding_dim"]
+                break
 
-        return {
-            "success": True,
-            "memory_id": memory_id,
-            "backend": backend,
-            "content_length": len(learning_content),
-            "embedding_dim": len(embedding),
-        }
+    aggregated["content_length"] = sum(len(v) for v in populated.values())
 
-    except Exception as e:
-        return {"success": False, "error": str(e)}
+    return aggregated
 
 
 async def main():

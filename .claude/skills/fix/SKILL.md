@@ -105,6 +105,15 @@ Proceed? [Yes / Adjust settings]
 
 See `references/agents.md` for full per-scope flow diagrams.
 
+### Investigator selection: sleuth vs debug-agent
+
+The `bug` and `hook` chains shown above default to `sleuth` for the investigation phase. Both agents load the `systematic-debugging` skill, so the methodology is identical — the split is about *where* you point the agent:
+
+- **sleuth** — deep forensics. Use when the bug is multi-file, intermittent, or needs evidence-grade reproduction with traced code paths. Sleuth produces file:line citations and a reproduction script.
+- **debug-agent** — general root-cause analysis. Use when the failure mode is not yet localized and you just need a competent first pass to surface candidate causes.
+
+Both have `model: opus` and overlapping toolsets; the agent frontmatter `description` fields encode this split (see `.claude/agents/sleuth.md` and `.claude/agents/debug-agent.md`). When a `/fix` invocation passes a multi-file or intermittent symptom, prefer `sleuth`. When the symptom is one error message in one file or the user is unsure where it lives, prefer `debug-agent`.
+
 ## Options
 
 | Option | Effect |

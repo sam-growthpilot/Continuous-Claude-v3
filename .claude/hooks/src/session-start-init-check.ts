@@ -128,6 +128,26 @@ function hasCodeFiles(projectDir: string): boolean {
     }
   }
 
+  // Phase 3 (cross-project isolation): also recognize bare-file projects
+  // that lack a build manifest. Top-level scan only -- no recursion.
+  const codeExtensions = new Set([
+    '.py', '.ts', '.tsx', '.js', '.jsx', '.go', '.rs', '.rb',
+    '.java', '.c', '.cpp', '.h', '.cs', '.kt', '.swift',
+  ]);
+  try {
+    const entries = fs.readdirSync(projectDir, { withFileTypes: true });
+    for (const entry of entries) {
+      if (entry.isFile()) {
+        const ext = path.extname(entry.name).toLowerCase();
+        if (codeExtensions.has(ext)) {
+          return true;
+        }
+      }
+    }
+  } catch {
+    // Unreadable directory -- treat as no code files.
+  }
+
   return false;
 }
 
@@ -329,6 +349,12 @@ async function main() {
   const projectDir = process.env.CLAUDE_PROJECT_DIR || process.cwd();
 
   if (projectDir.includes('.claude') && !projectDir.includes('continuous-claude')) {
+    // Phase 3 (cross-project isolation): warn so the user knows why bootstrap
+    // was skipped instead of silently no-oping.
+    console.error(
+      `[init-check] Skipping bootstrap: project path contains '.claude' (cwd=${projectDir}). ` +
+      `Set CLAUDE_PROJECT_DIR explicitly to override.`
+    );
     console.log(JSON.stringify({ result: 'continue' }));
     return;
   }

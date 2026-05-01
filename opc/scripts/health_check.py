@@ -25,10 +25,12 @@ import json
 import os
 import re
 import socket
+import statistics
 import subprocess
 import sys
 import time
 import uuid
+from collections import deque
 from dataclasses import asdict, dataclass, field
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -63,6 +65,7 @@ DEFAULT_OUTPUT_DIR = CLAUDE_DIR / "cache" / "health-checks"
 CATEGORY_ORDER: list[str] = [
     "infrastructure",
     "hooks",
+    "hook-runtime",
     "memory",
     "skills",
     "agents",
@@ -220,6 +223,7 @@ class HealthCheckRunner:
                 "counts": counts,
                 "duration_ms": int(duration * 1000),
                 "hostname": socket.gethostname(),
+                "results": [r.to_dict() for r in results],
             }) + "\n")
 
         return json_path, md_path
@@ -563,6 +567,53 @@ def check_opc_env_file() -> CheckResult:
                  metadata={"bytes": size})
 
 
+def check_tldr_daemon_running() -> CheckResult:
+    """`tldr daemon status` reports whether the long-running tldr daemon
+    is up. The daemon caches call graphs / embeddings so subsequent
+    queries skip cold-start. Phase 5 of system-coherence will codify
+    tldr as the canonical code-context lookup; this check makes the
+    "is it running?" signal observable now.
+
+    Note: `tldr daemon status` exits 0 in both running and not-running
+    states, so we parse the output text rather than the return code.
+    """
+    start = time.perf_counter()
+    p = _run(["tldr", "daemon", "status"], timeout=5)
+    dur = int((time.perf_counter() - start) * 1000)
+    if p.returncode != 0:
+        return _warn(
+            "tldr-daemon-running", "infrastructure",
+            f"tldr daemon status exit={p.returncode}: "
+            f"{(p.stderr or p.stdout).strip()[:200]}",
+            severity="LOW",
+            remediation="tldr daemon start  (or `pip install --upgrade tldr`)",
+            duration_ms=dur,
+        )
+    out = (p.stdout or "").strip()
+    low = out.lower()
+    if "not running" in low or "stopped" in low:
+        return _warn(
+            "tldr-daemon-running", "infrastructure",
+            f"tldr daemon is not running: {out[:200]}",
+            severity="LOW",
+            remediation="tldr daemon start",
+            duration_ms=dur,
+        )
+    if "running" in low:
+        return _pass(
+            "tldr-daemon-running", "infrastructure",
+            f"tldr daemon running: {out[:200]}",
+            duration_ms=dur,
+        )
+    # Unexpected output -- don't fail the whole check, but flag it.
+    return _warn(
+        "tldr-daemon-running", "infrastructure",
+        f"unrecognized tldr daemon status output: {out[:200]}",
+        severity="LOW",
+        duration_ms=dur,
+    )
+
+
 # ---- 2. Hooks --------------------------------------------------------------
 
 
@@ -817,6 +868,556 @@ def check_hook_vitest() -> CheckResult:
 
 # ---- 3. Memory -------------------------------------------------------------
 
+_CANARY_HISTORY_PATH = DEFAULT_OUTPUT_DIR / "history.jsonl"
+_CANARY_TIMEOUT_FLOOR = 90.0
+_CANARY_TIMEOUT_CEILING = 300.0
+_CANARY_MIN_PASS_RECORDS = 5
+_CANARY_HISTORY_TAIL = 50
+
+
+def compute_canary_timeout(history_path: Path | None = None) -> float:
+    """Return adaptive timeout (seconds) for memory-canary-roundtrip.
+
+    Uses P95 of the last 10 PASS records * 2, clamped to [90, 300].
+    Falls back to the floor if fewer than 5 PASS records exist.
+
+    Args:
+        history_path: Override the default history.jsonl path (for tests).
+
+    Returns:
+        Timeout in seconds (float).
+    """
+    path = history_path if history_path is not None else _CANARY_HISTORY_PATH
+    if not path or not path.exists():
+        return _CANARY_TIMEOUT_FLOOR
+
+    # Read last N lines without loading the full file
+    try:
+        raw_lines = path.read_text(encoding="utf-8").splitlines()
+    except OSError:
+        return _CANARY_TIMEOUT_FLOOR
+    tail = raw_lines[-_CANARY_HISTORY_TAIL:]
+
+    pass_durations: list[float] = []
+    for line in tail:
+        if not line.strip():
+            continue
+        try:
+            record = json.loads(line)
+        except (json.JSONDecodeError, ValueError):
+            continue
+        for result in record.get("results", []):
+            if (
+                result.get("name") == "memory-canary-roundtrip"
+                and result.get("status") == "PASS"
+                and isinstance(result.get("duration_ms"), (int, float))
+            ):
+                pass_durations.append(float(result["duration_ms"]))
+
+    # Only use the last 10 PASS records
+    recent = pass_durations[-10:]
+    if len(recent) < _CANARY_MIN_PASS_RECORDS:
+        return _CANARY_TIMEOUT_FLOOR
+
+    # P95 via statistics.quantiles (n=20 gives 5th percentile steps; index 18 = 95th)
+    p95_ms = statistics.quantiles(recent, n=20)[18]
+    adaptive = max(
+        _CANARY_TIMEOUT_FLOOR,
+        min(_CANARY_TIMEOUT_CEILING, (p95_ms / 1000.0) * 2),
+    )
+    return adaptive
+
+
+# ---------------------------------------------------------------------------
+# Hook runtime: trace + settings consumption
+# ---------------------------------------------------------------------------
+
+DEFAULT_HOOK_TRACE_PATH = Path(
+    os.path.expanduser("~/.claude/cache/hook-trace.jsonl")
+)
+DEFAULT_HOOK_SETTINGS_PATH = Path(
+    os.path.expanduser("~/.claude/settings.json")
+)
+_HOOK_TRACE_MAX_LINES = 100_000
+_HOOK_RUNTIME_MIN_FIRES_FOR_STATS = 10
+_HOOK_RUNTIME_ERROR_RATE_THRESHOLD = 0.05  # 5%
+_HOOK_RUNTIME_MIN_HISTORY_DAYS = 3
+
+
+def _parse_iso8601(ts: str) -> datetime | None:
+    """Parse an ISO 8601 timestamp into a tz-aware datetime, or None."""
+    if not isinstance(ts, str) or not ts:
+        return None
+    raw = ts
+    # datetime.fromisoformat accepts +00:00 but historically not the trailing Z
+    # Python 3.11+ does accept Z, but normalize to be safe across environments.
+    if raw.endswith("Z"):
+        raw = raw[:-1] + "+00:00"
+    try:
+        dt = datetime.fromisoformat(raw)
+    except (ValueError, TypeError):
+        return None
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
+    return dt
+
+
+def parse_hook_trace(
+    trace_path: Path | None = None,
+    since_days: int = 7,
+) -> list[dict]:
+    """Parse hook-trace.jsonl, return events from the last `since_days` days.
+
+    Skips malformed lines silently. Reads at most 100k lines to bound memory.
+    Returns empty list if the file does not exist.
+
+    Args:
+        trace_path: Override the default ~/.claude/cache/hook-trace.jsonl path.
+        since_days: Only include events newer than this many days.
+
+    Returns:
+        List of event dicts (raw JSONL records that parsed cleanly + are recent).
+    """
+    path = trace_path if trace_path is not None else DEFAULT_HOOK_TRACE_PATH
+    if not path or not path.exists():
+        return []
+    # Permissions can change between runs (e.g. another user wrote the trace
+    # file with restrictive umask). Skip readability failures up front so the
+    # downstream telemetry checks see an empty event list rather than a
+    # half-populated one from a partially-readable file.
+    if not os.access(path, os.R_OK):
+        return []
+
+    cutoff = datetime.now(timezone.utc) - timedelta(days=since_days)
+    events: list[dict] = []
+    try:
+        # Tail the file: read the last _HOOK_TRACE_MAX_LINES lines via a
+        # bounded deque. The previous head-read approach truncated AFTER
+        # _HOOK_TRACE_MAX_LINES, so once the trace file grew past the cap
+        # it would only ever surface ancient events. Tailing keeps the
+        # window aligned with the most recent activity.
+        with path.open("r", encoding="utf-8", errors="replace") as f:
+            tail = deque(f, maxlen=_HOOK_TRACE_MAX_LINES)
+        for line in tail:
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                rec = json.loads(line)
+            except (json.JSONDecodeError, ValueError):
+                continue
+            if not isinstance(rec, dict):
+                continue
+            ts = _parse_iso8601(rec.get("ts", ""))
+            if ts is None:
+                continue
+            if ts < cutoff:
+                continue
+            events.append(rec)
+    except OSError:
+        return []
+    return events
+
+
+def aggregate_by_hook(events: list[dict]) -> dict[str, dict]:
+    """Aggregate trace events by hook name.
+
+    Returns:
+        {
+            hook_name: {
+                "fires": N,
+                "errors": N,           # count of nonzero exitCode
+                "durations_ms": [...], # raw durations for percentile calc
+                "first_fire": iso ts (str) | None,
+                "last_fire":  iso ts (str) | None,
+            }
+        }
+    """
+    agg: dict[str, dict] = {}
+    for ev in events:
+        if not isinstance(ev, dict):
+            continue
+        name = ev.get("name")
+        if not isinstance(name, str) or not name:
+            continue
+        bucket = agg.setdefault(name, {
+            "fires": 0,
+            "errors": 0,
+            "durations_ms": [],
+            "first_fire": None,
+            "last_fire": None,
+        })
+        bucket["fires"] += 1
+        exit_code = ev.get("exitCode", 0)
+        if isinstance(exit_code, (int, float)) and int(exit_code) != 0:
+            bucket["errors"] += 1
+        dur = ev.get("durationMs")
+        if isinstance(dur, (int, float)):
+            bucket["durations_ms"].append(float(dur))
+        ts = ev.get("ts")
+        if isinstance(ts, str) and ts:
+            if bucket["first_fire"] is None or ts < bucket["first_fire"]:
+                bucket["first_fire"] = ts
+            if bucket["last_fire"] is None or ts > bucket["last_fire"]:
+                bucket["last_fire"] = ts
+    return agg
+
+
+def get_registered_hooks(
+    settings_path: Path | None = None,
+) -> set[str]:
+    """Parse settings.json and return the set of hook BASENAMES.
+
+    Walks `hooks.{event}[N].hooks[M].command`, extracts the .mjs path, and
+    returns just the bare hook name (no dirname, no `.mjs` suffix).
+
+    Args:
+        settings_path: Override the default ~/.claude/settings.json path.
+
+    Returns:
+        Set of hook basenames, e.g. {"memory-awareness", "agent-validate"}.
+    """
+    path = settings_path if settings_path is not None else DEFAULT_HOOK_SETTINGS_PATH
+    if not path or not path.exists():
+        return set()
+    try:
+        settings = json.loads(path.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, OSError, ValueError):
+        return set()
+    names: set[str] = set()
+    hooks_cfg = settings.get("hooks") if isinstance(settings, dict) else None
+    if not isinstance(hooks_cfg, dict):
+        return set()
+    for _event, entries in hooks_cfg.items():
+        if not isinstance(entries, list):
+            continue
+        for entry in entries:
+            if not isinstance(entry, dict):
+                continue
+            inner = entry.get("hooks", [])
+            if not isinstance(inner, list):
+                continue
+            for h in inner:
+                if not isinstance(h, dict):
+                    continue
+                cmd = h.get("command", "")
+                if not isinstance(cmd, str):
+                    continue
+                m = re.search(r"(\S+\.mjs)", cmd)
+                if not m:
+                    continue
+                raw = m.group(1)
+                # Normalize separators and strip dirname + extension
+                raw_norm = raw.replace("\\", "/")
+                bare = raw_norm.rsplit("/", 1)[-1]
+                if bare.endswith(".mjs"):
+                    bare = bare[: -len(".mjs")]
+                if bare:
+                    names.add(bare)
+    return names
+
+
+def compute_unfired_hooks(
+    registered: set[str],
+    aggregated: dict,
+    min_history_days: int = _HOOK_RUNTIME_MIN_HISTORY_DAYS,
+    events: list[dict] | None = None,
+) -> tuple[list[str], bool]:
+    """Return (sorted unfired hook names, has_sufficient_history).
+
+    The history window is the time span between the earliest and latest event
+    timestamps. If the span is less than `min_history_days`, returns
+    (unfired, False) so callers can SKIP rather than emit a misleading WARN.
+
+    Args:
+        registered: Set of registered hook basenames (from get_registered_hooks).
+        aggregated: Output of aggregate_by_hook (used for `fires` counts).
+        min_history_days: Threshold below which we declare insufficient history.
+        events: Raw trace events used to compute the actual history span.
+                If None, falls back to deriving span from aggregated `first_fire`/
+                `last_fire` if present.
+
+    Returns:
+        Tuple of (sorted list of registered names with zero fires,
+                  bool indicating whether trace history span >= min_history_days).
+    """
+    fired_with_count = {
+        name for name, bucket in aggregated.items()
+        if isinstance(bucket, dict) and bucket.get("fires", 0) > 0
+    }
+    unfired = sorted(registered - fired_with_count)
+
+    # Determine history span
+    earliest: datetime | None = None
+    latest: datetime | None = None
+
+    if events:
+        for ev in events:
+            ts = _parse_iso8601(ev.get("ts", "") if isinstance(ev, dict) else "")
+            if ts is None:
+                continue
+            if earliest is None or ts < earliest:
+                earliest = ts
+            if latest is None or ts > latest:
+                latest = ts
+    else:
+        for bucket in aggregated.values():
+            if not isinstance(bucket, dict):
+                continue
+            ff = _parse_iso8601(bucket.get("first_fire") or "")
+            lf = _parse_iso8601(bucket.get("last_fire") or "")
+            if ff is not None and (earliest is None or ff < earliest):
+                earliest = ff
+            if lf is not None and (latest is None or lf > latest):
+                latest = lf
+
+    if earliest is None or latest is None:
+        return unfired, False
+    span_days = (latest - earliest).total_seconds() / 86400.0
+    has_sufficient = span_days >= float(min_history_days)
+    return unfired, has_sufficient
+
+
+def _percentile(values: list[float], pct: float) -> float:
+    """Simple percentile (nearest-rank-ish, robust for small samples)."""
+    if not values:
+        return 0.0
+    if len(values) == 1:
+        return float(values[0])
+    sorted_vals = sorted(values)
+    # statistics.quantiles needs at least 2 points; we have len>=2 here.
+    # n=100 gives percentile-step quantiles; index = pct - 1 (clamped).
+    try:
+        qs = statistics.quantiles(sorted_vals, n=100)
+        idx = max(0, min(len(qs) - 1, int(pct) - 1))
+        return float(qs[idx])
+    except statistics.StatisticsError:
+        return float(sorted_vals[-1])
+
+
+def check_hook_runtime(
+    trace_path: Path | None = None,
+    settings_path: Path | None = None,
+) -> list[CheckResult]:
+    """Hook-runtime category: 4 sub-checks driven by trace.jsonl + settings.json.
+
+    Sub-checks:
+        1. hook-trace-file-present  -- PASS if file exists, SKIP otherwise.
+        2. hook-fire-rate           -- WARN MEDIUM on registered-but-unfired hooks
+                                       (only when history span >= 3 days).
+        3. hook-error-rate          -- WARN HIGH if any hook with >=10 fires has
+                                       >5% nonzero-exit rate.
+        4. hook-timing-p95          -- INFO PASS, evidence reports top-3 P95.
+
+    Fail-safe: any unhandled exception -> single FAIL severity LOW with the
+    exception message. Never crashes the parent runner.
+
+    Args:
+        trace_path: Override default ~/.claude/cache/hook-trace.jsonl.
+        settings_path: Override default ~/.claude/settings.json.
+
+    Returns:
+        List of CheckResult, all in category "hook-runtime".
+    """
+    category = "hook-runtime"
+    start = time.perf_counter()
+    results: list[CheckResult] = []
+    try:
+        path = trace_path if trace_path is not None else DEFAULT_HOOK_TRACE_PATH
+        sett = settings_path if settings_path is not None else DEFAULT_HOOK_SETTINGS_PATH
+
+        # 1. hook-trace-file-present
+        if not path.exists():
+            results.append(_skip(
+                "hook-trace-file-present", category,
+                f"trace file not yet present at {path}",
+                duration_ms=int((time.perf_counter() - start) * 1000),
+            ))
+            # If trace is missing, the rest is meaningless: skip them too.
+            results.append(_skip(
+                "hook-fire-rate", category,
+                "no trace data — skipped",
+            ))
+            results.append(_skip(
+                "hook-error-rate", category,
+                "no trace data — skipped",
+            ))
+            results.append(_skip(
+                "hook-timing-p95", category,
+                "no trace data — skipped",
+            ))
+            return results
+
+        # Readability check: a trace file that exists but is unreadable
+        # would silently degrade the rest of this category to SKIP/PASS via
+        # the OSError swallow inside parse_hook_trace. Fail loudly instead so
+        # the I/O problem (e.g. another user's umask, ACL change) is surfaced.
+        if not os.access(path, os.R_OK):
+            results.append(_fail(
+                "hook-trace-file-present", category,
+                f"trace file present but not readable: {path}",
+                severity="HIGH",
+                remediation=(
+                    "Check file ownership/ACLs on the hook-trace.jsonl path; "
+                    "the health checker user must have R_OK."
+                ),
+                duration_ms=int((time.perf_counter() - start) * 1000),
+            ))
+            results.append(_skip(
+                "hook-fire-rate", category,
+                "trace file unreadable — skipped",
+            ))
+            results.append(_skip(
+                "hook-error-rate", category,
+                "trace file unreadable — skipped",
+            ))
+            results.append(_skip(
+                "hook-timing-p95", category,
+                "trace file unreadable — skipped",
+            ))
+            return results
+
+        results.append(_pass(
+            "hook-trace-file-present", category,
+            f"trace file present at {path}",
+            duration_ms=int((time.perf_counter() - start) * 1000),
+        ))
+
+        # Parse + aggregate (shared work)
+        events = parse_hook_trace(trace_path=path, since_days=7)
+        aggregated = aggregate_by_hook(events)
+        registered = get_registered_hooks(settings_path=sett)
+
+        # 2. hook-fire-rate
+        fr_start = time.perf_counter()
+        unfired, sufficient = compute_unfired_hooks(
+            registered, aggregated,
+            min_history_days=_HOOK_RUNTIME_MIN_HISTORY_DAYS,
+            events=events,
+        )
+        fr_dur = int((time.perf_counter() - fr_start) * 1000)
+        if not sufficient:
+            results.append(_skip(
+                "hook-fire-rate", category,
+                "insufficient history (<3 days of trace data)",
+                duration_ms=fr_dur,
+            ))
+        elif unfired:
+            sample = unfired[:5]
+            results.append(_warn(
+                "hook-fire-rate", category,
+                f"{len(unfired)} registered hook(s) had zero fires in last 7d "
+                f"(first 5: {sample})",
+                severity="MEDIUM",
+                remediation=(
+                    "verify intent: dead hook? wrong matcher? remove or fix"
+                ),
+                duration_ms=fr_dur,
+                metadata={"unfired": unfired},
+            ))
+        else:
+            results.append(_pass(
+                "hook-fire-rate", category,
+                f"all {len(registered)} registered hooks fired in last 7d",
+                duration_ms=fr_dur,
+                metadata={"registered_count": len(registered)},
+            ))
+
+        # 3. hook-error-rate
+        er_start = time.perf_counter()
+        offenders: list[tuple[str, float, int, int]] = []  # name, rate, errors, fires
+        for name, bucket in aggregated.items():
+            fires = bucket.get("fires", 0)
+            errors = bucket.get("errors", 0)
+            if fires < _HOOK_RUNTIME_MIN_FIRES_FOR_STATS:
+                continue
+            rate = errors / fires if fires else 0.0
+            if rate > _HOOK_RUNTIME_ERROR_RATE_THRESHOLD:
+                offenders.append((name, rate, errors, fires))
+        er_dur = int((time.perf_counter() - er_start) * 1000)
+        if offenders:
+            offenders.sort(key=lambda x: x[1], reverse=True)
+            top = offenders[:3]
+            top_str = ", ".join(
+                f"{n} {e}/{f} ({r * 100:.1f}%)" for n, r, e, f in top
+            )
+            results.append(_warn(
+                "hook-error-rate", category,
+                f"{len(offenders)} hook(s) over 5% error rate. Top: {top_str}",
+                severity="HIGH",
+                remediation=(
+                    "investigate failing hooks; check ~/.claude/cache/hook-trace.jsonl"
+                ),
+                duration_ms=er_dur,
+                metadata={
+                    "offenders": [
+                        {"name": n, "rate": r, "errors": e, "fires": f}
+                        for n, r, e, f in offenders
+                    ],
+                },
+            ))
+        else:
+            sampled = sum(
+                1 for b in aggregated.values()
+                if b.get("fires", 0) >= _HOOK_RUNTIME_MIN_FIRES_FOR_STATS
+            )
+            if sampled == 0:
+                results.append(_skip(
+                    "hook-error-rate", category,
+                    "no hooks reached the 10-fire minimum for analysis",
+                    duration_ms=er_dur,
+                ))
+            else:
+                results.append(_pass(
+                    "hook-error-rate", category,
+                    f"{sampled} hook(s) sampled, all under 5% error rate",
+                    duration_ms=er_dur,
+                ))
+
+        # 4. hook-timing-p95 (always INFO PASS; just reports)
+        tp_start = time.perf_counter()
+        timed: list[tuple[str, float, float]] = []  # name, p50, p95
+        for name, bucket in aggregated.items():
+            durations = bucket.get("durations_ms") or []
+            if len(durations) < _HOOK_RUNTIME_MIN_FIRES_FOR_STATS:
+                continue
+            p50 = _percentile(durations, 50)
+            p95 = _percentile(durations, 95)
+            timed.append((name, p50, p95))
+        tp_dur = int((time.perf_counter() - tp_start) * 1000)
+        if not timed:
+            results.append(_pass(
+                "hook-timing-p95", category,
+                "no hook reached 10-fire minimum yet — no P95 to report",
+                duration_ms=tp_dur,
+            ))
+        else:
+            timed.sort(key=lambda x: x[2], reverse=True)
+            top3 = timed[:3]
+            slowest_str = ", ".join(
+                f"{n} P95 {p95:.0f}ms" for n, _p50, p95 in top3
+            )
+            results.append(_pass(
+                "hook-timing-p95", category,
+                f"{len(timed)} hooks tracked. Slowest P95: {slowest_str}",
+                duration_ms=tp_dur,
+                metadata={
+                    "timings": [
+                        {"name": n, "p50_ms": p50, "p95_ms": p95}
+                        for n, p50, p95 in timed
+                    ],
+                },
+            ))
+        return results
+    except Exception as e:  # noqa: BLE001 - intentional fail-safe
+        return [_fail(
+            "hook-runtime", "hook-runtime",
+            f"hook-runtime check crashed: {type(e).__name__}: {e}",
+            severity="LOW",
+            remediation="inspect the trace.jsonl + settings.json shapes",
+            duration_ms=int((time.perf_counter() - start) * 1000),
+        )]
+
 
 def _run_python_script(args: list[str], timeout: int = 60) -> tuple[int, str, str]:
     """Run a core Python script via uv, from opc dir with PYTHONPATH=."""
@@ -903,7 +1504,8 @@ def check_memory_canary_roundtrip() -> CheckResult:
             pass  # best-effort cleanup
 
     try:
-        # 1. Store via store_learning.py
+        # 1. Store via store_learning.py (adaptive timeout from P95 history)
+        _store_timeout = int(compute_canary_timeout())
         rc, stdout, stderr = _run_python_script([
             "scripts/core/store_learning.py",
             "--session-id", "health-check",
@@ -912,7 +1514,7 @@ def check_memory_canary_roundtrip() -> CheckResult:
             "--context", "health check canary",
             "--tags", "scope:global,canary,health-check",
             "--confidence", "medium",
-        ], timeout=90)
+        ], timeout=_store_timeout)
         steps.append(f"store_rc={rc}")
         if rc != 0:
             asyncio.run(_cleanup())
@@ -1759,21 +2361,78 @@ def check_git_uncommitted() -> CheckResult:
                  dur, metadata=metadata)
 
 
+# Backup remote convention: origin = upstream (parcadei, never push), fork = backup
+# (Rev4nchist, always push). The "real" sync delta is HEAD vs fork/main.
+GIT_BACKUP_REF = "fork/main"
+
+
 def check_git_remote_sync() -> CheckResult:
+    """Compare HEAD to the fork backup ref to surface unpushed/unpulled state.
+
+    PASS  -- HEAD is in sync with fork/main
+    WARN  -- ahead (push pending, backup gap), behind (pull/rebase needed),
+             or diverged (both)
+    SKIP  -- fork/main is missing (e.g., fresh clone without remote configured)
+
+    Uses ``git rev-list --left-right --count`` against ``GIT_BACKUP_REF``
+    rather than ``git status -sb`` because the latter only inspects the
+    current branch's upstream, which may be unset or pointed at the wrong
+    remote (origin = parcadei, never pushed).
+    """
     start = time.perf_counter()
-    p = _run(["git", "status", "-sb"],
-             cwd=REPO_ROOT, timeout=15, shell=True)
+    # Pass argv as a list (no shell=True) so user-controlled refs can never be
+    # interpreted as a shell metacharacter. argv-mode is also more portable on
+    # Windows where shell=True invokes cmd.exe with quoting quirks.
+    branch_p = _run(["git", "rev-parse", "--abbrev-ref", "HEAD"],
+                    cwd=REPO_ROOT, timeout=10)
+    branch = branch_p.stdout.strip() if branch_p.returncode == 0 else "?"
+
+    rev_p = _run(["git", "rev-list", "--left-right", "--count",
+                  f"{GIT_BACKUP_REF}...HEAD"],
+                 cwd=REPO_ROOT, timeout=15)
     dur = int((time.perf_counter() - start) * 1000)
-    if p.returncode != 0:
-        return _skip("git-remote-sync", "git", "git status failed")
-    first = p.stdout.splitlines()[0] if p.stdout.splitlines() else ""
-    if "behind" in first or "diverged" in first:
-        return _warn("git-remote-sync", "git",
-                     f"branch state: {first}",
-                     severity="LOW",
+
+    if rev_p.returncode != 0:
+        # fork/main missing or rev-list failed -- can't compute delta.
+        stderr = (rev_p.stderr or "").strip().splitlines()
+        reason = stderr[0] if stderr else f"exit {rev_p.returncode}"
+        return _skip("git-remote-sync", "git",
+                     f"cannot resolve {GIT_BACKUP_REF}: {reason}",
                      duration_ms=dur)
+
+    parts = rev_p.stdout.strip().split()
+    if len(parts) != 2:
+        return _skip("git-remote-sync", "git",
+                     f"unexpected rev-list output: {rev_p.stdout!r}",
+                     duration_ms=dur)
+    try:
+        behind, ahead = int(parts[0]), int(parts[1])
+    except ValueError:
+        return _skip("git-remote-sync", "git",
+                     f"unparseable rev-list output: {rev_p.stdout!r}",
+                     duration_ms=dur)
+
+    metadata = {"branch": branch, "ahead": ahead, "behind": behind,
+                "ref": GIT_BACKUP_REF}
+
+    if behind > 0 and ahead > 0:
+        return _warn("git-remote-sync", "git",
+                     f"diverged from {GIT_BACKUP_REF}: "
+                     f"{ahead} ahead, {behind} behind ({branch})",
+                     severity="LOW", duration_ms=dur, metadata=metadata)
+    if behind > 0:
+        return _warn("git-remote-sync", "git",
+                     f"behind {GIT_BACKUP_REF} by {behind} ({branch}): "
+                     f"pull/rebase needed",
+                     severity="LOW", duration_ms=dur, metadata=metadata)
+    if ahead > 0:
+        return _warn("git-remote-sync", "git",
+                     f"ahead of {GIT_BACKUP_REF} by {ahead} ({branch}): "
+                     f"push to fork for backup",
+                     severity="LOW", duration_ms=dur, metadata=metadata)
     return _pass("git-remote-sync", "git",
-                 f"branch: {first}", dur)
+                 f"in sync with {GIT_BACKUP_REF} ({branch})",
+                 duration_ms=dur, metadata=metadata)
 
 
 # ---- 13. ROADMAP -----------------------------------------------------------
@@ -1795,6 +2454,135 @@ def check_roadmap_present() -> CheckResult:
     return _pass("roadmap-present", "roadmap",
                  f"ROADMAP.md ({size} bytes)",
                  dur, metadata={"bytes": size})
+
+
+# ===========================================================================
+# Bridge (Notion HQ <-> Claude Code) -- Phase 4 system-coherence
+#
+# These checks are deliberately file-system level. The plan called for a live
+# "pages-resolve / queue-fresh" check, but health_check.py runs as a CLI and
+# cannot reach the claude.ai Notion MCP server (that's session-scoped). What
+# we *can* catch from disk: the skill is missing, the documented page IDs got
+# garbled, or the Notion MCP entry vanished from MCP config. A live HTTP
+# probe needs an internal Notion API token + integration grant; track that
+# as a Phase 4 follow-up if the offline checks prove insufficient.
+# ===========================================================================
+
+
+# Stable Notion page IDs for the bridge. Hyphenated UUID form is what Notion
+# emits; the unhyphenated 32-char form is what gets pasted into URLs and into
+# memory entries. Tolerate either when scanning text.
+BRIDGE_HQ_PAGE_ID_HYPH = "30e76fd7-ac82-81e9-9fe1-c0b257088b34"
+BRIDGE_HQ_PAGE_ID_FLAT = "30e76fd7ac8281e99fe1c0b257088b34"
+BRIDGE_ARCHIVE_PAGE_ID_HYPH = "30e76fd7-ac82-8125-8cd9-d281aa873298"
+BRIDGE_ARCHIVE_PAGE_ID_FLAT = "30e76fd7ac8281258cd9d281aa873298"
+
+
+def _bridge_skill_path() -> Path:
+    return CLAUDE_DIR / "skills" / "notion-bridge" / "notion-bridge" / "SKILL.md"
+
+
+def check_bridge_skill_present() -> CheckResult:
+    """The notion-bridge skill must exist; it's the contract Claude follows
+    when reading/writing the HQ page."""
+    start = time.perf_counter()
+    skill = _bridge_skill_path()
+    if not skill.exists():
+        return _fail(
+            "bridge-skill-present", "bridge",
+            f"missing {skill.relative_to(REPO_ROOT)}",
+            severity="HIGH",
+            duration_ms=int((time.perf_counter() - start) * 1000),
+        )
+    size = skill.stat().st_size
+    dur = int((time.perf_counter() - start) * 1000)
+    if size < 200:
+        return _warn(
+            "bridge-skill-present", "bridge",
+            f"SKILL.md exists but suspiciously small ({size} bytes)",
+            severity="MEDIUM", duration_ms=dur,
+        )
+    return _pass(
+        "bridge-skill-present", "bridge",
+        f"SKILL.md present ({size} bytes)",
+        dur, metadata={"bytes": size, "path": str(skill)},
+    )
+
+
+def check_bridge_page_ids_stable() -> CheckResult:
+    """The HQ + Archive page IDs must still be referenced in the skill or its
+    references/. Catches accidental edits, deletions, or ID rotations that
+    would silently break every bridge read/write."""
+    start = time.perf_counter()
+    skill_dir = _bridge_skill_path().parent
+    if not skill_dir.exists():
+        return _skip(
+            "bridge-page-ids-stable", "bridge",
+            "skill dir missing -- depends on bridge-skill-present",
+        )
+    blob_parts: list[str] = []
+    for p in skill_dir.rglob("*.md"):
+        try:
+            blob_parts.append(p.read_text(encoding="utf-8", errors="ignore"))
+        except OSError:
+            continue
+    blob = "\n".join(blob_parts)
+    missing: list[str] = []
+    if (BRIDGE_HQ_PAGE_ID_HYPH not in blob and
+            BRIDGE_HQ_PAGE_ID_FLAT not in blob):
+        missing.append("HQ")
+    if (BRIDGE_ARCHIVE_PAGE_ID_HYPH not in blob and
+            BRIDGE_ARCHIVE_PAGE_ID_FLAT not in blob):
+        missing.append("Archive")
+    dur = int((time.perf_counter() - start) * 1000)
+    if missing:
+        return _fail(
+            "bridge-page-ids-stable", "bridge",
+            f"page IDs missing from skill: {', '.join(missing)}",
+            severity="HIGH", duration_ms=dur,
+            metadata={"missing": missing},
+        )
+    return _pass(
+        "bridge-page-ids-stable", "bridge",
+        "HQ + Archive IDs present in skill text",
+        dur,
+    )
+
+
+def check_bridge_mcp_configured() -> CheckResult:
+    """At least one MCP config file must reference the Notion server; if not,
+    Claude has no way to talk to the bridge at runtime."""
+    start = time.perf_counter()
+    candidates = [
+        Path.home() / ".mcp.json",
+        Path.home() / ".claude.json",
+        Path.home() / ".claude" / "mcp.json",
+    ]
+    seen_in: list[str] = []
+    for cfg in candidates:
+        if not cfg.exists():
+            continue
+        try:
+            text = cfg.read_text(encoding="utf-8", errors="ignore")
+        except OSError:
+            continue
+        # Look for either the cloud server alias or any entry that mentions
+        # `notion` as a server key.
+        if "claude.ai Notion" in text or '"notion"' in text or "notion-mcp" in text:
+            seen_in.append(cfg.name)
+    dur = int((time.perf_counter() - start) * 1000)
+    if not seen_in:
+        return _warn(
+            "bridge-mcp-configured", "bridge",
+            "no Notion MCP entry found in ~/.mcp.json, ~/.claude.json, or "
+            "~/.claude/mcp.json -- bridge writes will fail",
+            severity="MEDIUM", duration_ms=dur,
+        )
+    return _pass(
+        "bridge-mcp-configured", "bridge",
+        f"Notion MCP entry found in: {', '.join(seen_in)}",
+        dur, metadata={"configs": seen_in},
+    )
 
 
 # ===========================================================================
@@ -1821,6 +2609,8 @@ def build_runner(output_dir: Path | None = None,
                check_claude_opc_dir)
     r.register("opc-env-file-present", "infrastructure",
                check_opc_env_file)
+    r.register("tldr-daemon-running", "infrastructure",
+               check_tldr_daemon_running)
 
     # 2. Hooks
     r.register("hook-dist-freshness", "hooks",
@@ -1832,6 +2622,42 @@ def build_runner(output_dir: Path | None = None,
                check_critical_hook_load, slow=True)
     r.register("hook-vitest-tests-pass", "hooks",
                check_hook_vitest, slow=True)
+
+    # 2.5 Hook runtime (consumes ~/.claude/cache/hook-trace.jsonl)
+    # check_hook_runtime returns 4 results, but the runner expects one per
+    # registration. Cache the call and emit one wrapper per sub-check.
+    _hook_runtime_cache: dict[str, CheckResult] = {}
+
+    def _hook_runtime_get(name: str) -> CheckResult:
+        if not _hook_runtime_cache:
+            try:
+                rs = check_hook_runtime()
+            except Exception as e:  # noqa: BLE001 - extra fail-safe at registration layer
+                rs = [_fail(
+                    "hook-runtime", "hook-runtime",
+                    f"hook-runtime wrapper crashed: {type(e).__name__}: {e}",
+                    severity="LOW",
+                )]
+            for cr in rs:
+                _hook_runtime_cache[cr.name] = cr
+        if name in _hook_runtime_cache:
+            return _hook_runtime_cache[name]
+        # If the helper returned the single fail-safe blob, surface it for any
+        # missing sub-name so we still emit a result.
+        return _fail(
+            name, "hook-runtime",
+            "no result produced by check_hook_runtime",
+            severity="LOW",
+        )
+
+    for sub in (
+        "hook-trace-file-present",
+        "hook-fire-rate",
+        "hook-error-rate",
+        "hook-timing-p95",
+    ):
+        r.register(sub, "hook-runtime",
+                   (lambda n=sub: _hook_runtime_get(n)))
 
     # 3. Memory
     r.register("memory-connection", "memory",
@@ -1878,8 +2704,11 @@ def build_runner(output_dir: Path | None = None,
                _make_sync_check("sync-drift-rules", "rules", "*.md"))
     r.register("sync-drift-agents", "sync",
                _make_sync_check("sync-drift-agents", "agents", "*.md"))
-    r.register("sync-drift-hooks-src", "sync",
-               _make_sync_check("sync-drift-hooks-src", "hooks/src", "*.ts"))
+    # NB: hooks/src is deliberately excluded from sync-to-active.sh -- the
+    # active dir uses repo-built dist/*.mjs, not src. Comparing src would
+    # always flag drift (a phantom WARN). The real invariant -- "hooks/src
+    # never appears in SYNC_DIRS" -- is asserted by tests/test_sync_to_active.py.
+    # See SYSTEM-ROADMAP.md backlog item: "Hook re-stale root cause hardening".
 
     # 10. External APIs
     r.register("anthropic-dev-api-reachable", "external",
@@ -1897,6 +2726,13 @@ def build_runner(output_dir: Path | None = None,
 
     # 13. Roadmap
     r.register("roadmap-present", "roadmap", check_roadmap_present)
+
+    # 14. Bridge (Notion HQ <-> Claude Code) -- Phase 4 system-coherence
+    r.register("bridge-skill-present", "bridge", check_bridge_skill_present)
+    r.register("bridge-page-ids-stable", "bridge",
+               check_bridge_page_ids_stable)
+    r.register("bridge-mcp-configured", "bridge",
+               check_bridge_mcp_configured)
 
     return r
 

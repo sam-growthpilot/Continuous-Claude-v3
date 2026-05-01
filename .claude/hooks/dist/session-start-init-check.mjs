@@ -78,6 +78,35 @@ function hasCodeFiles(projectDir) {
       return true;
     }
   }
+  const codeExtensions = /* @__PURE__ */ new Set([
+    ".py",
+    ".ts",
+    ".tsx",
+    ".js",
+    ".jsx",
+    ".go",
+    ".rs",
+    ".rb",
+    ".java",
+    ".c",
+    ".cpp",
+    ".h",
+    ".cs",
+    ".kt",
+    ".swift"
+  ]);
+  try {
+    const entries = fs.readdirSync(projectDir, { withFileTypes: true });
+    for (const entry of entries) {
+      if (entry.isFile()) {
+        const ext = path.extname(entry.name).toLowerCase();
+        if (codeExtensions.has(ext)) {
+          return true;
+        }
+      }
+    }
+  } catch {
+  }
   return false;
 }
 function checkExternalSkillStaleness() {
@@ -236,6 +265,9 @@ async function main() {
   }
   const projectDir = process.env.CLAUDE_PROJECT_DIR || process.cwd();
   if (projectDir.includes(".claude") && !projectDir.includes("continuous-claude")) {
+    console.error(
+      `[init-check] Skipping bootstrap: project path contains '.claude' (cwd=${projectDir}). Set CLAUDE_PROJECT_DIR explicitly to override.`
+    );
     console.log(JSON.stringify({ result: "continue" }));
     return;
   }

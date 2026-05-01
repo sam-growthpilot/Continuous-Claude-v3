@@ -33,10 +33,12 @@
         ▼           ▼           ▼           ▼           ▼
 ┌──────────┐ ┌──────────┐ ┌──────────┐ ┌──────────┐ ┌──────────┐
 │  MEMORY  │ │  HOOKS   │ │  AGENTS  │ │ PAGEINDEX│ │ WORKFLOWS│
-│PostgreSQL│ │92 src,23 │ │31 agents │ │Doc search│ │Ralph/    │
-│+pgvector │ │registered│ │Task tool │ │LLM reason│ │Maestro   │
+│PostgreSQL│ │TS source │ │ Task tool│ │Doc search│ │Ralph/    │
+│+pgvector │ │ → dist   │ │ delegate │ │LLM reason│ │Maestro   │
 └──────────┘ └──────────┘ └──────────┘ └──────────┘ └──────────┘
 ```
+
+For current inventory: see [agent-skill-map.md](../agent-skill-map.md), [hook-catalog.md](quick-ref/hook-catalog.md), [hook-audit-2026-04.md](../hook-audit-2026-04.md).
 
 ## Cross-References
 
@@ -55,12 +57,18 @@
 - [Agent Orchestration](subsystems/agents.md) - When to use which agent
 - [Workflows](subsystems/workflows.md) - Ralph, Maestro, compound workflows
 
+**Phase 5 design docs (../):**
+- [Agent x Skill Map](../agent-skill-map.md) - Cross-reference of agents and skills with routing coverage gaps
+- [Composition Design](../composition-design.md) - "Skills own behavior, agents own isolation" + decision tree (§2) + R1-R10 status
+- [Tool-Tier Policy](../tool-tier-policy.md) - Hooks vs MCPs vs skills decision rules
+- [Hook Audit (2026-04)](../hook-audit-2026-04.md) - Phase 2/3/5c audit decisions and open follow-ups
+
 **Comprehensive Documentation (continuous-claude/docs/):**
 - [ARCHITECTURE.md](file:///C:/Users/david.hayes/continuous-claude/docs/ARCHITECTURE.md) - Full system architecture with TLDR analysis
 - [memory-architecture.md](file:///C:/Users/david.hayes/continuous-claude/docs/memory-architecture.md) - Complete memory system with Mermaid diagrams
 - [hooks/README.md](file:///C:/Users/david.hayes/continuous-claude/docs/hooks/README.md) - Full hook reference (718 lines)
 - [agents/README.md](file:///C:/Users/david.hayes/continuous-claude/docs/agents/README.md) - Agent selection guide (750 lines)
 
-**User Guides:**
-- [CONTINUOUS-CLAUDE-GUIDE.md](../../CONTINUOUS-CLAUDE-GUIDE.md) - User guide with essential commands
-- [CONTINUOUS-CLAUDE-CHEATSHEET.md](../../CONTINUOUS-CLAUDE-CHEATSHEET.md) - Windows cheat sheet
+**User Guides (in this dir):**
+- [user-guide.md](user-guide.md) - User guide with essential commands and auto-started capabilities
+- [cheatsheet.md](cheatsheet.md) - Windows cheat sheet (PowerShell command reference)

@@ -2,6 +2,7 @@
 name: plan-agent
 description: Create implementation plans using research, best practices, and codebase analysis
 model: opus
+tools: [Read, Write, Bash, Grep, Glob, Skill, WebSearch, WebFetch]
 ---
 
 # Plan Agent
@@ -13,7 +14,7 @@ You are a specialized planning agent. Your job is to create detailed implementat
 Before creating any plan, read the planning skill for methodology and format:
 
 ```bash
-cat $CLAUDE_PROJECT_DIR/.claude/skills/create_plan/SKILL.md
+cat $CLAUDE_PROJECT_DIR/.claude/skills/plan-agent/SKILL.md
 ```
 
 Follow the structure and guidelines from that skill.

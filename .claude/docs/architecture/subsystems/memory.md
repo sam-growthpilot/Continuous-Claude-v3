@@ -8,7 +8,7 @@
 ├─────────────────────────────────────────────────────────────┤
 │  recall_learnings.py  →  Search stored learnings            │
 │  store_learning.py    →  Persist new learnings              │
-│  memory_daemon.py     →  Auto-extract from sessions         │
+│  lazy_memory.py       →  Auto-extract at SessionEnd         │
 │  EmbeddingService     →  BGE-large embeddings (1024d)       │
 └─────────────────────────────────────────────────────────────┘
             │
@@ -16,8 +16,12 @@
 ┌─────────────────────────────────────────────────────────────┐
 │  PostgreSQL + pgvector                                      │
 │  └─ archival_memory table                                   │
-│     └─ id, session_id, type, content, context, tags         │
-│     └─ embedding (vector 1024), confidence, created_at      │
+│     Top-level columns:                                      │
+│       id (uuid), session_id, agent_id, content,             │
+│       embedding (vector 1024), created_at,                  │
+│       project_id, scope (PROJECT|GLOBAL)                    │
+│     metadata (jsonb) holds:                                  │
+│       type, tags, confidence, context, source, ...          │
 └─────────────────────────────────────────────────────────────┘
 ```
 

@@ -18,7 +18,10 @@
  */
 
 import { readFileSync } from 'fs';
-import { getStatePathWithMigration } from './shared/session-isolation.js';
+import {
+  getProjectScopedStatePathWithMigration,
+} from './shared/session-isolation.js';
+import { getProjectId } from './shared/project-id.js';
 import { readStateWithLock } from './shared/atomic-write.js';
 import { isRalphActive } from './shared/state-schema.js';
 import { createLogger } from './shared/logger.js';
@@ -139,11 +142,21 @@ async function main() {
     const sessionId = input.session_id || '';
     const filePath = input.tool_input?.file_path || '';
     const projectDir = process.env.CLAUDE_PROJECT_DIR || process.cwd();
+    const projectId = getProjectId(projectDir);
 
-    // Read plan-approved state
+    // Read plan-approved state.
+    // Phase 4: state path is scoped to (projectId, sessionId) so a stale
+    // approval from project A cannot bleed into project B even if both
+    // sessions share an ID. Phase A2 (C2): the legacy session-only fallback
+    // was removed because a reused sessionId would resurrect plan-approved
+    // state across project switches. Missing state -> fail open.
     let planApproved = false;
     try {
-      const statePath = getStatePathWithMigration('plan-approved', sessionId);
+      const statePath = getProjectScopedStatePathWithMigration(
+        'plan-approved',
+        projectId,
+        sessionId,
+      );
       const content = readStateWithLock(statePath);
       if (content) {
         const state = JSON.parse(content);

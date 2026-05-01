@@ -32,6 +32,7 @@ import hashlib
 import json
 import os
 import sys
+import threading
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -43,6 +44,42 @@ global_env = Path.home() / ".claude" / ".env"
 if global_env.exists():
     load_dotenv(global_env)
 load_dotenv()
+
+
+# Phase 3C: singleton EmbeddingService cache.
+#
+# Loading the BAAI/bge-large-en-v1.5 model takes ~1.2s and a few hundred MB
+# of RAM. project_memory was previously building a fresh EmbeddingService on
+# every search_local_vector / search_global call. The pattern below mirrors
+# store_learning.get_embedder() and ensures the model loads at most once
+# per process.
+#
+# Phase B1: thread-safe via double-checked locking. Concurrent callers (e.g.
+# parallel asyncio tasks running on threadpool, or a future multi-threaded
+# indexer) could otherwise race past the `is None` check and instantiate two
+# BGE models, doubling RAM use and burning ~1.2s twice.
+_embedder = None
+_embedder_lock = threading.Lock()
+
+
+def get_embedder():
+    """Get or create singleton EmbeddingService(provider="local").
+
+    Lazy-initialized -- the BGE model is only loaded the first time something
+    actually needs an embedding. Returns the same instance on every subsequent
+    call so the SentenceTransformer weights stay cached.
+
+    Thread-safe via double-checked locking: the fast path (already initialized)
+    avoids the lock entirely, and the slow path re-checks under the lock so
+    only one thread ever pays the model-load cost.
+    """
+    global _embedder
+    if _embedder is None:
+        with _embedder_lock:
+            if _embedder is None:
+                from db.embedding_service import EmbeddingService
+                _embedder = EmbeddingService(provider="local")
+    return _embedder
 
 
 def get_project_id(project_dir: str) -> str:
@@ -332,7 +369,9 @@ def search_local_topics(project_dir: str, query: str, k: int = 5) -> list[dict]:
 async def search_local_vector(project_dir: str, query: str, k: int = 5) -> list[dict]:
     """Vector search in local handoff embeddings."""
     try:
-        from db.embedding_service import EmbeddingService
+        # Imported here so the module can still load when sentence-transformers
+        # is missing; get_embedder() does the lazy import.
+        from db.embedding_service import EmbeddingService  # noqa: F401
     except ImportError:
         return []
 
@@ -342,7 +381,9 @@ async def search_local_vector(project_dir: str, query: str, k: int = 5) -> list[
     if not handoffs_dir.exists():
         return []
 
-    embedder = EmbeddingService(provider="local")
+    # Phase 3C: use the singleton so the BGE model loads once per process,
+    # not once per query.
+    embedder = get_embedder()
     query_embedding = await embedder.embed(query)
 
     results = []
@@ -376,7 +417,7 @@ async def search_global(query: str, k: int = 5) -> list[dict]:
     """Search global learnings (scope=GLOBAL) in PostgreSQL."""
     try:
         from db.memory_factory import create_memory_service
-        from db.embedding_service import EmbeddingService
+        from db.embedding_service import EmbeddingService  # noqa: F401
     except ImportError:
         return []
 
@@ -385,18 +426,24 @@ async def search_global(query: str, k: int = 5) -> list[dict]:
         return []
 
     try:
-        embedder = EmbeddingService(provider="local")
+        # Phase 3C: singleton so the BGE model only loads once per process.
+        embedder = get_embedder()
         query_embedding = await embedder.embed(query)
 
         memory = await create_memory_service(backend="postgres", session_id="global-search")
 
-        results = await memory.search_vector(
-            query_embedding,
-            limit=k,
-            filters={"scope": "GLOBAL"}
-        )
-
-        await memory.close()
+        # Phase B1: wrap the search in try/finally so memory.close() always
+        # runs, even when search_vector raises (timeout, connection drop,
+        # malformed embedding). Leaking the connection causes pool exhaustion
+        # under load and was a real failure mode pre-fix.
+        try:
+            results = await memory.search_vector(
+                query_embedding,
+                limit=k,
+                filters={"scope": "GLOBAL"}
+            )
+        finally:
+            await memory.close()
 
         return [{
             "id": str(r.get("id", ""))[:8],

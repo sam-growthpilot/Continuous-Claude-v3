@@ -2,6 +2,7 @@
 name: braintrust-analyst
 description: Analyze Claude Code sessions using Braintrust logs
 model: opus
+tools: [Read, Write, Bash, Grep, Glob]
 ---
 
 # Braintrust Analyst Agent

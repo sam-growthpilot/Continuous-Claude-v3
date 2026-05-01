@@ -17,6 +17,8 @@ TESTING                  REVIEW                   DEBUG
 
 ## Agent Selection Guide
 
+> **Note on Model column:** Values shown are typical pinning, not enforcement. Per `.claude/rules/agent-model-selection.md`, the convention is to **omit the `model` parameter** when spawning agents (inherit from parent — usually Opus). The column documents what each agent is *typically* used as.
+
 | Need | Agent | Model | Tools |
 |------|-------|-------|-------|
 | Explore codebase | scout | sonnet | Grep, Glob, Read |

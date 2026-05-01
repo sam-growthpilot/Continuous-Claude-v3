@@ -22,7 +22,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "node {{CLAUDE_HOME}}/hooks/dist/agent-validate.mjs",
+            "command": "node {{CLAUDE_HOME}}/hooks/dist/agent-model-guard.mjs",
             "timeout": 3000
           },
           {

@@ -151,7 +151,7 @@ describe('hook-health-monitor', () => {
               hooks: [
                 {
                   type: 'command',
-                  command: 'node C:/Users/test/.claude/hooks/dist/agent-validate.mjs',
+                  command: 'node C:/Users/test/.claude/hooks/dist/agent-model-guard.mjs',
                 },
               ],
             },

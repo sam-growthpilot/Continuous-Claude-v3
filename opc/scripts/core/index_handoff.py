@@ -16,6 +16,7 @@ import hashlib
 import json
 import os
 import sys
+import threading
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -28,6 +29,36 @@ if global_env.exists():
 load_dotenv()
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
+
+
+# Phase 3C: singleton EmbeddingService cache (matches store_learning.get_embedder
+# and project_memory.get_embedder). Most CLI invocations index a single handoff
+# and exit, but anything that batch-indexes (tests, future scripts) benefits.
+#
+# Phase B1: thread-safe via double-checked locking. Mirrors project_memory's
+# fix -- if a future caller batch-indexes from multiple threads, the unguarded
+# `is None` check could race and load BGE twice.
+_embedder = None
+_embedder_lock = threading.Lock()
+
+
+def get_embedder():
+    """Get or create singleton EmbeddingService(provider='local').
+
+    The BGE model is ~1.2s + several hundred MB to load. This helper ensures
+    the cost is paid at most once per Python process.
+
+    Thread-safe via double-checked locking: fast path skips the lock when the
+    embedder is already initialized; slow path re-checks under the lock so
+    only one thread instantiates the model.
+    """
+    global _embedder
+    if _embedder is None:
+        with _embedder_lock:
+            if _embedder is None:
+                from db.embedding_service import EmbeddingService
+                _embedder = EmbeddingService(provider="local")
+    return _embedder
 
 
 def parse_handoff(handoff_path: str) -> dict | None:
@@ -106,7 +137,8 @@ def build_embedding_text(handoff: dict) -> str:
 async def index_handoff(handoff_path: str, project_dir: str) -> dict:
     """Index a handoff file with embedding."""
     try:
-        from db.embedding_service import EmbeddingService
+        # Imported here so module load doesn't require sentence-transformers.
+        from db.embedding_service import EmbeddingService  # noqa: F401
     except ImportError as e:
         return {"success": False, "error": f"Embedding service not available: {e}"}
 
@@ -118,7 +150,8 @@ async def index_handoff(handoff_path: str, project_dir: str) -> dict:
     if not embedding_text.strip():
         return {"success": False, "error": "No content to embed"}
 
-    embedder = EmbeddingService(provider="local")
+    # Phase 3C: singleton -- BGE model loads at most once per process.
+    embedder = get_embedder()
     embedding = await embedder.embed(embedding_text)
 
     memory_dir = Path(project_dir) / ".claude" / "memory" / "handoffs"

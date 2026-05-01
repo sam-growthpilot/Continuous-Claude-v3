@@ -12,6 +12,9 @@
  * 3. Response parsing utilities
  */
 
+import { createHash } from 'node:crypto';
+import { resolve as resolvePath } from 'node:path';
+
 /**
  * Represents a skill match that may need validation
  */
@@ -261,32 +264,84 @@ export async function validateSkillRelevance(
 }
 
 /**
+ * Build a project-scoped cache key for validation results.
+ *
+ * Validation outcomes can differ per project (e.g. "commit" might mean
+ * git-commit in repo A but "commit to a decision" in repo B), so we key the
+ * cache by `${skillName}::${projectId}`. Falls back to `${skillName}::global`
+ * when no project ID is available so legacy single-project callers keep
+ * working.
+ *
+ * Callers should populate `validationResults` with these composite keys.
+ */
+export function getValidationCacheKey(skillName: string, projectId?: string): string {
+  const scope = projectId && projectId.length > 0 ? projectId : 'global';
+  return `${skillName}::${scope}`;
+}
+
+/**
+ * Resolve the active project ID from the environment, mirroring
+ * shared/project-id.ts. Lazy-loaded so this module remains usable in tests
+ * that don't set up the project-id helper.
+ */
+function resolveProjectIdFromEnv(): string | undefined {
+  try {
+    // Local require avoids circular import at module load.
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    const mod = require('./shared/project-id.js');
+    if (mod && typeof mod.getActiveProjectId === 'function') {
+      return mod.getActiveProjectId() as string;
+    }
+  } catch {
+    // shared/project-id may not be importable in pure unit tests;
+    // fall through to the deterministic-hash fallback below.
+  }
+  // Mirror shared/project-id.ts's deterministic fallback so a runtime
+  // resolver fault doesn't silently revert to bare-name (cross-project)
+  // cache lookups in filterValidatedSkills. Returning undefined here would
+  // re-enable the very cross-project leak this module was hardened against.
+  const dir = process.env.CLAUDE_PROJECT_DIR || process.cwd();
+  return createHash('sha256').update(resolvePath(dir)).digest('hex').substring(0, 16);
+}
+
+/**
  * Filters matched skills based on validation results
  *
  * @param matches - Array of skill matches
- * @param validationResults - Map of skill name to validation result
+ * @param validationResults - Map keyed by `${skillName}::${projectId}` to validation result
+ *                            (legacy keys of just `skillName` are also accepted as a fallback)
  * @param confidenceThreshold - Minimum confidence to activate (default 0.5)
+ * @param projectId - Optional explicit project ID; defaults to active project
  */
 export function filterValidatedSkills(
   matches: SkillMatch[],
   validationResults: Map<string, SkillValidationResult>,
-  confidenceThreshold = 0.5
+  confidenceThreshold = 0.5,
+  projectId?: string
 ): SkillMatch[] {
+  const effectiveProjectId = projectId ?? resolveProjectIdFromEnv();
   return matches.filter((match) => {
-    const result = validationResults.get(match.skillName);
+    const scopedKey = getValidationCacheKey(match.skillName, effectiveProjectId);
+    // When we know the project, only use the project-scoped result. Falling
+    // back to a bare-name key would let one project's validation outcome leak
+    // into another project that happens to evaluate the same skill name.
+    // Only honor the legacy bare-name key when we genuinely have no project
+    // context (preserves backward compat for older callers).
+    const result = effectiveProjectId
+      ? validationResults.get(scopedKey)
+      : validationResults.get(scopedKey) ?? validationResults.get(match.skillName);
 
     // If no validation was done, keep the match
     if (!result) {
       return true;
     }
 
-    // Skip if decision is skip
-    if (result.decision === 'skip') {
-      return false;
-    }
-
-    // Skip if confidence is below threshold
-    if (result.confidence < confidenceThreshold) {
+    // Fail-open: only drop the match when the validator is *confidently*
+    // saying skip. A low-confidence skip is treated as inconclusive and the
+    // match is preserved. An 'activate' decision always keeps the match
+    // regardless of confidence — dropping a positive activation because of
+    // low confidence would silently suppress matches.
+    if (result.decision === 'skip' && result.confidence >= confidenceThreshold) {
       return false;
     }
 

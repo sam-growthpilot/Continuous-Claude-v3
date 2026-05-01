@@ -15,6 +15,7 @@ import pytest
 from scripts.health_check import (
     CheckResult,
     HealthCheckRunner,
+    compute_canary_timeout,
     compute_exit_code,
     render_markdown,
     CATEGORY_ORDER,
@@ -394,3 +395,538 @@ def test_vitest_check_uses_output_file(tmp_path):
                 hooks_pkg.unlink(missing_ok=True)
         except OSError:
             pass
+
+
+# ---------------------------------------------------------------------------
+# compute_canary_timeout
+# ---------------------------------------------------------------------------
+
+
+def _make_canary_pass_line(duration_ms: float) -> str:
+    """Build a history.jsonl line with a single memory-canary-roundtrip PASS."""
+    return json.dumps({
+        "timestamp": "2026-01-01T00:00:00+00:00",
+        "results": [
+            {
+                "name": "memory-canary-roundtrip",
+                "status": "PASS",
+                "duration_ms": duration_ms,
+            }
+        ],
+    })
+
+
+def test_compute_canary_timeout_no_history_file(tmp_path):
+    """No history file -> floor (90.0)."""
+    result = compute_canary_timeout(history_path=tmp_path / "nonexistent.jsonl")
+    assert result == 90.0
+
+
+def test_compute_canary_timeout_fewer_than_5_pass_records(tmp_path):
+    """<5 PASS records -> floor (90.0), adaptive logic does not engage."""
+    history = tmp_path / "history.jsonl"
+    for dur in [20000, 25000, 30000, 22000]:  # 4 records
+        history.open("a").write(_make_canary_pass_line(dur) + "\n")
+    result = compute_canary_timeout(history_path=history)
+    assert result == 90.0
+
+
+def test_compute_canary_timeout_within_bounds(tmp_path):
+    """>=5 PASS records, P95*2 within [90, 300] -> clamped adaptive value."""
+    history = tmp_path / "history.jsonl"
+    # 6 records, all 50 000 ms (50s) -> P95 = 50 000 ms -> *2 = 100s (within bounds)
+    for _ in range(6):
+        history.open("a").write(_make_canary_pass_line(50_000) + "\n")
+    result = compute_canary_timeout(history_path=history)
+    assert 90.0 <= result <= 300.0
+    # P95 of 6 identical values is 50000ms; *2 / 1000 = 100s
+    assert result == pytest.approx(100.0, abs=1.0)
+
+
+def test_compute_canary_timeout_ceiling(tmp_path):
+    """P95*2 exceeds 300s -> ceiling (300.0)."""
+    history = tmp_path / "history.jsonl"
+    # 6 records, all 200 000 ms (200s) -> P95*2 = 400s -> clamped to 300
+    for _ in range(6):
+        history.open("a").write(_make_canary_pass_line(200_000) + "\n")
+    result = compute_canary_timeout(history_path=history)
+    assert result == 300.0
+
+
+# ---------------------------------------------------------------------------
+# hook-runtime category helpers
+# ---------------------------------------------------------------------------
+
+
+def _make_trace_line(
+    *,
+    name: str = "memory-awareness",
+    event: str = "PreToolUse",
+    duration_ms: int = 50,
+    exit_code: int = 0,
+    ts: str | None = None,
+    error: str | None = None,
+) -> str:
+    """Build a hook-trace.jsonl line."""
+    if ts is None:
+        ts = "2026-04-25T12:00:00.000Z"
+    return json.dumps({
+        "ts": ts,
+        "name": name,
+        "event": event,
+        "durationMs": duration_ms,
+        "exitCode": exit_code,
+        "sessionId": "test-session",
+        "error": error,
+    })
+
+
+def test_parse_hook_trace_missing_file_returns_empty(tmp_path):
+    """Missing trace file -> empty list (no exception)."""
+    from scripts.health_check import parse_hook_trace
+
+    result = parse_hook_trace(trace_path=tmp_path / "nonexistent.jsonl")
+    assert result == []
+
+
+def test_parse_hook_trace_filters_by_since_days(tmp_path):
+    """Lines older than since_days are excluded."""
+    from datetime import datetime, timedelta, timezone
+    from scripts.health_check import parse_hook_trace
+
+    trace = tmp_path / "hook-trace.jsonl"
+    now = datetime.now(timezone.utc)
+    recent = (now - timedelta(days=2)).isoformat().replace("+00:00", "Z")
+    ancient = (now - timedelta(days=30)).isoformat().replace("+00:00", "Z")
+    with trace.open("a", encoding="utf-8") as f:
+        f.write(_make_trace_line(name="recent", ts=recent) + "\n")
+        f.write(_make_trace_line(name="ancient", ts=ancient) + "\n")
+
+    result = parse_hook_trace(trace_path=trace, since_days=7)
+    names = [e["name"] for e in result]
+    assert "recent" in names
+    assert "ancient" not in names
+
+
+def test_parse_hook_trace_skips_malformed_lines(tmp_path):
+    """Malformed JSON lines are skipped silently; valid lines preserved."""
+    from scripts.health_check import parse_hook_trace
+
+    trace = tmp_path / "hook-trace.jsonl"
+    with trace.open("w", encoding="utf-8") as f:
+        f.write(_make_trace_line(name="ok-1") + "\n")
+        f.write("this is not json\n")
+        f.write("{partial: not-quoted-json}\n")
+        f.write("\n")  # blank line
+        f.write(_make_trace_line(name="ok-2") + "\n")
+
+    result = parse_hook_trace(trace_path=trace, since_days=365)
+    names = sorted(e["name"] for e in result)
+    assert names == ["ok-1", "ok-2"]
+
+
+def test_aggregate_by_hook_counts_fires_errors_durations():
+    """aggregate_by_hook returns per-hook fires/errors/durations."""
+    from scripts.health_check import aggregate_by_hook
+
+    events = [
+        {"name": "hook-a", "exitCode": 0, "durationMs": 50,
+         "ts": "2026-04-20T10:00:00.000Z"},
+        {"name": "hook-a", "exitCode": 0, "durationMs": 70,
+         "ts": "2026-04-21T10:00:00.000Z"},
+        {"name": "hook-a", "exitCode": 1, "durationMs": 100,
+         "ts": "2026-04-22T10:00:00.000Z"},
+        {"name": "hook-b", "exitCode": 0, "durationMs": 25,
+         "ts": "2026-04-22T10:00:00.000Z"},
+    ]
+    agg = aggregate_by_hook(events)
+    assert set(agg.keys()) == {"hook-a", "hook-b"}
+    assert agg["hook-a"]["fires"] == 3
+    assert agg["hook-a"]["errors"] == 1
+    assert sorted(agg["hook-a"]["durations_ms"]) == [50, 70, 100]
+    assert agg["hook-b"]["fires"] == 1
+    assert agg["hook-b"]["errors"] == 0
+    assert agg["hook-a"]["first_fire"] is not None
+    assert agg["hook-a"]["last_fire"] is not None
+
+
+def test_get_registered_hooks_extracts_basenames(tmp_path):
+    """settings.json command paths -> set of bare hook names (no .mjs, no dirs)."""
+    from scripts.health_check import get_registered_hooks
+
+    settings = {
+        "hooks": {
+            "PreToolUse": [
+                {
+                    "matcher": "Agent",
+                    "hooks": [
+                        {
+                            "type": "command",
+                            "command": (
+                                "node C:/Users/david.hayes/.claude/hooks/"
+                                "dist/agent-validate.mjs"
+                            ),
+                        },
+                        {
+                            "type": "command",
+                            "command": (
+                                "node ~/.claude/hooks/dist/no-haiku-enforcer.mjs"
+                            ),
+                        },
+                    ],
+                },
+            ],
+            "PostToolUse": [
+                {
+                    "matcher": "Edit",
+                    "hooks": [
+                        {
+                            "type": "command",
+                            "command": "node /some/path/memory-awareness.mjs",
+                        },
+                    ],
+                },
+            ],
+        },
+    }
+    settings_path = tmp_path / "settings.json"
+    settings_path.write_text(json.dumps(settings), encoding="utf-8")
+
+    names = get_registered_hooks(settings_path=settings_path)
+    assert "agent-validate" in names
+    assert "no-haiku-enforcer" in names
+    assert "memory-awareness" in names
+    # No .mjs, no dirs
+    for n in names:
+        assert not n.endswith(".mjs")
+        assert "/" not in n
+        assert "\\" not in n
+
+
+def test_compute_unfired_hooks_insufficient_history():
+    """If history span < min_history_days, has_sufficient_history=False."""
+    from scripts.health_check import compute_unfired_hooks
+
+    registered = {"hook-a", "hook-b", "hook-c"}
+    aggregated = {
+        "hook-a": {
+            "fires": 5, "errors": 0, "durations_ms": [10],
+            "first_fire": "2026-04-25T10:00:00.000Z",
+            "last_fire": "2026-04-25T15:00:00.000Z",
+        },
+    }
+    # Same-day events span 5 hours -> < 3 days
+    events = [
+        {"name": "hook-a", "exitCode": 0, "durationMs": 10,
+         "ts": "2026-04-25T10:00:00.000Z"},
+        {"name": "hook-a", "exitCode": 0, "durationMs": 10,
+         "ts": "2026-04-25T15:00:00.000Z"},
+    ]
+    unfired, sufficient = compute_unfired_hooks(
+        registered, aggregated, min_history_days=3, events=events,
+    )
+    assert sufficient is False
+
+
+def test_compute_unfired_hooks_sufficient_history_returns_unfired():
+    """With >=3 days of history, returns the registered-but-unfired list."""
+    from scripts.health_check import compute_unfired_hooks
+
+    registered = {"hook-a", "hook-b", "hook-c", "hook-d"}
+    aggregated = {
+        "hook-a": {
+            "fires": 5, "errors": 0, "durations_ms": [10],
+            "first_fire": "2026-04-20T10:00:00.000Z",
+            "last_fire": "2026-04-25T15:00:00.000Z",
+        },
+        "hook-b": {
+            "fires": 1, "errors": 0, "durations_ms": [10],
+            "first_fire": "2026-04-22T10:00:00.000Z",
+            "last_fire": "2026-04-22T10:00:00.000Z",
+        },
+    }
+    events = [
+        {"name": "hook-a", "exitCode": 0, "durationMs": 10,
+         "ts": "2026-04-20T10:00:00.000Z"},
+        {"name": "hook-a", "exitCode": 0, "durationMs": 10,
+         "ts": "2026-04-25T15:00:00.000Z"},
+    ]
+    unfired, sufficient = compute_unfired_hooks(
+        registered, aggregated, min_history_days=3, events=events,
+    )
+    assert sufficient is True
+    assert set(unfired) == {"hook-c", "hook-d"}
+
+
+def test_hook_runtime_integration_all_subchecks(tmp_path):
+    """Feed fixture jsonl + settings -> verify all 4 sub-checks fire."""
+    from datetime import datetime, timedelta, timezone
+    from scripts.health_check import check_hook_runtime
+
+    trace = tmp_path / "hook-trace.jsonl"
+    settings_path = tmp_path / "settings.json"
+
+    now = datetime.now(timezone.utc)
+    # 5 days of trace data so fire-rate has sufficient history
+    days = [(now - timedelta(days=i)).isoformat().replace("+00:00", "Z")
+            for i in range(5, 0, -1)]
+    lines = []
+    # hook-a: many fires, mostly clean (>=10 fires triggers timing/error analysis)
+    for i in range(15):
+        lines.append(_make_trace_line(
+            name="hook-a", duration_ms=50 + i, exit_code=0, ts=days[i % 5],
+        ))
+    # hook-b: many fires, high error rate (>5%)
+    for i in range(15):
+        lines.append(_make_trace_line(
+            name="hook-b", duration_ms=100, exit_code=(1 if i < 5 else 0),
+            ts=days[i % 5],
+        ))
+    # hook-zero: registered but never fired -> goes via settings only
+    trace.write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+    settings = {
+        "hooks": {
+            "PreToolUse": [
+                {
+                    "matcher": "Agent",
+                    "hooks": [
+                        {"type": "command",
+                         "command": "node ~/.claude/hooks/dist/hook-a.mjs"},
+                        {"type": "command",
+                         "command": "node ~/.claude/hooks/dist/hook-b.mjs"},
+                        {"type": "command",
+                         "command": "node ~/.claude/hooks/dist/hook-zero.mjs"},
+                    ],
+                },
+            ],
+        },
+    }
+    settings_path.write_text(json.dumps(settings), encoding="utf-8")
+
+    results = check_hook_runtime(
+        trace_path=trace, settings_path=settings_path,
+    )
+    by_name = {r.name: r for r in results}
+
+    # Must produce 4 sub-checks
+    assert "hook-trace-file-present" in by_name
+    assert "hook-fire-rate" in by_name
+    assert "hook-error-rate" in by_name
+    assert "hook-timing-p95" in by_name
+
+    # All in hook-runtime category
+    for r in results:
+        assert r.category == "hook-runtime"
+
+    # Trace file present -> PASS
+    assert by_name["hook-trace-file-present"].status == "PASS"
+
+    # Fire-rate: hook-zero registered but no fires AND >=3 days history -> WARN
+    fr = by_name["hook-fire-rate"]
+    assert fr.status == "WARN"
+    assert fr.severity == "MEDIUM"
+    assert "hook-zero" in fr.evidence
+
+    # Error-rate: hook-b has 5/15 = 33% errors -> WARN HIGH
+    er = by_name["hook-error-rate"]
+    assert er.status == "WARN"
+    assert er.severity == "HIGH"
+    assert "hook-b" in er.evidence
+
+    # Timing P95: PASS, INFO severity
+    tp = by_name["hook-timing-p95"]
+    assert tp.status == "PASS"
+    assert tp.severity == "INFO"
+
+
+def test_hook_runtime_skips_when_trace_missing(tmp_path):
+    """Trace file missing -> hook-trace-file-present SKIPs (not WARN)."""
+    from scripts.health_check import check_hook_runtime
+
+    settings_path = tmp_path / "settings.json"
+    settings_path.write_text(json.dumps({"hooks": {}}), encoding="utf-8")
+
+    results = check_hook_runtime(
+        trace_path=tmp_path / "missing.jsonl",
+        settings_path=settings_path,
+    )
+    by_name = {r.name: r for r in results}
+    assert by_name["hook-trace-file-present"].status == "SKIP"
+    assert by_name["hook-trace-file-present"].severity == "INFO"
+
+
+def test_hook_runtime_fail_safe_on_unhandled_exception(tmp_path, monkeypatch):
+    """Any unhandled exception in helpers -> single FAIL with severity LOW."""
+    from scripts.health_check import check_hook_runtime
+    import scripts.health_check as hc
+
+    # Force parse_hook_trace to raise
+    def boom(*args, **kwargs):
+        raise RuntimeError("synthetic-boom")
+
+    monkeypatch.setattr(hc, "parse_hook_trace", boom)
+
+    settings_path = tmp_path / "settings.json"
+    settings_path.write_text(json.dumps({"hooks": {}}), encoding="utf-8")
+
+    trace = tmp_path / "hook-trace.jsonl"
+    trace.write_text("", encoding="utf-8")
+
+    results = check_hook_runtime(
+        trace_path=trace, settings_path=settings_path,
+    )
+    # exactly one FAIL result, severity LOW, mentions error
+    assert len(results) == 1
+    r = results[0]
+    assert r.status == "FAIL"
+    assert r.severity == "LOW"
+    assert "synthetic-boom" in r.evidence
+
+
+def test_hook_runtime_registered_in_build_runner(tmp_path):
+    """build_runner must register hook-runtime category checks."""
+    from scripts.health_check import build_runner, CATEGORY_ORDER
+
+    assert "hook-runtime" in CATEGORY_ORDER
+    runner = build_runner(output_dir=tmp_path, quiet=True)
+    # The runner stores _Registration per check; categories should include hook-runtime
+    cats = {reg.category for reg in runner._registrations}
+    assert "hook-runtime" in cats
+
+
+# ---------------------------------------------------------------------------
+# git-remote-sync (compares HEAD to fork/main backup)
+# ---------------------------------------------------------------------------
+
+
+def _git_remote_run_factory(branch: str = "main",
+                            rev_stdout: str = "0\t0",
+                            rev_returncode: int = 0,
+                            rev_stderr: str = ""):
+    """Build a fake _run that responds to rev-parse and rev-list."""
+    captured: list[list[str]] = []
+
+    def fake(cmd, **kwargs):
+        captured.append(list(cmd))
+        ns = MagicMock()
+        if "rev-parse" in cmd:
+            ns.returncode = 0
+            ns.stdout = branch + "\n"
+            ns.stderr = ""
+        elif "rev-list" in cmd:
+            ns.returncode = rev_returncode
+            ns.stdout = rev_stdout
+            ns.stderr = rev_stderr
+        else:
+            ns.returncode = 0
+            ns.stdout = ""
+            ns.stderr = ""
+        return ns
+
+    return fake, captured
+
+
+def test_git_remote_sync_in_sync():
+    """0 ahead, 0 behind fork/main -> PASS."""
+    from scripts.health_check import check_git_remote_sync
+
+    fake, _ = _git_remote_run_factory(rev_stdout="0\t0")
+    with patch("scripts.health_check._run", side_effect=fake):
+        r = check_git_remote_sync()
+    assert r.status == "PASS"
+    assert "in sync" in r.evidence
+    assert r.metadata["ahead"] == 0
+    assert r.metadata["behind"] == 0
+    assert r.metadata["ref"] == "fork/main"
+
+
+def test_git_remote_sync_ahead_warns_for_backup_gap():
+    """Ahead of fork/main -> WARN (push needed for backup).
+
+    This is the key behavior the old `git status -sb` parser missed.
+    """
+    from scripts.health_check import check_git_remote_sync
+
+    fake, _ = _git_remote_run_factory(rev_stdout="0\t5",
+                                      branch="feature/system-coherence")
+    with patch("scripts.health_check._run", side_effect=fake):
+        r = check_git_remote_sync()
+    assert r.status == "WARN"
+    assert r.severity == "LOW"
+    assert "ahead" in r.evidence
+    assert "5" in r.evidence
+    assert "push" in r.evidence.lower()
+    assert "feature/system-coherence" in r.evidence
+    assert r.metadata["ahead"] == 5
+    assert r.metadata["behind"] == 0
+
+
+def test_git_remote_sync_behind_warns():
+    """Behind fork/main -> WARN."""
+    from scripts.health_check import check_git_remote_sync
+
+    fake, _ = _git_remote_run_factory(rev_stdout="3\t0")
+    with patch("scripts.health_check._run", side_effect=fake):
+        r = check_git_remote_sync()
+    assert r.status == "WARN"
+    assert "behind" in r.evidence
+    assert "3" in r.evidence
+    assert r.metadata["behind"] == 3
+    assert r.metadata["ahead"] == 0
+
+
+def test_git_remote_sync_diverged_warns():
+    """Both ahead and behind -> WARN diverged."""
+    from scripts.health_check import check_git_remote_sync
+
+    fake, _ = _git_remote_run_factory(rev_stdout="2\t4")
+    with patch("scripts.health_check._run", side_effect=fake):
+        r = check_git_remote_sync()
+    assert r.status == "WARN"
+    assert "diverged" in r.evidence
+    assert "4 ahead" in r.evidence
+    assert "2 behind" in r.evidence
+
+
+def test_git_remote_sync_skips_when_fork_missing():
+    """rev-list nonzero -> SKIP rather than crash."""
+    from scripts.health_check import check_git_remote_sync
+
+    fake, _ = _git_remote_run_factory(rev_returncode=128,
+                                      rev_stdout="",
+                                      rev_stderr="fatal: ambiguous argument")
+    with patch("scripts.health_check._run", side_effect=fake):
+        r = check_git_remote_sync()
+    assert r.status == "SKIP"
+    assert "fork/main" in r.evidence
+
+
+def test_git_remote_sync_uses_rev_list_against_fork_main():
+    """The check MUST compare to fork/main, not just rely on git status -sb.
+
+    Regression guard: previous implementation used `git status -sb` which
+    silently passed when the branch had no upstream tracking, hiding ahead
+    state from the fork backup remote.
+    """
+    from scripts.health_check import check_git_remote_sync
+
+    fake, captured = _git_remote_run_factory(rev_stdout="0\t0")
+    with patch("scripts.health_check._run", side_effect=fake):
+        check_git_remote_sync()
+
+    # Find the rev-list invocation
+    rev_list_cmds = [c for c in captured if "rev-list" in c]
+    assert len(rev_list_cmds) == 1, (
+        "expected exactly one git rev-list call, got: " + str(captured))
+    cmd = rev_list_cmds[0]
+    assert "--left-right" in cmd
+    assert "--count" in cmd
+    assert any("fork/main...HEAD" in arg for arg in cmd), (
+        "rev-list must compare against fork/main, got: " + str(cmd))
+
+    # And we must NOT be using `git status -sb` for the sync determination.
+    status_sb = [c for c in captured
+                 if "status" in c and "-sb" in c]
+    assert not status_sb, (
+        "must not use 'git status -sb' for fork backup delta: " + str(captured))

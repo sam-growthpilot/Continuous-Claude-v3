@@ -12,6 +12,7 @@
 
 import * as fs from 'fs';
 import * as path from 'path';
+import { parseRoadmap, type RoadmapDoc } from './shared/roadmap-parser.js';
 
 interface PostToolUseInput {
   tool_name: string;
@@ -121,81 +122,9 @@ function findRoadmapPath(projectDir: string): string | null {
   return null;
 }
 
-interface RoadmapData {
-  current: { title: string; description: string; started: string } | null;
-  completed: Array<{ title: string; completed: string }>;
-  planned: Array<{ title: string; priority: string }>;
-  rawContent: string;
-}
-
-function parseRoadmap(content: string): RoadmapData {
-  const result: RoadmapData = {
-    current: null,
-    completed: [],
-    planned: [],
-    rawContent: content,
-  };
-
-  const lines = content.split('\n');
-  let section: string | null = null;
-
-  for (const line of lines) {
-    const stripped = line.trim();
-
-    if (stripped.toLowerCase().startsWith('## current')) {
-      section = 'current';
-      continue;
-    } else if (stripped.toLowerCase().startsWith('## completed')) {
-      section = 'completed';
-      continue;
-    } else if (stripped.toLowerCase().startsWith('## planned')) {
-      section = 'planned';
-      continue;
-    } else if (stripped.startsWith('## ')) {
-      section = null;
-      continue;
-    }
-
-    if (section === 'current') {
-      if (stripped.startsWith('**') && stripped.endsWith('**')) {
-        const title = stripped.replace(/\*\*/g, '').trim();
-        result.current = { title, description: '', started: '' };
-      } else if (result.current && stripped.startsWith('- ')) {
-        const text = stripped.slice(2).trim();
-        if (text.toLowerCase().startsWith('started:')) {
-          result.current.started = text.replace(/^started:\s*/i, '').trim();
-        } else {
-          result.current.description += (result.current.description ? '; ' : '') + text;
-        }
-      } else if (stripped.startsWith('- [ ]')) {
-        const title = stripped.replace(/^-\s*\[\s*\]\s*/, '').trim();
-        result.current = { title, description: '', started: '' };
-      }
-    }
-
-    if (section === 'completed') {
-      const match = stripped.match(/^-\s*\[x\]\s*(.+?)(?:\s*\(([^)]+)\))?$/i);
-      if (match) {
-        result.completed.push({
-          title: match[1].trim(),
-          completed: match[2] || '',
-        });
-      }
-    }
-
-    if (section === 'planned') {
-      const match = stripped.match(/^-\s*\[\s*\]\s*(.+?)(?:\s*\(([^)]+)\))?$/);
-      if (match) {
-        result.planned.push({
-          title: match[1].trim(),
-          priority: match[2] || 'normal',
-        });
-      }
-    }
-  }
-
-  return result;
-}
+// parseRoadmap + types now live in shared/roadmap-parser.ts (Phase 3A).
+// roadmap-completion uses RoadmapDoc as RoadmapData (drop-in superset).
+type RoadmapData = RoadmapDoc;
 
 function updateRoadmapContent(content: string, data: RoadmapData): string {
   if (!data.current) {
@@ -268,10 +197,13 @@ function promoteNextPlanned(content: string, data: RoadmapData): string {
 
   // Find highest priority planned item
   const priorities: Record<string, number> = { high: 3, medium: 2, normal: 1, low: 0 };
+  const prioOf = (item: { priority?: string }): number => {
+    const p = (item.priority || 'normal').toLowerCase();
+    return priorities[p] ?? 1;
+  };
   let best = data.planned[0];
   for (const item of data.planned) {
-    const priority = item.priority.toLowerCase();
-    if ((priorities[priority] || 1) > (priorities[best.priority.toLowerCase()] || 1)) {
+    if (prioOf(item) > prioOf(best)) {
       best = item;
     }
   }

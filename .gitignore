@@ -34,6 +34,11 @@ history.jsonl
 
 # Claude cache and state
 .claude/cache/
+# Hook telemetry trace (system-coherence Phase 1) -- explicit, redundant with .claude/cache/ above.
+.claude/cache/hook-trace.jsonl
+.claude/cache/hook-trace.jsonl.lock
+# Memory dedup runtime artifacts -- explicit, redundant with .claude/cache/ above.
+.claude/cache/memory-dedup-log.jsonl
 .claude/state/
 .claude/statsig/
 .claude/debug/
@@ -59,6 +64,7 @@ docs/_internal/
 
 # ROADMAP contains session-specific planning data (auto-updated by hooks)
 ROADMAP.md
+ROADMAP.archive.md
 
 # Statsig telemetry
 statsig/
@@ -66,9 +72,11 @@ statsig/
 # Archives (historical, not needed to operate)
 opc/scripts/archive/
 .claude/hooks/archive/
-.claude/hooks/_archived/
 .claude/skills/_archived/
 .claude/agents/_archived/
+# .claude/hooks/_archived/ is intentionally tracked (Phase 2 archive batches);
+# it preserves prototype hooks for revival. esbuild and sync-to-active.sh skip
+# it because their globs are top-level only.
 
 # OPC internal caches
 opc/.claude/cache/
@@ -205,5 +213,6 @@ x-article-*
 
 # Scheduled-task and ralph runtime locks (machine-specific state)
 .claude/scheduled_tasks.lock
-.ralph/agent-output.json
-.ralph/state.json
+# Match .ralph/ anywhere in the tree (root, opc/, project subdirs, ...).
+# Anchored patterns like ".ralph/state.json" only catch the root copy.
+.ralph/

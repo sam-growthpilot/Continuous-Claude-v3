@@ -17,6 +17,7 @@
 
 import * as fs from 'fs';
 import * as path from 'path';
+import { parseRoadmap, type RoadmapItem as SharedRoadmapItem } from './shared/roadmap-parser.js';
 
 interface PostToolUseInput {
   tool_name: string;
@@ -49,15 +50,8 @@ interface TaskProgress {
   isComplete: boolean;
 }
 
-interface RoadmapItem {
-  title: string;
-  description?: string;
-  priority?: string;
-  progress?: string;
-  started?: string;
-  completed?: string;
-  source?: string;
-}
+// RoadmapItem now lives in shared/roadmap-parser.ts (Phase 3A).
+type RoadmapItem = SharedRoadmapItem;
 
 function readStdin(): Promise<string> {
   return new Promise((resolve) => {
@@ -193,101 +187,7 @@ function findRoadmapPath(startDir: string): string | null {
   return null;
 }
 
-function parseRoadmap(content: string): {
-  current: RoadmapItem | null;
-  completed: RoadmapItem[];
-  planned: RoadmapItem[];
-  rawSections: Map<string, { start: number; end: number }>;
-} {
-  const result = {
-    current: null as RoadmapItem | null,
-    completed: [] as RoadmapItem[],
-    planned: [] as RoadmapItem[],
-    rawSections: new Map<string, { start: number; end: number }>(),
-  };
-
-  const lines = content.split('\n');
-  let section: string | null = null;
-  let sectionStart = -1;
-
-  for (let i = 0; i < lines.length; i++) {
-    const stripped = lines[i].trim().toLowerCase();
-
-    if (stripped.startsWith('## current')) {
-      if (section && sectionStart >= 0) {
-        result.rawSections.set(section, { start: sectionStart, end: i });
-      }
-      section = 'current';
-      sectionStart = i;
-      continue;
-    } else if (stripped.startsWith('## completed')) {
-      if (section && sectionStart >= 0) {
-        result.rawSections.set(section, { start: sectionStart, end: i });
-      }
-      section = 'completed';
-      sectionStart = i;
-      continue;
-    } else if (stripped.startsWith('## planned')) {
-      if (section && sectionStart >= 0) {
-        result.rawSections.set(section, { start: sectionStart, end: i });
-      }
-      section = 'planned';
-      sectionStart = i;
-      continue;
-    } else if (stripped.startsWith('## ')) {
-      if (section && sectionStart >= 0) {
-        result.rawSections.set(section, { start: sectionStart, end: i });
-      }
-      section = null;
-      sectionStart = -1;
-      continue;
-    }
-
-    const line = lines[i].trim();
-
-    if (section === 'current') {
-      if (line.startsWith('**') && line.endsWith('**')) {
-        result.current = { title: line.replace(/\*\*/g, '').trim() };
-      } else if (result.current && line.startsWith('- ')) {
-        const text = line.slice(2).trim();
-        if (text.toLowerCase().startsWith('started:')) {
-          result.current.started = text.replace(/^started:\s*/i, '').trim();
-        } else if (text.toLowerCase().startsWith('progress:')) {
-          result.current.progress = text.replace(/^progress:\s*/i, '').trim();
-        } else if (!result.current.description) {
-          result.current.description = text;
-        }
-      }
-    }
-
-    if (section === 'completed') {
-      const match = line.match(/^-\s*\[x\]\s*(.+?)(?:\s*\(([^)]+)\))?$/i);
-      if (match) {
-        result.completed.push({
-          title: match[1].trim(),
-          completed: match[2] || '',
-        });
-      }
-    }
-
-    if (section === 'planned') {
-      const match = line.match(/^-\s*\[\s*\]\s*(.+?)(?:\s*\(([^)]+)\))?$/);
-      if (match) {
-        result.planned.push({
-          title: match[1].trim(),
-          priority: match[2] || 'normal',
-        });
-      }
-    }
-  }
-
-  // Capture final section
-  if (section && sectionStart >= 0) {
-    result.rawSections.set(section, { start: sectionStart, end: lines.length });
-  }
-
-  return result;
-}
+// parseRoadmap moved to shared/roadmap-parser.ts (Phase 3A).
 
 function itemExists(items: RoadmapItem[], title: string): boolean {
   const normalized = title.toLowerCase().replace(/[^a-z0-9]/g, '');

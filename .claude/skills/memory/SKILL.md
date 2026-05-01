@@ -95,6 +95,23 @@ Embedding details: entries have BGE embeddings (default `bge-large-en-v1.5`, 102
 
 **Low RRF scores (0.02) are good results** — do not confuse with low relevance. RRF is a ranking fusion metric, not a similarity score.
 
+### Proactive Injection (memory-awareness hook)
+
+The `memory-awareness` UserPromptSubmit hook calls `recall_learnings.py` automatically and surfaces matches as a `MEMORY MATCH` block in session context. As of Phase 4 (system-coherence), the hook uses **text-only mode + a TypeScript-side score floor**:
+
+| Setting | Value | Why |
+|---------|-------|-----|
+| Mode | `--text-only` | BGE cold start exceeds the 2 s hook timeout; ts_rank is fast and never times out |
+| `--k` | 5 | Fetch 5; filter; show top 3 — gives the floor headroom to drop weak rows |
+| `PROACTIVE_INJECTION_FLOOR` | `0.05` (TypeScript const in `memory-awareness.ts`) | Filters ts_rank noise; admits strong FTS hits + ILIKE substring matches |
+| Timeout | 5000 ms | Absorbs `uv run` cold-start (~4-5 s on first fire, <2 s warm) |
+
+ts_rank scales 0.0001–0.1 with the ILIKE fallback hitting 0.1, so the 0.05 floor lets through ranked-strong matches and substring matches while suppressing the long tail of weak FTS hits that previously polluted the MEMORY MATCH block. To tune, edit `PROACTIVE_INJECTION_FLOOR` in `.claude/hooks/src/memory-awareness.ts`.
+
+For higher-quality recall (hybrid RRF + vector signal), call `/recall` manually — that path uses the embedding stack and is not bound by the hook timeout.
+
+If matches stop showing up, run `recall_learnings.py --text-only --query "<intent>"` and inspect scores to confirm the bar — the hook is silent on filtered results.
+
 ### What's Stored
 
 The `archival_memory` table contains:

@@ -2744,6 +2744,24 @@
           "where.*(is|defined).*(function|class|symbol)"
         ]
       }
+    },
+    "tldr-stats": {
+      "type": "meta",
+      "enforcement": "suggest",
+      "priority": "medium",
+      "description": "Show full session token usage, costs, TLDR savings, hook activity. Read-only telemetry dashboard.",
+      "promptTriggers": {
+        "keywords": [
+          "tldr stats",
+          "token usage",
+          "session cost",
+          "tldr savings",
+          "tldr token",
+          "session tokens",
+          "how many tokens",
+          "session telemetry"
+        ]
+      }
     }
   },
   "agents": {

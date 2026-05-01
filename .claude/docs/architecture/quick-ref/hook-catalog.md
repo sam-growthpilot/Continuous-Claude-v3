@@ -1,9 +1,8 @@
 # Hook Catalog
 
-**Total registered: 55 hooks across 6 event types**
-Last updated: 2026-03-21
+Current registrations live in `~/.claude/settings.json`. For totals and per-event breakdown, see [hook-audit-2026-04.md](../../hook-audit-2026-04.md).
 
-## SessionStart (9 hooks)
+## SessionStart
 
 | Hook | Description |
 |------|-------------|
@@ -17,7 +16,7 @@ Last updated: 2026-03-21
 | session-start-tldr-cache | Pre-cache TLDR structure analysis |
 | hook-health-monitor | Verify hook registration health on startup |
 
-## UserPromptSubmit (12 hooks)
+## UserPromptSubmit
 
 | Hook | Description |
 |------|-------------|
@@ -34,12 +33,12 @@ Last updated: 2026-03-21
 | ralph-retry-reminder | Remind about failed Ralph agent retries |
 | braintrust_hooks user_prompt_submit | Braintrust prompt-level tracing |
 
-## PreToolUse (17 hooks)
+## PreToolUse
 
 | Hook | Matcher | Description |
 |------|---------|-------------|
 | pre-plan-memory | EnterPlanMode | Recall relevant memories before planning |
-| agent-validate | Agent | Validate agent type and configuration |
+| agent-model-guard | Agent | Validate agent type and configuration |
 | explore-to-scout | Agent | Redirect Explore agent to scout |
 | no-haiku-enforcer | Agent | Block haiku model selection for agents |
 | navigator-validate | Agent | Validate navigator agent configuration |
@@ -56,7 +55,7 @@ Last updated: 2026-03-21
 | file-claims | Edit\|Write | Distributed file locking across sessions |
 | test-before-done | TaskUpdate | Require test evidence before marking task complete |
 
-## PostToolUse (21 hooks)
+## PostToolUse
 
 | Hook | Matcher | Description |
 |------|---------|-------------|
@@ -86,14 +85,14 @@ Last updated: 2026-03-21
 | post-edit-diagnostics | Edit\|Write | Run type check and lint after code edits |
 | web-lookup-advisor | WebFetch\|WebSearch | Suggest Nia/context7 before web lookups |
 
-## PreCompact (2 hooks)
+## PreCompact
 
 | Hook | Description |
 |------|-------------|
 | pre-compact-extract | Extract learnings before context compaction (L1) |
 | pre-compact-continuity | Save continuity state before compaction |
 
-## SessionEnd (5 hooks)
+## SessionEnd
 
 | Hook | Description |
 |------|-------------|

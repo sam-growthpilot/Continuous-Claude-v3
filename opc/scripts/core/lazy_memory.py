@@ -16,6 +16,7 @@ Usage:
 
 from __future__ import annotations
 
+import asyncio
 import json
 import os
 import re
@@ -27,11 +28,25 @@ from typing import Any
 # Add parent to path for imports
 sys.path.insert(0, str(Path(__file__).parent))
 
+# Import the v2 storage entrypoint. v1 (`store_learning`) has a different
+# signature (worked/failed/decisions/patterns) that does not match the
+# call site below; v2 takes (session_id, content, learning_type, ...).
+#
+# The previous version of this file imported a non-existent `LearningType`
+# symbol, which raised ImportError. The except-clause then set BOTH
+# `store_learning` and `LearningType` to None, and the storage branch was
+# silently skipped -- L2 (session-end) learnings never reached postgres.
+# That bug is the reason this file was rewritten; do NOT reintroduce a
+# silent-None ImportError swallow here.
 try:
-    from store_learning import store_learning, LearningType
-except ImportError:
-    store_learning = None
-    LearningType = None
+    from store_learning import store_learning_v2 as _store_learning_v2
+except ImportError as e:
+    # Re-raise with context so a future regression is loud, not silent.
+    raise ImportError(
+        f"lazy_memory cannot import store_learning_v2 from store_learning: {e}. "
+        "This used to be silently swallowed -- see Phase 1 of the memory "
+        "remediation plan. Fix the import path or the store_learning module."
+    ) from e
 
 # Perception change signal patterns (from extract_thinking_blocks.py)
 PERCEPTION_SIGNALS = [
@@ -352,6 +367,12 @@ def extract_session_learnings(
     if not jsonl_path or not jsonl_path.exists():
         return []
 
+    # Clamp to a sane range. The default is 10; a caller passing 10_000
+    # would otherwise fan out 10k concurrent embedding+DB calls below and
+    # spike the backend. The lower bound also rejects 0 / negatives that
+    # would silently disable extraction.
+    max_learnings = max(1, min(max_learnings, 100))
+
     # Extract thinking blocks with perception signals
     blocks = extract_thinking_blocks(jsonl_path)
 
@@ -369,20 +390,68 @@ def extract_session_learnings(
             if len(learnings) >= max_learnings:
                 break
 
-    # Store if requested
-    if store and store_learning and learnings:
-        for learning in learnings:
-            try:
-                store_learning(
-                    session_id=session_id,
-                    learning_type=learning['type'],
-                    content=learning['content'],
-                    context=learning['context'],
-                    tags=learning['tags'],
-                    confidence=learning['confidence'],
+    # Store if requested. store_learning_v2 is async, so previously each
+    # learning was awaited via its own asyncio.run() call -- N event loops,
+    # N pool reconnects, N round-trips serialized. Phase B1: bundle the
+    # whole batch into a single asyncio.run() that fans out via gather.
+    # Failures are still visible on stderr -- never silently swallowed.
+    # If a future maintainer wants to skip storage, they must pass
+    # store=False explicitly; reverting this branch to a no-op is the bug
+    # we just fixed.
+    if store and learnings:
+        # Cap concurrency so the DB pool + embedding service aren't slammed
+        # by a synchronous burst. With max_learnings clamped to <=100 above
+        # and 8 here, the worst-case fan-out is 8 in-flight at a time.
+        STORE_CONCURRENCY = 8
+
+        async def _store_all():
+            sem = asyncio.Semaphore(STORE_CONCURRENCY)
+
+            async def _bounded(learning: dict) -> Any:
+                async with sem:
+                    return await _store_learning_v2(
+                        session_id=session_id,
+                        content=learning['content'],
+                        learning_type=learning['type'],
+                        context=learning['context'],
+                        tags=learning['tags'],
+                        confidence=learning['confidence'],
+                        project_dir=project_dir,
+                    )
+
+            tasks = [_bounded(learning) for learning in learnings]
+            # return_exceptions=True so one bad learning doesn't cancel the
+            # rest. Each result is either the v2 result dict or an Exception.
+            return await asyncio.gather(*tasks, return_exceptions=True)
+
+        try:
+            results = asyncio.run(_store_all())
+        except Exception as e:
+            # asyncio.run itself failed (loop already running, etc.).
+            # Surface and bail -- nothing was stored.
+            print(
+                f"Failed to store learnings (session={session_id}): {e}",
+                file=sys.stderr,
+            )
+            results = []
+
+        for result in results:
+            if isinstance(result, Exception):
+                # Any unexpected exception (e.g. DB outage, embedding service
+                # crash) must be visible. We do NOT re-raise so a single
+                # failed learning doesn't prevent storing the rest.
+                print(
+                    f"Failed to store learning (session={session_id}): {result}",
+                    file=sys.stderr,
                 )
-            except Exception as e:
-                print(f"Failed to store learning: {e}", file=sys.stderr)
+            elif isinstance(result, dict) and not result.get('success'):
+                # store_learning_v2 returned a failure dict (e.g. backend
+                # unavailable). Surface it explicitly.
+                print(
+                    f"Failed to store learning (session={session_id}): "
+                    f"{result.get('error', 'unknown error')}",
+                    file=sys.stderr,
+                )
 
     return learnings
 

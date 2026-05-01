@@ -501,17 +501,12 @@ critic:
   - Relevant past work
   - Recommendations based on history
 
-#### session-analyst
+#### braintrust-analyst (canonical Braintrust analysis agent)
 - **Model:** Opus
-- **Purpose:** Analyze Claude Code sessions via Braintrust
-- **When to use:** Need to analyze session data from Braintrust
-- **Output:** `.claude/cache/agents/session-analyst/latest-output.md`
-
-#### braintrust-analyst
-- **Model:** (not specified)
-- **Purpose:** Execute Braintrust analysis scripts
-- **When to use:** Need to run analysis scripts
+- **Purpose:** Analyze Claude Code sessions using Braintrust logs — runs `braintrust_analyze.py` with all variants (`--last-session`, `--detect-loops`, `--agent-stats`, `--skill-stats`, `--replay`, `--weekly-summary`, `--token-trends`).
+- **When to use:** Retrospective analysis of session traces. The active tracing pipeline is the `~/.claude/hooks/braintrust_hooks.py` hook (registered for SessionStart, UserPromptSubmit, PostToolUse, Stop, SessionEnd) — this agent reads the resulting Braintrust logs after the fact.
 - **Output:** `.claude/cache/agents/braintrust-analyst/latest-output.md`
+- **Note:** `session-analyst` was archived 2026-04-26 as a duplicate (same skill, same script). Use `braintrust-analyst` for all Braintrust retrospective work.
 
 #### memory-extractor
 - **Model:** (not specified)

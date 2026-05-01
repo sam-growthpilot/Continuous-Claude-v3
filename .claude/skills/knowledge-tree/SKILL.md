@@ -56,20 +56,25 @@ uv run python $CLAUDE_OPC_DIR/scripts/core/query_tree.py --project . --query "au
 | `what is this project` | Get project description |
 | `current goal` | Show current focus from ROADMAP |
 
-## Daemon
+## Regeneration (no daemon)
 
-The tree daemon continuously updates the knowledge tree when files change:
+The tree is regenerated on demand via hooks rather than a background daemon:
+
+- `tree-invalidate.ts` (PostToolUse) marks the tree stale on Edit/Write
+- `session-start-init-check.ts` (SessionStart) regenerates if missing or stale
+- `pageindex-watch.ts` triggers regeneration when PageIndex content changes
+
+Manual commands:
 
 ```bash
-# Start daemon in background
-uv run python $CLAUDE_OPC_DIR/scripts/core/tree_daemon.py --project . --background
+# Regenerate tree for a project
+cd $CLAUDE_OPC_DIR && PYTHONPATH=. uv run python scripts/core/knowledge_tree.py --project <project-dir> --verbose
 
-# Check daemon status
-uv run python $CLAUDE_OPC_DIR/scripts/core/tree_daemon.py --project . --status
-
-# Stop daemon
-uv run python $CLAUDE_OPC_DIR/scripts/core/tree_daemon.py --project . --stop
+# Validate tree schema
+cd $CLAUDE_OPC_DIR && PYTHONPATH=. uv run python scripts/core/tree_schema.py --validate <project-dir>/.claude/knowledge-tree.json
 ```
+
+An earlier design called for a `tree_daemon.py` watcher process; it was never built. The lazy/hook-driven approach is the canonical implementation.
 
 ## ROADMAP.md Format
 

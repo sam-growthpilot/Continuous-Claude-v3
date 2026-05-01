@@ -17,6 +17,8 @@
 
 import { readFileSync } from 'fs';
 import { spawn } from 'child_process';
+import { homedir } from 'node:os';
+import { join } from 'node:path';
 import { registerSession, getActiveSessions } from './shared/db-utils-pg.js';
 import { generateSessionId, writeSessionId, getProject, loadSessionId } from './shared/session-id.js';
 import type { SessionStartInput, HookOutput } from './shared/types.js';
@@ -163,7 +165,7 @@ export async function main(): Promise<void> {
     input = {} as SessionStartInput;
   }
 
-  const hooksDir = 'C:/Users/david.hayes/.claude/hooks';
+  const hooksDir = join(homedir(), '.claude', 'hooks').replace(/\\/g, '/');
   const distDir = `${hooksDir}/dist`;
 
   // Run all tasks in parallel

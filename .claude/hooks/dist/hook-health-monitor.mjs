@@ -1,6 +1,7 @@
 // src/hook-health-monitor.ts
 import * as fs from "fs";
 import * as path from "path";
+import * as os from "os";
 function parseHookCommands(settings) {
   const hooks = settings.hooks;
   if (!hooks || typeof hooks !== "object") {
@@ -35,9 +36,12 @@ function parseHookCommands(settings) {
 function extractDistPath(command) {
   const match = command.match(/^node\s+(.+\.mjs)\s*$/);
   if (!match) return null;
-  const filePath = match[1].trim();
+  let filePath = match[1].trim();
   const normalized = filePath.replace(/\\/g, "/");
   if (!normalized.includes("hooks/dist/")) return null;
+  if (filePath.startsWith("~/") || filePath.startsWith("~\\")) {
+    filePath = path.join(os.homedir(), filePath.slice(2));
+  }
   return filePath;
 }
 function deriveSrcPath(distPath) {

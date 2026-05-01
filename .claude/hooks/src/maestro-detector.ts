@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+// @hook-kind injector
 /**
  * Maestro Detector Hook
  *
@@ -13,9 +14,12 @@
  * - Complexity keywords (complex, multiple, integrate, coordinate)
  *
  * If total weight > threshold, suggests Maestro orchestration.
+ * Re-entrancy guard: if .claude/maestro-state.json exists and is fresh
+ * (mtime within SESSION_WINDOW_MS), skip the suggestion entirely.
  */
 
-import { readFileSync } from 'fs';
+import { readFileSync, statSync } from 'fs';
+import { join } from 'path';
 import { outputContinue } from './shared/output.js';
 
 interface ComplexitySignal {
@@ -53,6 +57,7 @@ const COMPLEXITY_SIGNALS: ComplexitySignal[] = [
 ];
 
 const COMPLEXITY_THRESHOLD = 0.65;
+const SESSION_WINDOW_MS = 30 * 60 * 1000; // 30 minutes
 
 interface HookInput {
   prompt?: string;
@@ -65,11 +70,28 @@ interface DetectedSignal {
   matches: number;
 }
 
+/**
+ * Returns true if a fresh maestro session is active.
+ * Checks .claude/maestro-state.json mtime; fails open on any error.
+ */
+export function isMaestroActive(projectDir?: string): boolean {
+  try {
+    const dir = projectDir ?? (process.env.CLAUDE_PROJECT_DIR || process.cwd());
+    const stateFile = join(dir, '.claude', 'maestro-state.json');
+    const stat = statSync(stateFile);
+    const ageMsec = Date.now() - stat.mtimeMs;
+    return ageMsec < SESSION_WINDOW_MS;
+  } catch {
+    // File missing or unreadable — no active session
+    return false;
+  }
+}
+
 function readStdin(): string {
   return readFileSync(0, 'utf-8');
 }
 
-function analyzeComplexity(prompt: string): { score: number; signals: DetectedSignal[] } {
+export function analyzeComplexity(prompt: string): { score: number; signals: DetectedSignal[] } {
   const detected: DetectedSignal[] = [];
   let totalScore = 0;
 
@@ -92,7 +114,7 @@ function analyzeComplexity(prompt: string): { score: number; signals: DetectedSi
   return { score: Math.min(totalScore, 1.5), signals: detected };
 }
 
-function countProcessPhases(prompt: string): number {
+export function countProcessPhases(prompt: string): number {
   const phases = [
     /\b(research|explore|understand|investigate)\b/i,
     /\b(plan|design|architect)\b/i,
@@ -173,6 +195,12 @@ async function main() {
 
     // Skip if already invoking maestro
     if (/\b(maestro|orchestrat)/i.test(prompt)) {
+      outputContinue();
+      return;
+    }
+
+    // Re-entrancy guard: skip if a maestro session is already active
+    if (isMaestroActive()) {
       outputContinue();
       return;
     }
