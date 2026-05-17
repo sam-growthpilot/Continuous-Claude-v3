@@ -14,6 +14,9 @@ USAGE:
     # Voyage embeddings (higher quality, requires VOYAGE_API_KEY)
     uv run python scripts/recall_learnings.py --query "errors" --provider voyage
 
+    # Phase 2: cross-encoder rerank (hybrid RRF only; default off until Task 3.2 decision gate)
+    uv run python scripts/recall_learnings.py --query "memory hardening" --rerank
+
 Workflow:
     Query -> Embed (Local/Voyage) -> Vector Search (pgvector) -> Return
 
@@ -30,6 +33,7 @@ import json
 import math
 import os
 import sys
+import time
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -1111,6 +1115,151 @@ async def search_pageindex(query: str, k: int = 5, project_path: str | None = No
         service.close()
 
 
+# Phase 2 (Task 1.3): Stage-2 rerank integration.
+#
+# When --rerank is set on the hybrid path, we ask the search function for a
+# larger candidate pool (up to RERANK_CANDIDATE_POOL), pass those candidates
+# through the cross-encoder reranker, and return the top-K.
+#
+# The reranker lives in opc/scripts/core/rerank.py. We prefer talking to the
+# long-lived daemon (TCP loopback, $TEMP/ccv3-rerank.json discovery file) when
+# available, and fall back to spawning a subprocess one-shot when not.
+RERANK_CANDIDATE_POOL = 50
+
+
+def _serialize_candidate_for_rerank(cand: dict[str, Any]) -> dict[str, Any]:
+    """Strip a candidate dict to JSON-serialisable fields for the reranker.
+
+    The reranker only needs ``id``, ``content``, and ``base_score`` (the
+    last is a passthrough audit field). All other keys (metadata, datetime
+    columns, session_id, valid_from, etc.) are kept on the original
+    candidate and re-attached after rerank by matching on ``id``.
+    """
+    return {
+        "id": str(cand.get("id", "")),
+        "content": cand.get("content", "") or "",
+        "base_score": cand.get(
+            "base_score", cand.get("final_score", cand.get("similarity", 0.0)),
+        ),
+    }
+
+
+def _apply_rerank(
+    query: str,
+    candidates: list[dict[str, Any]],
+    top_k: int,
+) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+    """Run Stage-2 rerank on candidates, return (top_k_results, meta).
+
+    Strategy:
+        1. If $TEMP/ccv3-rerank.json exists AND the PID is alive, try TCP
+           daemon mode.
+        2. Otherwise, spawn ``rerank.py --candidates-from-stdin`` as a
+           subprocess (cold path: model load ~50s on Windows CPU).
+        3. On any failure, return the original RRF top-K unchanged with
+           ``meta["rerank_status"] == "failed"`` and the error.
+
+    The returned candidates carry an added ``rerank_score`` field; the
+    original ``id`` -> candidate mapping is used to re-hydrate metadata
+    columns (since the reranker only sees id/content/base_score).
+    """
+    if not candidates:
+        return [], {"rerank_status": "skipped", "reason": "no_candidates"}
+
+    # Map id -> original candidate so we can rehydrate after rerank.
+    by_id: dict[str, dict[str, Any]] = {str(c.get("id", "")): c for c in candidates}
+    slim = [_serialize_candidate_for_rerank(c) for c in candidates]
+
+    # Lazy import: rerank.py imports torch/sentence-transformers, which we
+    # want to defer until --rerank is actually used.
+    # Import via `from core import rerank` -- recall_learnings inserts
+    # ``opc/scripts/`` onto sys.path at module load, which makes ``core`` a
+    # package (siblings to ``db``, ``pageindex``, etc.).
+    from core import rerank as _rerank  # type: ignore
+
+    t0 = time.perf_counter()
+    daemon_used = False
+    elapsed_remote_ms: float | None = None
+    try:
+        resp = _rerank.rerank_via_daemon(
+            query=query,
+            candidates=slim,
+            top_k=top_k,
+        )
+        if resp is not None and "results" in resp:
+            daemon_used = True
+            slim_results = resp["results"]
+            elapsed_remote_ms = float(resp.get("elapsed_ms", 0.0))
+        else:
+            slim_results = None
+    except Exception as exc:  # noqa: BLE001
+        print(f"[recall] rerank daemon error: {exc}", file=sys.stderr)
+        slim_results = None
+
+    if slim_results is None:
+        # Fallback: subprocess one-shot.
+        try:
+            import subprocess
+            rerank_path = Path(__file__).resolve().parent / "rerank.py"
+            payload = "\n".join(json.dumps(s, default=str) for s in slim) + "\n"
+            proc = subprocess.run(  # noqa: S603
+                [sys.executable, str(rerank_path),
+                 "--query", query,
+                 "--candidates-from-stdin",
+                 "--top-k", str(top_k)],
+                input=payload,
+                capture_output=True,
+                text=True,
+                check=False,
+                timeout=180,  # cold load can take ~50s; give headroom
+            )
+            if proc.returncode != 0:
+                return candidates[:top_k], {
+                    "rerank_status": "failed",
+                    "reason": "subprocess_nonzero",
+                    "stderr_tail": (proc.stderr or "")[-400:],
+                }
+            slim_results = []
+            for line in (proc.stdout or "").splitlines():
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    slim_results.append(json.loads(line))
+                except json.JSONDecodeError:
+                    continue
+        except Exception as exc:  # noqa: BLE001
+            return candidates[:top_k], {
+                "rerank_status": "failed",
+                "reason": "subprocess_error",
+                "error": str(exc),
+            }
+
+    elapsed_total_ms = (time.perf_counter() - t0) * 1000
+
+    # Rehydrate full candidate rows by id, preserving rerank_score.
+    hydrated: list[dict[str, Any]] = []
+    for slim_row in slim_results or []:
+        cid = str(slim_row.get("id", ""))
+        full = by_id.get(cid)
+        if full is None:
+            continue
+        # Attach rerank_score onto the original candidate dict.
+        full["rerank_score"] = float(slim_row.get("rerank_score", 0.0))
+        hydrated.append(full)
+
+    meta = {
+        "rerank_status": "ok",
+        "rerank_used_daemon": daemon_used,
+        "rerank_total_ms": elapsed_total_ms,
+        "rerank_remote_ms": elapsed_remote_ms,
+        "rerank_candidate_pool": len(candidates),
+        "rerank_top_k": top_k,
+        "rerank_model": "BAAI/bge-reranker-v2-m3",
+    }
+    return hydrated, meta
+
+
 async def main() -> int:
     """Run semantic recall on session learnings."""
     parser = argparse.ArgumentParser(
@@ -1233,6 +1382,17 @@ async def main() -> int:
             "Set to 0 to disable."
         ),
     )
+    # Phase 2 (Task 1.3): Stage-2 cross-encoder reranker. Hybrid RRF path only.
+    # Default off until the Task 3.2 decision gate flips it.
+    parser.add_argument(
+        "--rerank",
+        action="store_true",
+        help=(
+            "Apply Stage-2 cross-encoder rerank (BAAI/bge-reranker-v2-m3) over the "
+            "top-50 hybrid-RRF candidates and return the top-K. No-op for "
+            "--text-only / --vector-only modes (warning to stderr)."
+        ),
+    )
 
     args = parser.parse_args()
 
@@ -1264,6 +1424,33 @@ async def main() -> int:
     # JSON mode: suppress human-readable output
     backend = get_backend()
 
+    # Phase 2 (Task 1.3): --rerank only applies to the hybrid-RRF default path.
+    # For other modes (text-only, vector-only, pageindex, sqlite, --hybrid w/
+    # pageindex blend) we no-op with a stderr warning. The decision gate at
+    # Task 3.2 will decide whether to flip the default.
+    apply_rerank = False
+    rerank_meta: dict[str, Any] = {}
+    if args.rerank:
+        # The hybrid-RRF default is "no --text-only, no --vector-only, no
+        # --pageindex, postgres backend, and not the --hybrid PageIndex
+        # blend". The --hybrid flag fans out PageIndex alongside vector,
+        # which we don't rerank (Stage-2 rerank is for the vector recall
+        # path; PageIndex already does LLM reasoning).
+        if (backend != "postgres"
+                or args.text_only
+                or args.vector_only
+                or args.pageindex
+                or args.hybrid):
+            print(
+                "[recall] --rerank is hybrid-RRF only; skipping for "
+                f"backend={backend!r} text_only={args.text_only} "
+                f"vector_only={args.vector_only} pageindex={args.pageindex} "
+                f"hybrid={args.hybrid}",
+                file=sys.stderr,
+            )
+        else:
+            apply_rerank = True
+
     if not args.json:
         print(f'Recalling learnings for: "{args.query}"')
         if args.pageindex:
@@ -1274,6 +1461,8 @@ async def main() -> int:
         else:
             print(f"Backend: {backend}")
             print(f"Embedding provider: {args.provider}")
+            if apply_rerank:
+                print("Rerank: Stage-2 cross-encoder (bge-reranker-v2-m3)")
         print()
 
     try:
@@ -1361,10 +1550,13 @@ async def main() -> int:
                 decay_lambda=decay_lambda,
             )
         else:
-            # Default: Hybrid RRF search (text + vector combined)
+            # Default: Hybrid RRF search (text + vector combined).
+            # When --rerank is set, ask the RRF for a wider candidate pool
+            # (top-50 by default) so the cross-encoder has more to choose from.
+            fetch_k = max(args.k, RERANK_CANDIDATE_POOL) if apply_rerank else args.k
             results = await search_learnings_hybrid_rrf(
                 query=args.query,
-                k=args.k,
+                k=fetch_k,
                 provider=args.provider,
                 similarity_threshold=args.threshold * 0.01,  # RRF scores are ~0.01-0.03 range
                 project_id=project_id, scope_mode=scope_mode,
@@ -1372,6 +1564,26 @@ async def main() -> int:
                 include_superseded=args.include_superseded,
                 decay_lambda=decay_lambda,
             )
+
+            # Phase 2 (Task 1.3): Stage-2 cross-encoder rerank over the
+            # candidate pool, return top-K. Failure mode: keep RRF results
+            # untouched, attach rerank_status='failed' to the meta block.
+            if apply_rerank and len(results) > args.k:
+                pre_rerank_count = len(results)
+                results, rerank_meta = _apply_rerank(
+                    query=args.query,
+                    candidates=results,
+                    top_k=args.k,
+                )
+                rerank_meta["rerank_pre_count"] = pre_rerank_count
+            elif apply_rerank:
+                # Fewer candidates than top-K -- nothing to rerank meaningfully.
+                rerank_meta = {
+                    "rerank_status": "skipped",
+                    "reason": "candidate_pool_smaller_than_top_k",
+                    "rerank_candidate_pool": len(results),
+                    "rerank_top_k": args.k,
+                }
     except Exception as e:
         if args.json:
             print(json.dumps({"error": str(e), "results": []}))
@@ -1401,6 +1613,10 @@ async def main() -> int:
                 "created_at": created_str,
             }
 
+            # Phase 2 (Task 1.3): surface the cross-encoder score when rerank ran.
+            if "rerank_score" in result:
+                entry["rerank_score"] = result["rerank_score"]
+
             # Include temporal fields when available (postgres-only)
             valid_from = result.get("valid_from")
             valid_until = result.get("valid_until")
@@ -1414,7 +1630,13 @@ async def main() -> int:
                 entry["valid_until"] = str(valid_until)
 
             json_results.append(entry)
-        print(json.dumps({"results": json_results}))
+        # Phase 2 (Task 1.3): include _meta block carrying rerank diagnostics
+        # when --rerank was used. Kept absent when no rerank happened so
+        # callers that parse the JSON aren't surprised.
+        out_doc: dict[str, Any] = {"results": json_results}
+        if rerank_meta:
+            out_doc["_meta"] = rerank_meta
+        print(json.dumps(out_doc))
         return 0
 
     # Human-readable output
@@ -1423,6 +1645,17 @@ async def main() -> int:
         return 0
 
     print(f"Found {len(results)} matching learnings:")
+    if rerank_meta and rerank_meta.get("rerank_status") == "ok":
+        total_ms = rerank_meta.get("rerank_total_ms")
+        used_daemon = rerank_meta.get("rerank_used_daemon")
+        if total_ms is not None:
+            print(
+                f"  (reranked from {rerank_meta.get('rerank_pre_count', '?')} via "
+                f"{'daemon' if used_daemon else 'subprocess'} in "
+                f"{total_ms:.0f}ms)"
+            )
+    elif rerank_meta and rerank_meta.get("rerank_status") == "failed":
+        print(f"  (rerank failed: {rerank_meta.get('reason')})")
     print()
 
     for i, result in enumerate(results, 1):
@@ -1450,7 +1683,10 @@ async def main() -> int:
                 print(f"   Why: {reason}")
             print(f"   {content_preview}")
         else:
-            print(f"{i}. [{similarity:.3f}] Session: {session_id} ({created_str})")
+            rerank_suffix = ""
+            if "rerank_score" in result:
+                rerank_suffix = f" rerank={result['rerank_score']:.3f}"
+            print(f"{i}. [{similarity:.3f}{rerank_suffix}] Session: {session_id} ({created_str})")
             print(f"   {content_preview}")
         print()
 
