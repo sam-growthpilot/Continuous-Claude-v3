@@ -40,6 +40,8 @@ dependencies = [
     "pypdf2>=3.0.1",
     "pymupdf>=1.26.7",
     "rlms>=0.1.1",
+    "transformers>=4.40,<5",
+    "numpy>=1.24.0",
 ]
 
 [project.optional-dependencies]
