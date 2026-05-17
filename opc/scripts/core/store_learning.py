@@ -160,7 +160,10 @@ MIN_CONTENT_LENGTH = {
     None: 80,  # untyped default
 }
 
-# Noise patterns -- content starting with these is ephemeral thinking, not a learning
+# Noise patterns -- content starting with these is ephemeral thinking, not a learning.
+# G14 (Task #15): these prefixes leaked through previously; we now reject them
+# BEFORE the min-length check so a short-but-noisy fragment still gets rejected
+# with a clear noise_prefix reason (helps debugging / observability).
 NOISE_PREFIXES = [
     "Agent '",           # agent failure dumps
     "Now I have",        # thinking fragment
@@ -192,37 +195,98 @@ QUALITY_SIGNALS = [
 def validate_learning_quality(
     content: str,
     learning_type: str | None = None,
+    _internal_caller: bool = False,
 ) -> dict:
     """Gate: reject noise, accept quality learnings.
+
+    Order matters here. Noise-prefix rejection runs BEFORE the length check
+    so a short-but-noisy fragment ("Let me think") gets a clear
+    ``noise_prefix`` reason rather than a misleading ``too_short`` one.
+
+    Args:
+        content: The candidate learning content.
+        learning_type: One of LEARNING_TYPES, or None. When None and the
+            caller is external (``_internal_caller=False``), the gate
+            rejects -- callers must declare a type so the canonical
+            7-type heuristic can apply.
+        _internal_caller: Sentinel set by trusted in-process callers (e.g.,
+            ``store_learning_v2`` when it has already inferred a type, or
+            the legacy v1 entrypoint). External CLI / hook callers MUST
+            leave this False so the NULL-type guard fires.
 
     Returns:
         {"passes": True} or {"passes": False, "reason": "..."}
     """
     stripped = content.strip()
 
-    # 1. Minimum length by type
-    min_len = MIN_CONTENT_LENGTH.get(learning_type, MIN_CONTENT_LENGTH[None])
-    if len(stripped) < min_len:
-        return {"passes": False, "reason": f"too_short ({len(stripped)}<{min_len})"}
-
-    # 2. Reject noise prefixes
+    # 1. Reject noise prefixes FIRST (Task #15 / G14).
+    # Even a short fragment like "Let me think" is rejected with a clear
+    # noise_prefix reason rather than too_short.
     for prefix in NOISE_PREFIXES:
         if stripped.startswith(prefix):
             return {"passes": False, "reason": f"noise_prefix: {prefix}"}
 
-    # 3. Reject if high newline ratio (code/log dumps)
+    # 2. Reject NULL learning_type for external callers (G14 follow-up).
+    # Forces callers to either pass --type or rely on store_learning_v2's
+    # inferred type (which sets _internal_caller=True before re-validating).
+    if learning_type is None and not _internal_caller:
+        return {
+            "passes": False,
+            "reason": "missing_type (external caller must provide learning_type)",
+        }
+
+    # 3. Minimum length by type.
+    min_len = MIN_CONTENT_LENGTH.get(learning_type, MIN_CONTENT_LENGTH[None])
+    if len(stripped) < min_len:
+        return {"passes": False, "reason": f"too_short ({len(stripped)}<{min_len})"}
+
+    # 4. Reject if high newline ratio (code/log dumps)
     newline_ratio = stripped.count("\n") / max(len(stripped), 1)
     if newline_ratio > 0.15 and len(stripped) > 500:
         return {"passes": False, "reason": "high_newline_ratio (likely code dump)"}
 
-    # 4. Boost: if content has quality signals, always pass
+    # 5. Boost: if content has quality signals, always pass
     content_lower = stripped.lower()
     signal_count = sum(1 for s in QUALITY_SIGNALS if s in content_lower)
     if signal_count >= 2:
         return {"passes": True, "boost": True, "signals": signal_count}
 
-    # 5. Default: pass (don't over-filter)
+    # 6. Default: pass (don't over-filter)
     return {"passes": True}
+
+
+# --- Canonical type heuristic (Task #6 + #15 -- mirrors incremental_extract.py) ---
+# Same patterns and order as incremental_extract.infer_learning_type so the
+# canonical 7-type taxonomy is consistent across extraction paths and the
+# manual store CLI. If you change one, change both.
+import re as _re
+
+_TYPE_PATTERNS: list[tuple[str, "_re.Pattern[str]"]] = [
+    # OPEN_THREAD first -- "TODO" / "next session" beats any generic noun match below.
+    ("OPEN_THREAD", _re.compile(r"\bTODO\b|incomplete|next\s+session|to\s+do\s+later", _re.IGNORECASE)),
+    ("USER_PREFERENCE", _re.compile(r"\bprefer\b|user\s+wants|user\s+prefers", _re.IGNORECASE)),
+    ("FAILED_APPROACH", _re.compile(r"\bfailed\b|didn'?t\s+work|don'?t\s+do", _re.IGNORECASE)),
+    ("ERROR_FIX", _re.compile(r"\berror\b|\bexception\b|\bfix\b|\bbug\b", _re.IGNORECASE)),
+    ("ARCHITECTURAL_DECISION", _re.compile(r"\b(decided|chose|architecture|trade-?off|rationale)\b|^\s*decisions?\s*:", _re.IGNORECASE | _re.MULTILINE)),
+    ("CODEBASE_PATTERN", _re.compile(r"\bpattern\b|\balways\b|\bconvention\b|recurring", _re.IGNORECASE)),
+]
+
+
+def _infer_learning_type(content: str) -> str:
+    """Classify content into one of the 7 canonical learning types.
+
+    Mirrors ``incremental_extract.infer_learning_type``. Falls back to
+    ``WORKING_SOLUTION`` when no pattern matches (broadest bucket).
+
+    Order is intentional: OPEN_THREAD > USER_PREFERENCE > FAILED_APPROACH
+    > ERROR_FIX > ARCHITECTURAL_DECISION > CODEBASE_PATTERN > WORKING_SOLUTION.
+    """
+    if not content:
+        return "WORKING_SOLUTION"
+    for learning_type, pattern in _TYPE_PATTERNS:
+        if pattern.search(content):
+            return learning_type
+    return "WORKING_SOLUTION"
 
 
 async def store_learning_v2(
@@ -234,18 +298,26 @@ async def store_learning_v2(
     confidence: str | None = None,
     project_dir: str | None = None,
     scope: str | None = None,
+    agent_id: str | None = None,
 ) -> dict:
     """Store learning with v2 metadata schema, deduplication, and scope classification.
 
     Args:
         session_id: Session identifier
         content: The learning content
-        learning_type: One of LEARNING_TYPES (e.g., WORKING_SOLUTION)
+        learning_type: One of LEARNING_TYPES (e.g., WORKING_SOLUTION). When
+            None, the canonical 7-type heuristic (``_infer_learning_type``)
+            is used so the ``archival_memory.learning_type`` column is
+            always populated. Previously, passing None left the column
+            NULL, which broke type-scoped recall.
         context: What this learning relates to (e.g., "hook development")
         tags: List of tags for categorization
         confidence: Confidence level (high/medium/low)
         project_dir: Project directory for PROJECT scope learnings
         scope: Override scope classification (PROJECT or GLOBAL)
+        agent_id: Optional agent identifier (e.g., "kraken", "spark"). When
+            set, written to ``archival_memory.agent_id`` so per-agent recall
+            works (G12 follow-up).
 
     Returns:
         dict with success status, memory_id, or skipped info for duplicates
@@ -262,8 +334,21 @@ async def store_learning_v2(
     if not content or not content.strip():
         return {"success": False, "error": "No content provided"}
 
-    # Quality gate -- reject noise before expensive embedding
-    quality = validate_learning_quality(content, learning_type)
+    # Infer learning_type when caller passes None. This runs BEFORE the
+    # quality gate so the gate sees a non-NULL type and the NULL-type guard
+    # in validate_learning_quality only fires for external callers that
+    # bypass this helper (impossible from inside store_learning_v2, but the
+    # _internal_caller flag below makes that explicit).
+    if learning_type is None:
+        learning_type = _infer_learning_type(content)
+
+    # Quality gate -- reject noise before expensive embedding.
+    # We pass _internal_caller=True because we just inferred a type above;
+    # the NULL-type guard would otherwise fire spuriously if the heuristic
+    # somehow returns None in the future.
+    quality = validate_learning_quality(
+        content, learning_type, _internal_caller=True
+    )
     if not quality["passes"]:
         return {"success": True, "skipped": True, "reason": quality["reason"]}
 
@@ -277,6 +362,7 @@ async def store_learning_v2(
         memory = await create_memory_service(
             backend=backend,
             session_id=session_id,
+            agent_id=agent_id,
         )
 
         # Generate embedding (uses singleton to avoid 1.5GB model reload)
@@ -513,6 +599,13 @@ async def main():
         help="Override scope classification",
     )
 
+    # Agent identifier (G12 follow-up: writes to archival_memory.agent_id)
+    parser.add_argument(
+        "--agent-id",
+        default=os.environ.get("CLAUDE_AGENT_ID"),
+        help="Optional agent identifier (defaults to $CLAUDE_AGENT_ID)",
+    )
+
     # Output options
     parser.add_argument("--json", action="store_true", help="Output as JSON")
 
@@ -534,6 +627,7 @@ async def main():
             confidence=args.confidence,
             project_dir=args.project_dir,
             scope=args.scope,
+            agent_id=args.agent_id,
         )
     else:
         # Legacy mode

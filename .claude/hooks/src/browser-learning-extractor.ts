@@ -10,6 +10,7 @@
 import { readFileSync } from 'fs';
 import { spawnSync } from 'child_process';
 import { getOpcDir } from './shared/opc-path.js';
+import { scoreExtraction } from './shared/memory-quality-scorer.js';
 
 interface PostToolUseInput {
   session_id: string;
@@ -413,11 +414,33 @@ function extractPlaywriterLearning(input: PostToolUseInput): BrowserLearning | n
 }
 
 /**
- * Store learning to archival memory
+ * Store learning to archival memory.
+ *
+ * G8 / Task #6: this hook used to call store_learning.py directly without
+ * running the TypeScript memory-quality-scorer. Templated browser learnings
+ * ("screenshotWithAccessibilityLabels() captures visual state...") could
+ * therefore slip into archival_memory as low-signal entries. We now gate
+ * every store with scoreExtraction() and drop NOISE (<3).
  */
 function storeLearning(learning: BrowserLearning, sessionId: string): boolean {
   const opcDir = getOpcDir();
   if (!opcDir) return false;
+
+  const score = scoreExtraction(learning.content, learning.context);
+  if (score.classification === 'NOISE') {
+    console.error(
+      `[BrowserLearningExtractor] Skipped NOISE (score=${score.score}) for ${learning.type}: ` +
+      score.reasons.join('; ')
+    );
+    return false;
+  }
+
+  // Append quality tags so downstream analytics can spot scorer decisions.
+  const enrichedTags = [
+    ...learning.tags,
+    `quality:${score.classification.toLowerCase()}`,
+    `score:${score.score}`,
+  ];
 
   const args = [
     'run', 'python', 'scripts/core/store_learning.py',
@@ -425,7 +448,7 @@ function storeLearning(learning: BrowserLearning, sessionId: string): boolean {
     '--type', learning.type,
     '--content', learning.content,
     '--context', learning.context,
-    '--tags', learning.tags.join(','),
+    '--tags', enrichedTags.join(','),
     '--confidence', learning.confidence
   ];
 

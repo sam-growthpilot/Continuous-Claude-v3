@@ -298,10 +298,18 @@ class TestSearchLearningsHybridRRF:
              patch("db.postgres_pool.init_pgvector", mock_init_pgvector), \
              patch("db.embedding_service.EmbeddingService", return_value=mock_embedder):
             from scripts.core.recall_learnings import search_learnings_hybrid_rrf
-            results = await search_learnings_hybrid_rrf("typescript hooks", k=5)
+            # Phase 1.10: pass decay_lambda=0 so the assertion below can check
+            # the raw RRF score directly. With decay on, similarity becomes
+            # base_score * decay_weight; tests of the raw RRF math use
+            # decay_lambda=0 to keep the math pure.
+            results = await search_learnings_hybrid_rrf(
+                "typescript hooks", k=5, decay_lambda=0,
+            )
 
         assert len(results) == 1
         assert results[0]["similarity"] == 0.032
+        assert results[0]["base_score"] == 0.032
+        assert results[0]["decay_weight"] == 1.0
         assert results[0]["fts_rank"] == 1
         assert results[0]["vec_rank"] == 2
 

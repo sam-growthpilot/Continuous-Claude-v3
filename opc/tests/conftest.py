@@ -188,7 +188,13 @@ class MockRecord:
 
 
 def make_db_row(learning: dict[str, Any], **overrides) -> MockRecord:
-    """Convert learning dict to mock database row."""
+    """Convert learning dict to mock database row.
+
+    Phase 1.10: archival_memory rows now project valid_from / valid_until /
+    decay_weight when read by recall_learnings. Defaulting them here keeps
+    test fixtures simple -- tests that care about temporal semantics can
+    still override.
+    """
     data = {
         "id": learning["id"],
         "session_id": learning["session_id"],
@@ -196,6 +202,9 @@ def make_db_row(learning: dict[str, Any], **overrides) -> MockRecord:
         "metadata": json.dumps(learning["metadata"]) if isinstance(learning["metadata"], dict) else learning["metadata"],
         "created_at": learning["created_at"],
         "similarity": learning.get("similarity", 0.5),
+        "valid_from": learning.get("valid_from", learning["created_at"]),
+        "valid_until": learning.get("valid_until"),
+        "decay_weight": learning.get("decay_weight", 1.0),
     }
     data.update(overrides)
     return MockRecord(data)

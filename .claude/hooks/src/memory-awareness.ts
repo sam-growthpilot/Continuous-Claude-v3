@@ -5,18 +5,38 @@
  * Shows hint to BOTH user (visible) AND Claude (system context).
  *
  * Flow:
- * 1. Extract INTENT from user prompt (not just keywords)
- * 2. Semantic search using hybrid RRF (text + vector)
- * 3. If score > threshold, show visible hint with top learning preview
- * 4. Claude proactively discloses and acts on relevant memories
+ * 1. Extract INTENT from user prompt (via shared/intent-extractor)
+ * 2. Run local-memory + DB-memory checks in parallel
+ * 3. Merge & dedupe results, apply PROACTIVE_INJECTION_FLOOR
+ * 4. If results survive floor, inject MEMORY MATCH context for Claude
+ * 5. Log every fire to <project>/.claude/logs/memory-recall.jsonl
+ *
+ * Story: memory-hardening-2026-05-16, Wave 3 (Tasks 9 + 10).
+ *  - Task 9: de-shadow local memory (merge local + DB instead of short-circuit)
+ *  - Task 10: append observability log (memory-recall.jsonl) for every fire
+ *  - Wave 3 cleanup: replace inline extractIntent/extractKeywords with
+ *    imports from shared/intent-extractor (Wave 2 owns that file).
  */
 
-import { readFileSync, existsSync } from 'fs';
+import { readFileSync, existsSync, mkdirSync, appendFileSync } from 'fs';
 import * as path from 'path';
 import { spawnSync } from 'child_process';
 import { getOpcDir } from './shared/opc-path.js';
 import { outputContinue } from './shared/output.js';
 import { logHook } from './shared/session-activity.js';
+import { extractIntent, extractKeywords } from './shared/intent-extractor.js';
+
+const PROACTIVE_INJECTION_FLOOR = 0.05;
+
+/**
+ * Score-scale normalization for local results.
+ *
+ * Local index returns cosine-ish similarity (~0.5 typical) while the DB path
+ * returns ts_rank (0.0001–0.1) plus a 0.1 ILIKE fallback. Multiplying local
+ * scores by this factor brings them into the ts_rank range so the merge sort
+ * and floor filter behave consistently across both sources.
+ */
+const LOCAL_SCORE_NORMALIZE = 0.1;
 
 interface UserPromptSubmitInput {
   session_id: string;
@@ -32,9 +52,12 @@ interface LearningResult {
   score: number;
 }
 
+type MemorySource = 'local' | 'db' | 'merged' | 'empty';
+
 interface MemoryMatch {
   count: number;
   results: LearningResult[];
+  source: MemorySource;
 }
 
 function readStdin(): string {
@@ -85,77 +108,24 @@ function expandGitQuery(prompt: string): string | null {
   return null;
 }
 
-/**
- * Extract the INTENT from user prompt - what they're actually asking about.
- * Removes meta-language ("can you", "help me", "recall") to get core topic.
- */
-function extractIntent(prompt: string): string {
-  // Meta-phrases to remove (these describe HOW, not WHAT)
-  const metaPhrases = [
-    /^(can you|could you|would you|please|help me|i want to|i need to|let's|lets)\s+/gi,
-    /^(show me|tell me|find|search for|look for|recall|remember)\s+/gi,
-    /^(how do i|how can i|how to|what is|what are|where is|where are)\s+/gi,
-    /\s+(for me|please|thanks|thank you)$/gi,
-    /\?$/g,
-  ];
-
-  let intent = prompt.trim();
-
-  // Strip meta-phrases iteratively
-  for (const pattern of metaPhrases) {
-    intent = intent.replace(pattern, '');
-  }
-
-  intent = intent.trim();
-
-  // If we stripped too much, fall back to keyword extraction
-  if (intent.length < 5) {
-    return extractKeywords(prompt);
-  }
-
-  return intent;
-}
-
-/**
- * Extract meaningful keywords from prompt (fallback for very short intents).
- */
-function extractKeywords(prompt: string): string {
-  const stopWords = new Set([
-    'a', 'an', 'the', 'is', 'are', 'was', 'were', 'be', 'been', 'being',
-    'have', 'has', 'had', 'do', 'does', 'did', 'will', 'would', 'could',
-    'should', 'may', 'might', 'must', 'can', 'to', 'of', 'in', 'for',
-    'on', 'with', 'at', 'by', 'from', 'as', 'into', 'through', 'during',
-    'before', 'after', 'above', 'below', 'between', 'under', 'again',
-    'further', 'then', 'once', 'here', 'there', 'when', 'where', 'why',
-    'how', 'all', 'each', 'few', 'more', 'most', 'other', 'some', 'such',
-    'no', 'nor', 'not', 'only', 'own', 'same', 'so', 'than', 'too', 'very',
-    's', 't', 'just', 'don', 'now', 'i', 'me', 'my', 'you', 'your', 'we', 'help', 'with',
-    'our', 'they', 'them', 'their', 'it', 'its', 'this', 'that', 'these',
-    'what', 'which', 'who', 'whom', 'and', 'but', 'if', 'or', 'because',
-    'until', 'while', 'about', 'against', 'also', 'get', 'got', 'make',
-    'want', 'need', 'look', 'see', 'use', 'like', 'know', 'think', 'take',
-    'come', 'go', 'say', 'said', 'tell', 'please', 'help', 'let', 'sure',
-    'recall', 'remember', 'similar', 'problems', 'issues'
-  ]);
-
-  const words = prompt
-    .toLowerCase()
-    .replace(/[^\w\s-]/g, ' ')
-    .split(/\s+/)
-    .filter(w => w.length > 2 && !stopWords.has(w));
-
-  return [...new Set(words)].slice(0, 5).join(' ');
-}
+// Note: extractIntent / extractKeywords now imported from
+// './shared/intent-extractor.js' (Wave 2 — kraken-AGENT-RECALL).
+// The implementations there are byte-identical to the previous inline
+// versions; behavior is unchanged.
 
 /**
  * Check local project memory index first (topic keyword match).
  * Returns results from .claude/memory/index.json if available.
+ *
+ * NOTE: scores from this path are similarity-style (~0.5). The caller
+ * normalizes them via LOCAL_SCORE_NORMALIZE before merging with DB results
+ * so the merge sort + floor filter behave consistently.
  */
-function checkLocalMemory(intent: string, projectDir: string): MemoryMatch | null {
+function checkLocalMemory(intent: string, projectDir: string): LearningResult[] {
   const homeDir = process.env.HOME || process.env.USERPROFILE || '';
   const projectMemoryScript = path.join(homeDir, '.claude', 'scripts', 'core', 'project_memory.py');
 
-  if (!existsSync(projectMemoryScript)) return null;
+  if (!existsSync(projectMemoryScript)) return [];
 
   try {
     const result = spawnSync('uv', [
@@ -171,40 +141,31 @@ function checkLocalMemory(intent: string, projectDir: string): MemoryMatch | nul
       killSignal: 'SIGKILL',
     });
 
-    if (result.status !== 0 || !result.stdout) return null;
+    if (result.status !== 0 || !result.stdout) return [];
 
     const data = JSON.parse(result.stdout);
-    if (!data.results || data.results.length === 0) return null;
+    if (!data.results || data.results.length === 0) return [];
 
-    const results: LearningResult[] = data.results.slice(0, 3).map((r: any) => ({
+    return data.results.slice(0, 3).map((r: any) => ({
       id: r.task_id || r.id || 'local',
       type: 'LOCAL_HANDOFF',
       content: r.summary || r.content || '',
-      score: r.similarity || 0.5
+      // Normalize local similarity (~0.5) into ts_rank range so the merge
+      // sort/floor doesn't unfairly favor local rows.
+      score: (r.similarity || 0.5) * LOCAL_SCORE_NORMALIZE,
     }));
-
-    return { count: data.count || results.length, results };
   } catch {
-    return null;
+    return [];
   }
 }
 
 /**
- * Fast memory relevance check using text search.
- * Local-first: checks project memory, then falls back to global DB.
+ * Query the global archival memory DB via recall_learnings.py.
+ * Returns the raw (unfiltered) result list — caller applies floor + merge.
  */
-function checkMemoryRelevance(intent: string, projectDir: string): MemoryMatch | null {
-  if (!intent || intent.length < 3) return null;
-
-  // 1. Try local project memory first (fast topic index)
-  const localMatch = checkLocalMemory(intent, projectDir);
-  if (localMatch) {
-    return localMatch;
-  }
-
-  // 2. Fall back to global DB search
+function checkDbMemory(intent: string, _projectDir: string): LearningResult[] {
   const opcDir = getOpcDir();
-  if (!opcDir) return null;
+  if (!opcDir) return [];
 
   const searchTerm = intent
     .replace(/[_\/]/g, ' ')
@@ -230,23 +191,18 @@ function checkMemoryRelevance(intent: string, projectDir: string): MemoryMatch |
   });
 
   if (result.status !== 0 || !result.stdout) {
-    return null;
+    return [];
   }
 
   try {
     const data = JSON.parse(result.stdout);
 
     if (!data.results || data.results.length === 0) {
-      return null;
+      return [];
     }
 
-    // ts_rank returns small values (0.0001-0.1), ILIKE fallback returns 0.1
-    // Any match from FTS is relevant enough to show
-
-    // Extract structured results with better previews
-    const results: LearningResult[] = data.results.slice(0, 3).map((r: any) => {
+    return (data.results || []).map((r: any) => {
       const content = r.content || '';
-      // Get first meaningful line up to 120 chars
       const preview = content
         .split('\n')
         .filter((l: string) => l.trim().length > 0)
@@ -258,16 +214,142 @@ function checkMemoryRelevance(intent: string, projectDir: string): MemoryMatch |
         id: (r.id || 'unknown').slice(0, 8),
         type: r.learning_type || r.type || 'UNKNOWN',
         content: preview + (content.length > 120 ? '...' : ''),
-        score: r.score || 0
+        score: r.score || 0,
       };
     });
-
-    return {
-      count: data.results.length,
-      results
-    };
   } catch {
+    return [];
+  }
+}
+
+/**
+ * Merge local + DB result lists.
+ *
+ * Returns null if both inputs are empty. Otherwise dedupes by id (keeping
+ * the higher score), sorts descending, slices to top 3, and tags the source.
+ *
+ * `source` semantics: 'local' / 'db' / 'merged' depending on which sources
+ * contributed to the *kept* (post-slice) results.
+ */
+function mergeResults(
+  local: LearningResult[],
+  db: LearningResult[],
+): MemoryMatch | null {
+  if ((!local || local.length === 0) && (!db || db.length === 0)) {
     return null;
+  }
+
+  const localTagged = (local || []).map((r) => ({ ...r, __src: 'local' as const }));
+  const dbTagged = (db || []).map((r) => ({ ...r, __src: 'db' as const }));
+  const combined = [...localTagged, ...dbTagged];
+
+  // Dedupe by id: keep the entry with the higher score (and remember
+  // whether we crossed sources for that id, which counts as 'merged').
+  const byId = new Map<string, { row: LearningResult & { __src: 'local' | 'db' }; crossed: boolean }>();
+  for (const row of combined) {
+    const existing = byId.get(row.id);
+    if (!existing) {
+      byId.set(row.id, { row, crossed: false });
+    } else {
+      const crossed = existing.crossed || existing.row.__src !== row.__src;
+      const winner = row.score > existing.row.score ? row : existing.row;
+      byId.set(row.id, { row: winner, crossed });
+    }
+  }
+
+  const deduped = Array.from(byId.values());
+  deduped.sort((a, b) => b.row.score - a.row.score);
+  const top = deduped.slice(0, 3);
+
+  if (top.length === 0) return null;
+
+  const sources = new Set<string>();
+  for (const t of top) {
+    sources.add(t.row.__src);
+    if (t.crossed) sources.add('merged');
+  }
+  const source: MemorySource =
+    sources.has('merged') || sources.size > 1
+      ? 'merged'
+      : sources.has('local')
+        ? 'local'
+        : 'db';
+
+  // Strip the internal __src tag from results before returning.
+  const cleaned: LearningResult[] = top.map(({ row }) => ({
+    id: row.id,
+    type: row.type,
+    content: row.content,
+    score: row.score,
+  }));
+
+  return {
+    count: deduped.length,
+    results: cleaned,
+    source,
+  };
+}
+
+/**
+ * Apply the PROACTIVE_INJECTION_FLOOR to a MemoryMatch.
+ * Returns null if nothing survives.
+ */
+function applyFloor(match: MemoryMatch | null): MemoryMatch | null {
+  if (!match) return null;
+  const filtered = match.results.filter((r) => (r.score ?? 0) >= PROACTIVE_INJECTION_FLOOR);
+  if (filtered.length === 0) return null;
+  return {
+    count: filtered.length,
+    results: filtered,
+    source: match.source,
+  };
+}
+
+/**
+ * Memory relevance check (Wave 3 dual-source design).
+ *
+ * Previously this short-circuited on a local hit, which could mask better
+ * global archival_memory rows. Now we ALWAYS query both sources, merge,
+ * dedupe, sort, and slice to the top 3 — then apply the floor.
+ */
+function checkMemoryRelevance(intent: string, projectDir: string): MemoryMatch | null {
+  if (!intent || intent.length < 3) return null;
+
+  const local = checkLocalMemory(intent, projectDir);
+  const db = checkDbMemory(intent, projectDir);
+
+  const merged = mergeResults(local, db);
+  return applyFloor(merged);
+}
+
+// ---------------------------------------------------------------------------
+// Observability logging (Task #10)
+// ---------------------------------------------------------------------------
+
+interface RecallLogEntry {
+  timestamp: string;
+  session_id: string;
+  subagent: string | null;
+  intent: string;
+  results_count: number;
+  top_score: number;
+  kept_after_floor: number;
+  source: MemorySource;
+}
+
+function getRecallLogPath(projectDir: string): string {
+  const dir = path.join(projectDir, '.claude', 'logs');
+  try {
+    mkdirSync(dir, { recursive: true });
+  } catch { /* dir already exists */ }
+  return path.join(dir, 'memory-recall.jsonl');
+}
+
+function logRecallFire(entry: RecallLogEntry, projectDir: string): void {
+  try {
+    appendFileSync(getRecallLogPath(projectDir), JSON.stringify(entry) + '\n');
+  } catch {
+    /* fail-open: never let logging break the hook */
   }
 }
 
@@ -305,8 +387,29 @@ async function main() {
     return;
   }
 
-  // Check memory relevance using semantic search
-  const match = checkMemoryRelevance(intent, projectDir);
+  // Run both sources, merge, apply floor.
+  const local = checkLocalMemory(intent, projectDir);
+  const db = checkDbMemory(intent, projectDir);
+  const mergedRaw = mergeResults(local, db);
+  const match = applyFloor(mergedRaw);
+
+  // Observability log (Task #10): record every fire that made it past skips.
+  // We log both hits and misses so we can find "intents that consistently
+  // miss" — but suppress entries that get filtered by the skip checks above.
+  const topScoreRaw = mergedRaw && mergedRaw.results.length > 0
+    ? mergedRaw.results.reduce((m, r) => Math.max(m, r.score ?? 0), 0)
+    : 0;
+  const logEntry: RecallLogEntry = {
+    timestamp: new Date().toISOString(),
+    session_id: input.session_id || 'unknown',
+    subagent: process.env.CLAUDE_AGENT_ID || null,
+    intent,
+    results_count: mergedRaw ? mergedRaw.count : 0,
+    top_score: topScoreRaw,
+    kept_after_floor: match ? match.results.length : 0,
+    source: match ? match.source : (mergedRaw ? mergedRaw.source : 'empty'),
+  };
+  logRecallFire(logEntry, projectDir);
 
   if (match) {
     // Log that this hook fired (only when it actually finds memories)
@@ -334,3 +437,16 @@ main().catch(() => {
   // Silent fail - don't block user prompts
   outputContinue();
 });
+
+// Exports for testability — Wave 3 introduces these so future tests can pin
+// the merge & floor behavior without going through the stdin/spawn path.
+export {
+  mergeResults,
+  applyFloor,
+  PROACTIVE_INJECTION_FLOOR,
+  LOCAL_SCORE_NORMALIZE,
+};
+export type { LearningResult, MemoryMatch, MemorySource };
+// Also re-export the shared helpers so callers don't need to know they were
+// factored into shared/.
+export { extractIntent, extractKeywords };

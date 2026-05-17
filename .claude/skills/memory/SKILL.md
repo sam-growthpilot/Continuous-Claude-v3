@@ -21,7 +21,7 @@ Trigger signals:
 - User corrects a behavior or states a preference
 - Approach fails and is worth flagging for future sessions
 
-Agents (kraken, architect, phoenix, spark) should consider recall before beginning implementation tasks, especially when working on hooks, skills, wizard code, or features similar to prior work.
+Agents (kraken, architect, phoenix, spark) now receive relevant learnings automatically via the `agent-recall-injector.ts` hook — no manual preflight recall required. Manual `/recall` is still available for higher-quality hybrid RRF results.
 
 ---
 
@@ -66,6 +66,15 @@ cd $CLAUDE_OPC_DIR && PYTHONPATH=. uv run python scripts/core/recall_learnings.p
 
 # Text-only search (fast, no embeddings)
 cd $CLAUDE_OPC_DIR && PYTHONPATH=. uv run python scripts/core/recall_learnings.py --query "YAML format" --text-only
+
+# Query as-of a specific date (temporal — excludes entries superseded before that date)
+cd $CLAUDE_OPC_DIR && PYTHONPATH=. uv run python scripts/core/recall_learnings.py --query "hook patterns" --valid-at 2026-04-01
+
+# Disable decay weighting (returns raw RRF ranks)
+cd $CLAUDE_OPC_DIR && PYTHONPATH=. uv run python scripts/core/recall_learnings.py --query "hook patterns" --no-decay
+
+# Include superseded entries in results
+cd $CLAUDE_OPC_DIR && PYTHONPATH=. uv run python scripts/core/recall_learnings.py --query "hook patterns" --include-superseded
 ```
 
 | Flag | Description |
@@ -73,6 +82,10 @@ cd $CLAUDE_OPC_DIR && PYTHONPATH=. uv run python scripts/core/recall_learnings.p
 | `--k N` | Return N results (default: 5) |
 | `--vector-only` | Pure vector search (higher precision, slower) |
 | `--text-only` | Text search only (fast, no embeddings) |
+| `--valid-at <ISO>` | Query memory as-of a date; excludes entries superseded before that point |
+| `--no-decay` | Disable decay weighting; returns raw RRF ranks |
+| `--decay-lambda N` | Override decay rate (default 0.02, ≈35-day half-life) |
+| `--include-superseded` | Include entries marked as replaced by a newer entry |
 
 ### Backend Architecture
 
@@ -84,6 +97,10 @@ cd $CLAUDE_OPC_DIR && PYTHONPATH=. uv run python scripts/core/recall_learnings.p
 **DO NOT manually inspect databases** — use the recall script. It auto-selects the correct backend.
 
 Embedding details: entries have BGE embeddings (default `bge-large-en-v1.5`, 1024-dim). The dimension is configurable via `EMBEDDING_DIMENSION` env var.
+
+**Temporal columns (Phase 1):** `archival_memory` rows now carry `valid_from` (NOT NULL, defaults to `created_at`) and `valid_until` (nullable, NULL = still valid). Superseded entries are excluded from default recall; opt-in with `--include-superseded`. Filter handoff-derived learnings with `metadata->>'source' = 'handoff'` — these are indexed automatically from session handoffs.
+
+**Type enforcement (Phase 1):** All 7 canonical types are enforced at write time. `incremental_extract.infer_learning_type()` assigns types on extraction. NULL-type writes from non-CLI paths are rejected. `session_learning` is no longer a valid type.
 
 ### Understanding Scores
 
@@ -97,20 +114,23 @@ Embedding details: entries have BGE embeddings (default `bge-large-en-v1.5`, 102
 
 ### Proactive Injection (memory-awareness hook)
 
-The `memory-awareness` UserPromptSubmit hook calls `recall_learnings.py` automatically and surfaces matches as a `MEMORY MATCH` block in session context. As of Phase 4 (system-coherence), the hook uses **text-only mode + a TypeScript-side score floor**:
+The `memory-awareness` UserPromptSubmit hook calls `recall_learnings.py` automatically and surfaces matches as a `MEMORY MATCH` block in session context. The hook uses **text-only mode + a TypeScript-side score floor**, and merges results from both local cache and the PostgreSQL DB (deduped by id, top 3 returned):
 
 | Setting | Value | Why |
 |---------|-------|-----|
 | Mode | `--text-only` | BGE cold start exceeds the 2 s hook timeout; ts_rank is fast and never times out |
 | `--k` | 5 | Fetch 5; filter; show top 3 — gives the floor headroom to drop weak rows |
-| `PROACTIVE_INJECTION_FLOOR` | `0.05` (TypeScript const in `memory-awareness.ts`) | Filters ts_rank noise; admits strong FTS hits + ILIKE substring matches |
+| `PROACTIVE_INJECTION_FLOOR` | `0.05` (enforced in `memory-awareness.ts`) | Filters ts_rank noise; admits strong FTS hits + ILIKE substring matches |
 | Timeout | 5000 ms | Absorbs `uv run` cold-start (~4-5 s on first fire, <2 s warm) |
+| Sources merged | local + DB | Both queried; deduplicated by `id`; ranked; top 3 returned |
 
-ts_rank scales 0.0001–0.1 with the ILIKE fallback hitting 0.1, so the 0.05 floor lets through ranked-strong matches and substring matches while suppressing the long tail of weak FTS hits that previously polluted the MEMORY MATCH block. To tune, edit `PROACTIVE_INJECTION_FLOOR` in `.claude/hooks/src/memory-awareness.ts`.
+ts_rank scales 0.0001–0.1 with the ILIKE fallback hitting 0.1, so the 0.05 floor lets through ranked-strong matches and substring matches while suppressing the long tail of weak FTS hits. To tune, edit `PROACTIVE_INJECTION_FLOOR` in `.claude/hooks/src/memory-awareness.ts`.
 
 For higher-quality recall (hybrid RRF + vector signal), call `/recall` manually — that path uses the embedding stack and is not bound by the hook timeout.
 
 If matches stop showing up, run `recall_learnings.py --text-only --query "<intent>"` and inspect scores to confirm the bar — the hook is silent on filtered results.
+
+**Observability:** Every injection decision is appended to `.claude/logs/memory-recall.jsonl`. Use `/memory-stats` to audit hook performance (hit rate, score distribution, false-positive rate).
 
 ### What's Stored
 
@@ -222,6 +242,8 @@ cd $CLAUDE_OPC_DIR && PYTHONPATH=. uv run python scripts/core/store_learning.py 
 **IMPORTANT:** Use `cd <absolute-path>` — not the subshell form `(cd opc && ...)`. The subshell form can cause path-doubling errors.
 
 ### Learning Types
+
+These 7 types are the canonical, enforced set. Writes using any other type (including the deprecated `session_learning`) are rejected by the store pipeline. `incremental_extract.infer_learning_type()` auto-assigns types during extraction.
 
 | Type | Use For |
 |------|---------|
@@ -346,15 +368,104 @@ cd $CLAUDE_OPC_DIR && PYTHONPATH=. uv run python scripts/core/recall_learnings.p
 
 ---
 
+## Agent Memory Recall (Automatic)
+
+As of Phase 1, spawned agents receive memory context automatically — no manual recall step required.
+
+The `agent-recall-injector.ts` PreToolUse hook fires on `Task` tool calls. It queries `recall_learnings.py --text-only` for terms extracted from the task prompt and injects relevant learnings as `additionalContext` before the agent starts.
+
+| Behavior | Detail |
+|----------|--------|
+| Trigger | `Task` tool PreToolUse |
+| Hook | `.claude/hooks/src/agent-recall-injector.ts` |
+| Mode | `--text-only` (same as memory-awareness; fast, no embedding cold-start) |
+| Agents skipped | `oracle`, `pathfinder` (external research; past memory is noise) |
+| Recursion guard | `CLAUDE_AGENT_ID` env var prevents sub-agents from re-triggering injection |
+
+Agents (kraken, spark, architect, phoenix) no longer need to manually run `recall_learnings.py` as a preflight step — the hook handles it. Manual recall is still available and gives higher-quality results via hybrid RRF.
+
+---
+
+## Temporal Validity & Decay
+
+### Bi-Temporal Columns
+
+Each row in `archival_memory` now has:
+- `valid_from` — when the learning became valid (NOT NULL; defaults to `created_at`)
+- `valid_until` — when superseded (nullable; NULL = still valid)
+
+Default recall excludes rows where `valid_until IS NOT NULL`. Use `--include-superseded` to opt in.
+
+Query memory as it existed on a specific date:
+```bash
+cd $CLAUDE_OPC_DIR && PYTHONPATH=. uv run python scripts/core/recall_learnings.py \
+  --query "hook patterns" --valid-at 2026-03-15
+```
+
+### Decay-Weighted Retrieval
+
+Decay is **on by default**. Older entries are down-ranked by `exp(-age_days * 0.02)` (≈35-day half-life). Recent learnings surface higher in results without explicit date filtering.
+
+```bash
+# Disable decay — pure RRF ranking
+--no-decay
+
+# Tune decay rate (lower = slower decay)
+--decay-lambda 0.01
+```
+
+---
+
+## Superseding Entries
+
+When a learning becomes outdated, mark it superseded rather than deleting it (preserves audit trail):
+
+```
+/supersede <old-id> <new-content> --reason "brief explanation"
+```
+
+This sets `valid_until = NOW()` on the old entry and stores a new entry linked via metadata. The old entry remains queryable with `--include-superseded`. Use this when an approach has changed, a bug fix was revisited, or a preference was reversed.
+
+---
+
+## Observability
+
+The memory system emits structured logs for hook performance auditing:
+
+| Log | Path | Contents |
+|-----|------|----------|
+| Injection log | `.claude/logs/memory-recall.jsonl` | Per-prompt: query, scores, injected/filtered counts, latency |
+
+Audit with:
+```
+/memory-stats
+```
+
+This reads `memory-recall.jsonl` and reports hit rate, score distribution, p95 latency, and false-positive rate (injections with no subsequent `/recall` follow-up).
+
+---
+
+## Quality Gate (Uniform Enforcement)
+
+All extraction hooks (`agent-error-capture`, `browser-learning-extractor`, etc.) now call `scoreExtraction()` and require score ≥ 3 before storing. The Python validator rejects noise-prefix content before the min-length check. The `vibe_trading_data` table (Cohort A) is separate from `archival_memory` — do not recall against it.
+
+---
+
 ## Memory Architecture Summary
 
 | Component | Purpose |
 |-----------|---------|
 | PostgreSQL | Primary storage with pgvector |
 | BGE Embeddings | 1024-dim vectors (`bge-large-en-v1.5`) |
-| Hybrid Search | RRF combining text + vector |
+| Hybrid Search | RRF combining text + vector (manual `/recall`) |
+| Hook-time search | Text-only (`--text-only`); fast, no embedding cold-start |
 | Artifact Index | Handoffs/plans with post-mortems |
-| L0 Quality Gate | Auto-blocks NOISE entries (score <3) |
+| L0 Quality Gate | Uniform: score ≥ 3 required across all extraction hooks |
+| Type Enforcement | 7 canonical types enforced; NULL-type writes rejected |
+| Decay Weighting | `exp(-age_days * 0.02)`, ≈35-day half-life; `--no-decay` to disable |
+| Bi-Temporal Columns | `valid_from` / `valid_until`; `--valid-at` for point-in-time queries |
+| Agent Auto-Recall | `agent-recall-injector.ts` injects context into Task tool calls |
+| Observability | `.claude/logs/memory-recall.jsonl` + `/memory-stats` skill |
 | `EMBEDDING_DIMENSION` | Env var to configure vector dimension |
 
 ---

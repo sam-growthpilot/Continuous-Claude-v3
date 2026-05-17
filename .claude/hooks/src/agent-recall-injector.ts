@@ -1,0 +1,374 @@
+#!/usr/bin/env node
+/**
+ * Agent Recall Injector Hook (PreToolUse on Task)
+ *
+ * Today the `memory-awareness` UserPromptSubmit hook explicitly skips
+ * subagents (`process.env.CLAUDE_AGENT_ID`) so every spawned agent starts
+ * cold. The canonical memory skill says "kraken/architect/phoenix/spark
+ * should consider recall" but that is advisory only — no hook actually
+ * injects context for agents.
+ *
+ * This hook fires *before* the Task tool runs. It:
+ *   1. Extracts intent from the agent's prompt (via shared/intent-extractor)
+ *   2. Runs `recall_learnings.py --text-only --k 3 --json` against intent
+ *   3. Applies the same PROACTIVE_INJECTION_FLOOR = 0.05 as memory-awareness
+ *   4. Builds a tight context block and emits it as
+ *      `hookSpecificOutput.additionalContext`
+ *   5. Logs every fire to `<project>/.claude/logs/agent-recall.jsonl`
+ *
+ * Skip rules:
+ *   - tool_name !== 'Task'
+ *   - subagent_type in {oracle, pathfinder}  (external research)
+ *   - prompt length < 30
+ *   - description starts with '/' (slash-command pass-through)
+ *   - CLAUDE_AGENT_ID is set  (recursion guard for sub-subagents)
+ *
+ * Fail-open: any error -> output {} and log to stderr.
+ *
+ * Story: memory-hardening-2026-05-16, Phase 1.6 / G5 / Task 7
+ */
+
+import { readFileSync, existsSync, mkdirSync, appendFileSync } from 'fs';
+import * as path from 'path';
+import { spawnSync } from 'child_process';
+import { getOpcDir } from './shared/opc-path.js';
+import { outputContinue } from './shared/output.js';
+import { extractIntent } from './shared/intent-extractor.js';
+import { createLogger } from './shared/logger.js';
+
+// ---------------------------------------------------------------------------
+// Public constants & types (exported so tests can pin them)
+// ---------------------------------------------------------------------------
+
+export const PROACTIVE_INJECTION_FLOOR = 0.05;
+const RECALL_TIMEOUT_MS = 2000;
+const MIN_PROMPT_LENGTH = 30;
+const TOP_K = 3;
+const PREVIEW_CHARS = 120;
+
+const SKIP_SUBAGENTS = new Set(['oracle', 'pathfinder']);
+
+const log = createLogger('agent-recall-injector');
+
+export interface TaskHookInput {
+  session_id?: string;
+  tool_name?: string;
+  tool_input?: {
+    subagent_type?: string;
+    prompt?: string;
+    description?: string;
+    [k: string]: unknown;
+  };
+  cwd?: string;
+}
+
+export interface RecallResult {
+  id: string;
+  type: string;
+  content: string;
+  score: number;
+}
+
+export interface RecallResponse {
+  ok: boolean;
+  results: RecallResult[];
+  error?: string;
+}
+
+export type RecallFn = (intent: string) => RecallResponse;
+
+export interface HookOutput {
+  hookSpecificOutput?: {
+    hookEventName: string;
+    additionalContext?: string;
+  };
+}
+
+// ---------------------------------------------------------------------------
+// Skip logic
+// ---------------------------------------------------------------------------
+
+export interface SkipDecision {
+  skip: boolean;
+  reason?: string;
+}
+
+export function shouldSkip(input: TaskHookInput): SkipDecision {
+  if (process.env.CLAUDE_AGENT_ID) {
+    return { skip: true, reason: 'CLAUDE_AGENT_ID set (recursion guard, nested agent)' };
+  }
+  if (!input || typeof input !== 'object') {
+    return { skip: true, reason: 'invalid input' };
+  }
+  if (input.tool_name !== 'Task') {
+    return { skip: true, reason: `tool_name is not Task (${input.tool_name})` };
+  }
+  const ti = input.tool_input;
+  if (!ti || typeof ti !== 'object') {
+    return { skip: true, reason: 'missing tool_input' };
+  }
+  const subagent = typeof ti.subagent_type === 'string' ? ti.subagent_type : '';
+  if (!subagent) {
+    return { skip: true, reason: 'missing subagent_type' };
+  }
+  if (SKIP_SUBAGENTS.has(subagent.toLowerCase())) {
+    return { skip: true, reason: `${subagent} is external research, skipping` };
+  }
+  const prompt = typeof ti.prompt === 'string' ? ti.prompt : '';
+  if (!prompt) {
+    return { skip: true, reason: 'missing prompt' };
+  }
+  if (prompt.length < MIN_PROMPT_LENGTH) {
+    return { skip: true, reason: `prompt too short (length ${prompt.length})` };
+  }
+  const desc = typeof ti.description === 'string' ? ti.description : '';
+  if (desc.trim().startsWith('/')) {
+    return { skip: true, reason: 'slash-command pass-through' };
+  }
+  return { skip: false };
+}
+
+// ---------------------------------------------------------------------------
+// Context builder
+// ---------------------------------------------------------------------------
+
+function previewContent(content: string): string {
+  const preview = content
+    .split('\n')
+    .filter((l) => l.trim().length > 0)
+    .map((l) => l.trim())
+    .join(' ')
+    .slice(0, PREVIEW_CHARS);
+  return preview + (content.length > PREVIEW_CHARS ? '...' : '');
+}
+
+export function buildAgentContext(
+  subagentType: string,
+  intent: string,
+  results: RecallResult[],
+): string {
+  const top = results.slice(0, TOP_K);
+  const lines = top.map((r, i) => {
+    const id = (r.id || 'unknown').slice(0, 8);
+    return `${i + 1}. [${r.type || 'UNKNOWN'}] ${previewContent(r.content || '')} (id: ${id})`;
+  });
+  return [
+    `AGENT MEMORY CONTEXT for "${subagentType}" task on "${intent}":`,
+    ...lines,
+    `Use these as background; full content available via /recall "${intent}".`,
+  ].join('\n');
+}
+
+// ---------------------------------------------------------------------------
+// Default recall implementation (spawns recall_learnings.py)
+// ---------------------------------------------------------------------------
+
+export function defaultRecall(intent: string): RecallResponse {
+  const opcDir = getOpcDir();
+  if (!opcDir) {
+    return { ok: false, results: [], error: 'no opcDir' };
+  }
+  // Same prep as memory-awareness.ts:checkMemoryRelevance
+  const searchTerm = intent
+    .replace(/[_\/]/g, ' ')
+    .replace(/\b\w{1,2}\b/g, '')
+    .replace(/\s+/g, ' ')
+    .trim();
+
+  const res = spawnSync(
+    'uv',
+    [
+      'run', 'python', 'scripts/core/recall_learnings.py',
+      '--query', searchTerm,
+      '--k', String(TOP_K),
+      '--json',
+      '--text-only',
+    ],
+    {
+      encoding: 'utf-8',
+      cwd: opcDir,
+      env: { ...process.env, PYTHONPATH: opcDir },
+      timeout: RECALL_TIMEOUT_MS,
+      killSignal: 'SIGKILL',
+    },
+  );
+
+  if (res.status !== 0 || !res.stdout) {
+    return { ok: false, results: [], error: `recall status=${res.status}` };
+  }
+
+  try {
+    const data = JSON.parse(res.stdout);
+    const raw = Array.isArray(data?.results) ? data.results : [];
+    const normalized: RecallResult[] = raw.map((r: any) => ({
+      id: String(r.id ?? 'unknown'),
+      type: String(r.learning_type ?? r.type ?? 'UNKNOWN'),
+      content: String(r.content ?? ''),
+      score: typeof r.score === 'number' ? r.score : 0,
+    }));
+    return { ok: true, results: normalized };
+  } catch (e: any) {
+    return { ok: false, results: [], error: `parse error: ${e?.message}` };
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Logging
+// ---------------------------------------------------------------------------
+
+interface LogEntry {
+  session_id: string;
+  subagent_type: string;
+  intent: string;
+  results_count: number;
+  kept_after_floor: number;
+  top_score: number;
+  timestamp: string;
+}
+
+function getLogPath(): string {
+  const projectDir = process.env.CLAUDE_PROJECT_DIR || process.cwd();
+  const dir = path.join(projectDir, '.claude', 'logs');
+  try {
+    mkdirSync(dir, { recursive: true });
+  } catch { /* dir already exists */ }
+  return path.join(dir, 'agent-recall.jsonl');
+}
+
+function writeFireLog(entry: LogEntry): void {
+  try {
+    appendFileSync(getLogPath(), JSON.stringify(entry) + '\n');
+  } catch (e: any) {
+    log.warn('failed to write agent-recall.jsonl', { error: e?.message });
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Main handler (testable, recall injected as dependency)
+// ---------------------------------------------------------------------------
+
+/**
+ * Returns the hook output to emit, or `null` if no context should be injected.
+ * Always logs to agent-recall.jsonl unless the call was skipped (no recall).
+ */
+export function handleAgentTask(
+  input: TaskHookInput,
+  recall: RecallFn = defaultRecall,
+): HookOutput | null {
+  const decision = shouldSkip(input);
+  if (decision.skip) {
+    log.debug('skipping agent-recall', { reason: decision.reason });
+    return null;
+  }
+
+  const ti = input.tool_input!;
+  const subagentType = String(ti.subagent_type);
+  const prompt = String(ti.prompt);
+  const intent = extractIntent(prompt);
+  if (intent.length < 3) {
+    log.debug('intent too short after extraction', { prompt_len: prompt.length });
+    return null;
+  }
+
+  let response: RecallResponse;
+  try {
+    response = recall(intent);
+  } catch (e: any) {
+    log.warn('recall threw', { error: e?.message });
+    return null;
+  }
+
+  const results = response.ok ? response.results : [];
+  const kept = results.filter((r) => (r.score ?? 0) >= PROACTIVE_INJECTION_FLOOR);
+  const topScore = results.length > 0
+    ? results.reduce((m, r) => Math.max(m, r.score ?? 0), 0)
+    : 0;
+
+  // Always log fires that reach this point (passed skip checks)
+  const entry: LogEntry = {
+    session_id: String(input.session_id ?? 'unknown'),
+    subagent_type: subagentType,
+    intent,
+    results_count: results.length,
+    kept_after_floor: kept.length,
+    top_score: topScore,
+    timestamp: new Date().toISOString(),
+  };
+  writeFireLog(entry);
+
+  if (!response.ok) {
+    log.debug('recall failed/timeout', { error: response.error });
+    return null;
+  }
+  if (kept.length === 0) {
+    return null;
+  }
+
+  const additionalContext = buildAgentContext(subagentType, intent, kept);
+  return {
+    hookSpecificOutput: {
+      hookEventName: 'PreToolUse',
+      additionalContext,
+    },
+  };
+}
+
+// ---------------------------------------------------------------------------
+// stdin entry point
+// ---------------------------------------------------------------------------
+
+function readStdin(): string {
+  try {
+    return readFileSync(0, 'utf-8');
+  } catch {
+    return '';
+  }
+}
+
+async function main(): Promise<void> {
+  let input: TaskHookInput;
+  try {
+    const raw = readStdin().trim();
+    if (!raw) {
+      outputContinue();
+      return;
+    }
+    input = JSON.parse(raw);
+  } catch (e: any) {
+    log.warn('failed to parse stdin', { error: e?.message });
+    outputContinue();
+    return;
+  }
+
+  const out = handleAgentTask(input);
+  if (out) {
+    console.log(JSON.stringify(out));
+  } else {
+    // No injection — let the Task run unchanged
+    console.log('{}');
+  }
+}
+
+// Only run main() when executed directly (not when imported by tests).
+// Heuristic: tests import via vitest which doesn't execute the bundle as
+// an entry point. The build output is a single .mjs file invoked by node.
+const isDirectInvocation = (() => {
+  try {
+    // process.argv[1] ends with the bundled filename when invoked directly
+    const arg1 = process.argv[1] || '';
+    return arg1.endsWith('agent-recall-injector.mjs') || arg1.endsWith('agent-recall-injector.js');
+  } catch {
+    return false;
+  }
+})();
+
+if (isDirectInvocation) {
+  main().catch((e: any) => {
+    log.error('main() crashed', { error: e?.message });
+    outputContinue();
+  });
+}
+
+// Re-export the existing fs check so the entry detection above remains
+// resilient to bundler path-mangling. (no-op for runtime.)
+export const __isDirectInvocation = isDirectInvocation;

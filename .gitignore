@@ -31,6 +31,8 @@ history.jsonl
 # Claude runtime artifacts (machine-specific, auto-regenerated)
 .claude/extraction-state.json
 .claude/knowledge-tree.json
+# Memory hardening runtime observability logs (Phase 1, 2026-05-16)
+.claude/logs/*.jsonl
 
 # Claude cache and state
 .claude/cache/

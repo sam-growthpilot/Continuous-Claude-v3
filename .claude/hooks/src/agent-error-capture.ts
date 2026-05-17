@@ -23,6 +23,7 @@
 import { readFileSync, existsSync } from 'fs';
 import { execSync } from 'child_process';
 import { join } from 'path';
+import { scoreExtraction } from './shared/memory-quality-scorer.js';
 
 interface PostToolUseInput {
   session_id: string;
@@ -142,12 +143,28 @@ function storeLearning(
   // Build content for the learning
   const content = `Agent '${agentType}' error: ${errorContext}`;
 
+  // G3 / Task #6: gate the store with the TypeScript memory-quality-scorer
+  // BEFORE shelling out to Python. Previously this hook bypassed the scorer
+  // entirely; any "Agent 'foo' error: ..." dump would land in archival_memory
+  // regardless of signal density. Now we only proceed for SIGNAL (>=5) or
+  // BORDERLINE (3-4); NOISE (<3) is dropped with a stderr log for visibility.
+  const score = scoreExtraction(content, `Failed agent invocation: ${agentType}`);
+  if (score.classification === 'NOISE') {
+    console.error(
+      `[AgentErrorCapture] Skipped NOISE (score=${score.score}) for agent '${agentType}': ` +
+      score.reasons.join('; ')
+    );
+    return;
+  }
+
   // Build tags
   const tags = [
     'auto_captured',
     'agent_failure',
     `agent:${agentType}`,
-    'scope:global'
+    'scope:global',
+    `quality:${score.classification.toLowerCase()}`,
+    `score:${score.score}`,
   ];
 
   try {

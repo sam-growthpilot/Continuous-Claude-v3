@@ -27,9 +27,10 @@ from __future__ import annotations
 import argparse
 import asyncio
 import json
+import math
 import os
 import sys
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -193,11 +194,113 @@ def _build_scope_clause(
     return clause, ["GLOBAL", "PROJECT", project_id], starting_param_idx + 3
 
 
+# Phase 1.10 (memory hardening v2): Temporal / decay defaults.
+#
+# Half-life of ~35 days: ln(2)/0.02 ~= 34.7 days. Older entries are
+# down-weighted exponentially so fresh learnings rank above ancient ones with
+# identical similarity scores. Setting --decay-lambda 0 (or --no-decay)
+# bypasses the multiplier.
+DEFAULT_DECAY_LAMBDA = 0.02
+
+
+def _build_temporal_clause(
+    valid_at: datetime | None,
+    include_superseded: bool,
+    starting_param_idx: int,
+) -> tuple[str, list[Any], int]:
+    """Build SQL WHERE fragment + params for temporal validity scoping.
+
+    Args:
+        valid_at: If provided, restrict to entries where valid_from <= valid_at
+            AND (valid_until IS NULL OR valid_until > valid_at). The bi-temporal
+            full filter is only applied when the caller passes an explicit
+            timestamp -- the default behaviour just filters out
+            currently-superseded rows.
+        include_superseded: If True, do not filter out entries with
+            valid_until < NOW(). Useful for historical analysis. Ignored when
+            valid_at is set (the valid_at filter is more specific).
+        starting_param_idx: Next available 1-based param index.
+
+    Returns:
+        (clause, params_to_append, next_param_idx).
+        clause is a parenthesized SQL fragment to AND into the WHERE; empty
+        string when no temporal constraint applies.
+    """
+    # Explicit point-in-time query: full bi-temporal filter.
+    if valid_at is not None:
+        clause = (
+            f"(valid_from <= ${starting_param_idx}::timestamptz AND "
+            f"(valid_until IS NULL OR valid_until > ${starting_param_idx}::timestamptz))"
+        )
+        return clause, [valid_at], starting_param_idx + 1
+
+    # Default behaviour: drop currently-superseded rows.
+    if include_superseded:
+        return "", [], starting_param_idx
+
+    # Filter rows where valid_until < NOW() (i.e., superseded in the past).
+    # We use NOW() inline rather than parameterizing -- this is the cheapest
+    # form and keeps the param indices stable across callers.
+    return "(valid_until IS NULL OR valid_until > NOW())", [], starting_param_idx
+
+
+def _apply_decay(
+    results: list[dict[str, Any]],
+    decay_lambda: float,
+    *,
+    score_key: str = "similarity",
+    now: datetime | None = None,
+) -> list[dict[str, Any]]:
+    """Apply exponential decay to result scores in Python.
+
+    Used as a fallback / for backends where we don't compute decay in SQL.
+    When decay_lambda <= 0, this is a no-op that still records audit fields.
+
+    Sets on each result:
+        base_score: original score before decay
+        decay_weight: multiplier applied (1.0 when no decay)
+        final_score: base_score * decay_weight
+        age_days: integer age in days (clamped to >= 0)
+
+    Also re-sorts the list by final_score descending so callers can rely on
+    ordering after the multiplier.
+    """
+    now = now or datetime.now(timezone.utc)
+    for r in results:
+        base = float(r.get(score_key, 0.0) or 0.0)
+        created = r.get("created_at")
+        if isinstance(created, datetime):
+            # Postgres returns tz-aware; SQLite may be naive. Coerce naive ->
+            # UTC so the subtraction is well-defined.
+            if created.tzinfo is None:
+                created = created.replace(tzinfo=timezone.utc)
+            age_seconds = max(0.0, (now - created).total_seconds())
+        else:
+            age_seconds = 0.0
+        age_days = age_seconds / 86400.0
+        if decay_lambda > 0:
+            weight = math.exp(-age_days * decay_lambda)
+        else:
+            weight = 1.0
+        r["base_score"] = base
+        r["decay_weight"] = weight
+        r["age_days"] = int(age_days)
+        r["final_score"] = base * weight
+        # Keep the legacy "similarity" key in sync so existing consumers
+        # that read result["similarity"] see the decay-adjusted score.
+        r["similarity"] = base * weight
+    results.sort(key=lambda x: x.get("final_score", 0.0), reverse=True)
+    return results
+
+
 async def search_learnings_text_only_postgres(
     query: str,
     k: int = 5,
     project_id: str | None = None,
     scope_mode: str | None = None,
+    valid_at: datetime | None = None,
+    include_superseded: bool = False,
+    decay_lambda: float = DEFAULT_DECAY_LAMBDA,
 ) -> list[dict[str, Any]]:
     """Fast text-only search for PostgreSQL using full-text search.
 
@@ -212,6 +315,11 @@ async def search_learnings_text_only_postgres(
         When called without explicit args (the common library/test path), we
         auto-resolve scope from CLAUDE_PROJECT_ID, then CWD vs project
         registry, falling back to 'global_only' as the safe default.
+
+    Temporal filtering (Phase 1.10):
+        valid_at: point-in-time bi-temporal filter.
+        include_superseded: keep rows with valid_until < NOW() (default False).
+        decay_lambda: exponential decay applied in SQL (0 disables).
     """
     from db.postgres_pool import get_pool
 
@@ -219,8 +327,12 @@ async def search_learnings_text_only_postgres(
     if scope_mode is None:
         project_id, scope_mode = resolve_recall_scope()
 
-    # Build the project_id constraint
-    scope_clause, scope_params, _ = _build_scope_clause(scope_mode, project_id, 3)
+    # Build the project_id constraint (params start at $3: query=$1, k=$2)
+    scope_clause, scope_params, next_idx = _build_scope_clause(scope_mode, project_id, 3)
+    # Build the temporal constraint after scope so param indices stay sequential.
+    temporal_clause, temporal_params, _ = _build_temporal_clause(
+        valid_at, include_superseded, next_idx,
+    )
 
     pool = await get_pool()
 
@@ -241,6 +353,23 @@ async def search_learnings_text_only_postgres(
         or_query = ' | '.join(words)
 
         scope_sql = f" AND {scope_clause}" if scope_clause else ""
+        temporal_sql = f" AND {temporal_clause}" if temporal_clause else ""
+
+        # Decay applied in SQL so we sort by final_score before LIMIT.
+        decay_select = (
+            f"EXP(-EXTRACT(EPOCH FROM (NOW() - created_at)) / 86400.0 * {decay_lambda})"
+            if decay_lambda > 0
+            else "1.0"
+        )
+
+        # Postgres doesn't allow output-column aliases inside arithmetic
+        # expressions in ORDER BY (the alias is only visible in bare-reference
+        # form). Inline the ts_rank expression so the decay multiplier
+        # references real columns / functions.
+        rank_expr = (
+            "ts_rank(to_tsvector('english', content), "
+            "to_tsquery('english', $1))"
+        )
         rows = await conn.fetch(
             f"""
             SELECT
@@ -249,7 +378,10 @@ async def search_learnings_text_only_postgres(
                 content,
                 metadata,
                 created_at,
-                ts_rank(to_tsvector('english', content), to_tsquery('english', $1)) as similarity
+                valid_from,
+                valid_until,
+                {rank_expr} as similarity,
+                {decay_select} as decay_weight
             FROM archival_memory
             WHERE (metadata->>'type' IS NULL OR metadata->>'type' IN (
                 'session_learning', 'WORKING_SOLUTION', 'ERROR_FIX',
@@ -259,12 +391,14 @@ async def search_learnings_text_only_postgres(
                 AND LENGTH(content) >= 50
                 AND content NOT LIKE 'Agent ''%'' failed when given task:%'
                 {scope_sql}
-            ORDER BY similarity DESC, created_at DESC
+                {temporal_sql}
+            ORDER BY ({rank_expr} * {decay_select}) DESC, created_at DESC
             LIMIT $2
             """,
             or_query,
             k,
             *scope_params,
+            *temporal_params,
         )
 
         # Fallback to ILIKE if no FTS results (query was all stopwords)
@@ -279,7 +413,10 @@ async def search_learnings_text_only_postgres(
                     content,
                     metadata,
                     created_at,
-                    0.1 as similarity
+                    valid_from,
+                    valid_until,
+                    0.1 as similarity,
+                    {decay_select} as decay_weight
                 FROM archival_memory
                 WHERE (metadata->>'type' IS NULL OR metadata->>'type' IN (
                     'session_learning', 'WORKING_SOLUTION', 'ERROR_FIX',
@@ -289,12 +426,14 @@ async def search_learnings_text_only_postgres(
                     AND LENGTH(content) >= 50
                     AND content NOT LIKE 'Agent ''%'' failed when given task:%'
                     {scope_sql}
-                ORDER BY created_at DESC
+                    {temporal_sql}
+                ORDER BY (0.1 * {decay_select}) DESC, created_at DESC
                 LIMIT $2
                 """,
                 first_word,
                 k,
                 *scope_params,
+                *temporal_params,
             )
 
     results = []
@@ -303,13 +442,28 @@ async def search_learnings_text_only_postgres(
         if isinstance(metadata, str):
             metadata = json.loads(metadata)
 
+        base = float(row["similarity"])
+        weight = float(row["decay_weight"]) if row["decay_weight"] is not None else 1.0
+        created = row["created_at"]
+        age_seconds = 0.0
+        if isinstance(created, datetime):
+            now = datetime.now(timezone.utc)
+            created_tz = created if created.tzinfo else created.replace(tzinfo=timezone.utc)
+            age_seconds = max(0.0, (now - created_tz).total_seconds())
+
         results.append({
             "id": str(row["id"]),
             "session_id": row["session_id"],
             "content": row["content"],
             "metadata": metadata,
             "created_at": row["created_at"],
-            "similarity": float(row["similarity"]),  # Use actual ts_rank score
+            "valid_from": row["valid_from"],
+            "valid_until": row["valid_until"],
+            "base_score": base,
+            "decay_weight": weight,
+            "final_score": base * weight,
+            "age_days": int(age_seconds / 86400.0),
+            "similarity": base * weight,  # Back-compat: read as final_score
         })
 
     return results
@@ -399,6 +553,9 @@ async def search_learnings_hybrid_rrf(
     similarity_threshold: float = 0.0,
     project_id: str | None = None,
     scope_mode: str | None = None,
+    valid_at: datetime | None = None,
+    include_superseded: bool = False,
+    decay_lambda: float = DEFAULT_DECAY_LAMBDA,
 ) -> list[dict[str, Any]]:
     """Hybrid RRF search combining text and vector rankings.
 
@@ -410,12 +567,20 @@ async def search_learnings_hybrid_rrf(
         k: Number of results
         provider: Embedding provider
         rrf_k: RRF constant (default 60)
-        similarity_threshold: Minimum RRF score to include
+        similarity_threshold: Minimum RRF score to include (applied to
+            base_score before decay; see Phase 1.10 note below)
         project_id: Project hash (16-char sha256). Auto-derived when None.
         scope_mode: 'project' | 'global_only' | 'all'. Auto-resolved when None.
+        valid_at: Optional bi-temporal filter (point-in-time recall).
+        include_superseded: When True, do not filter out rows whose
+            valid_until has passed.
+        decay_lambda: Exponential decay constant (per day). 0.02 -> half-life
+            ~35 days. Set to 0 to disable.
 
     Returns:
-        List of learnings with RRF scores
+        List of learnings with RRF + decay-adjusted scores. Each row has
+        base_score, decay_weight, age_days, final_score in addition to the
+        legacy similarity field (which mirrors final_score for back-compat).
 
     Cross-project isolation:
         PROJECT-scoped rows from other projects are filtered out by default.
@@ -456,21 +621,38 @@ async def search_learnings_hybrid_rrf(
     # WHERE clause so it appears in BOTH ranking CTEs (FTS + vector). Param
     # indices for scope start at 5 (after text_query=1, embedding=2,
     # rrf_k=3, limit=4).
-    scope_clause, scope_params, _ = _build_scope_clause(scope_mode, project_id, 5)
+    scope_clause, scope_params, next_idx = _build_scope_clause(scope_mode, project_id, 5)
     if scope_clause:
         learnings_where = f"{learnings_where} AND {scope_clause}"
+
+    # Phase 1.10: append the temporal/supersede filter. The shared RRF builder
+    # applies `learnings_where` inside BOTH ranking CTEs, so this filters both
+    # branches consistently.
+    temporal_clause, temporal_params, _ = _build_temporal_clause(
+        valid_at, include_superseded, next_idx,
+    )
+    if temporal_clause:
+        learnings_where = f"{learnings_where} AND {temporal_clause}"
 
     async with pool.acquire() as conn:
         await init_pgvector(conn)
 
         # RRF query across all sessions for learnings, via shared builder.
+        # We project valid_from/valid_until alongside the standard fields so
+        # downstream JSON output can echo them.
         sql = build_rrf_sql(
             where_clause=learnings_where,
             text_query_param=1,
             embedding_param=2,
             rrf_k_param=3,
             limit_param=4,
-            extra_select=["a.session_id", "c.fts_rank", "c.vec_rank"],
+            extra_select=[
+                "a.session_id",
+                "a.valid_from",
+                "a.valid_until",
+                "c.fts_rank",
+                "c.vec_rank",
+            ],
         )
         rows = await conn.fetch(
             sql,
@@ -479,34 +661,47 @@ async def search_learnings_hybrid_rrf(
             rrf_k,
             k * 2,  # Fetch more to allow filtering
             *scope_params,
+            *temporal_params,
         )
 
-    results = []
+    # Convert rows then apply decay in Python (RRF score is computed in SQL
+    # against a tight LIMIT; applying decay in SQL would require restructuring
+    # the shared builder, so we post-process here -- the bounded k*2 row count
+    # keeps this trivial).
+    candidates: list[dict[str, Any]] = []
     for row in rows:
-        rrf_score = float(row["rrf_score"])
+        # Defensive: tests sometimes mock rows without the new valid_from /
+        # valid_until columns. asyncpg Records support dict(row) -- so we
+        # normalise to a plain dict and use .get() for optional fields.
+        row_d = dict(row) if not isinstance(row, dict) else row
+        rrf_score = float(row_d["rrf_score"])
 
+        # Threshold applies to the base RRF score, not the decay-adjusted one.
+        # That keeps the threshold semantics stable (it's about ranking
+        # quality, not freshness).
         if similarity_threshold > 0 and rrf_score < similarity_threshold:
             continue
 
-        metadata = row["metadata"]
+        metadata = row_d["metadata"]
         if isinstance(metadata, str):
             metadata = json.loads(metadata)
 
-        results.append({
-            "id": str(row["id"]),
-            "session_id": row["session_id"],
-            "content": row["content"],
+        candidates.append({
+            "id": str(row_d["id"]),
+            "session_id": row_d["session_id"],
+            "content": row_d["content"],
             "metadata": metadata,
-            "created_at": row["created_at"],
-            "similarity": rrf_score,  # Use RRF score as similarity for consistency
-            "fts_rank": row["fts_rank"],
-            "vec_rank": row["vec_rank"],
+            "created_at": row_d["created_at"],
+            "valid_from": row_d.get("valid_from"),
+            "valid_until": row_d.get("valid_until"),
+            "similarity": rrf_score,  # Pre-decay; _apply_decay will overwrite
+            "fts_rank": row_d.get("fts_rank"),
+            "vec_rank": row_d.get("vec_rank"),
         })
 
-        if len(results) >= k:
-            break
-
-    return results
+    # Apply decay, re-sort by final_score, then trim to k.
+    _apply_decay(candidates, decay_lambda, score_key="similarity")
+    return candidates[:k]
 
 
 async def search_learnings_postgres(
@@ -518,6 +713,9 @@ async def search_learnings_postgres(
     recency_weight: float = 0.0,
     project_id: str | None = None,
     scope_mode: str | None = None,
+    valid_at: datetime | None = None,
+    include_superseded: bool = False,
+    decay_lambda: float = DEFAULT_DECAY_LAMBDA,
 ) -> list[dict[str, Any]]:
     """Search learnings using PostgreSQL (vector similarity or text fallback).
 
@@ -530,9 +728,14 @@ async def search_learnings_postgres(
         recency_weight: Weight for recency boost (0.0-1.0). 0=no boost, 0.3=30% recency
         project_id: Project hash (16-char sha256). Auto-derived when None.
         scope_mode: 'project' | 'global_only' | 'all'. Auto-resolved when None.
+        valid_at: Optional bi-temporal point-in-time filter.
+        include_superseded: When True, do not filter out superseded rows.
+        decay_lambda: Exponential decay per day (default 0.02, half-life ~35d).
 
     Returns:
-        List of matching learnings with similarity scores
+        List of matching learnings. Each row exposes base_score, decay_weight,
+        final_score, age_days alongside the legacy similarity field (which
+        mirrors final_score for back-compat).
     """
     from db.embedding_service import EmbeddingService
     from db.postgres_pool import get_pool
@@ -550,8 +753,12 @@ async def search_learnings_postgres(
     # when text-fallback would have found matches in the current project.
     # That manifested as "vector triggers, returns nothing, but text path
     # would have hit" right after the Phase 1 scope filter landed.
-    scope_clause, scope_params, _ = _build_scope_clause(scope_mode, project_id, 1)
+    scope_clause, scope_params, next_idx = _build_scope_clause(scope_mode, project_id, 1)
     scope_sql = f" AND {scope_clause}" if scope_clause else ""
+    temporal_clause_count, temporal_params_count, _ = _build_temporal_clause(
+        valid_at, include_superseded, next_idx,
+    )
+    temporal_sql_count = f" AND {temporal_clause_count}" if temporal_clause_count else ""
     async with pool.acquire() as conn:
         count_row = await conn.fetchrow(
             f"""
@@ -562,10 +769,20 @@ async def search_learnings_postgres(
                 'USER_PREFERENCE', 'OPEN_THREAD'))
                 AND embedding IS NOT NULL
                 {scope_sql}
+                {temporal_sql_count}
             """,
             *scope_params,
+            *temporal_params_count,
         )
         has_embeddings = count_row["cnt"] > 0
+
+    # Decay expression reused across vector branches. Computed in SQL so the
+    # ORDER BY can rank by the decay-adjusted score.
+    decay_expr = (
+        f"EXP(-EXTRACT(EPOCH FROM (NOW() - created_at)) / 86400.0 * {decay_lambda})"
+        if decay_lambda > 0
+        else "1.0"
+    )
 
     if has_embeddings:
         # Vector similarity search
@@ -583,8 +800,12 @@ async def search_learnings_postgres(
                 # Combined score: (1-recency_weight)*similarity + recency_weight*recency
                 # Recency is normalized: 1.0 for newest, 0.0 for 30 days old or older
                 # Scope params start at $4 (after embedding=$1, k=$2, recency=$3)
-                scope_clause, scope_params, _ = _build_scope_clause(scope_mode, project_id, 4)
+                scope_clause, scope_params, next_idx = _build_scope_clause(scope_mode, project_id, 4)
                 scope_sql = f" AND {scope_clause}" if scope_clause else ""
+                temporal_clause, temporal_params, _ = _build_temporal_clause(
+                    valid_at, include_superseded, next_idx,
+                )
+                temporal_sql = f" AND {temporal_clause}" if temporal_clause else ""
                 rows = await conn.fetch(
                     f"""
                     WITH scored AS (
@@ -594,8 +815,11 @@ async def search_learnings_postgres(
                             content,
                             metadata,
                             created_at,
+                            valid_from,
+                            valid_until,
                             1 - (embedding <=> $1::vector) as similarity,
-                            GREATEST(0, 1.0 - EXTRACT(EPOCH FROM NOW() - created_at) / (30 * 86400)) as recency
+                            GREATEST(0, 1.0 - EXTRACT(EPOCH FROM NOW() - created_at) / (30 * 86400)) as recency,
+                            {decay_expr} as decay_weight
                         FROM archival_memory
                         WHERE (metadata->>'type' IS NULL OR metadata->>'type' IN (
                             'session_learning', 'WORKING_SOLUTION', 'ERROR_FIX',
@@ -605,23 +829,31 @@ async def search_learnings_postgres(
                             AND LENGTH(content) >= 50
                             AND content NOT LIKE 'Agent ''%'' failed when given task:%'
                             {scope_sql}
+                            {temporal_sql}
                     )
                     SELECT
-                        id, session_id, content, metadata, created_at, similarity, recency,
-                        (1.0 - $3::float) * similarity + $3::float * recency as combined_score
+                        id, session_id, content, metadata, created_at,
+                        valid_from, valid_until,
+                        similarity, recency, decay_weight,
+                        ((1.0 - $3::float) * similarity + $3::float * recency) as combined_score
                     FROM scored
-                    ORDER BY combined_score DESC
+                    ORDER BY (((1.0 - $3::float) * similarity + $3::float * recency) * decay_weight) DESC
                     LIMIT $2
                     """,
                     str(query_embedding),
                     k,
                     recency_weight,
                     *scope_params,
+                    *temporal_params,
                 )
             else:
                 # Scope params start at $3 (after embedding=$1, k=$2)
-                scope_clause, scope_params, _ = _build_scope_clause(scope_mode, project_id, 3)
+                scope_clause, scope_params, next_idx = _build_scope_clause(scope_mode, project_id, 3)
                 scope_sql = f" AND {scope_clause}" if scope_clause else ""
+                temporal_clause, temporal_params, _ = _build_temporal_clause(
+                    valid_at, include_superseded, next_idx,
+                )
+                temporal_sql = f" AND {temporal_clause}" if temporal_clause else ""
                 rows = await conn.fetch(
                     f"""
                     SELECT
@@ -630,7 +862,10 @@ async def search_learnings_postgres(
                         content,
                         metadata,
                         created_at,
-                        1 - (embedding <=> $1::vector) as similarity
+                        valid_from,
+                        valid_until,
+                        1 - (embedding <=> $1::vector) as similarity,
+                        {decay_expr} as decay_weight
                     FROM archival_memory
                     WHERE (metadata->>'type' IS NULL OR metadata->>'type' IN (
                         'session_learning', 'WORKING_SOLUTION', 'ERROR_FIX',
@@ -640,18 +875,24 @@ async def search_learnings_postgres(
                         AND LENGTH(content) >= 50
                         AND content NOT LIKE 'Agent ''%'' failed when given task:%'
                         {scope_sql}
-                    ORDER BY embedding <=> $1::vector
+                        {temporal_sql}
+                    ORDER BY ((1 - (embedding <=> $1::vector)) * {decay_expr}) DESC
                     LIMIT $2
                     """,
                     str(query_embedding),
                     k,
                     *scope_params,
+                    *temporal_params,
                 )
     elif text_fallback:
         # Fallback to text search (ILIKE) when no embeddings
         # Scope params start at $3 (after query=$1, k=$2)
-        scope_clause, scope_params, _ = _build_scope_clause(scope_mode, project_id, 3)
+        scope_clause, scope_params, next_idx = _build_scope_clause(scope_mode, project_id, 3)
         scope_sql = f" AND {scope_clause}" if scope_clause else ""
+        temporal_clause, temporal_params, _ = _build_temporal_clause(
+            valid_at, include_superseded, next_idx,
+        )
+        temporal_sql = f" AND {temporal_clause}" if temporal_clause else ""
         async with pool.acquire() as conn:
             rows = await conn.fetch(
                 f"""
@@ -661,7 +902,10 @@ async def search_learnings_postgres(
                     content,
                     metadata,
                     created_at,
-                    0.5 as similarity
+                    valid_from,
+                    valid_until,
+                    0.5 as similarity,
+                    {decay_expr} as decay_weight
                 FROM archival_memory
                 WHERE (metadata->>'type' IS NULL OR metadata->>'type' IN (
                     'session_learning', 'WORKING_SOLUTION', 'ERROR_FIX',
@@ -671,12 +915,14 @@ async def search_learnings_postgres(
                     AND LENGTH(content) >= 50
                     AND content NOT LIKE 'Agent ''%'' failed when given task:%'
                     {scope_sql}
-                ORDER BY created_at DESC
+                    {temporal_sql}
+                ORDER BY (0.5 * {decay_expr}) DESC, created_at DESC
                 LIMIT $2
                 """,
                 query,
                 k,
                 *scope_params,
+                *temporal_params,
             )
     else:
         return []
@@ -685,15 +931,31 @@ async def search_learnings_postgres(
     for row in rows:
         row_dict = dict(row)  # Convert Record to dict for easier access
 
-        # Use combined_score if available (recency boost), otherwise similarity
-        if "combined_score" in row_dict:
-            score = float(row_dict["combined_score"]) if row_dict["combined_score"] else 0.0
+        # base_score: pre-decay score (combined_score wins over similarity
+        # when recency_weight was applied).
+        if "combined_score" in row_dict and row_dict["combined_score"] is not None:
+            base = float(row_dict["combined_score"])
         else:
-            score = float(row_dict["similarity"]) if row_dict["similarity"] else 0.0
+            base = float(row_dict["similarity"]) if row_dict["similarity"] is not None else 0.0
 
-        # Skip results below threshold (only for vector search, not text fallback)
-        if similarity_threshold > 0 and score < similarity_threshold:
+        # Skip results below threshold (threshold is on base_score, not
+        # decay-adjusted score -- threshold gates ranking quality, not freshness)
+        if similarity_threshold > 0 and base < similarity_threshold:
             continue
+
+        weight = (
+            float(row_dict["decay_weight"])
+            if row_dict.get("decay_weight") is not None
+            else 1.0
+        )
+
+        # Compute age_days for audit / JSON output.
+        created = row_dict.get("created_at")
+        age_seconds = 0.0
+        if isinstance(created, datetime):
+            now = datetime.now(timezone.utc)
+            created_tz = created if created.tzinfo else created.replace(tzinfo=timezone.utc)
+            age_seconds = max(0.0, (now - created_tz).total_seconds())
 
         metadata = row_dict["metadata"]
         if isinstance(metadata, str):
@@ -705,16 +967,29 @@ async def search_learnings_postgres(
             "content": row_dict["content"],
             "metadata": metadata,
             "created_at": row_dict["created_at"],
-            "similarity": score,
+            "valid_from": row_dict.get("valid_from"),
+            "valid_until": row_dict.get("valid_until"),
+            "base_score": base,
+            "decay_weight": weight,
+            "final_score": base * weight,
+            "age_days": int(age_seconds / 86400.0),
+            "similarity": base * weight,  # Back-compat alias
         }
 
         # Include raw similarity and recency if available
         if "recency" in row_dict:
-            result["raw_similarity"] = float(row_dict["similarity"]) if row_dict["similarity"] else 0.0
-            result["recency"] = float(row_dict["recency"]) if row_dict["recency"] else 0.0
+            result["raw_similarity"] = (
+                float(row_dict["similarity"]) if row_dict["similarity"] else 0.0
+            )
+            result["recency"] = (
+                float(row_dict["recency"]) if row_dict["recency"] else 0.0
+            )
 
         results.append(result)
 
+    # Re-sort by final_score because SQL already did so, but recency_weight +
+    # decay interactions may shift ordering for tied rows. Safe to call.
+    results.sort(key=lambda x: x.get("final_score", 0.0), reverse=True)
     return results
 
 
@@ -727,6 +1002,9 @@ async def search_learnings(
     recency_weight: float = 0.0,
     project_id: str | None = None,
     scope_mode: str | None = None,
+    valid_at: datetime | None = None,
+    include_superseded: bool = False,
+    decay_lambda: float = DEFAULT_DECAY_LAMBDA,
 ) -> list[dict[str, Any]]:
     """Search archival_memory for session learnings.
 
@@ -741,6 +1019,9 @@ async def search_learnings(
         recency_weight: Weight for recency boost (0.0-1.0). 0=no boost, 0.3=30% recency
         project_id: Project hash (16-char sha256). Auto-derived when None.
         scope_mode: 'project' | 'global_only' | 'all'. Auto-resolved when None.
+        valid_at: Optional point-in-time bi-temporal filter.
+        include_superseded: When True, do not filter out superseded rows.
+        decay_lambda: Exponential decay per day (default 0.02, half-life ~35d).
 
     Returns:
         List of matching learnings with similarity scores
@@ -751,12 +1032,21 @@ async def search_learnings(
     backend = get_backend()
 
     if backend == "sqlite":
-        return await search_learnings_sqlite(query, k)
+        # SQLite path doesn't support temporal/decay in SQL; apply decay in
+        # Python after the BM25 search. SQLite doesn't have the valid_from /
+        # valid_until columns, so temporal filtering is a no-op there.
+        results = await search_learnings_sqlite(query, k)
+        if decay_lambda > 0:
+            _apply_decay(results, decay_lambda, score_key="similarity")
+        return results
     else:
         return await search_learnings_postgres(
             query, k, provider, text_fallback,
             similarity_threshold, recency_weight,
             project_id=project_id, scope_mode=scope_mode,
+            valid_at=valid_at,
+            include_superseded=include_superseded,
+            decay_lambda=decay_lambda,
         )
 
 
@@ -905,6 +1195,44 @@ async def main() -> int:
             "see learnings across projects."
         ),
     )
+    # Phase 1.10 (memory hardening v2): temporal-aware retrieval flags.
+    parser.add_argument(
+        "--valid-at",
+        default=None,
+        help=(
+            "ISO 8601 timestamp for point-in-time recall. When set, returns "
+            "entries that existed at that moment (valid_from <= ts AND "
+            "(valid_until IS NULL OR valid_until > ts)). Default behaviour "
+            "without this flag is to filter out only currently-superseded "
+            "entries."
+        ),
+    )
+    parser.add_argument(
+        "--include-superseded",
+        action="store_true",
+        help=(
+            "Include entries whose valid_until has passed (i.e., learnings "
+            "replaced by newer versions). Off by default."
+        ),
+    )
+    parser.add_argument(
+        "--no-decay",
+        action="store_true",
+        help=(
+            "Disable exponential decay weighting. Equivalent to "
+            "--decay-lambda 0."
+        ),
+    )
+    parser.add_argument(
+        "--decay-lambda",
+        type=float,
+        default=DEFAULT_DECAY_LAMBDA,
+        help=(
+            "Per-day exponential decay constant for score weighting. "
+            f"Default {DEFAULT_DECAY_LAMBDA} -> half-life ~35 days. "
+            "Set to 0 to disable."
+        ),
+    )
 
     args = parser.parse_args()
 
@@ -913,6 +1241,25 @@ async def main() -> int:
         project_dir=args.project_dir,
         all_projects=args.all_projects,
     )
+
+    # Phase 1.10: resolve temporal/decay flags.
+    valid_at: datetime | None = None
+    if args.valid_at:
+        try:
+            # Accept both `2026-01-15T00:00:00Z` and `2026-01-15T00:00:00+00:00`.
+            ts_str = args.valid_at.replace("Z", "+00:00")
+            valid_at = datetime.fromisoformat(ts_str)
+            # Coerce to UTC-aware so the SQL comparison is unambiguous.
+            if valid_at.tzinfo is None:
+                valid_at = valid_at.replace(tzinfo=timezone.utc)
+        except ValueError as exc:
+            print(
+                f"Error: --valid-at must be ISO 8601 (e.g. 2026-01-15T00:00:00Z). "
+                f"Got: {args.valid_at!r} ({exc})",
+                file=sys.stderr,
+            )
+            return 2
+    decay_lambda = 0.0 if args.no_decay else max(0.0, args.decay_lambda)
 
     # JSON mode: suppress human-readable output
     backend = get_backend()
@@ -950,10 +1297,15 @@ async def main() -> int:
 
             if backend == "sqlite":
                 vector_results = await search_learnings_sqlite(args.query, args.k)
+                if decay_lambda > 0:
+                    _apply_decay(vector_results, decay_lambda, score_key="similarity")
             elif args.text_only:
                 vector_results = await search_learnings_text_only_postgres(
                     args.query, args.k,
                     project_id=project_id, scope_mode=scope_mode,
+                    valid_at=valid_at,
+                    include_superseded=args.include_superseded,
+                    decay_lambda=decay_lambda,
                 )
             else:
                 vector_results = await search_learnings_hybrid_rrf(
@@ -962,6 +1314,9 @@ async def main() -> int:
                     provider=args.provider,
                     similarity_threshold=args.threshold * 0.01,
                     project_id=project_id, scope_mode=scope_mode,
+                    valid_at=valid_at,
+                    include_superseded=args.include_superseded,
+                    decay_lambda=decay_lambda,
                 )
 
             for r in vector_results:
@@ -978,11 +1333,19 @@ async def main() -> int:
             if not args.text_only and not args.json:
                 print("  (SQLite backend - using text search)")
             results = await search_learnings_sqlite(args.query, args.k)
+            # SQLite has no valid_from / valid_until columns, so the
+            # --valid-at / --include-superseded flags are no-ops here. Decay
+            # is still applied in Python.
+            if decay_lambda > 0:
+                _apply_decay(results, decay_lambda, score_key="similarity")
         elif args.text_only:
             # Fast text-only search (no embeddings)
             results = await search_learnings_text_only_postgres(
                 args.query, args.k,
                 project_id=project_id, scope_mode=scope_mode,
+                valid_at=valid_at,
+                include_superseded=args.include_superseded,
+                decay_lambda=decay_lambda,
             )
         elif args.vector_only:
             # Vector-only search with recency boost
@@ -993,6 +1356,9 @@ async def main() -> int:
                 similarity_threshold=args.threshold,
                 recency_weight=args.recency,
                 project_id=project_id, scope_mode=scope_mode,
+                valid_at=valid_at,
+                include_superseded=args.include_superseded,
+                decay_lambda=decay_lambda,
             )
         else:
             # Default: Hybrid RRF search (text + vector combined)
@@ -1002,6 +1368,9 @@ async def main() -> int:
                 provider=args.provider,
                 similarity_threshold=args.threshold * 0.01,  # RRF scores are ~0.01-0.03 range
                 project_id=project_id, scope_mode=scope_mode,
+                valid_at=valid_at,
+                include_superseded=args.include_superseded,
+                decay_lambda=decay_lambda,
             )
     except Exception as e:
         if args.json:
@@ -1020,12 +1389,31 @@ async def main() -> int:
             else:
                 created_str = str(created_at)
 
-            json_results.append({
+            entry = {
+                "id": result.get("id"),
                 "score": result["similarity"],
+                "base_score": result.get("base_score"),
+                "decay_weight": result.get("decay_weight"),
+                "final_score": result.get("final_score", result["similarity"]),
+                "age_days": result.get("age_days"),
                 "session_id": result["session_id"],
                 "content": result["content"],
                 "created_at": created_str,
-            })
+            }
+
+            # Include temporal fields when available (postgres-only)
+            valid_from = result.get("valid_from")
+            valid_until = result.get("valid_until")
+            if isinstance(valid_from, datetime):
+                entry["valid_from"] = valid_from.isoformat()
+            elif valid_from is not None:
+                entry["valid_from"] = str(valid_from)
+            if isinstance(valid_until, datetime):
+                entry["valid_until"] = valid_until.isoformat()
+            elif valid_until is not None:
+                entry["valid_until"] = str(valid_until)
+
+            json_results.append(entry)
         print(json.dumps({"results": json_results}))
         return 0
 

@@ -44,13 +44,16 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import TypedDict
 
-from dotenv import load_dotenv
-
-# Load environment
-global_env = Path.home() / ".claude" / ".env"
-if global_env.exists():
-    load_dotenv(global_env)
-load_dotenv()
+try:
+    from dotenv import load_dotenv
+    # Load environment
+    global_env = Path.home() / ".claude" / ".env"
+    if global_env.exists():
+        load_dotenv(global_env)
+    load_dotenv()
+except ImportError:
+    # python-dotenv not available; rely on env vars already set in environment.
+    pass
 
 # Add parent directory to path
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
@@ -187,6 +190,39 @@ def score_extraction(content: str, context: str = "") -> dict:
         classification = "NOISE"
 
     return {"score": score, "classification": classification, "reasons": reasons}
+
+
+# --- Canonical type heuristic (Task #4, Phase 1.1) ---
+# Mirrors the auto-type heuristic documented in .claude/skills/memory/SKILL.md.
+# Order matters: more specific patterns match before more general ones.
+
+_TYPE_PATTERNS: list[tuple[str, re.Pattern[str]]] = [
+    # OPEN_THREAD checked first -- "TODO" / "next session" wins over any generic
+    # noun that might also match below.
+    ("OPEN_THREAD", re.compile(r"\bTODO\b|incomplete|next\s+session|to\s+do\s+later", re.IGNORECASE)),
+    ("USER_PREFERENCE", re.compile(r"\bprefer\b|user\s+wants|user\s+prefers", re.IGNORECASE)),
+    ("FAILED_APPROACH", re.compile(r"\bfailed\b|didn'?t\s+work|don'?t\s+do", re.IGNORECASE)),
+    ("ERROR_FIX", re.compile(r"\berror\b|\bexception\b|\bfix\b|\bbug\b", re.IGNORECASE)),
+    ("ARCHITECTURAL_DECISION", re.compile(r"\b(decided|chose|architecture|trade-?off|rationale)\b|^\s*decisions?\s*:", re.IGNORECASE | re.MULTILINE)),
+    ("CODEBASE_PATTERN", re.compile(r"\bpattern\b|\balways\b|\bconvention\b|recurring", re.IGNORECASE)),
+]
+
+
+def infer_learning_type(content: str) -> str:
+    """Classify content into one of the 7 canonical learning types.
+
+    Falls back to WORKING_SOLUTION when no pattern matches (the broadest
+    bucket for "a thing that worked" insights).
+
+    Order is intentional: OPEN_THREAD beats USER_PREFERENCE beats FAILED_APPROACH
+    beats ERROR_FIX beats ARCHITECTURAL_DECISION beats CODEBASE_PATTERN.
+    """
+    if not content:
+        return "WORKING_SOLUTION"
+    for learning_type, pattern in _TYPE_PATTERNS:
+        if pattern.search(content):
+            return learning_type
+    return "WORKING_SOLUTION"
 
 
 class ExtractionState(TypedDict, total=False):
@@ -345,25 +381,24 @@ async def store_thinking_learning(
         sys.path.insert(0, os.path.dirname(__file__))
         from store_learning import store_learning_v2
 
-    # Determine learning type based on content
-    learning_type = "CODEBASE_PATTERN"  # Default
-    content_lower = content.lower()
-
-    if any(kw in content_lower for kw in ["mistake", "wrong", "didn't work", "failed"]):
-        learning_type = "FAILED_APPROACH"
-    elif any(kw in content_lower for kw in ["fix", "solution", "works because"]):
-        learning_type = "WORKING_SOLUTION"
-    elif any(kw in content_lower for kw in ["decide", "chose", "choice"]):
-        learning_type = "ARCHITECTURAL_DECISION"
-    elif any(kw in content_lower for kw in ["error", "exception", "bug"]):
-        learning_type = "ERROR_FIX"
+    # Determine learning type via canonical auto-type heuristic
+    # (Phase 1.1 / Task #4 -- aligns with .claude/skills/memory/SKILL.md)
+    learning_type = infer_learning_type(content)
 
     # Extract tags from content (simple keyword extraction)
+    content_lower = content.lower()
     tags = ["auto_extracted", "thinking_block"]
     keywords = ["hook", "test", "build", "api", "database", "ui", "config"]
     for kw in keywords:
         if kw in content_lower:
             tags.append(kw)
+
+    # Capture CLAUDE_AGENT_ID env var for agent attribution (Task #14).
+    # Tagged into metadata as a carrier so Task #6 (store_learning.py owner)
+    # can wire it through to the archival_memory.agent_id column.
+    agent_id = os.environ.get("CLAUDE_AGENT_ID")
+    if agent_id:
+        tags.append(f"agent:{agent_id}")
 
     result = await store_learning_v2(
         session_id=session_id,
@@ -402,10 +437,18 @@ async def store_tool_error_learning(
         "scope:global",
     ]
 
+    # Capture CLAUDE_AGENT_ID env var for agent attribution (Task #14).
+    agent_id = os.environ.get("CLAUDE_AGENT_ID")
+    if agent_id:
+        tags.append(f"agent:{agent_id}")
+
+    # ERROR_FIX is a closer canonical type than FAILED_APPROACH for tool errors
+    # that we are about to surface for future-self diagnosis. Tool errors are
+    # the most common ERROR_FIX trigger in the heuristic. (Task #4)
     result = await store_learning_v2(
         session_id=session_id,
         content=content[:2000],
-        learning_type="FAILED_APPROACH",
+        learning_type="ERROR_FIX",
         context="extracted from tool error output",
         tags=tags,
         confidence="medium",

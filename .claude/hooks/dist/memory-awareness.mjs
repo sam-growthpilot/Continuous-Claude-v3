@@ -1,5 +1,5 @@
 // src/memory-awareness.ts
-import { readFileSync as readFileSync2, existsSync as existsSync3 } from "fs";
+import { readFileSync as readFileSync2, existsSync as existsSync3, mkdirSync as mkdirSync2, appendFileSync } from "fs";
 import * as path from "path";
 import { spawnSync } from "child_process";
 
@@ -96,7 +96,170 @@ function logHook(sessionId, hookName) {
   writeFileSync(filePath, JSON.stringify(activity), { encoding: "utf-8" });
 }
 
+// src/shared/intent-extractor.ts
+var STOP_WORDS = /* @__PURE__ */ new Set([
+  "a",
+  "an",
+  "the",
+  "is",
+  "are",
+  "was",
+  "were",
+  "be",
+  "been",
+  "being",
+  "have",
+  "has",
+  "had",
+  "do",
+  "does",
+  "did",
+  "will",
+  "would",
+  "could",
+  "should",
+  "may",
+  "might",
+  "must",
+  "can",
+  "to",
+  "of",
+  "in",
+  "for",
+  "on",
+  "with",
+  "at",
+  "by",
+  "from",
+  "as",
+  "into",
+  "through",
+  "during",
+  "before",
+  "after",
+  "above",
+  "below",
+  "between",
+  "under",
+  "again",
+  "further",
+  "then",
+  "once",
+  "here",
+  "there",
+  "when",
+  "where",
+  "why",
+  "how",
+  "all",
+  "each",
+  "few",
+  "more",
+  "most",
+  "other",
+  "some",
+  "such",
+  "no",
+  "nor",
+  "not",
+  "only",
+  "own",
+  "same",
+  "so",
+  "than",
+  "too",
+  "very",
+  "s",
+  "t",
+  "just",
+  "don",
+  "now",
+  "i",
+  "me",
+  "my",
+  "you",
+  "your",
+  "we",
+  "help",
+  "with",
+  "our",
+  "they",
+  "them",
+  "their",
+  "it",
+  "its",
+  "this",
+  "that",
+  "these",
+  "what",
+  "which",
+  "who",
+  "whom",
+  "and",
+  "but",
+  "if",
+  "or",
+  "because",
+  "until",
+  "while",
+  "about",
+  "against",
+  "also",
+  "get",
+  "got",
+  "make",
+  "want",
+  "need",
+  "look",
+  "see",
+  "use",
+  "like",
+  "know",
+  "think",
+  "take",
+  "come",
+  "go",
+  "say",
+  "said",
+  "tell",
+  "please",
+  "help",
+  "let",
+  "sure",
+  "recall",
+  "remember",
+  "similar",
+  "problems",
+  "issues"
+]);
+var META_PATTERNS = [
+  /^(can you|could you|would you|please|help me|i want to|i need to|let's|lets)\s+/gi,
+  /^(show me|tell me|find|search for|look for|recall|remember)\s+/gi,
+  /^(how do i|how can i|how to|what is|what are|where is|where are)\s+/gi,
+  /\s+(for me|please|thanks|thank you)$/gi,
+  /\?$/g
+];
+function extractKeywords(prompt) {
+  if (typeof prompt !== "string") return "";
+  const words = prompt.toLowerCase().replace(/[^\w\s-]/g, " ").split(/\s+/).filter((w) => w.length > 2 && !STOP_WORDS.has(w));
+  return [...new Set(words)].slice(0, 5).join(" ");
+}
+function extractIntent(prompt) {
+  if (typeof prompt !== "string") return "";
+  let intent = prompt.trim();
+  for (const pattern of META_PATTERNS) {
+    intent = intent.replace(pattern, "");
+  }
+  intent = intent.trim();
+  if (intent.length < 5) {
+    return extractKeywords(prompt);
+  }
+  return intent;
+}
+
 // src/memory-awareness.ts
+var PROACTIVE_INJECTION_FLOOR = 0.05;
+var LOCAL_SCORE_NORMALIZE = 0.1;
 function readStdin() {
   return readFileSync2(0, "utf-8");
 }
@@ -130,167 +293,10 @@ function expandGitQuery(prompt) {
   }
   return null;
 }
-function extractIntent(prompt) {
-  const metaPhrases = [
-    /^(can you|could you|would you|please|help me|i want to|i need to|let's|lets)\s+/gi,
-    /^(show me|tell me|find|search for|look for|recall|remember)\s+/gi,
-    /^(how do i|how can i|how to|what is|what are|where is|where are)\s+/gi,
-    /\s+(for me|please|thanks|thank you)$/gi,
-    /\?$/g
-  ];
-  let intent = prompt.trim();
-  for (const pattern of metaPhrases) {
-    intent = intent.replace(pattern, "");
-  }
-  intent = intent.trim();
-  if (intent.length < 5) {
-    return extractKeywords(prompt);
-  }
-  return intent;
-}
-function extractKeywords(prompt) {
-  const stopWords = /* @__PURE__ */ new Set([
-    "a",
-    "an",
-    "the",
-    "is",
-    "are",
-    "was",
-    "were",
-    "be",
-    "been",
-    "being",
-    "have",
-    "has",
-    "had",
-    "do",
-    "does",
-    "did",
-    "will",
-    "would",
-    "could",
-    "should",
-    "may",
-    "might",
-    "must",
-    "can",
-    "to",
-    "of",
-    "in",
-    "for",
-    "on",
-    "with",
-    "at",
-    "by",
-    "from",
-    "as",
-    "into",
-    "through",
-    "during",
-    "before",
-    "after",
-    "above",
-    "below",
-    "between",
-    "under",
-    "again",
-    "further",
-    "then",
-    "once",
-    "here",
-    "there",
-    "when",
-    "where",
-    "why",
-    "how",
-    "all",
-    "each",
-    "few",
-    "more",
-    "most",
-    "other",
-    "some",
-    "such",
-    "no",
-    "nor",
-    "not",
-    "only",
-    "own",
-    "same",
-    "so",
-    "than",
-    "too",
-    "very",
-    "s",
-    "t",
-    "just",
-    "don",
-    "now",
-    "i",
-    "me",
-    "my",
-    "you",
-    "your",
-    "we",
-    "help",
-    "with",
-    "our",
-    "they",
-    "them",
-    "their",
-    "it",
-    "its",
-    "this",
-    "that",
-    "these",
-    "what",
-    "which",
-    "who",
-    "whom",
-    "and",
-    "but",
-    "if",
-    "or",
-    "because",
-    "until",
-    "while",
-    "about",
-    "against",
-    "also",
-    "get",
-    "got",
-    "make",
-    "want",
-    "need",
-    "look",
-    "see",
-    "use",
-    "like",
-    "know",
-    "think",
-    "take",
-    "come",
-    "go",
-    "say",
-    "said",
-    "tell",
-    "please",
-    "help",
-    "let",
-    "sure",
-    "recall",
-    "remember",
-    "similar",
-    "problems",
-    "issues"
-  ]);
-  const words = prompt.toLowerCase().replace(/[^\w\s-]/g, " ").split(/\s+/).filter((w) => w.length > 2 && !stopWords.has(w));
-  return [...new Set(words)].slice(0, 5).join(" ");
-}
 function checkLocalMemory(intent, projectDir) {
   const homeDir = process.env.HOME || process.env.USERPROFILE || "";
   const projectMemoryScript = path.join(homeDir, ".claude", "scripts", "core", "project_memory.py");
-  if (!existsSync3(projectMemoryScript)) return null;
+  if (!existsSync3(projectMemoryScript)) return [];
   try {
     const result = spawnSync("uv", [
       "run",
@@ -309,28 +315,24 @@ function checkLocalMemory(intent, projectDir) {
       timeout: 2e3,
       killSignal: "SIGKILL"
     });
-    if (result.status !== 0 || !result.stdout) return null;
+    if (result.status !== 0 || !result.stdout) return [];
     const data = JSON.parse(result.stdout);
-    if (!data.results || data.results.length === 0) return null;
-    const results = data.results.slice(0, 3).map((r) => ({
+    if (!data.results || data.results.length === 0) return [];
+    return data.results.slice(0, 3).map((r) => ({
       id: r.task_id || r.id || "local",
       type: "LOCAL_HANDOFF",
       content: r.summary || r.content || "",
-      score: r.similarity || 0.5
+      // Normalize local similarity (~0.5) into ts_rank range so the merge
+      // sort/floor doesn't unfairly favor local rows.
+      score: (r.similarity || 0.5) * LOCAL_SCORE_NORMALIZE
     }));
-    return { count: data.count || results.length, results };
   } catch {
-    return null;
+    return [];
   }
 }
-function checkMemoryRelevance(intent, projectDir) {
-  if (!intent || intent.length < 3) return null;
-  const localMatch = checkLocalMemory(intent, projectDir);
-  if (localMatch) {
-    return localMatch;
-  }
+function checkDbMemory(intent, _projectDir) {
   const opcDir = getOpcDir();
-  if (!opcDir) return null;
+  if (!opcDir) return [];
   const searchTerm = intent.replace(/[_\/]/g, " ").replace(/\b\w{1,2}\b/g, "").replace(/\s+/g, " ").trim();
   const result = spawnSync("uv", [
     "run",
@@ -353,14 +355,14 @@ function checkMemoryRelevance(intent, projectDir) {
     killSignal: "SIGKILL"
   });
   if (result.status !== 0 || !result.stdout) {
-    return null;
+    return [];
   }
   try {
     const data = JSON.parse(result.stdout);
     if (!data.results || data.results.length === 0) {
-      return null;
+      return [];
     }
-    const results = data.results.slice(0, 3).map((r) => {
+    return (data.results || []).map((r) => {
       const content = r.content || "";
       const preview = content.split("\n").filter((l) => l.trim().length > 0).map((l) => l.trim()).join(" ").slice(0, 120);
       return {
@@ -370,12 +372,72 @@ function checkMemoryRelevance(intent, projectDir) {
         score: r.score || 0
       };
     });
-    return {
-      count: data.results.length,
-      results
-    };
   } catch {
+    return [];
+  }
+}
+function mergeResults(local, db) {
+  if ((!local || local.length === 0) && (!db || db.length === 0)) {
     return null;
+  }
+  const localTagged = (local || []).map((r) => ({ ...r, __src: "local" }));
+  const dbTagged = (db || []).map((r) => ({ ...r, __src: "db" }));
+  const combined = [...localTagged, ...dbTagged];
+  const byId = /* @__PURE__ */ new Map();
+  for (const row of combined) {
+    const existing = byId.get(row.id);
+    if (!existing) {
+      byId.set(row.id, { row, crossed: false });
+    } else {
+      const crossed = existing.crossed || existing.row.__src !== row.__src;
+      const winner = row.score > existing.row.score ? row : existing.row;
+      byId.set(row.id, { row: winner, crossed });
+    }
+  }
+  const deduped = Array.from(byId.values());
+  deduped.sort((a, b) => b.row.score - a.row.score);
+  const top = deduped.slice(0, 3);
+  if (top.length === 0) return null;
+  const sources = /* @__PURE__ */ new Set();
+  for (const t of top) {
+    sources.add(t.row.__src);
+    if (t.crossed) sources.add("merged");
+  }
+  const source = sources.has("merged") || sources.size > 1 ? "merged" : sources.has("local") ? "local" : "db";
+  const cleaned = top.map(({ row }) => ({
+    id: row.id,
+    type: row.type,
+    content: row.content,
+    score: row.score
+  }));
+  return {
+    count: deduped.length,
+    results: cleaned,
+    source
+  };
+}
+function applyFloor(match) {
+  if (!match) return null;
+  const filtered = match.results.filter((r) => (r.score ?? 0) >= PROACTIVE_INJECTION_FLOOR);
+  if (filtered.length === 0) return null;
+  return {
+    count: filtered.length,
+    results: filtered,
+    source: match.source
+  };
+}
+function getRecallLogPath(projectDir) {
+  const dir = path.join(projectDir, ".claude", "logs");
+  try {
+    mkdirSync2(dir, { recursive: true });
+  } catch {
+  }
+  return path.join(dir, "memory-recall.jsonl");
+}
+function logRecallFire(entry, projectDir) {
+  try {
+    appendFileSync(getRecallLogPath(projectDir), JSON.stringify(entry) + "\n");
+  } catch {
   }
 }
 async function main() {
@@ -399,7 +461,22 @@ async function main() {
     outputContinue();
     return;
   }
-  const match = checkMemoryRelevance(intent, projectDir);
+  const local = checkLocalMemory(intent, projectDir);
+  const db = checkDbMemory(intent, projectDir);
+  const mergedRaw = mergeResults(local, db);
+  const match = applyFloor(mergedRaw);
+  const topScoreRaw = mergedRaw && mergedRaw.results.length > 0 ? mergedRaw.results.reduce((m, r) => Math.max(m, r.score ?? 0), 0) : 0;
+  const logEntry = {
+    timestamp: (/* @__PURE__ */ new Date()).toISOString(),
+    session_id: input.session_id || "unknown",
+    subagent: process.env.CLAUDE_AGENT_ID || null,
+    intent,
+    results_count: mergedRaw ? mergedRaw.count : 0,
+    top_score: topScoreRaw,
+    kept_after_floor: match ? match.results.length : 0,
+    source: match ? match.source : mergedRaw ? mergedRaw.source : "empty"
+  };
+  logRecallFire(logEntry, projectDir);
   if (match) {
     try {
       logHook(input.session_id, "memory-awareness");
@@ -424,3 +501,11 @@ Use /recall "${intent}" for full content. Disclose if helpful.`;
 main().catch(() => {
   outputContinue();
 });
+export {
+  LOCAL_SCORE_NORMALIZE,
+  PROACTIVE_INJECTION_FLOOR,
+  applyFloor,
+  extractIntent,
+  extractKeywords,
+  mergeResults
+};

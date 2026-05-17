@@ -26,6 +26,143 @@ function getOpcDir() {
   return null;
 }
 
+// src/shared/memory-quality-scorer.ts
+var SIGNAL_INDICATORS = [
+  {
+    test: (c) => /error|exception|failure|bug|crash/i.test(c) && /fix|fixed|solved|solution|resolved|workaround/i.test(c),
+    points: 3,
+    label: "contains error + fix/solution"
+  },
+  {
+    test: (c) => /decided to|chose|because|rationale|trade-?off/i.test(c) && c.length > 60,
+    points: 2,
+    label: "contains decision with reasoning"
+  },
+  {
+    test: (c) => /[.\/\\][\w-]+\.(ts|js|py|mjs|json|yaml|yml|toml|md|sh|go|rs)\b/.test(c) && c.length > 60,
+    points: 2,
+    label: "contains file path + explanation"
+  },
+  {
+    test: (c) => /doesn'?t work|does not work|fixed by|root cause|broke because/i.test(c),
+    points: 2,
+    label: "contains diagnostic language"
+  },
+  {
+    test: (c) => c.length > 100,
+    points: 1,
+    label: "content length > 100 chars"
+  },
+  {
+    test: (c) => /`[^`]+`/.test(c) || /\$\s*\w+/.test(c) || /--[\w-]+/.test(c),
+    points: 1,
+    label: "contains code snippet or command"
+  },
+  {
+    // Mentions specific technical tools/systems (rescues short factual statements)
+    test: (c) => /\b(esbuild|webpack|vite|vitest|jest|pytest|docker|postgres|redis|nginx|caddy|drizzle|prisma|typescript|eslint|prettier|rollup|turbopack|bun|deno|node)\b/i.test(c),
+    points: 1,
+    label: "mentions specific technology/tool"
+  }
+];
+var NOISE_INDICATORS = [
+  {
+    test: (c) => /periodic extraction|session checkpoint/i.test(c),
+    points: -3,
+    label: "matches periodic/checkpoint pattern"
+  },
+  {
+    test: (c) => /\bheartbeat\b|\bstatus update\b/i.test(c),
+    points: -3,
+    label: "matches heartbeat/status update"
+  },
+  {
+    test: (c) => c.length < 50,
+    points: -2,
+    label: "content too short (< 50 chars)"
+  },
+  {
+    test: (c) => {
+      const hasPath = /[.\/\\][\w-]+\.(ts|js|py|mjs|json|yaml|yml|toml|md|sh|go|rs)\b/.test(c);
+      const hasError = /error|exception|failure|bug|crash/i.test(c);
+      const hasDecision = /decided|chose|because|rationale/i.test(c);
+      const hasDiagnostic = /fix|root cause|doesn'?t work|broke/i.test(c);
+      const hasCommand = /`[^`]+`/.test(c) || /--[\w-]+/.test(c);
+      const hasTechTerm = /\b(esbuild|webpack|vite|vitest|jest|pytest|docker|postgres|redis|nginx|caddy|drizzle|prisma|typescript|eslint|prettier|rollup|turbopack|bun|deno|node)\b/i.test(c);
+      return !hasPath && !hasError && !hasDecision && !hasDiagnostic && !hasCommand && !hasTechTerm;
+    },
+    points: -2,
+    label: "generic/vague content"
+  },
+  {
+    test: (c) => {
+      const stripped = c.trim().toLowerCase();
+      return /^(task\s+)?(completed|in progress|started|done|pending|finished)\b/i.test(stripped) || /^\s*(completed|in progress|started)\s*$/i.test(stripped);
+    },
+    points: -2,
+    label: "only contains task status"
+  },
+  {
+    // Repetitive/padded content: long text but low unique sentence ratio
+    test: (c) => {
+      if (c.length < 100) return false;
+      const sentences = c.split(/[.!?]+/).map((s) => s.trim().toLowerCase()).filter((s) => s.length > 5);
+      if (sentences.length < 2) return false;
+      const uniqueSentences = new Set(sentences);
+      return uniqueSentences.size / sentences.length < 0.5;
+    },
+    points: -3,
+    label: "repetitive/padded content"
+  }
+];
+var BASE_SCORE = 5;
+var MIN_SCORE = 0;
+var MAX_SCORE = 10;
+var SIGNAL_THRESHOLD = 5;
+var BORDERLINE_LOW = 3;
+function scoreExtraction(content, context) {
+  const reasons = [];
+  let score = BASE_SCORE;
+  if (!content || content.trim().length === 0) {
+    return {
+      score: 0,
+      confidence: "low",
+      classification: "NOISE",
+      reasons: ["empty content"]
+    };
+  }
+  for (const indicator of SIGNAL_INDICATORS) {
+    if (indicator.test(content, context)) {
+      score += indicator.points;
+      reasons.push(`+${indicator.points}: ${indicator.label}`);
+    }
+  }
+  for (const indicator of NOISE_INDICATORS) {
+    if (indicator.test(content, context)) {
+      score += indicator.points;
+      reasons.push(`${indicator.points}: ${indicator.label}`);
+    }
+  }
+  if (context && context.trim().length > 0) {
+    score += 0.5;
+    reasons.push("+0.5: context provided");
+  }
+  score = Math.max(MIN_SCORE, Math.min(MAX_SCORE, Math.round(score)));
+  let classification;
+  let confidence;
+  if (score >= SIGNAL_THRESHOLD) {
+    classification = "SIGNAL";
+    confidence = "high";
+  } else if (score >= BORDERLINE_LOW) {
+    classification = "BORDERLINE";
+    confidence = "medium";
+  } else {
+    classification = "NOISE";
+    confidence = "low";
+  }
+  return { score, confidence, classification, reasons };
+}
+
 // src/browser-learning-extractor.ts
 var ERROR_PATTERNS = {
   staleRef: /No element found with reference/i,
@@ -316,6 +453,18 @@ function extractPlaywriterLearning(input) {
 function storeLearning(learning, sessionId) {
   const opcDir = getOpcDir();
   if (!opcDir) return false;
+  const score = scoreExtraction(learning.content, learning.context);
+  if (score.classification === "NOISE") {
+    console.error(
+      `[BrowserLearningExtractor] Skipped NOISE (score=${score.score}) for ${learning.type}: ` + score.reasons.join("; ")
+    );
+    return false;
+  }
+  const enrichedTags = [
+    ...learning.tags,
+    `quality:${score.classification.toLowerCase()}`,
+    `score:${score.score}`
+  ];
   const args = [
     "run",
     "python",
@@ -329,7 +478,7 @@ function storeLearning(learning, sessionId) {
     "--context",
     learning.context,
     "--tags",
-    learning.tags.join(","),
+    enrichedTags.join(","),
     "--confidence",
     learning.confidence
   ];
