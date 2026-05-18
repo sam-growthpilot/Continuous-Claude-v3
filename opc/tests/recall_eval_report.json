@@ -33,7 +33,18 @@
       "_caveats": "USER_PREFERENCE has n=1 clean row (b87bd60b) \u2014 NDCG unreliable for this type. ARCHITECTURAL_DECISION clean pool is small (only 3 rows survive pollution filter); load shifted to CODEBASE_PATTERN (9) which absorbed several decision-shaped rows that the auto-classifier labeled differently. All type fields reflect the DB's metadata->>type value, not the eval-author's intuition."
     },
     "PARTIAL_RUN": true,
-    "PARTIAL_NOTE": "Only first 33 of 42 pairs are present. The eval was killed by the parent Bash tool's 10-minute lifetime cap; subsequent re-runs all failed with systematic rerank ERR=returncode=1 errors. Top-K id lists are not available in the log-derived data, so verdict classification is coarsened (no baseline_match / shuffled_no_change distinction; rescued/demoted/improved inferred from NDCG only)."
+    "PARTIAL_NOTE": "Only first 33 of 42 pairs are present. The eval was killed by the parent Bash tool's 10-minute lifetime cap; subsequent re-runs all failed with systematic rerank ERR=returncode=1 errors. Top-K id lists are not available in the log-derived data, so verdict classification is coarsened (no baseline_match / shuffled_no_change distinction; rescued/demoted/improved inferred from NDCG only).",
+    "latency_methodology": {
+      "eval_subprocess_p95_ms": 95142.5,
+      "daemon_bench_p95_ms": 5000,
+      "daemon_bench_p50_ms": 4515,
+      "daemon_bench_cold_ms": 40183,
+      "daemon_bench_source": "kraken Task 1.2 bench output, commit 5d13b7f. CPU only, max_length=256, batch_size=32, 50 candidates, 10-call hot loop.",
+      "gate_comparison_uses": "eval_subprocess_p95_ms",
+      "gate_threshold_ms": 500,
+      "gate_arm_verdict": "FAIL",
+      "notes": "Decision-gate latency arm uses eval_subprocess_p95_ms (~95s) -- the honest user-experience cost of /recall --rerank from a fresh shell, including uv env resolve, Python imports, sentence-transformers/torch import, DB connect, rerank, and JSON write. The daemon-bench p95 of ~5s measures only the in-process rerank step with a daemon-resident model; it is 10x over the 500ms gate even without subprocess overhead. Therefore: even with a Phase-3+ recall daemon that amortizes the subprocess startup, the rerank step alone cannot meet the 500ms gate on this CPU hardware. Conclusion: --rerank stays opt-in regardless of methodology; default-on would require either a faster reranker (smaller model, ONNX quantization, GPU) or relaxing the latency arm to ~5s warm."
+    }
   },
   "baseline": {
     "n_pairs": 33,

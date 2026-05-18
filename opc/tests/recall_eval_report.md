@@ -61,6 +61,27 @@ clean system before relying on the result.
 | GLOBAL | 19 | 0.393 | 0.823 |
 | PROJECT | 14 | 0.367 | 0.778 |
 
+## Latency Measurement Methodology
+
+The decision-gate latency arm threshold is `P95 <= 500ms`. Two different latency measurements exist for this eval:
+
+| Metric | Source | Value | Gate (<=500ms) |
+|---|---|---:|:---:|
+| `eval_subprocess_p95_ms` | `recall_learnings.py --rerank` wall-clock per call (this eval) | ~95,000 ms | **FAIL** |
+| `daemon_bench_p95_ms` | `rerank.py --bench` in-process hot loop (kraken Task 1.2, commit `5d13b7f`) | ~5,000 ms | **FAIL** |
+
+**What each measures:**
+- `eval_subprocess_p95_ms` is wall-clock per `uv run python recall_learnings.py --rerank ...` call. Includes uv env resolve, Python imports, sentence-transformers/torch import, DB connect, rerank step, JSON write. **This is what a USER experiences invoking `/recall --rerank` from a fresh shell.**
+- `daemon_bench_p95_ms` is in-process hot-loop of the rerank step only. Excludes shell, imports, and DB. Measures steady-state cost of the cross-encoder forward pass on top-50 candidates with a daemon-resident model. **This is what `/recall --rerank` would cost if the entire recall pipeline lived in a long-lived daemon (Phase 3+ change, out of scope for Phase 2).**
+
+**Conclusion for Task 3.2 (decision gate):**
+
+The gate's latency arm uses `eval_subprocess_p95_ms` (the honest user-experience cost). At ~95s, this is ~190x over the 500ms gate. Even the daemon-bench measurement at ~5s is 10x over the gate. Therefore:
+
+- The rerank cannot be default-on while the recall pipeline is invoked as a subprocess.
+- Even with a Phase-3+ in-process recall daemon, the cross-encoder forward pass alone exceeds 500ms.
+- **The `--rerank` flag stays opt-in.** Default-on would require either a faster reranker (smaller model, ONNX quantization, GPU acceleration) or relaxing the latency-arm threshold to ~5s warm.
+
 ## Decision Gate (Task 3.2)
 
 - **NDCG@5 lift**: +110.4% (gate >= +10.0%) -> **PASS**
