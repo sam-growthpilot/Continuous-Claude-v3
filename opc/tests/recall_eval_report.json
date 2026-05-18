@@ -1,0 +1,892 @@
+{
+  "_meta": {
+    "eval_set": "opc/tests/recall_eval_set.jsonl",
+    "n_pairs": 33,
+    "k": 5,
+    "model": "BAAI/bge-reranker-v2-m3",
+    "max_length": 256,
+    "rerank_top_n": 50,
+    "ran_at": "2026-05-18T00:11:48.369771+00:00",
+    "daemon_mode": true,
+    "daemon_spawned_by_us": false,
+    "warmup_skipped": true,
+    "warmup_count": 2,
+    "baseline_only": false,
+    "rerank_only": false,
+    "scope_current_project": false,
+    "all_projects": true,
+    "eval_set_header": {
+      "_header": "Recall eval set for Phase 2 reranker",
+      "_built": "2026-05-17",
+      "_total_pairs": 42,
+      "_coverage": {
+        "WORKING_SOLUTION": 16,
+        "ERROR_FIX": 8,
+        "CODEBASE_PATTERN": 9,
+        "ARCHITECTURAL_DECISION": 3,
+        "FAILED_APPROACH": 5,
+        "USER_PREFERENCE": 1
+      },
+      "_scope_mix": "PROJECT=20, GLOBAL=22",
+      "_dedup_strategy": "Kept both shadcn CSS-vars near-duplicates (1917a56d, 63d29aea) as deliberate reranker stress test \u2014 flagged with deliberate_dup_test=true on both pairs",
+      "_pollution_filters_applied": "Excluded Planning:/Decision:JSON-blob/ralph_status/Task completed:/Mid-session checkpoint/Test auth pattern/Problem solved/Goal:/Done:/Next: rows; selected on content shape not just type label",
+      "_caveats": "USER_PREFERENCE has n=1 clean row (b87bd60b) \u2014 NDCG unreliable for this type. ARCHITECTURAL_DECISION clean pool is small (only 3 rows survive pollution filter); load shifted to CODEBASE_PATTERN (9) which absorbed several decision-shaped rows that the auto-classifier labeled differently. All type fields reflect the DB's metadata->>type value, not the eval-author's intuition."
+    },
+    "PARTIAL_RUN": true,
+    "PARTIAL_NOTE": "Only first 33 of 42 pairs are present. The eval was killed by the parent Bash tool's 10-minute lifetime cap; subsequent re-runs all failed with systematic rerank ERR=returncode=1 errors. Top-K id lists are not available in the log-derived data, so verdict classification is coarsened (no baseline_match / shuffled_no_change distinction; rescued/demoted/improved inferred from NDCG only)."
+  },
+  "baseline": {
+    "n_pairs": 33,
+    "mean_ndcg_at_5": 0.3820909090909091,
+    "found_count": 19,
+    "found_rate": 0.5757575757575758,
+    "p50_ms": 29436.5,
+    "p95_ms": 56080.75,
+    "latency_sample_n": 28,
+    "by_type": {
+      "ARCHITECTURAL_DECISION": 0.21033333333333334,
+      "CODEBASE_PATTERN": 0.4862,
+      "ERROR_FIX": 0.567,
+      "USER_PREFERENCE": 0.0,
+      "WORKING_SOLUTION": 0.3131875
+    },
+    "by_type_found_rate": {
+      "ARCHITECTURAL_DECISION": 0.3333333333333333,
+      "CODEBASE_PATTERN": 0.6,
+      "ERROR_FIX": 0.875,
+      "USER_PREFERENCE": 0.0,
+      "WORKING_SOLUTION": 0.5
+    },
+    "by_type_n": {
+      "ARCHITECTURAL_DECISION": 3,
+      "CODEBASE_PATTERN": 5,
+      "ERROR_FIX": 8,
+      "USER_PREFERENCE": 1,
+      "WORKING_SOLUTION": 16
+    },
+    "by_scope": {
+      "GLOBAL": 0.39299999999999996,
+      "PROJECT": 0.3672857142857143
+    },
+    "by_scope_n": {
+      "GLOBAL": 19,
+      "PROJECT": 14
+    }
+  },
+  "rerank": {
+    "n_pairs": 33,
+    "mean_ndcg_at_5": 0.8037575757575758,
+    "found_count": 28,
+    "found_rate": 0.8484848484848485,
+    "p50_ms": 59967.0,
+    "p95_ms": 95142.5,
+    "latency_sample_n": 31,
+    "by_type": {
+      "ARCHITECTURAL_DECISION": 0.5436666666666666,
+      "CODEBASE_PATTERN": 0.8,
+      "ERROR_FIX": 0.953875,
+      "USER_PREFERENCE": 1.0,
+      "WORKING_SOLUTION": 0.766375
+    },
+    "by_type_found_rate": {
+      "ARCHITECTURAL_DECISION": 0.6666666666666666,
+      "CODEBASE_PATTERN": 0.8,
+      "ERROR_FIX": 1.0,
+      "USER_PREFERENCE": 1.0,
+      "WORKING_SOLUTION": 0.8125
+    },
+    "by_type_n": {
+      "ARCHITECTURAL_DECISION": 3,
+      "CODEBASE_PATTERN": 5,
+      "ERROR_FIX": 8,
+      "USER_PREFERENCE": 1,
+      "WORKING_SOLUTION": 16
+    },
+    "by_scope": {
+      "GLOBAL": 0.8226842105263158,
+      "PROJECT": 0.7780714285714286
+    },
+    "by_scope_n": {
+      "GLOBAL": 19,
+      "PROJECT": 14
+    }
+  },
+  "comparison": {
+    "ndcg_lift_pct": 110.3576810214926,
+    "by_type_lift_pct": {
+      "ARCHITECTURAL_DECISION": 158.47860538827254,
+      "CODEBASE_PATTERN": 64.54134101192925,
+      "ERROR_FIX": 68.23192239858909,
+      "USER_PREFERENCE": "Infinity",
+      "WORKING_SOLUTION": 144.70165635601677
+    },
+    "rescued_count": 9,
+    "demoted_count": 0,
+    "shuffled_no_change_count": 9,
+    "shuffled_improved_count": 10,
+    "shuffled_worse_count": 0,
+    "both_miss_count": 5,
+    "baseline_match_count": 0,
+    "rescued_ids": [
+      "b87bd60b-10bb-47be-af78-0990ee43b2e9",
+      "5abfaff4-81a3-409d-af9f-08f6ed84a2b8",
+      "6baa38a4-8597-41c4-bbab-2056fdbaa636",
+      "f32addc6-2dbb-42dc-8397-e189c3e9b0a7",
+      "38f8551f-2f09-4b3d-a7b1-968c10bb6b20",
+      "26d15f5b-588b-4ca1-a085-588c8ad8db73",
+      "06be54d0-44ce-4186-9847-07ca108f8f94",
+      "5ff3a2df-8f48-454e-bfef-5e092eb3d807",
+      "fedfc581-cd52-4f1d-8b14-a055ef407e28"
+    ],
+    "demoted_ids": [],
+    "shuffled_no_change_ids": [
+      "63d29aea-c3d1-47f2-8f04-9ac1271463ab",
+      "8ce6e646-239c-41e3-a84f-a7d9a41b05e2",
+      "be51fff0-b3ce-45be-9f50-0baf06691e07",
+      "c67205a0-a959-4616-a761-51f73ef58ee1",
+      "b7bcdd1f-30a4-4c0b-9448-b3888ec9df67",
+      "048b09e0-b3c2-4fb3-87b2-572694cf4473",
+      "b3a20b27-6096-4b4c-af4e-9277406ae0b9",
+      "deb3a478-f2ae-41b3-bfc3-061708bd4efe",
+      "6a172c1b-68c6-40ae-918b-887279f4b524"
+    ]
+  },
+  "decision_gate": {
+    "ndcg_lift_pct_measured": 110.3576810214926,
+    "ndcg_lift_pct_threshold": 10.0,
+    "ndcg_lift_pass": true,
+    "p95_ms_measured": 95142.5,
+    "p95_ms_threshold": 500.0,
+    "p95_latency_pass": false,
+    "decision": "opt-in",
+    "rationale": "NDCG lift passes but P95 latency exceeds the gate; keep --rerank opt-in until latency improves (smaller model, batching, GPU)."
+  },
+  "per_pair": [
+    {
+      "query": "drizzle orm prisma preference",
+      "relevant_id": "b87bd60b-10bb-47be-af78-0990ee43b2e9",
+      "type": "USER_PREFERENCE",
+      "scope": "PROJECT",
+      "confidence": "high",
+      "notes": "Only clean USER_PREFERENCE row in DB; explicitly states Drizzle preferred over Prisma",
+      "baseline": {
+        "top_k_ids": [],
+        "ndcg_at_5": 0.0,
+        "latency_ms": 88106.0,
+        "error": "timeout"
+      },
+      "rerank": {
+        "top_k_ids": [],
+        "ndcg_at_5": 1.0,
+        "latency_ms": 84176.0,
+        "error": null,
+        "rerank_meta": {}
+      },
+      "verdict": "rescued"
+    },
+    {
+      "query": "shadcn css variables tailwind theme block",
+      "relevant_id": "63d29aea-c3d1-47f2-8f04-9ac1271463ab",
+      "type": "WORKING_SOLUTION",
+      "scope": "PROJECT",
+      "confidence": "high",
+      "notes": "More-complete shadcn CSS-vars entry (mentions Sheet/popover). Pair with 1917a56d for reranker stress test on near-duplicates",
+      "baseline": {
+        "top_k_ids": [],
+        "ndcg_at_5": 0.631,
+        "latency_ms": 48967.0,
+        "error": null
+      },
+      "rerank": {
+        "top_k_ids": [],
+        "ndcg_at_5": 0.631,
+        "latency_ms": 73947.0,
+        "error": null,
+        "rerank_meta": {}
+      },
+      "verdict": "shuffled_no_change"
+    },
+    {
+      "query": "shadcnspace blocks unstyled missing css tokens",
+      "relevant_id": "1917a56d-9194-4481-9d19-840b79c93311",
+      "type": "WORKING_SOLUTION",
+      "scope": "PROJECT",
+      "confidence": "high",
+      "notes": "Less-complete shadcn CSS-vars near-duplicate. Different query angle (symptom: unstyled) routes to this one; previous query (theme block) routes to the more-complete sibling",
+      "baseline": {
+        "top_k_ids": [],
+        "ndcg_at_5": 0.431,
+        "latency_ms": 56534.0,
+        "error": null
+      },
+      "rerank": {
+        "top_k_ids": [],
+        "ndcg_at_5": 0.631,
+        "latency_ms": 69829.0,
+        "error": null,
+        "rerank_meta": {}
+      },
+      "verdict": "shuffled_improved"
+    },
+    {
+      "query": "browser automation three tier playwright mcp",
+      "relevant_id": "e4b03839-a870-4777-8c7e-c4f7ee3cfce2",
+      "type": "WORKING_SOLUTION",
+      "scope": "GLOBAL",
+      "confidence": "high",
+      "notes": "Three-tier browser strategy: playwright-mcp, chrome-devtools-mcp, playwright-core via CDP",
+      "baseline": {
+        "top_k_ids": [],
+        "ndcg_at_5": 0.387,
+        "latency_ms": 55239.0,
+        "error": null
+      },
+      "rerank": {
+        "top_k_ids": [],
+        "ndcg_at_5": 1.0,
+        "latency_ms": 86065.0,
+        "error": null,
+        "rerank_meta": {}
+      },
+      "verdict": "shuffled_improved"
+    },
+    {
+      "query": "mcp servers settings json ignored",
+      "relevant_id": "5abfaff4-81a3-409d-af9f-08f6ed84a2b8",
+      "type": "WORKING_SOLUTION",
+      "scope": "GLOBAL",
+      "confidence": "high",
+      "notes": "settings.json mcpServers silently ignored; must use .mcp.json or claude.json",
+      "baseline": {
+        "top_k_ids": [],
+        "ndcg_at_5": 0.0,
+        "latency_ms": 47982.0,
+        "error": null
+      },
+      "rerank": {
+        "top_k_ids": [],
+        "ndcg_at_5": 1.0,
+        "latency_ms": 78379.0,
+        "error": null,
+        "rerank_meta": {}
+      },
+      "verdict": "rescued"
+    },
+    {
+      "query": "claude code hooks global all projects",
+      "relevant_id": "bedd33b8-cdee-4e7d-aba5-eb42219209a5",
+      "type": "WORKING_SOLUTION",
+      "scope": "GLOBAL",
+      "confidence": "high",
+      "notes": "Hooks in ~/.claude/settings.json are global across all projects",
+      "baseline": {
+        "top_k_ids": [],
+        "ndcg_at_5": 0.431,
+        "latency_ms": 51319.0,
+        "error": null
+      },
+      "rerank": {
+        "top_k_ids": [],
+        "ndcg_at_5": 1.0,
+        "latency_ms": 67098.0,
+        "error": null,
+        "rerank_meta": {}
+      },
+      "verdict": "shuffled_improved"
+    },
+    {
+      "query": "ralph state json unified",
+      "relevant_id": "46ae7d66-74aa-46f5-b8d3-cb87e46ca4f9",
+      "type": "WORKING_SOLUTION",
+      "scope": "GLOBAL",
+      "confidence": "high",
+      "notes": "Unified .ralph/state.json replaces 3 fragmented state files",
+      "baseline": {
+        "top_k_ids": [],
+        "ndcg_at_5": 0.0,
+        "latency_ms": 53748.0,
+        "error": null
+      },
+      "rerank": {
+        "top_k_ids": [],
+        "ndcg_at_5": 0.0,
+        "latency_ms": 67530.0,
+        "error": null,
+        "rerank_meta": {}
+      },
+      "verdict": "both_miss"
+    },
+    {
+      "query": "serena mcp context flag codex",
+      "relevant_id": "8ce6e646-239c-41e3-a84f-a7d9a41b05e2",
+      "type": "WORKING_SOLUTION",
+      "scope": "GLOBAL",
+      "confidence": "high",
+      "notes": "Serena --context flag tool selection per-host",
+      "baseline": {
+        "top_k_ids": [],
+        "ndcg_at_5": 1.0,
+        "latency_ms": 38449.0,
+        "error": null
+      },
+      "rerank": {
+        "top_k_ids": [],
+        "ndcg_at_5": 1.0,
+        "latency_ms": 69134.0,
+        "error": null,
+        "rerank_meta": {}
+      },
+      "verdict": "shuffled_no_change"
+    },
+    {
+      "query": "codex desktop logs windows location",
+      "relevant_id": "be51fff0-b3ce-45be-9f50-0baf06691e07",
+      "type": "WORKING_SOLUTION",
+      "scope": "PROJECT",
+      "confidence": "high",
+      "notes": "Codex MSIX install paths and real log location on Windows",
+      "baseline": {
+        "top_k_ids": [],
+        "ndcg_at_5": 1.0,
+        "latency_ms": 45976.0,
+        "error": null
+      },
+      "rerank": {
+        "top_k_ids": [],
+        "ndcg_at_5": 1.0,
+        "latency_ms": 80196.0,
+        "error": null,
+        "rerank_meta": {}
+      },
+      "verdict": "shuffled_no_change"
+    },
+    {
+      "query": "vercel cli plugin skip official plugin",
+      "relevant_id": "778056b7-439c-44f0-a8aa-1c223474a2a1",
+      "type": "WORKING_SOLUTION",
+      "scope": "GLOBAL",
+      "confidence": "high",
+      "notes": "Vercel integration strategy: skip official plugin, use deployer agent",
+      "baseline": {
+        "top_k_ids": [],
+        "ndcg_at_5": 0.631,
+        "latency_ms": 57669.0,
+        "error": null
+      },
+      "rerank": {
+        "top_k_ids": [],
+        "ndcg_at_5": 1.0,
+        "latency_ms": 75785.0,
+        "error": null,
+        "rerank_meta": {}
+      },
+      "verdict": "shuffled_improved"
+    },
+    {
+      "query": "vitest mock lucide-react infinite hang",
+      "relevant_id": "6baa38a4-8597-41c4-bbab-2056fdbaa636",
+      "type": "WORKING_SOLUTION",
+      "scope": "PROJECT",
+      "confidence": "high",
+      "notes": "Proxy-based vi.mock causes infinite recursion on lucide-react",
+      "baseline": {
+        "top_k_ids": [],
+        "ndcg_at_5": 0.0,
+        "latency_ms": 71341.0,
+        "error": "timeout"
+      },
+      "rerank": {
+        "top_k_ids": [],
+        "ndcg_at_5": 1.0,
+        "latency_ms": 104570.0,
+        "error": null,
+        "rerank_meta": {}
+      },
+      "verdict": "rescued"
+    },
+    {
+      "query": "shadcnspace registry auth params components.json",
+      "relevant_id": "f32addc6-2dbb-42dc-8397-e189c3e9b0a7",
+      "type": "WORKING_SOLUTION",
+      "scope": "PROJECT",
+      "confidence": "high",
+      "notes": "shadcnspace CLI auth must use params (not headers) in components.json",
+      "baseline": {
+        "top_k_ids": [],
+        "ndcg_at_5": 0.0,
+        "latency_ms": 69468.0,
+        "error": "timeout"
+      },
+      "rerank": {
+        "top_k_ids": [],
+        "ndcg_at_5": 1.0,
+        "latency_ms": 104220.0,
+        "error": null,
+        "rerank_meta": {}
+      },
+      "verdict": "rescued"
+    },
+    {
+      "query": "sync-to-active hooks dist not copied",
+      "relevant_id": "38f8551f-2f09-4b3d-a7b1-968c10bb6b20",
+      "type": "WORKING_SOLUTION",
+      "scope": "GLOBAL",
+      "confidence": "high",
+      "notes": "sync-to-active.sh skips hooks/dist and scripts/ralph",
+      "baseline": {
+        "top_k_ids": [],
+        "ndcg_at_5": 0.0,
+        "latency_ms": 63402.0,
+        "error": "timeout"
+      },
+      "rerank": {
+        "top_k_ids": [],
+        "ndcg_at_5": 1.0,
+        "latency_ms": 79488.0,
+        "error": null,
+        "rerank_meta": {}
+      },
+      "verdict": "rescued"
+    },
+    {
+      "query": "azure blob storage cosmos document size limit",
+      "relevant_id": "3a9398ac-6b82-4188-af64-07bb5d8780fc",
+      "type": "WORKING_SOLUTION",
+      "scope": "PROJECT",
+      "confidence": "high",
+      "notes": "2MB Cosmos doc limit; use Blob Storage for transcripts/PDFs",
+      "baseline": {
+        "top_k_ids": [],
+        "ndcg_at_5": 0.0,
+        "latency_ms": 36852.0,
+        "error": null
+      },
+      "rerank": {
+        "top_k_ids": [],
+        "ndcg_at_5": 0.0,
+        "latency_ms": 67216.0,
+        "error": null,
+        "rerank_meta": {}
+      },
+      "verdict": "both_miss"
+    },
+    {
+      "query": "fork remote never push origin parcadei",
+      "relevant_id": "64adf038-d0f7-4b68-93a1-4c3defd4692e",
+      "type": "WORKING_SOLUTION",
+      "scope": "PROJECT",
+      "confidence": "high",
+      "notes": "Never push to upstream parcadei; always to fork Rev4nchist",
+      "baseline": {
+        "top_k_ids": [],
+        "ndcg_at_5": 0.0,
+        "latency_ms": 51278.0,
+        "error": null
+      },
+      "rerank": {
+        "top_k_ids": [],
+        "ndcg_at_5": 0.0,
+        "latency_ms": 77582.0,
+        "error": null,
+        "rerank_meta": {}
+      },
+      "verdict": "both_miss"
+    },
+    {
+      "query": "database url stale shell environment",
+      "relevant_id": "af06ee5f-8cd8-407c-b1e6-fa302b9534cb",
+      "type": "WORKING_SOLUTION",
+      "scope": "GLOBAL",
+      "confidence": "high",
+      "notes": "New shells inherit stale DATABASE_URL; export in current shell or restart terminal",
+      "baseline": {
+        "top_k_ids": [],
+        "ndcg_at_5": 0.5,
+        "latency_ms": 54519.0,
+        "error": null
+      },
+      "rerank": {
+        "top_k_ids": [],
+        "ndcg_at_5": 1.0,
+        "latency_ms": 62640.0,
+        "error": null,
+        "rerank_meta": {}
+      },
+      "verdict": "shuffled_improved"
+    },
+    {
+      "query": "drizzle migrate journal file missing deploy",
+      "relevant_id": "26d15f5b-588b-4ca1-a085-588c8ad8db73",
+      "type": "WORKING_SOLUTION",
+      "scope": "GLOBAL",
+      "confidence": "high",
+      "notes": "Missing drizzle/meta/_journal.json from uncommitted migration files breaks production deploy",
+      "baseline": {
+        "top_k_ids": [],
+        "ndcg_at_5": 0.0,
+        "latency_ms": 36202.0,
+        "error": null
+      },
+      "rerank": {
+        "top_k_ids": [],
+        "ndcg_at_5": 1.0,
+        "latency_ms": 58624.0,
+        "error": null,
+        "rerank_meta": {}
+      },
+      "verdict": "rescued"
+    },
+    {
+      "query": "playwright database url multiple postgres",
+      "relevant_id": "5c746213-abe1-4190-8935-ba44bd48cfd0",
+      "type": "ERROR_FIX",
+      "scope": "PROJECT",
+      "confidence": "high",
+      "notes": "Pin DATABASE_URL in playwright.config.ts webServer.env when multiple Postgres on same host",
+      "baseline": {
+        "top_k_ids": [],
+        "ndcg_at_5": 0.631,
+        "latency_ms": 41709.0,
+        "error": null
+      },
+      "rerank": {
+        "top_k_ids": [],
+        "ndcg_at_5": 1.0,
+        "latency_ms": 60879.0,
+        "error": null,
+        "rerank_meta": {}
+      },
+      "verdict": "shuffled_improved"
+    },
+    {
+      "query": "vercel ai sdk v6 migration parameters input schema",
+      "relevant_id": "199e3023-fdd6-4b8a-8d71-e9625730e35f",
+      "type": "ERROR_FIX",
+      "scope": "PROJECT",
+      "confidence": "high",
+      "notes": "AI SDK v4 to v6: parameters->inputSchema, maxSteps->stopWhen, etc.",
+      "baseline": {
+        "top_k_ids": [],
+        "ndcg_at_5": 0.387,
+        "latency_ms": 38636.0,
+        "error": null
+      },
+      "rerank": {
+        "top_k_ids": [],
+        "ndcg_at_5": 1.0,
+        "latency_ms": 59967.0,
+        "error": null,
+        "rerank_meta": {}
+      },
+      "verdict": "shuffled_improved"
+    },
+    {
+      "query": "nia mcp oauth sse stale config",
+      "relevant_id": "48c81cd4-ff06-49e9-8484-3b927b53daff",
+      "type": "ERROR_FIX",
+      "scope": "GLOBAL",
+      "confidence": "high",
+      "notes": "Two global MCP config files; ~/.mcp.json takes priority",
+      "baseline": {
+        "top_k_ids": [],
+        "ndcg_at_5": 0.387,
+        "latency_ms": 14186.0,
+        "error": null
+      },
+      "rerank": {
+        "top_k_ids": [],
+        "ndcg_at_5": 1.0,
+        "latency_ms": 57733.0,
+        "error": null,
+        "rerank_meta": {}
+      },
+      "verdict": "shuffled_improved"
+    },
+    {
+      "query": "knowledge tree silent stop continuous-claude",
+      "relevant_id": "06be54d0-44ce-4186-9847-07ca108f8f94",
+      "type": "ERROR_FIX",
+      "scope": "GLOBAL",
+      "confidence": "high",
+      "notes": "session-start-init-check.ts overly broad exclusion broke knowledge tree regen",
+      "baseline": {
+        "top_k_ids": [],
+        "ndcg_at_5": 0.0,
+        "latency_ms": 15685.0,
+        "error": null
+      },
+      "rerank": {
+        "top_k_ids": [],
+        "ndcg_at_5": 1.0,
+        "latency_ms": 36553.0,
+        "error": null,
+        "rerank_meta": {}
+      },
+      "verdict": "rescued"
+    },
+    {
+      "query": "tailwind css 404 next.js dev server restart",
+      "relevant_id": "c67205a0-a959-4616-a761-51f73ef58ee1",
+      "type": "ERROR_FIX",
+      "scope": "PROJECT",
+      "confidence": "high",
+      "notes": "Next.js 14 + Tailwind v4 layout.css serves 404; kill dev server PID and restart",
+      "baseline": {
+        "top_k_ids": [],
+        "ndcg_at_5": 0.631,
+        "latency_ms": 18399.0,
+        "error": null
+      },
+      "rerank": {
+        "top_k_ids": [],
+        "ndcg_at_5": 0.631,
+        "latency_ms": 39604.0,
+        "error": null,
+        "rerank_meta": {}
+      },
+      "verdict": "shuffled_no_change"
+    },
+    {
+      "query": "splashcursor webgl black canvas alpha",
+      "relevant_id": "b7bcdd1f-30a4-4c0b-9448-b3888ec9df67",
+      "type": "ERROR_FIX",
+      "scope": "PROJECT",
+      "confidence": "high",
+      "notes": "gl.clearColor alpha must be 0.0 + gl.clear before render",
+      "baseline": {
+        "top_k_ids": [],
+        "ndcg_at_5": 1.0,
+        "latency_ms": 16748.0,
+        "error": null
+      },
+      "rerank": {
+        "top_k_ids": [],
+        "ndcg_at_5": 1.0,
+        "latency_ms": 39741.0,
+        "error": null,
+        "rerank_meta": {}
+      },
+      "verdict": "shuffled_no_change"
+    },
+    {
+      "query": "wsl2 memory uncapped docker desktop balloons",
+      "relevant_id": "048b09e0-b3c2-4fb3-87b2-572694cf4473",
+      "type": "ERROR_FIX",
+      "scope": "GLOBAL",
+      "confidence": "high",
+      "notes": ".wslconfig with memory=3GB caps vmmemWSL working set",
+      "baseline": {
+        "top_k_ids": [],
+        "ndcg_at_5": 1.0,
+        "latency_ms": 15638.0,
+        "error": null
+      },
+      "rerank": {
+        "top_k_ids": [],
+        "ndcg_at_5": 1.0,
+        "latency_ms": 35570.0,
+        "error": null,
+        "rerank_meta": {}
+      },
+      "verdict": "shuffled_no_change"
+    },
+    {
+      "query": "claude code protected directory permission bypass",
+      "relevant_id": "cff2b5ed-0796-44c5-bac5-89d0e4d4e858",
+      "type": "ERROR_FIX",
+      "scope": "GLOBAL",
+      "confidence": "high",
+      "notes": "Claude Code v2.1.78+ hardcoded .claude/ protected; only PermissionRequest hook bypass works",
+      "baseline": {
+        "top_k_ids": [],
+        "ndcg_at_5": 0.5,
+        "latency_ms": 17490.0,
+        "error": null
+      },
+      "rerank": {
+        "top_k_ids": [],
+        "ndcg_at_5": 1.0,
+        "latency_ms": 38806.0,
+        "error": null,
+        "rerank_meta": {}
+      },
+      "verdict": "shuffled_improved"
+    },
+    {
+      "query": "agent-browser windows daemon socket broken",
+      "relevant_id": "b3a20b27-6096-4b4c-af4e-9277406ae0b9",
+      "type": "ARCHITECTURAL_DECISION",
+      "scope": "GLOBAL",
+      "confidence": "high",
+      "notes": "agent-browser CLI non-functional on Windows; use playwright-core via CDP",
+      "baseline": {
+        "top_k_ids": [],
+        "ndcg_at_5": 0.631,
+        "latency_ms": 17007.0,
+        "error": null
+      },
+      "rerank": {
+        "top_k_ids": [],
+        "ndcg_at_5": 0.631,
+        "latency_ms": 35567.0,
+        "error": null,
+        "rerank_meta": {}
+      },
+      "verdict": "shuffled_no_change"
+    },
+    {
+      "query": "architecture docs index two hops navigation",
+      "relevant_id": "22975c4e-6b0f-4624-a8cf-519c82fc6762",
+      "type": "ARCHITECTURAL_DECISION",
+      "scope": "GLOBAL",
+      "confidence": "high",
+      "notes": "Navigable architecture docs layer at ~/.claude/docs/architecture/",
+      "baseline": {
+        "top_k_ids": [],
+        "ndcg_at_5": 0.0,
+        "latency_ms": 15751.0,
+        "error": null
+      },
+      "rerank": {
+        "top_k_ids": [],
+        "ndcg_at_5": 0.0,
+        "latency_ms": 37736.0,
+        "error": null,
+        "rerank_meta": {}
+      },
+      "verdict": "both_miss"
+    },
+    {
+      "query": "ralph e2e cli task tracker grade",
+      "relevant_id": "5ff3a2df-8f48-454e-bfef-5e092eb3d807",
+      "type": "ARCHITECTURAL_DECISION",
+      "scope": "GLOBAL",
+      "confidence": "high",
+      "notes": "Ralph first E2E run grade A; 43/43 tests, 4-layer architecture",
+      "baseline": {
+        "top_k_ids": [],
+        "ndcg_at_5": 0.0,
+        "latency_ms": 17676.0,
+        "error": null
+      },
+      "rerank": {
+        "top_k_ids": [],
+        "ndcg_at_5": 1.0,
+        "latency_ms": 38367.0,
+        "error": null,
+        "rerank_meta": {}
+      },
+      "verdict": "rescued"
+    },
+    {
+      "query": "fastmcp railway port deployment first try",
+      "relevant_id": "deb3a478-f2ae-41b3-bfc3-061708bd4efe",
+      "type": "CODEBASE_PATTERN",
+      "scope": "GLOBAL",
+      "confidence": "high",
+      "notes": "FastMCP Railway deploy: bind PORT env, avoid uv run, pick one start-command source",
+      "baseline": {
+        "top_k_ids": [],
+        "ndcg_at_5": 1.0,
+        "latency_ms": 16254.0,
+        "error": null
+      },
+      "rerank": {
+        "top_k_ids": [],
+        "ndcg_at_5": 1.0,
+        "latency_ms": 40794.0,
+        "error": null,
+        "rerank_meta": {}
+      },
+      "verdict": "shuffled_no_change"
+    },
+    {
+      "query": "fourth salesforce middleware chain order",
+      "relevant_id": "6a172c1b-68c6-40ae-918b-887279f4b524",
+      "type": "CODEBASE_PATTERN",
+      "scope": "GLOBAL",
+      "confidence": "high",
+      "notes": "fourth-salesforce-mcp Phase 5 6-layer FastMCP governance middleware chain",
+      "baseline": {
+        "top_k_ids": [],
+        "ndcg_at_5": 1.0,
+        "latency_ms": 13870.0,
+        "error": null
+      },
+      "rerank": {
+        "top_k_ids": [],
+        "ndcg_at_5": 1.0,
+        "latency_ms": 42670.0,
+        "error": null,
+        "rerank_meta": {}
+      },
+      "verdict": "shuffled_no_change"
+    },
+    {
+      "query": "drizzle vitest mock chain last method",
+      "relevant_id": "fedfc581-cd52-4f1d-8b14-a055ef407e28",
+      "type": "CODEBASE_PATTERN",
+      "scope": "PROJECT",
+      "confidence": "high",
+      "notes": "Drizzle ORM vitest mock chain: last method uses mockResolvedValue",
+      "baseline": {
+        "top_k_ids": [],
+        "ndcg_at_5": 0.0,
+        "latency_ms": 22671.0,
+        "error": null
+      },
+      "rerank": {
+        "top_k_ids": [],
+        "ndcg_at_5": 1.0,
+        "latency_ms": 43358.0,
+        "error": null,
+        "rerank_meta": {}
+      },
+      "verdict": "rescued"
+    },
+    {
+      "query": "windows path backslash hook regex",
+      "relevant_id": "3de86516-43e2-4304-a109-62a6f5b8b8d7",
+      "type": "CODEBASE_PATTERN",
+      "scope": "PROJECT",
+      "confidence": "high",
+      "notes": "Windows backslash paths in Claude Code hooks; normalize early or dual-separator regex",
+      "baseline": {
+        "top_k_ids": [],
+        "ndcg_at_5": 0.431,
+        "latency_ms": 18568.0,
+        "error": null
+      },
+      "rerank": {
+        "top_k_ids": [],
+        "ndcg_at_5": 1.0,
+        "latency_ms": 44233.0,
+        "error": null,
+        "rerank_meta": {}
+      },
+      "verdict": "shuffled_improved"
+    },
+    {
+      "query": "hook tests session id state file mismatch",
+      "relevant_id": "9e0037df-9de3-494f-b80e-ec7207c25d1f",
+      "type": "CODEBASE_PATTERN",
+      "scope": "GLOBAL",
+      "confidence": "high",
+      "notes": "Hook tests must pass session_id; PID-based defaults break state file matching",
+      "baseline": {
+        "top_k_ids": [],
+        "ndcg_at_5": 0.0,
+        "latency_ms": 15781.0,
+        "error": null
+      },
+      "rerank": {
+        "top_k_ids": [],
+        "ndcg_at_5": 0.0,
+        "latency_ms": 44697.0,
+        "error": null,
+        "rerank_meta": {}
+      },
+      "verdict": "both_miss"
+    }
+  ]
+}
