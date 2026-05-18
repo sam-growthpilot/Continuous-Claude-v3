@@ -264,9 +264,10 @@ class DaemonManager:
     didn't start (avoids stomping on other terminals).
     """
 
-    def __init__(self, enabled: bool, repo_root: Path) -> None:
+    def __init__(self, enabled: bool, repo_root: Path, startup_timeout_s: float = 180.0) -> None:
         self.enabled = enabled
         self.repo_root = repo_root
+        self.startup_timeout_s = startup_timeout_s
         self.info: dict[str, Any] | None = None
         self.spawned_by_us = False
         self.proc: subprocess.Popen[bytes] | None = None
@@ -301,6 +302,10 @@ class DaemonManager:
                 subprocess.CREATE_NEW_PROCESS_GROUP  # type: ignore[attr-defined]
                 | getattr(subprocess, "CREATE_NO_WINDOW", 0)
             )
+        # Capture daemon stderr to a tempfile so startup failures are diagnosable.
+        daemon_log_path = Path(tempfile.gettempdir()) / "ccv3-rerank-daemon.log"
+        print(f"[eval] daemon stderr -> {daemon_log_path}", file=sys.stderr)
+        daemon_log = open(daemon_log_path, "w")  # noqa: WPS515
         self.proc = subprocess.Popen(  # noqa: S603
             [
                 "uv", "run", "--project", str(self.repo_root / "opc"),
@@ -309,17 +314,18 @@ class DaemonManager:
             ],
             cwd=str(self.repo_root),
             stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
+            stderr=daemon_log,
             stdin=subprocess.DEVNULL,
             creationflags=creationflags,
         )
         self.spawned_by_us = True
 
-        info = _wait_for_daemon(timeout_s=60.0, poll_interval=1.0)
+        info = _wait_for_daemon(timeout_s=self.startup_timeout_s, poll_interval=1.0)
         if not info:
             raise RuntimeError(
-                "rerank daemon failed to become ready within 60s "
-                f"(discovery file: {DAEMON_INFO_PATH})"
+                f"rerank daemon failed to become ready within {self.startup_timeout_s}s "
+                f"(discovery file: {DAEMON_INFO_PATH}; "
+                f"see daemon log: {daemon_log_path})"
             )
         self.info = info
         print(
@@ -965,6 +971,9 @@ def main() -> int:
                         help="Cap at first N pairs (for smoke testing; default = all)")
     parser.add_argument("--warmup", action="store_true",
                         help="Discard first 2 calls of each arm from latency stats (cold-start exclusion)")
+    parser.add_argument("--daemon-startup-timeout", type=float, default=180.0,
+                        help="Seconds to wait for daemon to load model on cold start "
+                             "(default 180; bump to 300 on slow hardware)")
     parser.add_argument("--recall-timeout-baseline", type=float, default=60.0,
                         help="Per-call timeout for baseline recall (seconds, default 60)")
     parser.add_argument("--recall-timeout-rerank", type=float, default=180.0,
@@ -1015,6 +1024,7 @@ def main() -> int:
     daemon = DaemonManager(
         enabled=(args.daemon_mode and run_rerank),
         repo_root=repo_root,
+        startup_timeout_s=args.daemon_startup_timeout,
     )
     atexit.register(daemon.stop)
     try:

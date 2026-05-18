@@ -45,6 +45,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
 import os
 import signal
 import socket
@@ -539,8 +540,12 @@ def _run_bench(args: argparse.Namespace) -> int:
         times.append((time.perf_counter() - t0) * 1000)
 
     times.sort()
-    p50_ms = times[len(times) // 2]
-    p95_ms = times[max(0, int(len(times) * 0.95) - 1)]
+    # Percentiles use math.ceil nearest-rank, matching eval_recall._percentile.
+    # For even n, p50 averages the two middle values (true median).
+    n = len(times)
+    _mid = n // 2
+    p50_ms = (times[_mid - 1] + times[_mid]) / 2.0 if n % 2 == 0 else times[_mid]
+    p95_ms = times[min(n - 1, int(math.ceil(n * 0.95)) - 1)]
     out = {
         "cold_ms": cold_ms,
         "warmup_ms": warmup_ms,
