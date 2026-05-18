@@ -537,7 +537,7 @@ function checkLocalMemory(intent, projectDir) {
 }
 function checkDbMemory(intent, _projectDir, useHybrid) {
   const opcDir = getOpcDir();
-  if (!opcDir) return [];
+  if (!opcDir) return [[], false];
   const searchTerm = intent.replace(/[_\/]/g, " ").replace(/\b\w{1,2}\b/g, "").replace(/\s+/g, " ").trim();
   const args = [
     "run",
@@ -559,18 +559,19 @@ function checkDbMemory(intent, _projectDir, useHybrid) {
       ...process.env,
       PYTHONPATH: opcDir
     },
-    timeout: 2e3,
+    timeout: 8e3,
     killSignal: "SIGKILL"
   });
+  const timedOut = result.signal === "SIGKILL";
   if (result.status !== 0 || !result.stdout) {
-    return [];
+    return [[], timedOut];
   }
   try {
     const data = JSON.parse(result.stdout);
     if (!data.results || data.results.length === 0) {
-      return [];
+      return [[], false];
     }
-    return (data.results || []).map((r) => {
+    const results = (data.results || []).map((r) => {
       const content = r.content || "";
       const preview = content.split("\n").filter((l) => l.trim().length > 0).map((l) => l.trim()).join(" ").slice(0, 120);
       return {
@@ -580,8 +581,9 @@ function checkDbMemory(intent, _projectDir, useHybrid) {
         score: r.score || 0
       };
     });
+    return [results, false];
   } catch {
-    return [];
+    return [[], false];
   }
 }
 function mergeResults(local, db) {
@@ -684,7 +686,7 @@ async function main() {
     }
   }
   const local = checkLocalMemory(intent, projectDir);
-  const db = checkDbMemory(intent, projectDir, daemonReady);
+  const [db, dbTimedOut] = checkDbMemory(intent, projectDir, daemonReady);
   const mergedRaw = mergeResults(local, db);
   const floorApplied = daemonReady ? HYBRID_FLOOR : TEXT_ONLY_FLOOR;
   const match = applyFloor(mergedRaw, floorApplied);
@@ -701,7 +703,10 @@ async function main() {
     mode,
     daemon_ready: daemonReady,
     total_elapsed_ms: Date.now() - t0,
-    floor_applied: floorApplied
+    floor_applied: floorApplied,
+    // MEDIUM-2 (arbiter 2.1): true = subprocess SIGKILLed before returning
+    // output; false = completed normally (even if results_count is 0).
+    db_subprocess_timed_out: dbTimedOut
   };
   logRecallFire(logEntry, projectDir);
   if (match) {

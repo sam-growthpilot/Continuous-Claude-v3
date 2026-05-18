@@ -184,14 +184,17 @@ function checkLocalMemory(intent: string, projectDir: string): LearningResult[] 
  *
  * When ``useHybrid`` is false (daemon not ready), runs ``--text-only``.
  * This preserves the Phase 1 fallback path byte-for-byte.
+ *
+ * Returns a tuple: [results, timedOut]. timedOut=true when the subprocess
+ * was SIGKILLed before returning output (used by caller for MEDIUM-2 log).
  */
 function checkDbMemory(
   intent: string,
   _projectDir: string,
   useHybrid: boolean,
-): LearningResult[] {
+): [LearningResult[], boolean] {
   const opcDir = getOpcDir();
-  if (!opcDir) return [];
+  if (!opcDir) return [[], false];
 
   const searchTerm = intent
     .replace(/[_\/]/g, ' ')
@@ -208,10 +211,8 @@ function checkDbMemory(
   if (!useHybrid) {
     args.push('--text-only');
   }
-  // Hybrid path uses the daemon (when alive) via recall_learnings.py's
-  // own daemon routing logic. Timeout stays at 2s -- that's enough for
-  // a warm daemon embed (~30-100ms) + FTS + RRF + I/O.
-
+  // 8s budget: uv run startup ~2.2s on Windows + Python imports + DB + rerank/embed
+  // Was 2000ms in Phase 1; SIGKILLed every recall on Windows (bug arbiter 2.1 HIGH-1).
   const result = spawnSync('uv', args, {
     encoding: 'utf-8',
     cwd: opcDir,
@@ -219,22 +220,25 @@ function checkDbMemory(
       ...process.env,
       PYTHONPATH: opcDir
     },
-    timeout: 2000,
+    timeout: 8000,
     killSignal: 'SIGKILL',
   });
 
+  // Detect timeout: spawnSync sets signal='SIGKILL' when the timeout fires.
+  const timedOut = result.signal === 'SIGKILL';
+
   if (result.status !== 0 || !result.stdout) {
-    return [];
+    return [[], timedOut];
   }
 
   try {
     const data = JSON.parse(result.stdout);
 
     if (!data.results || data.results.length === 0) {
-      return [];
+      return [[], false];
     }
 
-    return (data.results || []).map((r: any) => {
+    const results = (data.results || []).map((r: any) => {
       const content = r.content || '';
       const preview = content
         .split('\n')
@@ -250,8 +254,9 @@ function checkDbMemory(
         score: r.score || 0,
       };
     });
+    return [results, false];
   } catch {
-    return [];
+    return [[], false];
   }
 }
 
@@ -363,7 +368,7 @@ function checkMemoryRelevance(
   if (!intent || intent.length < 3) return null;
 
   const local = checkLocalMemory(intent, projectDir);
-  const db = checkDbMemory(intent, projectDir, useHybrid);
+  const [db] = checkDbMemory(intent, projectDir, useHybrid);
 
   const merged = mergeResults(local, db);
   const floor = useHybrid ? HYBRID_FLOOR : TEXT_ONLY_FLOOR;
@@ -389,6 +394,10 @@ interface RecallLogEntry {
   total_elapsed_ms: number;
   // Task 1.3a: record which floor was applied so /memory-stats can verify.
   floor_applied: number;
+  // Task 2.1a MEDIUM-2: distinguish "subprocess SIGKILLed by timeout" from
+  // "no matches found". true = subprocess was killed before returning output;
+  // false = subprocess completed (even if results_count is 0).
+  db_subprocess_timed_out?: boolean;
 }
 
 function getRecallLogPath(projectDir: string): string {
@@ -466,7 +475,7 @@ async function main() {
   // FTS ts_rank scores (0.05-0.5); using the wrong floor silently drops
   // all daemon-returned matches.
   const local = checkLocalMemory(intent, projectDir);
-  const db = checkDbMemory(intent, projectDir, daemonReady);
+  const [db, dbTimedOut] = checkDbMemory(intent, projectDir, daemonReady);
   const mergedRaw = mergeResults(local, db);
   const floorApplied = daemonReady ? HYBRID_FLOOR : TEXT_ONLY_FLOOR;
   const match = applyFloor(mergedRaw, floorApplied);
@@ -491,6 +500,9 @@ async function main() {
     daemon_ready: daemonReady,
     total_elapsed_ms: Date.now() - t0,
     floor_applied: floorApplied,
+    // MEDIUM-2 (arbiter 2.1): true = subprocess SIGKILLed before returning
+    // output; false = completed normally (even if results_count is 0).
+    db_subprocess_timed_out: dbTimedOut,
   };
   logRecallFire(logEntry, projectDir);
 

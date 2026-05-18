@@ -379,7 +379,17 @@ class TestSearchLearningsPostgres:
 
     @pytest.mark.asyncio
     async def test_vector_search_with_embeddings(self, mock_db_pool, sample_learnings):
-        """Verify vector search when embeddings exist."""
+        """Verify vector search when embeddings exist.
+
+        MEDIUM-1 (arbiter 2.1): inject a mock 'core.embedding_daemon' module
+        into sys.modules so the lazy import inside _embed_query_with_daemon
+        (``from core import embedding_daemon as _ed``) gets a stub whose
+        daemon_is_alive returns (False, None). This forces the in-process
+        EmbeddingService path regardless of whether the real daemon is running.
+        Without this isolation the test was daemon-state-dependent (passes when
+        daemon down, fails when daemon up -- regression introduced in commit
+        36b241a via the daemon-route decision inside recall_learnings.py).
+        """
         pool, conn = mock_db_pool
         conn.fetchrow = AsyncMock(return_value={"cnt": 5})
         rows = [make_db_row(sample_learnings[0])]
@@ -393,9 +403,17 @@ class TestSearchLearningsPostgres:
         async def mock_init_pgvector(conn):
             pass
 
+        # Build a minimal stub for the embedding_daemon module.
+        # daemon_is_alive returning (False, None) forces recall_learnings.py
+        # to skip the daemon and fall through to the in-process embedder,
+        # making the test hermetic regardless of real daemon state.
+        mock_daemon_module = MagicMock()
+        mock_daemon_module.daemon_is_alive.return_value = (False, None)
+
         with patch("db.postgres_pool.get_pool", mock_get_pool), \
              patch("db.postgres_pool.init_pgvector", mock_init_pgvector), \
-             patch("db.embedding_service.EmbeddingService", return_value=mock_embedder):
+             patch("db.embedding_service.EmbeddingService", return_value=mock_embedder), \
+             patch.dict("sys.modules", {"core.embedding_daemon": mock_daemon_module}):
             from scripts.core.recall_learnings import search_learnings_postgres
             results = await search_learnings_postgres("typescript", k=5)
 
