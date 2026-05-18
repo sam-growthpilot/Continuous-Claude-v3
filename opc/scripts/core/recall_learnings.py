@@ -207,6 +207,155 @@ def _build_scope_clause(
 DEFAULT_DECAY_LAMBDA = 0.02
 
 
+# Task 1.4 (Task #11 Path A): persistent BGE embedding daemon.
+#
+# When the daemon is alive at $TEMP/ccv3-embedding.json AND ping responds
+# ready=True under EMBED_DAEMON_PING_TIMEOUT_S, query embeds are routed
+# through the daemon (TCP loopback, length-prefixed JSON frames) instead
+# of paying the ~30s sentence-transformers import tax in-process.
+#
+# The daemon's embed output byte-for-byte matches LocalEmbeddingProvider
+# (verified in kraken handoff smoke check, max_diff=0.00 on bge-large),
+# so cosine similarity against rows stored in archival_memory.embedding
+# is preserved.
+#
+# Fallback: any failure (no daemon, dead PID, slow ping, embed error,
+# or non-local provider) routes through the in-process EmbeddingService
+# path. The provider arg must equal "local" to use the daemon -- Voyage
+# is API-backed and doesn't have the cold-start problem.
+EMBED_DAEMON_PING_TIMEOUT_S = 0.2
+EMBED_DAEMON_CALL_TIMEOUT_S = 30.0
+
+
+async def _embed_query_with_daemon(
+    query: str,
+    provider: str,
+    meta_out: dict[str, Any] | None = None,
+) -> list[float]:
+    """Embed ``query`` via the embedding daemon when alive, else in-process.
+
+    Mirrors the rerank daemon routing pattern (``_apply_rerank``). When the
+    daemon is reachable AND its ping responds with ``ready: true`` AND the
+    requested provider is ``"local"`` (the only one the daemon serves),
+    we send an ``embed`` request and return the vector. Otherwise we fall
+    back to ``EmbeddingService(provider).embed(query)``.
+
+    The optional ``meta_out`` dict is populated with diagnostics:
+      * ``embed_used_daemon``: True iff the daemon answered with a vector.
+      * ``embed_elapsed_ms``: total time spent embedding (daemon or local).
+      * ``embed_provider``: the provider that produced the vector (echo of
+        the input arg; "local" for daemon path).
+      * ``embed_fallback_reason``: filled when used_daemon=False and a
+        non-trivial reason exists (e.g. "daemon_not_alive", "ping_failed",
+        "embed_failed", "provider_not_local").
+
+    Args:
+        query: Text to embed.
+        provider: Embedding provider name ("local" or "voyage").
+        meta_out: Optional diagnostic sink. Mutated in place when provided.
+
+    Returns:
+        Query embedding (list of floats). Dim matches the provider's model.
+    """
+    t0 = time.perf_counter()
+
+    # Only the local BGE daemon is supported. Voyage has its own latency
+    # profile (API call, no cold start) and a different dimension on some
+    # models -- the daemon would silently produce 1024-dim vectors that
+    # don't match Voyage rows. Bail out fast.
+    if provider != "local":
+        if meta_out is not None:
+            meta_out["embed_fallback_reason"] = "provider_not_local"
+        return await _embed_query_inproc(query, provider, t0, meta_out)
+
+    # Try the daemon. Import lazily so the daemon module isn't loaded
+    # unless we're actually about to use it.
+    try:
+        from core import embedding_daemon as _ed  # type: ignore
+    except ImportError:
+        if meta_out is not None:
+            meta_out["embed_fallback_reason"] = "daemon_import_error"
+        return await _embed_query_inproc(query, provider, t0, meta_out)
+
+    # Cheap discovery + PID check before paying the ping round-trip.
+    alive, info = _ed.daemon_is_alive()
+    if not alive or not info:
+        if meta_out is not None:
+            meta_out["embed_fallback_reason"] = "daemon_not_alive"
+        return await _embed_query_inproc(query, provider, t0, meta_out)
+
+    # Liveness probe with a tight timeout so we don't burn the recall
+    # budget on a hung daemon.
+    ping_resp = _ed.ping_daemon(timeout_s=EMBED_DAEMON_PING_TIMEOUT_S)
+    if not ping_resp or not ping_resp.get("ready"):
+        if meta_out is not None:
+            meta_out["embed_fallback_reason"] = (
+                "ping_failed" if not ping_resp else "model_not_ready"
+            )
+        return await _embed_query_inproc(query, provider, t0, meta_out)
+
+    # Sanity-check: model + dim must match what's stored in archival_memory.
+    # If the daemon was started against a different model (bge-base etc.),
+    # bail out -- silent dim mismatch would corrupt recall.
+    if ping_resp.get("model") != "BAAI/bge-large-en-v1.5" or ping_resp.get("dim") != 1024:
+        if meta_out is not None:
+            meta_out["embed_fallback_reason"] = "daemon_model_mismatch"
+            meta_out["daemon_model"] = ping_resp.get("model")
+            meta_out["daemon_dim"] = ping_resp.get("dim")
+        return await _embed_query_inproc(query, provider, t0, meta_out)
+
+    # Send the embed request.
+    resp = _ed.embed_via_daemon(query, timeout_s=EMBED_DAEMON_CALL_TIMEOUT_S)
+    if resp is None or "vector" not in resp:
+        if meta_out is not None:
+            meta_out["embed_fallback_reason"] = (
+                "embed_failed" if resp is None else "embed_no_vector"
+            )
+            if resp is not None and "error" in resp:
+                meta_out["embed_daemon_error"] = resp["error"]
+        return await _embed_query_inproc(query, provider, t0, meta_out)
+
+    elapsed_ms = (time.perf_counter() - t0) * 1000
+    if meta_out is not None:
+        meta_out["embed_used_daemon"] = True
+        meta_out["embed_elapsed_ms"] = elapsed_ms
+        meta_out["embed_provider"] = provider
+        meta_out["embed_dim"] = len(resp["vector"])
+        # Echo the daemon-internal timing for diagnostics.
+        if "elapsed_ms" in resp:
+            meta_out["embed_daemon_inner_ms"] = float(resp["elapsed_ms"])
+    return resp["vector"]
+
+
+async def _embed_query_inproc(
+    query: str,
+    provider: str,
+    t0: float,
+    meta_out: dict[str, Any] | None,
+) -> list[float]:
+    """Fallback path: load EmbeddingService in-process and embed.
+
+    Pays the ~30s sentence-transformers import + bge-large load on first
+    call within this process. Subsequent calls within the same process
+    are fast.
+    """
+    from db.embedding_service import EmbeddingService
+
+    embedder = EmbeddingService(provider=provider)
+    try:
+        vec = await embedder.embed(query)
+    finally:
+        await embedder.aclose()
+    elapsed_ms = (time.perf_counter() - t0) * 1000
+    if meta_out is not None:
+        # Don't clobber the existing fallback_reason if already set.
+        meta_out.setdefault("embed_used_daemon", False)
+        meta_out["embed_elapsed_ms"] = elapsed_ms
+        meta_out["embed_provider"] = provider
+        meta_out["embed_dim"] = len(vec)
+    return vec
+
+
 def _build_temporal_clause(
     valid_at: datetime | None,
     include_superseded: bool,
@@ -560,6 +709,7 @@ async def search_learnings_hybrid_rrf(
     valid_at: datetime | None = None,
     include_superseded: bool = False,
     decay_lambda: float = DEFAULT_DECAY_LAMBDA,
+    embed_meta_out: dict[str, Any] | None = None,
 ) -> list[dict[str, Any]]:
     """Hybrid RRF search combining text and vector rankings.
 
@@ -591,7 +741,6 @@ async def search_learnings_hybrid_rrf(
         GLOBAL-scoped rows are always visible. Pass scope_mode='all' to drop
         the filter (debug only).
     """
-    from db.embedding_service import EmbeddingService
     from db.memory_service_pg import build_rrf_sql
     from db.postgres_pool import get_pool, init_pgvector
 
@@ -601,12 +750,15 @@ async def search_learnings_hybrid_rrf(
 
     pool = await get_pool()
 
-    # Generate query embedding
-    embedder = EmbeddingService(provider=provider)
-    try:
-        query_embedding = await embedder.embed(query)
-    finally:
-        await embedder.aclose()
+    # Generate query embedding. Task 1.4: route through the embedding
+    # daemon when alive, else fall back to in-process. Diagnostics land
+    # in embed_meta_out (mutated dict), which main() merges into the
+    # JSON `_meta` block.
+    query_embedding = await _embed_query_with_daemon(
+        query=query,
+        provider=provider,
+        meta_out=embed_meta_out,
+    )
 
     # Filter to learning-typed entries (or untyped legacy rows), with content
     # length and a known agent-failure exclusion. Phase 3B: WHERE-only fragment;
@@ -720,6 +872,7 @@ async def search_learnings_postgres(
     valid_at: datetime | None = None,
     include_superseded: bool = False,
     decay_lambda: float = DEFAULT_DECAY_LAMBDA,
+    embed_meta_out: dict[str, Any] | None = None,
 ) -> list[dict[str, Any]]:
     """Search learnings using PostgreSQL (vector similarity or text fallback).
 
@@ -741,7 +894,6 @@ async def search_learnings_postgres(
         final_score, age_days alongside the legacy similarity field (which
         mirrors final_score for back-compat).
     """
-    from db.embedding_service import EmbeddingService
     from db.postgres_pool import get_pool
 
     # Auto-resolve scope when caller didn't pass it explicitly
@@ -789,12 +941,13 @@ async def search_learnings_postgres(
     )
 
     if has_embeddings:
-        # Vector similarity search
-        embedder = EmbeddingService(provider=provider)
-        try:
-            query_embedding = await embedder.embed(query)
-        finally:
-            await embedder.aclose()
+        # Vector similarity search. Task 1.4: route through the embedding
+        # daemon when alive, else fall back to in-process.
+        query_embedding = await _embed_query_with_daemon(
+            query=query,
+            provider=provider,
+            meta_out=embed_meta_out,
+        )
 
         async with pool.acquire() as conn:
             from db.postgres_pool import init_pgvector
@@ -1009,6 +1162,7 @@ async def search_learnings(
     valid_at: datetime | None = None,
     include_superseded: bool = False,
     decay_lambda: float = DEFAULT_DECAY_LAMBDA,
+    embed_meta_out: dict[str, Any] | None = None,
 ) -> list[dict[str, Any]]:
     """Search archival_memory for session learnings.
 
@@ -1051,6 +1205,7 @@ async def search_learnings(
             valid_at=valid_at,
             include_superseded=include_superseded,
             decay_lambda=decay_lambda,
+            embed_meta_out=embed_meta_out,
         )
 
 
@@ -1430,6 +1585,10 @@ async def main() -> int:
     # Task 3.2 will decide whether to flip the default.
     apply_rerank = False
     rerank_meta: dict[str, Any] = {}
+    # Task 1.4: capture embedding-path diagnostics so JSON output can
+    # surface whether the query embed went through the daemon. Populated
+    # by _embed_query_with_daemon; merged into the _meta block below.
+    embed_meta: dict[str, Any] = {}
     if args.rerank:
         # The hybrid-RRF default is "no --text-only, no --vector-only, no
         # --pageindex, postgres backend, and not the --hybrid PageIndex
@@ -1506,6 +1665,7 @@ async def main() -> int:
                     valid_at=valid_at,
                     include_superseded=args.include_superseded,
                     decay_lambda=decay_lambda,
+                    embed_meta_out=embed_meta,
                 )
 
             for r in vector_results:
@@ -1548,6 +1708,7 @@ async def main() -> int:
                 valid_at=valid_at,
                 include_superseded=args.include_superseded,
                 decay_lambda=decay_lambda,
+                embed_meta_out=embed_meta,
             )
         else:
             # Default: Hybrid RRF search (text + vector combined).
@@ -1563,6 +1724,7 @@ async def main() -> int:
                 valid_at=valid_at,
                 include_superseded=args.include_superseded,
                 decay_lambda=decay_lambda,
+                embed_meta_out=embed_meta,
             )
 
             # Phase 2 (Task 1.3): Stage-2 cross-encoder rerank over the
@@ -1631,11 +1793,18 @@ async def main() -> int:
 
             json_results.append(entry)
         # Phase 2 (Task 1.3): include _meta block carrying rerank diagnostics
-        # when --rerank was used. Kept absent when no rerank happened so
-        # callers that parse the JSON aren't surprised.
+        # when --rerank was used. Task 1.4: also surface embedding-path
+        # diagnostics (embed_used_daemon, embed_elapsed_ms) when the path
+        # touched the vector index. Kept absent when no diagnostics were
+        # collected so callers that parse the JSON aren't surprised.
         out_doc: dict[str, Any] = {"results": json_results}
+        combined_meta: dict[str, Any] = {}
         if rerank_meta:
-            out_doc["_meta"] = rerank_meta
+            combined_meta.update(rerank_meta)
+        if embed_meta:
+            combined_meta.update(embed_meta)
+        if combined_meta:
+            out_doc["_meta"] = combined_meta
         print(json.dumps(out_doc))
         return 0
 
@@ -1656,6 +1825,15 @@ async def main() -> int:
             )
     elif rerank_meta and rerank_meta.get("rerank_status") == "failed":
         print(f"  (rerank failed: {rerank_meta.get('reason')})")
+    # Task 1.4: surface embedding-daemon usage when the vector path ran.
+    if embed_meta and "embed_used_daemon" in embed_meta:
+        em_used = embed_meta.get("embed_used_daemon")
+        em_ms = embed_meta.get("embed_elapsed_ms")
+        if em_ms is not None:
+            print(
+                f"  (embedded via {'daemon' if em_used else 'in-process'} "
+                f"in {em_ms:.0f}ms)"
+            )
     print()
 
     for i, result in enumerate(results, 1):
