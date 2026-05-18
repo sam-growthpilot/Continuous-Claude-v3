@@ -6,16 +6,28 @@
  *
  * Flow:
  * 1. Extract INTENT from user prompt (via shared/intent-extractor)
- * 2. Run local-memory + DB-memory checks in parallel
- * 3. Merge & dedupe results, apply PROACTIVE_INJECTION_FLOOR
- * 4. If results survive floor, inject MEMORY MATCH context for Claude
- * 5. Log every fire to <project>/.claude/logs/memory-recall.jsonl
+ * 2. Probe BGE embedding daemon ($TEMP/ccv3-embedding.json, 200ms budget)
+ *    - Ready -> hybrid RRF (vector + FTS) via recall_learnings.py default mode
+ *    - Not ready -> fall back to --text-only AND fire-and-forget spawn the
+ *      daemon so the NEXT prompt benefits
+ * 3. Run local-memory + DB-memory checks in parallel
+ * 4. Merge & dedupe results, apply PROACTIVE_INJECTION_FLOOR
+ * 5. If results survive floor, inject MEMORY MATCH context for Claude
+ * 6. Log every fire to <project>/.claude/logs/memory-recall.jsonl with
+ *    daemon-routing metadata (mode, daemon_ready, total_elapsed_ms)
  *
  * Story: memory-hardening-2026-05-16, Wave 3 (Tasks 9 + 10).
  *  - Task 9: de-shadow local memory (merge local + DB instead of short-circuit)
  *  - Task 10: append observability log (memory-recall.jsonl) for every fire
  *  - Wave 3 cleanup: replace inline extractIntent/extractKeywords with
  *    imports from shared/intent-extractor (Wave 2 owns that file).
+ *
+ * Task #11 Path A (Tasks 1.2 + 1.3, 2026-05-18):
+ *  - Daemon-routed hybrid recall when the BGE embedding daemon is hot.
+ *  - Fallback path is byte-identical to Phase 1 behavior.
+ *  - PROACTIVE_INJECTION_FLOOR (0.05) is unchanged. The hybrid path can
+ *    produce RRF scores in the 0.01-0.05 range, but the existing local
+ *    + text floor logic stays in place to preserve current cuts.
  */
 
 import { readFileSync, existsSync, mkdirSync, appendFileSync } from 'fs';
@@ -25,6 +37,7 @@ import { getOpcDir } from './shared/opc-path.js';
 import { outputContinue } from './shared/output.js';
 import { logHook } from './shared/session-activity.js';
 import { extractIntent, extractKeywords } from './shared/intent-extractor.js';
+import { isDaemonReady, ensureDaemonRunning } from './shared/embedding-client.js';
 
 const PROACTIVE_INJECTION_FLOOR = 0.05;
 
@@ -162,8 +175,20 @@ function checkLocalMemory(intent: string, projectDir: string): LearningResult[] 
 /**
  * Query the global archival memory DB via recall_learnings.py.
  * Returns the raw (unfiltered) result list — caller applies floor + merge.
+ *
+ * When ``useHybrid`` is true, runs the default (RRF vector + FTS) path.
+ * The Python side (Task 1.4, commit 36b241a) routes the query embed
+ * through the BGE embedding daemon at ``$TEMP/ccv3-embedding.json`` so
+ * we don't pay the ~30s sentence-transformers import tax per call.
+ *
+ * When ``useHybrid`` is false (daemon not ready), runs ``--text-only``.
+ * This preserves the Phase 1 fallback path byte-for-byte.
  */
-function checkDbMemory(intent: string, _projectDir: string): LearningResult[] {
+function checkDbMemory(
+  intent: string,
+  _projectDir: string,
+  useHybrid: boolean,
+): LearningResult[] {
   const opcDir = getOpcDir();
   if (!opcDir) return [];
 
@@ -173,13 +198,20 @@ function checkDbMemory(intent: string, _projectDir: string): LearningResult[] {
     .replace(/\s+/g, ' ')
     .trim();
 
-  const result = spawnSync('uv', [
+  const args = [
     'run', 'python', 'scripts/core/recall_learnings.py',
     '--query', searchTerm,
     '--k', '3',
     '--json',
-    '--text-only'
-  ], {
+  ];
+  if (!useHybrid) {
+    args.push('--text-only');
+  }
+  // Hybrid path uses the daemon (when alive) via recall_learnings.py's
+  // own daemon routing logic. Timeout stays at 2s -- that's enough for
+  // a warm daemon embed (~30-100ms) + FTS + RRF + I/O.
+
+  const result = spawnSync('uv', args, {
     encoding: 'utf-8',
     cwd: opcDir,
     env: {
@@ -311,12 +343,22 @@ function applyFloor(match: MemoryMatch | null): MemoryMatch | null {
  * Previously this short-circuited on a local hit, which could mask better
  * global archival_memory rows. Now we ALWAYS query both sources, merge,
  * dedupe, sort, and slice to the top 3 — then apply the floor.
+ *
+ * Task 1.3: ``useHybrid`` forwards to ``checkDbMemory`` so the DB path
+ * uses RRF (vector + FTS) when the BGE embedding daemon is ready. Kept
+ * as a helper for callers that want a single entrypoint; ``main`` now
+ * inlines the local/db/merge sequence so it can record diagnostics
+ * (mode, daemon_ready, total_elapsed_ms) in the recall log.
  */
-function checkMemoryRelevance(intent: string, projectDir: string): MemoryMatch | null {
+function checkMemoryRelevance(
+  intent: string,
+  projectDir: string,
+  useHybrid: boolean = false,
+): MemoryMatch | null {
   if (!intent || intent.length < 3) return null;
 
   const local = checkLocalMemory(intent, projectDir);
-  const db = checkDbMemory(intent, projectDir);
+  const db = checkDbMemory(intent, projectDir, useHybrid);
 
   const merged = mergeResults(local, db);
   return applyFloor(merged);
@@ -335,6 +377,10 @@ interface RecallLogEntry {
   top_score: number;
   kept_after_floor: number;
   source: MemorySource;
+  // Task 1.3 diagnostics: track daemon-routing decisions for observability.
+  mode: 'hybrid' | 'text-only';
+  daemon_ready: boolean;
+  total_elapsed_ms: number;
 }
 
 function getRecallLogPath(projectDir: string): string {
@@ -354,6 +400,7 @@ function logRecallFire(entry: RecallLogEntry, projectDir: string): void {
 }
 
 async function main() {
+  const t0 = Date.now();
   const input: UserPromptSubmitInput = JSON.parse(readStdin());
   const projectDir = process.env.CLAUDE_PROJECT_DIR || input.cwd;
 
@@ -387,15 +434,35 @@ async function main() {
     return;
   }
 
+  // Task 1.3: probe BGE embedding daemon. If ready, use hybrid (vector +
+  // FTS) recall; otherwise fall back to text-only and fire-and-forget the
+  // daemon spawn so the NEXT prompt benefits.
+  //
+  // The probe is bounded to 200ms (DEFAULT_PING_TIMEOUT_MS inside the
+  // client) so we never burn the hook's 2s budget on a hung daemon.
+  let daemonReady = false;
+  try {
+    daemonReady = await isDaemonReady();
+  } catch {
+    daemonReady = false;
+  }
+  const mode: 'hybrid' | 'text-only' = daemonReady ? 'hybrid' : 'text-only';
+  if (!daemonReady) {
+    // Best-effort: warm the daemon for next prompt. Detached spawn -- this
+    // returns immediately and does NOT block this prompt.
+    try { ensureDaemonRunning(); } catch { /* fail-open */ }
+  }
+
   // Run both sources, merge, apply floor.
   const local = checkLocalMemory(intent, projectDir);
-  const db = checkDbMemory(intent, projectDir);
+  const db = checkDbMemory(intent, projectDir, daemonReady);
   const mergedRaw = mergeResults(local, db);
   const match = applyFloor(mergedRaw);
 
-  // Observability log (Task #10): record every fire that made it past skips.
-  // We log both hits and misses so we can find "intents that consistently
-  // miss" — but suppress entries that get filtered by the skip checks above.
+  // Observability log (Task #10 + Task 1.3): record every fire that made
+  // it past skips. We log both hits and misses so we can find "intents
+  // that consistently miss" -- but suppress entries that get filtered by
+  // the skip checks above.
   const topScoreRaw = mergedRaw && mergedRaw.results.length > 0
     ? mergedRaw.results.reduce((m, r) => Math.max(m, r.score ?? 0), 0)
     : 0;
@@ -408,6 +475,9 @@ async function main() {
     top_score: topScoreRaw,
     kept_after_floor: match ? match.results.length : 0,
     source: match ? match.source : (mergedRaw ? mergedRaw.source : 'empty'),
+    mode,
+    daemon_ready: daemonReady,
+    total_elapsed_ms: Date.now() - t0,
   };
   logRecallFire(logEntry, projectDir);
 

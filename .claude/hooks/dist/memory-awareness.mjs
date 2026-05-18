@@ -1,5 +1,5 @@
 // src/memory-awareness.ts
-import { readFileSync as readFileSync2, existsSync as existsSync3, mkdirSync as mkdirSync2, appendFileSync } from "fs";
+import { readFileSync as readFileSync3, existsSync as existsSync4, mkdirSync as mkdirSync2, appendFileSync } from "fs";
 import * as path from "path";
 import { spawnSync } from "child_process";
 
@@ -257,11 +257,215 @@ function extractIntent(prompt) {
   return intent;
 }
 
+// src/shared/embedding-client.ts
+import { existsSync as existsSync3, readFileSync as readFileSync2 } from "fs";
+import { spawn } from "child_process";
+import { tmpdir } from "os";
+import { join as join3, resolve } from "path";
+import * as net from "net";
+var DAEMON_INFO_PATH = join3(tmpdir(), "ccv3-embedding.json");
+var FRAME_SIZE_CAP_BYTES = 100 * 1024 * 1024;
+var DEFAULT_PING_TIMEOUT_MS = 200;
+var EXPECTED_MODEL = "BAAI/bge-large-en-v1.5";
+var EXPECTED_DIM = 1024;
+function sendFrame(sock, obj) {
+  const payload = Buffer.from(JSON.stringify(obj), "utf-8");
+  if (payload.length > FRAME_SIZE_CAP_BYTES) {
+    throw new Error(`frame too large: ${payload.length} bytes`);
+  }
+  const header = Buffer.alloc(4);
+  header.writeUInt32BE(payload.length, 0);
+  sock.write(Buffer.concat([header, payload]));
+}
+function recvFrame(sock, timeoutMs) {
+  return new Promise((res, rej) => {
+    let received = Buffer.alloc(0);
+    let expectedLen = null;
+    let settled = false;
+    const finish = (cb) => {
+      if (settled) return;
+      settled = true;
+      sock.removeAllListeners("data");
+      sock.removeAllListeners("error");
+      sock.removeAllListeners("close");
+      sock.removeAllListeners("timeout");
+      sock.setTimeout(0);
+      cb();
+    };
+    sock.setTimeout(timeoutMs, () => {
+      finish(() => rej(new Error("frame read timeout")));
+    });
+    sock.on("error", (err) => {
+      finish(() => rej(err));
+    });
+    sock.on("close", () => {
+      finish(
+        () => rej(new Error(`socket closed after ${received.length} bytes`))
+      );
+    });
+    sock.on("data", (chunk) => {
+      received = Buffer.concat([received, chunk]);
+      if (expectedLen === null && received.length >= 4) {
+        expectedLen = received.readUInt32BE(0);
+        if (expectedLen > FRAME_SIZE_CAP_BYTES) {
+          finish(() => rej(new Error(`frame too large: ${expectedLen} bytes`)));
+          return;
+        }
+      }
+      if (expectedLen !== null && received.length >= 4 + expectedLen) {
+        const payload = received.subarray(4, 4 + expectedLen);
+        try {
+          const parsed = JSON.parse(payload.toString("utf-8"));
+          finish(() => res(parsed));
+        } catch (err) {
+          finish(() => rej(err));
+        }
+      }
+    });
+  });
+}
+function readDaemonInfo() {
+  if (!existsSync3(DAEMON_INFO_PATH)) return null;
+  try {
+    const raw = readFileSync2(DAEMON_INFO_PATH, "utf-8");
+    const obj = JSON.parse(raw);
+    if (typeof obj !== "object" || obj === null || typeof obj.pid !== "number" || typeof obj.port !== "number" || typeof obj.started_at !== "number" || typeof obj.model !== "string" || typeof obj.dim !== "number") {
+      return null;
+    }
+    return obj;
+  } catch {
+    return null;
+  }
+}
+function isDaemonAlive(info) {
+  if (info.pid <= 0) return false;
+  try {
+    process.kill(info.pid, 0);
+    return true;
+  } catch (err) {
+    if (err && err.code === "EPERM") return true;
+    return false;
+  }
+}
+async function pingDaemon(info, timeoutMs = DEFAULT_PING_TIMEOUT_MS) {
+  return new Promise((res) => {
+    const sock = new net.Socket();
+    let settled = false;
+    const cleanup = (val) => {
+      if (settled) return;
+      settled = true;
+      try {
+        sock.setTimeout(0);
+        sock.destroy();
+      } catch {
+      }
+      res(val);
+    };
+    const connectTimer = setTimeout(() => cleanup(null), timeoutMs);
+    sock.once("error", () => {
+      clearTimeout(connectTimer);
+      cleanup(null);
+    });
+    sock.connect(info.port, "127.0.0.1", () => {
+      clearTimeout(connectTimer);
+      try {
+        sock.setNoDelay(true);
+      } catch {
+      }
+      try {
+        sendFrame(sock, { cmd: "ping" });
+      } catch {
+        cleanup(null);
+        return;
+      }
+      recvFrame(sock, timeoutMs).then((reply) => {
+        if (reply && typeof reply === "object" && typeof reply.ok === "boolean" && typeof reply.ready === "boolean") {
+          cleanup(reply);
+        } else {
+          cleanup(null);
+        }
+      }).catch(() => cleanup(null));
+    });
+  });
+}
+async function isDaemonReady() {
+  const info = readDaemonInfo();
+  if (!info) return false;
+  if (!isDaemonAlive(info)) return false;
+  if (info.model !== EXPECTED_MODEL || info.dim !== EXPECTED_DIM) return false;
+  const reply = await pingDaemon(info);
+  if (!reply) return false;
+  if (!reply.ok || !reply.ready) return false;
+  if (reply.model && reply.model !== EXPECTED_MODEL) return false;
+  if (reply.dim && reply.dim !== EXPECTED_DIM) return false;
+  return true;
+}
+function resolveRepoRoot() {
+  const envDir = process.env.CLAUDE_PROJECT_DIR;
+  if (envDir && existsSync3(join3(envDir, "opc"))) {
+    return resolve(envDir);
+  }
+  try {
+    const entry = process.argv[1];
+    if (entry) {
+      let dir = resolve(entry);
+      for (let i = 0; i < 10; i++) {
+        const parent = resolve(dir, "..");
+        if (parent === dir) break;
+        dir = parent;
+        if (existsSync3(join3(dir, "opc", "scripts", "core", "embedding_daemon.py"))) {
+          return dir;
+        }
+      }
+    }
+  } catch {
+  }
+  return null;
+}
+var _spawnAttempted = false;
+function ensureDaemonRunning() {
+  if (_spawnAttempted) return;
+  _spawnAttempted = true;
+  const info = readDaemonInfo();
+  if (info && isDaemonAlive(info)) return;
+  const repoRoot = resolveRepoRoot();
+  if (!repoRoot) {
+    console.error(
+      "[embedding-client] cannot locate repo root; daemon will not be spawned"
+    );
+    return;
+  }
+  try {
+    const child = spawn(
+      "uv",
+      ["run", "--project", "opc", "python", "opc/scripts/core/embedding_daemon.py", "--daemon"],
+      {
+        cwd: repoRoot,
+        detached: true,
+        stdio: "ignore",
+        // shell: true is needed on Windows for `uv` (a .exe shim) to
+        // resolve via PATH from a detached spawn -- without it, ENOENT.
+        shell: process.platform === "win32"
+      }
+    );
+    child.on("error", (err) => {
+      console.error(
+        `[embedding-client] daemon spawn error: ${err.message ?? err}`
+      );
+    });
+    child.unref();
+  } catch (err) {
+    console.error(
+      `[embedding-client] daemon spawn failed: ${err?.message ?? err}`
+    );
+  }
+}
+
 // src/memory-awareness.ts
 var PROACTIVE_INJECTION_FLOOR = 0.05;
 var LOCAL_SCORE_NORMALIZE = 0.1;
 function readStdin() {
-  return readFileSync2(0, "utf-8");
+  return readFileSync3(0, "utf-8");
 }
 function expandGitQuery(prompt) {
   const lower = prompt.toLowerCase().trim();
@@ -296,7 +500,7 @@ function expandGitQuery(prompt) {
 function checkLocalMemory(intent, projectDir) {
   const homeDir = process.env.HOME || process.env.USERPROFILE || "";
   const projectMemoryScript = path.join(homeDir, ".claude", "scripts", "core", "project_memory.py");
-  if (!existsSync3(projectMemoryScript)) return [];
+  if (!existsSync4(projectMemoryScript)) return [];
   try {
     const result = spawnSync("uv", [
       "run",
@@ -330,11 +534,11 @@ function checkLocalMemory(intent, projectDir) {
     return [];
   }
 }
-function checkDbMemory(intent, _projectDir) {
+function checkDbMemory(intent, _projectDir, useHybrid) {
   const opcDir = getOpcDir();
   if (!opcDir) return [];
   const searchTerm = intent.replace(/[_\/]/g, " ").replace(/\b\w{1,2}\b/g, "").replace(/\s+/g, " ").trim();
-  const result = spawnSync("uv", [
+  const args = [
     "run",
     "python",
     "scripts/core/recall_learnings.py",
@@ -342,9 +546,12 @@ function checkDbMemory(intent, _projectDir) {
     searchTerm,
     "--k",
     "3",
-    "--json",
-    "--text-only"
-  ], {
+    "--json"
+  ];
+  if (!useHybrid) {
+    args.push("--text-only");
+  }
+  const result = spawnSync("uv", args, {
     encoding: "utf-8",
     cwd: opcDir,
     env: {
@@ -441,6 +648,7 @@ function logRecallFire(entry, projectDir) {
   }
 }
 async function main() {
+  const t0 = Date.now();
   const input = JSON.parse(readStdin());
   const projectDir = process.env.CLAUDE_PROJECT_DIR || input.cwd;
   if (process.env.CLAUDE_AGENT_ID) {
@@ -461,8 +669,21 @@ async function main() {
     outputContinue();
     return;
   }
+  let daemonReady = false;
+  try {
+    daemonReady = await isDaemonReady();
+  } catch {
+    daemonReady = false;
+  }
+  const mode = daemonReady ? "hybrid" : "text-only";
+  if (!daemonReady) {
+    try {
+      ensureDaemonRunning();
+    } catch {
+    }
+  }
   const local = checkLocalMemory(intent, projectDir);
-  const db = checkDbMemory(intent, projectDir);
+  const db = checkDbMemory(intent, projectDir, daemonReady);
   const mergedRaw = mergeResults(local, db);
   const match = applyFloor(mergedRaw);
   const topScoreRaw = mergedRaw && mergedRaw.results.length > 0 ? mergedRaw.results.reduce((m, r) => Math.max(m, r.score ?? 0), 0) : 0;
@@ -474,7 +695,10 @@ async function main() {
     results_count: mergedRaw ? mergedRaw.count : 0,
     top_score: topScoreRaw,
     kept_after_floor: match ? match.results.length : 0,
-    source: match ? match.source : mergedRaw ? mergedRaw.source : "empty"
+    source: match ? match.source : mergedRaw ? mergedRaw.source : "empty",
+    mode,
+    daemon_ready: daemonReady,
+    total_elapsed_ms: Date.now() - t0
   };
   logRecallFire(logEntry, projectDir);
   if (match) {
