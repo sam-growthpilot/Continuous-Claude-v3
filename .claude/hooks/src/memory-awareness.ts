@@ -11,7 +11,7 @@
  *    - Not ready -> fall back to --text-only AND fire-and-forget spawn the
  *      daemon so the NEXT prompt benefits
  * 3. Run local-memory + DB-memory checks in parallel
- * 4. Merge & dedupe results, apply PROACTIVE_INJECTION_FLOOR
+ * 4. Merge & dedupe results, apply mode-aware floor (HYBRID_FLOOR or TEXT_ONLY_FLOOR)
  * 5. If results survive floor, inject MEMORY MATCH context for Claude
  * 6. Log every fire to <project>/.claude/logs/memory-recall.jsonl with
  *    daemon-routing metadata (mode, daemon_ready, total_elapsed_ms)
@@ -22,12 +22,12 @@
  *  - Wave 3 cleanup: replace inline extractIntent/extractKeywords with
  *    imports from shared/intent-extractor (Wave 2 owns that file).
  *
- * Task #11 Path A (Tasks 1.2 + 1.3, 2026-05-18):
+ * Task #11 Path A (Tasks 1.2 + 1.3 + 1.3a, 2026-05-18):
  *  - Daemon-routed hybrid recall when the BGE embedding daemon is hot.
  *  - Fallback path is byte-identical to Phase 1 behavior.
- *  - PROACTIVE_INJECTION_FLOOR (0.05) is unchanged. The hybrid path can
- *    produce RRF scores in the 0.01-0.05 range, but the existing local
- *    + text floor logic stays in place to preserve current cuts.
+ *  - Task 1.3a: PROACTIVE_INJECTION_FLOOR split into two mode-aware floors.
+ *    TEXT_ONLY_FLOOR=0.05 preserves Phase 1 behavior when daemon is down.
+ *    HYBRID_FLOOR=0.01 lets RRF scores (0.01-0.03 typical) pass through.
  */
 
 import { readFileSync, existsSync, mkdirSync, appendFileSync } from 'fs';
@@ -39,7 +39,8 @@ import { logHook } from './shared/session-activity.js';
 import { extractIntent, extractKeywords } from './shared/intent-extractor.js';
 import { isDaemonReady, ensureDaemonRunning } from './shared/embedding-client.js';
 
-const PROACTIVE_INJECTION_FLOOR = 0.05;
+const TEXT_ONLY_FLOOR = 0.05;  // FTS ts_rank scores: 0.05-0.5 typical
+const HYBRID_FLOOR = 0.01;     // RRF fused scores: 0.01-0.03 typical
 
 /**
  * Score-scale normalization for local results.
@@ -323,12 +324,16 @@ function mergeResults(
 }
 
 /**
- * Apply the PROACTIVE_INJECTION_FLOOR to a MemoryMatch.
+ * Apply a score floor to a MemoryMatch.
  * Returns null if nothing survives.
+ *
+ * ``floor`` must be selected by the caller based on recall mode:
+ *   hybrid    → HYBRID_FLOOR (0.01)   — RRF scores sit in 0.01-0.03 range
+ *   text-only → TEXT_ONLY_FLOOR (0.05) — FTS ts_rank scores sit in 0.05-0.5 range
  */
-function applyFloor(match: MemoryMatch | null): MemoryMatch | null {
+function applyFloor(match: MemoryMatch | null, floor: number): MemoryMatch | null {
   if (!match) return null;
-  const filtered = match.results.filter((r) => (r.score ?? 0) >= PROACTIVE_INJECTION_FLOOR);
+  const filtered = match.results.filter((r) => (r.score ?? 0) >= floor);
   if (filtered.length === 0) return null;
   return {
     count: filtered.length,
@@ -361,7 +366,8 @@ function checkMemoryRelevance(
   const db = checkDbMemory(intent, projectDir, useHybrid);
 
   const merged = mergeResults(local, db);
-  return applyFloor(merged);
+  const floor = useHybrid ? HYBRID_FLOOR : TEXT_ONLY_FLOOR;
+  return applyFloor(merged, floor);
 }
 
 // ---------------------------------------------------------------------------
@@ -381,6 +387,8 @@ interface RecallLogEntry {
   mode: 'hybrid' | 'text-only';
   daemon_ready: boolean;
   total_elapsed_ms: number;
+  // Task 1.3a: record which floor was applied so /memory-stats can verify.
+  floor_applied: number;
 }
 
 function getRecallLogPath(projectDir: string): string {
@@ -453,11 +461,15 @@ async function main() {
     try { ensureDaemonRunning(); } catch { /* fail-open */ }
   }
 
-  // Run both sources, merge, apply floor.
+  // Run both sources, merge, apply mode-appropriate floor.
+  // Hybrid RRF scores (0.01-0.03) require a lower floor than text-only
+  // FTS ts_rank scores (0.05-0.5); using the wrong floor silently drops
+  // all daemon-returned matches.
   const local = checkLocalMemory(intent, projectDir);
   const db = checkDbMemory(intent, projectDir, daemonReady);
   const mergedRaw = mergeResults(local, db);
-  const match = applyFloor(mergedRaw);
+  const floorApplied = daemonReady ? HYBRID_FLOOR : TEXT_ONLY_FLOOR;
+  const match = applyFloor(mergedRaw, floorApplied);
 
   // Observability log (Task #10 + Task 1.3): record every fire that made
   // it past skips. We log both hits and misses so we can find "intents
@@ -478,6 +490,7 @@ async function main() {
     mode,
     daemon_ready: daemonReady,
     total_elapsed_ms: Date.now() - t0,
+    floor_applied: floorApplied,
   };
   logRecallFire(logEntry, projectDir);
 
@@ -513,7 +526,8 @@ main().catch(() => {
 export {
   mergeResults,
   applyFloor,
-  PROACTIVE_INJECTION_FLOOR,
+  TEXT_ONLY_FLOOR,
+  HYBRID_FLOOR,
   LOCAL_SCORE_NORMALIZE,
 };
 export type { LearningResult, MemoryMatch, MemorySource };

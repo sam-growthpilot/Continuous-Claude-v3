@@ -462,7 +462,8 @@ function ensureDaemonRunning() {
 }
 
 // src/memory-awareness.ts
-var PROACTIVE_INJECTION_FLOOR = 0.05;
+var TEXT_ONLY_FLOOR = 0.05;
+var HYBRID_FLOOR = 0.01;
 var LOCAL_SCORE_NORMALIZE = 0.1;
 function readStdin() {
   return readFileSync3(0, "utf-8");
@@ -623,9 +624,9 @@ function mergeResults(local, db) {
     source
   };
 }
-function applyFloor(match) {
+function applyFloor(match, floor) {
   if (!match) return null;
-  const filtered = match.results.filter((r) => (r.score ?? 0) >= PROACTIVE_INJECTION_FLOOR);
+  const filtered = match.results.filter((r) => (r.score ?? 0) >= floor);
   if (filtered.length === 0) return null;
   return {
     count: filtered.length,
@@ -685,7 +686,8 @@ async function main() {
   const local = checkLocalMemory(intent, projectDir);
   const db = checkDbMemory(intent, projectDir, daemonReady);
   const mergedRaw = mergeResults(local, db);
-  const match = applyFloor(mergedRaw);
+  const floorApplied = daemonReady ? HYBRID_FLOOR : TEXT_ONLY_FLOOR;
+  const match = applyFloor(mergedRaw, floorApplied);
   const topScoreRaw = mergedRaw && mergedRaw.results.length > 0 ? mergedRaw.results.reduce((m, r) => Math.max(m, r.score ?? 0), 0) : 0;
   const logEntry = {
     timestamp: (/* @__PURE__ */ new Date()).toISOString(),
@@ -698,7 +700,8 @@ async function main() {
     source: match ? match.source : mergedRaw ? mergedRaw.source : "empty",
     mode,
     daemon_ready: daemonReady,
-    total_elapsed_ms: Date.now() - t0
+    total_elapsed_ms: Date.now() - t0,
+    floor_applied: floorApplied
   };
   logRecallFire(logEntry, projectDir);
   if (match) {
@@ -726,8 +729,9 @@ main().catch(() => {
   outputContinue();
 });
 export {
+  HYBRID_FLOOR,
   LOCAL_SCORE_NORMALIZE,
-  PROACTIVE_INJECTION_FLOOR,
+  TEXT_ONLY_FLOOR,
   applyFloor,
   extractIntent,
   extractKeywords,
