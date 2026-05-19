@@ -224,7 +224,10 @@ DEFAULT_DECAY_LAMBDA = 0.02
 # path. The provider arg must equal "local" to use the daemon -- Voyage
 # is API-backed and doesn't have the cold-start problem.
 EMBED_DAEMON_PING_TIMEOUT_S = 0.2
-EMBED_DAEMON_CALL_TIMEOUT_S = 30.0
+# Was 30.0 — too loose for hook path (8-12s subprocess budget).
+# 5.0 still gives 30x safety margin over warm p95 ~157ms; hung daemon
+# now caught before the hook itself times out.
+EMBED_DAEMON_CALL_TIMEOUT_S = 5.0
 
 
 async def _embed_query_with_daemon(

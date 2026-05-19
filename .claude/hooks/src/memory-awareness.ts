@@ -211,7 +211,10 @@ function checkDbMemory(
   if (!useHybrid) {
     args.push('--text-only');
   }
-  // 8s budget: uv run startup ~2.2s on Windows + Python imports + DB + rerank/embed
+  // Was 8000ms after fixing HIGH-1; bumped to 12000ms per critic 3.1 HIGH-1 for
+  // safer margin under system load. uv run startup ~2.2s + imports + DB query
+  // + (optional) embed daemon route + result write = ~4.3-6.0s typical.
+  // Claude Code's UserPromptSubmit hook budget is 60s, so 12s is well within bounds.
   // Was 2000ms in Phase 1; SIGKILLed every recall on Windows (bug arbiter 2.1 HIGH-1).
   const result = spawnSync('uv', args, {
     encoding: 'utf-8',
@@ -220,7 +223,7 @@ function checkDbMemory(
       ...process.env,
       PYTHONPATH: opcDir
     },
-    timeout: 8000,
+    timeout: 12000,
     killSignal: 'SIGKILL',
   });
 

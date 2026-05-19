@@ -559,7 +559,7 @@ function checkDbMemory(intent, _projectDir, useHybrid) {
       ...process.env,
       PYTHONPATH: opcDir
     },
-    timeout: 8e3,
+    timeout: 12e3,
     killSignal: "SIGKILL"
   });
   const timedOut = result.signal === "SIGKILL";
