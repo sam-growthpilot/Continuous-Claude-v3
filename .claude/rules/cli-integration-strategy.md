@@ -29,14 +29,15 @@ Pattern: single file, JSON output to stdout, subcommand interface.
 Use **browser automation** (Playwright MCP) as last resort.
 Highest friction, lowest reliability — only for truly GUI-only workflows.
 
-## Current CLI Inventory (22 tools)
+## Current CLI Inventory (23 tools)
 
 | Pattern | Tools |
 |---------|-------|
-| Direct Bash + Skill + Rule | tldr, opencli, gh, vercel, railway, neonctl, qlty, git, playwright, playwright-cli, cdp.mjs, linearis, sentry-cli, kusto-cli\* |
+| Direct Bash + Skill + Rule | tldr, opencli, gh, vercel, railway, neonctl, qlty, git, playwright, playwright-cli, cdp.mjs, linearis, sentry-cli, kusto-cli\*, codex |
 | Python harness via uv run | ast-grep, morph, braintrust, github-search |
 | MCP server | Serena, Playwright MCP, Notion, Paper, Exa, Neon, Vercel Cloud, Linear, Sentry |
-| Agent delegation | deployer (Vercel + Railway + Sentry + Linear), arbiter/atlas (tests) |
+| Claude Code plugin | codex-plugin-cc (slash commands `/codex:*`) |
+| Agent delegation | deployer (Vercel + Railway + Sentry + Linear), arbiter/atlas (tests), codex-adversary (cross-model review via Codex CLI) |
 
 \* `kusto-cli` is Pattern 1 with notable agent-friendliness gaps — REPL-first (needs `-keepRunning:false`), positional connection string, no native JSON output (CSV via `#save` only). Score it low on the Agent Compatibility Checklist when comparing to gold-standard tools like `gh` or `vercel`.
 
@@ -49,6 +50,7 @@ Highest friction, lowest reliability — only for truly GUI-only workflows.
 | Linear | INTEGRATED — MCP (remote) + linearis CLI + linear-cli + skill + rule + deployer (2026-03-25) | DONE |
 | Sentry | INTEGRATED — MCP (remote) + sentry-cli + skill + rule + deployer + 3 hooks (2026-03-25) | DONE |
 | Kusto.Cli (ADX / Fabric Eventhouse) | INTEGRATED — Microsoft.Azure.Kusto.Tools v14.1.2 net472 staged at `C:\tools\kusto-cli\`; skill + safety rule + databases cross-ref (2026-05-04) | DONE |
+| Codex (OpenAI) | INTEGRATED — `codex-cli 0.104.0` + `codex-plugin-cc` plugin + `codex-adversary` agent + `codex-adversarial` rule + `/review` and `/premortem` skill wiring + `plan-exit-premortem-prompt` hook (2026-05-18). ChatGPT subscription auth via `codex login`. Used for cross-model adversarial review. | DONE |
 | CLI-Anything | Not installed — for future desktop software control | LOW |
 
 ## Agent Compatibility Checklist

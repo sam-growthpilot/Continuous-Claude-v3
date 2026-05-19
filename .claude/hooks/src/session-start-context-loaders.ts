@@ -26,13 +26,8 @@ export async function main(): Promise<void> {
   const claudeDir = homeDir ? `${homeDir}/.claude`.replace(/\\/g, '/') : '';
   const normalizedProject = project.replace(/\\/g, '/');
 
-  // Skip in ~/.claude infrastructure dir to avoid self-referential loops.
-  // Use exact path-segment matching (split on both separators) so paths like
-  // `~/.claude-cache` or `myproject/dotclaude-stuff` don't get misclassified
-  // by a substring check.
-  const projectSegments = project.split(/[\\/]/);
-  const isClaudeInfra = projectSegments.includes('.claude');
-  if (claudeDir && (normalizedProject === claudeDir || isClaudeInfra)) {
+  // Skip in ~/.claude infrastructure dir to avoid self-referential loops
+  if (claudeDir && (normalizedProject === claudeDir || normalizedProject.includes('/.claude'))) {
     console.log(JSON.stringify({ result: 'continue' }));
     return;
   }

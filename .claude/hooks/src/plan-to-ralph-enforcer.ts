@@ -19,6 +19,7 @@
 
 import { readFileSync } from 'fs';
 import {
+  getStatePathWithMigration,
   getProjectScopedStatePathWithMigration,
 } from './shared/session-isolation.js';
 import { getProjectId } from './shared/project-id.js';
@@ -145,11 +146,10 @@ async function main() {
     const projectId = getProjectId(projectDir);
 
     // Read plan-approved state.
-    // Phase 4: state path is scoped to (projectId, sessionId) so a stale
+    // Phase 4: state path is now scoped to (projectId, sessionId) so a stale
     // approval from project A cannot bleed into project B even if both
-    // sessions share an ID. Phase A2 (C2): the legacy session-only fallback
-    // was removed because a reused sessionId would resurrect plan-approved
-    // state across project switches. Missing state -> fail open.
+    // sessions share an ID. Migration helper falls back to the legacy
+    // session-only path for one hour to preserve in-flight approvals.
     let planApproved = false;
     try {
       const statePath = getProjectScopedStatePathWithMigration(

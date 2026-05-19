@@ -470,6 +470,55 @@ All extraction hooks (`agent-error-capture`, `browser-learning-extractor`, etc.)
 
 ---
 
+## Embedding Daemon Lifecycle
+
+The BGE-large model (`BAAI/bge-large-en-v1.5`) that powers vector recall takes ~30-45s to load on Windows CPU. This section explains the two operating modes and how to pre-warm the daemon.
+
+### Default: spawn-on-first-hit
+
+No setup required. The first call to `recall_learnings.py` that needs embeddings spawns the daemon automatically and waits for it to be ready. The penalty is paid once per machine reboot — typically ~32s on the first prompt after a cold boot.
+
+The daemon discovery file is `$env:TEMP\ccv3-embedding.json`. When it exists and the PID is alive, subsequent calls connect directly (hot-path latency ~30-100ms).
+
+Hook-time recall (`memory-awareness.ts`) uses `--text-only` and is never affected by the cold-start.
+
+### Optional: pre-warm at login (recommended for daily use)
+
+Register a Windows Task Scheduler entry that spawns the daemon ~30s after login, so it is warm before the first prompt.
+
+**Setup (run once after fresh clone):**
+
+```powershell
+pwsh -File scripts\install-embedding-daemon-task.ps1
+```
+
+This registers `CCv3-Embedding-Daemon` — AtLogon trigger, 30s delay, Limited run level (no admin required). Idempotent: safe to re-run after updates.
+
+**Verify (after next reboot):**
+
+```powershell
+# Should appear within ~60s of login
+Test-Path $env:TEMP\ccv3-embedding.json
+```
+
+If the file appears, the daemon is warm and the cold-start penalty is eliminated.
+
+**Uninstall:**
+
+```powershell
+pwsh -File scripts\uninstall-embedding-daemon-task.ps1
+# or
+schtasks /delete /tn "CCv3-Embedding-Daemon" /f
+```
+
+### Logs
+
+Launcher log: `~/.claude/logs/embedding-daemon-launcher.log` (1 MB rotate, 3 prior kept).
+
+Daemon stdout/stderr are detached (not captured) to avoid blocking the login trigger.
+
+---
+
 ## Proactive Memory Usage
 
 - Before starting work: `/recall <task keywords>`

@@ -1,0 +1,22 @@
+[
+  {"id": 1, "query": "Pull availability metrics for Brinker over the last 30 days", "should_trigger": true, "rationale": "Core use case — exact phrase that produced the original Brinker run."},
+  {"id": 2, "query": "Audit how shift_rated is firing for HMSHost", "should_trigger": true, "rationale": "'Audit' + customer + event = textbook trigger."},
+  {"id": 3, "query": "Build EBR numbers for BurgerWorks Colorado on their labor events", "should_trigger": true, "rationale": "EBR/QBR framing explicitly called out in description."},
+  {"id": 4, "query": "Who's approving availability changes at customer 0016R00003Fr6NbQAJ? want a CSV", "should_trigger": true, "rationale": "'Who's doing X' + CSV deliverable = full audit."},
+  {"id": 5, "query": "Tell me what's broken with everify events for PeopleMatter customers", "should_trigger": true, "rationale": "'What's broken with event X' phrasing in description."},
+  {"id": 6, "query": "I need coverage stats and time-to-decision for time_off_request at one of our customers", "should_trigger": true, "rationale": "Coverage + pair-wise timing = exactly what the skill produces."},
+  {"id": 7, "query": "How many distinct managers are doing manual_shift_assigned at HMSHost? Need names where possible", "should_trigger": true, "rationale": "Distinct-actor counts + name resolution = audit outputs."},
+  {"id": 8, "query": "Quick coverage check on schedule_posted across our top accounts — give me percent valid and a Rally callout if anything looks broken", "should_trigger": true, "rationale": "Coverage + validity + Rally-story callouts triple-match."},
+  {"id": 9, "query": "Run a KQL query for me: raw_feature_events | where event_type contains 'shift' | take 5", "should_trigger": false, "rationale": "Direct one-liner KQL — belongs to iq360-events."},
+  {"id": 10, "query": "Just give me the row count of everify_case_submitted yesterday", "should_trigger": false, "rationale": "Single count, no analysis. iq360-events."},
+  {"id": 11, "query": "What's the schema for raw_feature_events?", "should_trigger": false, "rationale": "Schema introspection — iq360-events."},
+  {"id": 12, "query": "Show me 5 sample rows from enriched_feature_events for HotSchedules", "should_trigger": false, "rationale": "Sample fetch, no audit/report. iq360-events."},
+  {"id": 13, "query": "Triage defect D123456 about an availability bug in PeopleMatter", "should_trigger": false, "rationale": "Defect triage for PM — pm-copilot."},
+  {"id": 14, "query": "Why is HRGW returning 500 for HMSHost employee creation?", "should_trigger": false, "rationale": "Different system (HRGW) — fourth-assistant debug."},
+  {"id": 15, "query": "Save what we learned about EMS auth to the knowledge base", "should_trigger": false, "rationale": "Knowledge save — fourth-assistant Learn mode."},
+  {"id": 16, "query": "How does PeopleMatter onboarding work end to end?", "should_trigger": false, "rationale": "Architecture/explanation question — pm-copilot."},
+  {"id": 17, "query": "Update the iQ360 Confluence page after we shipped the new shift_rated event", "should_trigger": false, "rationale": "Doc maintenance — iq360-events-manager."},
+  {"id": 18, "query": "Audit our iQ360 instrumentation across all HotSchedules repos and tell me which events are missing tests", "should_trigger": false, "rationale": "Catalogue/code audit, NOT a per-customer event audit. iq360-events-manager."},
+  {"id": 19, "query": "Pull every event for customer 0016R00003Fr6NbQAJ in the last 30 days — every column, no aggregation", "should_trigger": false, "rationale": "Raw row dump, no analysis or callouts. iq360-events with set notruncation."},
+  {"id": 20, "query": "Build me a UI that lets users browse iQ360 events", "should_trigger": false, "rationale": "Frontend build task — fourth-assistant Build mode."}
+]

@@ -15,9 +15,7 @@
  */
 
 import { readFileSync, existsSync, readdirSync, statSync } from 'fs';
-import { join, resolve } from 'path';
-import { homedir } from 'os';
-import { fileURLToPath } from 'url';
+import { join } from 'path';
 import {
     SkillRouterAPIInput,
     SkillRouterAPIOutput,
@@ -55,59 +53,6 @@ const FILE_WEIGHTS = {
 
 const COMPLEXITY_THRESHOLD_SUGGEST = 0.5;
 const COMPLEXITY_THRESHOLD_FORCE = 0.7;
-
-// =============================================================================
-// Pattern Safety Helpers
-// =============================================================================
-
-/** Maximum allowed regex pattern length (chars). Patterns above this are skipped. */
-const MAX_INTENT_PATTERN_LENGTH = 200;
-
-/** Whitelist of orchestration pattern names accepted from untrusted JSON input. */
-const KNOWN_ORCHESTRATION_PATTERNS: ReadonlySet<string> = new Set([
-  'swarm',
-  'hierarchical',
-  'pipeline',
-  'generator_critic',
-  'adversarial',
-  'map_reduce',
-  'jury',
-  'blackboard',
-  'chain_of_responsibility',
-  'event_driven',
-  'circuit_breaker',
-]);
-
-/**
- * Heuristic regex shapes commonly associated with catastrophic backtracking.
- * Reject any pattern that contains nested quantifiers like `(...+)+`, `(...*)*`,
- * `(...+)*`, `(...*)+`, or alternations of identical branches like `(a|a)+`.
- * Conservative: prefers false-rejects over executing a potentially evil pattern.
- */
-const REDOS_SHAPES: RegExp[] = [
-  /\([^)]*[+*][^)]*\)\s*[+*]/,           // (X+)+ , (X*)*, (X+)*, (X*)+ etc.
-  /\(([^|()]+)\|\1\)\s*[+*]/,            // (a|a)+
-  // Overlapping alternations like (a|aa)+ where one branch is a prefix of another.
-  // These bypass the identical-branch check above but exhibit the same exponential
-  // backtracking on inputs like "aaaa...x".
-  /\(([^|()]+)\|(\1[^|()]*|[^|()]*\1)\)\s*[+*]/,
-];
-
-/**
- * Validate an intent pattern string before passing it to `new RegExp(...)`.
- * Returns null when the pattern is safe to compile, else a short reason.
- */
-function validateIntentPattern(pattern: unknown): string | null {
-  if (typeof pattern !== 'string') return 'pattern is not a string';
-  if (pattern.length === 0) return 'pattern is empty';
-  if (pattern.length > MAX_INTENT_PATTERN_LENGTH) {
-    return `pattern length ${pattern.length} > ${MAX_INTENT_PATTERN_LENGTH}`;
-  }
-  for (const shape of REDOS_SHAPES) {
-    if (shape.test(pattern)) return 'pattern matches known catastrophic-backtracking shape';
-  }
-  return null;
-}
 
 const PATTERN_AGENT_MAP: Record<string, string> = {
     swarm: 'research-agent',
@@ -150,7 +95,7 @@ const AGENT_TYPES: Record<string, string> = {
 // =============================================================================
 
 function loadSkillRules(): SkillRulesConfig {
-    const homeDir = homedir();
+    const homeDir = process.env.HOME || process.env.USERPROFILE || '';
     const rulesPath = join(homeDir, '.claude', 'skills', 'skill-rules.json');
 
     if (!existsSync(rulesPath)) {
@@ -630,11 +575,6 @@ function matchSkills(task: string, context: string, rules: SkillRulesConfig): Sk
         const intentPatterns = triggers.intentPatterns || [];
         let matchedIntent = false;
         for (const pattern of intentPatterns) {
-            const reason = validateIntentPattern(pattern);
-            if (reason) {
-                console.warn(`[skill-router] skipping unsafe intent pattern for skill "${skillName}": ${reason}`);
-                continue;
-            }
             try {
                 const regex = new RegExp(pattern, 'i');
                 if (regex.test(combined)) {
@@ -703,11 +643,6 @@ function matchAgents(
         const intentPatterns = triggers.intentPatterns || [];
         let matchedIntent = false;
         for (const pattern of intentPatterns) {
-            const reason = validateIntentPattern(pattern);
-            if (reason) {
-                console.warn(`[skill-router] skipping unsafe intent pattern for agent "${agentName}": ${reason}`);
-                continue;
-            }
             try {
                 const regex = new RegExp(pattern, 'i');
                 if (regex.test(combined)) {
@@ -820,13 +755,8 @@ export function route(input: SkillRouterAPIInput): SkillRouterAPIOutput {
     // Match agents
     const agents = matchAgents(task, context, rules, exclude_agents);
 
-    // Recommend pattern -- only honor a caller-supplied current_pattern when it
-    // matches the known orchestration whitelist; otherwise ignore it and fall back.
-    const trustedCurrentPattern =
-        typeof current_pattern === 'string' && KNOWN_ORCHESTRATION_PATTERNS.has(current_pattern)
-            ? (current_pattern as OrchestrationPattern)
-            : null;
-    const pattern = trustedCurrentPattern ||
+    // Recommend pattern
+    const pattern = (current_pattern as OrchestrationPattern) ||
         recommendPattern(task, context, skills, complexity.total);
 
     // Suggest Ralph for greenfield
@@ -851,32 +781,11 @@ async function main() {
     // Read JSON from stdin
     let inputData: SkillRouterAPIInput;
 
-    if (process.stdin.isTTY) {
-        // No piped input — print usage to stderr so JSON consumers don't choke
-        // on the help text mixed into stdout.
-        console.error('skill-router: expected JSON on stdin (e.g. echo \'{"task":"..."}\' | skill-router)');
-        process.exit(2);
-    }
-
     try {
         const input = readFileSync(0, 'utf-8');
         inputData = JSON.parse(input);
     } catch {
-        console.error('skill-router: invalid JSON input or no input provided');
-        process.exit(1);
-    }
-
-    // Validate payload shape before routing. JSON.parse accepts arrays,
-    // strings, numbers, and {"task": ""} -- all of which would silently
-    // produce empty/garbage routing decisions downstream.
-    if (
-        !inputData ||
-        typeof inputData !== 'object' ||
-        Array.isArray(inputData) ||
-        typeof (inputData as { task?: unknown }).task !== 'string' ||
-        (inputData as { task: string }).task.trim().length === 0
-    ) {
-        console.error('skill-router: input must be an object with a non-empty "task" string');
+        console.log(JSON.stringify({ error: 'Invalid JSON input or no input provided' }));
         process.exit(1);
     }
 
@@ -884,15 +793,8 @@ async function main() {
     console.log(JSON.stringify(result, null, 2));
 }
 
-// Only run CLI if executed directly. Use a strict file-URL comparison so
-// importing this module from another bundle never triggers main(); a
-// substring check on argv[1] would fire for any path containing
-// 'skill-router' (including symlinks, build artifacts, or test wrappers).
-const isDirectExecution =
-    typeof process.argv[1] === 'string' &&
-    resolve(process.argv[1]) === fileURLToPath(import.meta.url);
-
-if (isDirectExecution) {
+// Only run CLI if executed directly
+if (process.argv[1] && process.argv[1].includes('skill-router')) {
     main().catch(err => {
         console.error('Error:', err);
         process.exit(1);

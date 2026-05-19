@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 
-// ../.claude/hooks/src/agent-model-guard.ts
+// src/agent-model-guard.ts
 import { readFileSync, existsSync, readdirSync } from "fs";
 import { join } from "path";
 import { homedir } from "os";

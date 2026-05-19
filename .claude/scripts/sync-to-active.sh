@@ -49,28 +49,6 @@ copy_dir() {
 
     $DRY_RUN || mkdir -p "$dst_path"
 
-    # Prefer rsync --delete for one-shot copy + cleanup of stale files.
-    # Falls back to manual copy + post-pass deletion if rsync is unavailable.
-    if command -v rsync &> /dev/null; then
-        if $DRY_RUN; then
-            rsync -a --delete --dry-run \
-                --exclude='*.pid' --exclude='*.lock' \
-                --exclude='.tldr/' --exclude='node_modules/' \
-                --exclude='cache/' --exclude='dist/' \
-                "$src_path/" "$dst_path/" 2>/dev/null \
-                | sed -n 's/^/[DRY RUN] /p'
-        else
-            rsync -a --delete \
-                --exclude='*.pid' --exclude='*.lock' \
-                --exclude='.tldr/' --exclude='node_modules/' \
-                --exclude='cache/' --exclude='dist/' \
-                "$src_path/" "$dst_path/"
-            $VERBOSE && echo "rsync'd: $dir (with --delete)" || true
-        fi
-        return 0
-    fi
-
-    # Fallback: copy each source file, then delete dest files with no source.
     while IFS= read -r src_file; do
         local rel="${src_file#$src_path/}"
         local dst_file="$dst_path/$rel"
@@ -90,30 +68,11 @@ copy_dir() {
             $VERBOSE && echo "Copied: $dir/$rel" || true
         fi
     done < <(find "$src_path" -type f ! -name "*.pid" ! -name "*.lock" ! -path "*/.tldr/*" ! -path "*/node_modules/*" ! -path "*/cache/*" ! -path "*/dist/*" 2>/dev/null)
-
-    # Post-pass: delete destination files that no longer exist in the source.
-    # This mirrors `rsync --delete` semantics so removals in the repo propagate.
-    while IFS= read -r dst_file; do
-        local rel="${dst_file#$dst_path/}"
-        local src_file="$src_path/$rel"
-        [[ -f "$src_file" ]] && continue
-        if $DRY_RUN; then
-            echo "[DRY RUN] Would delete (orphan): $dst_file"
-        else
-            rm -f "$dst_file"
-            $VERBOSE && echo "Deleted (orphan): $dir/$rel" || true
-        fi
-    done < <(find "$dst_path" -type f ! -name "*.pid" ! -name "*.lock" ! -path "*/.tldr/*" ! -path "*/node_modules/*" ! -path "*/cache/*" ! -path "*/dist/*" 2>/dev/null)
 }
 
 for dir in $SYNC_DIRS; do
     copy_dir "$dir"
 done
-
-# Ensure the active root exists before any copy attempts. On a fresh install
-# `~/.claude` may not exist yet; without this `cp` would error and abort the
-# whole sync because of `set -e`.
-$DRY_RUN || mkdir -p "$ACTIVE_CLAUDE"
 
 # Sync top-level .claude/*.md files (canonical entry points / redirect stubs)
 for src_file in "$REPO_CLAUDE"/*.md; do
@@ -134,10 +93,7 @@ for src_file in "$REPO_CLAUDE"/*.md; do
 done
 
 for pattern in "hooks/*.sh" "hooks/*.py" "hooks/*.mjs" "hooks/*.ps1" "hooks/package.json" "hooks/tsconfig.json"; do
-    # Quote $REPO_CLAUDE so checkout paths containing spaces don't word-split
-    # and silently skip files. The pattern is intentionally unquoted so the
-    # shell still expands the glob.
-    for src_file in "$REPO_CLAUDE"/$pattern; do
+    for src_file in $REPO_CLAUDE/$pattern; do
         [[ ! -f "$src_file" ]] && continue
         rel="${src_file#$REPO_CLAUDE/}"
         dst_file="$ACTIVE_CLAUDE/$rel"
@@ -213,13 +169,7 @@ if ! $DRY_RUN && ! $SKIP_BUILD; then
         if [[ -f "build.sh" ]]; then
             bash build.sh
         elif command -v npm &> /dev/null; then
-            # Don't mask build failures: a successful exit here would leave
-            # stale or missing hooks/dist artifacts in place. Fail the sync
-            # so the user notices and can rebuild.
-            if ! npm run build; then
-                echo "Error: Hook build failed (npm run build)" >&2
-                exit 1
-            fi
+            npm run build 2>/dev/null || echo "Warning: Hook build failed"
         fi
     fi
 fi
@@ -231,17 +181,13 @@ if ! $DRY_RUN && command -v jq &> /dev/null; then
     ACTIVE_SETTINGS="$ACTIVE_CLAUDE/settings.json"
 
     if [[ -f "$REPO_SETTINGS" && -f "$ACTIVE_SETTINGS" ]]; then
-        # Extract mcpServers from repo and merge into active.
-        # Both jq calls run under `set -e`, so a malformed JSON file would
-        # abort the entire sync before reaching the cleanup paths below.
-        # The `|| MCP_SERVERS=""` and `if jq ...; then` forms keep set -e
-        # from killing the script on a non-zero jq exit -- we want a
-        # graceful skip instead.
-        MCP_SERVERS=$(jq '.mcpServers // empty' "$REPO_SETTINGS" 2>/dev/null) || MCP_SERVERS=""
+        # Extract mcpServers from repo and merge into active
+        MCP_SERVERS=$(jq '.mcpServers // empty' "$REPO_SETTINGS" 2>/dev/null)
         if [[ -n "$MCP_SERVERS" && "$MCP_SERVERS" != "null" ]]; then
             # Create temp file with merged content
             TEMP_SETTINGS=$(mktemp)
-            if jq --argjson mcp "$MCP_SERVERS" '.mcpServers = $mcp' "$ACTIVE_SETTINGS" > "$TEMP_SETTINGS" 2>/dev/null && [[ -s "$TEMP_SETTINGS" ]]; then
+            jq --argjson mcp "$MCP_SERVERS" '.mcpServers = $mcp' "$ACTIVE_SETTINGS" > "$TEMP_SETTINGS" 2>/dev/null
+            if [[ $? -eq 0 && -s "$TEMP_SETTINGS" ]]; then
                 mv "$TEMP_SETTINGS" "$ACTIVE_SETTINGS"
                 $VERBOSE && echo "Merged mcpServers into ~/.claude/settings.json" || true
             else

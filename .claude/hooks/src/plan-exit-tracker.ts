@@ -19,6 +19,7 @@
 
 import { readFileSync } from 'fs';
 import {
+  getStatePathWithMigration,
   getProjectScopedStatePath,
 } from './shared/session-isolation.js';
 import { getProjectId } from './shared/project-id.js';

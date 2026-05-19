@@ -208,7 +208,9 @@ function shouldValidateWithLLM(match) {
 
 // src/skill-router.ts
 import { readFileSync as readFileSync3, existsSync as existsSync3, readdirSync, statSync } from "fs";
-import { join as join3 } from "path";
+import { join as join3, resolve } from "path";
+import { homedir } from "os";
+import { fileURLToPath } from "url";
 
 // src/shared/skill-router-types.ts
 var CircularDependencyError = class extends Error {
@@ -236,6 +238,41 @@ var FILE_WEIGHTS = {
 };
 var COMPLEXITY_THRESHOLD_SUGGEST = 0.5;
 var COMPLEXITY_THRESHOLD_FORCE = 0.7;
+var MAX_INTENT_PATTERN_LENGTH = 200;
+var KNOWN_ORCHESTRATION_PATTERNS = /* @__PURE__ */ new Set([
+  "swarm",
+  "hierarchical",
+  "pipeline",
+  "generator_critic",
+  "adversarial",
+  "map_reduce",
+  "jury",
+  "blackboard",
+  "chain_of_responsibility",
+  "event_driven",
+  "circuit_breaker"
+]);
+var REDOS_SHAPES = [
+  /\([^)]*[+*][^)]*\)\s*[+*]/,
+  // (X+)+ , (X*)*, (X+)*, (X*)+ etc.
+  /\(([^|()]+)\|\1\)\s*[+*]/,
+  // (a|a)+
+  // Overlapping alternations like (a|aa)+ where one branch is a prefix of another.
+  // These bypass the identical-branch check above but exhibit the same exponential
+  // backtracking on inputs like "aaaa...x".
+  /\(([^|()]+)\|(\1[^|()]*|[^|()]*\1)\)\s*[+*]/
+];
+function validateIntentPattern(pattern) {
+  if (typeof pattern !== "string") return "pattern is not a string";
+  if (pattern.length === 0) return "pattern is empty";
+  if (pattern.length > MAX_INTENT_PATTERN_LENGTH) {
+    return `pattern length ${pattern.length} > ${MAX_INTENT_PATTERN_LENGTH}`;
+  }
+  for (const shape of REDOS_SHAPES) {
+    if (shape.test(pattern)) return "pattern matches known catastrophic-backtracking shape";
+  }
+  return null;
+}
 var AGENT_TYPES = {
   scout: "exploration",
   oracle: "research",
@@ -258,7 +295,7 @@ var AGENT_TYPES = {
   maestro: "orchestration"
 };
 function loadSkillRules() {
-  const homeDir = process.env.HOME || process.env.USERPROFILE || "";
+  const homeDir = homedir();
   const rulesPath = join3(homeDir, ".claude", "skills", "skill-rules.json");
   if (!existsSync3(rulesPath)) {
     return { skills: {}, agents: {} };
@@ -587,6 +624,11 @@ function matchSkills(task, context, rules) {
     const intentPatterns = triggers.intentPatterns || [];
     let matchedIntent = false;
     for (const pattern of intentPatterns) {
+      const reason = validateIntentPattern(pattern);
+      if (reason) {
+        console.warn(`[skill-router] skipping unsafe intent pattern for skill "${skillName}": ${reason}`);
+        continue;
+      }
       try {
         const regex = new RegExp(pattern, "i");
         if (regex.test(combined)) {
@@ -638,6 +680,11 @@ function matchAgents(task, context, rules, exclude = []) {
     const intentPatterns = triggers.intentPatterns || [];
     let matchedIntent = false;
     for (const pattern of intentPatterns) {
+      const reason = validateIntentPattern(pattern);
+      if (reason) {
+        console.warn(`[skill-router] skipping unsafe intent pattern for agent "${agentName}": ${reason}`);
+        continue;
+      }
       try {
         const regex = new RegExp(pattern, "i");
         if (regex.test(combined)) {
@@ -706,7 +753,8 @@ function route(input) {
   const greenfield = calculateGreenfieldScore(task, context, cwd);
   const skills = matchSkills(task, context, rules);
   const agents = matchAgents(task, context, rules, exclude_agents);
-  const pattern = current_pattern || recommendPattern(task, context, skills, complexity.total);
+  const trustedCurrentPattern = typeof current_pattern === "string" && KNOWN_ORCHESTRATION_PATTERNS.has(current_pattern) ? current_pattern : null;
+  const pattern = trustedCurrentPattern || recommendPattern(task, context, skills, complexity.total);
   const suggestRalph = greenfield > 0.4;
   return {
     skills,
@@ -720,17 +768,26 @@ function route(input) {
 }
 async function main() {
   let inputData;
+  if (process.stdin.isTTY) {
+    console.error(`skill-router: expected JSON on stdin (e.g. echo '{"task":"..."}' | skill-router)`);
+    process.exit(2);
+  }
   try {
     const input = readFileSync3(0, "utf-8");
     inputData = JSON.parse(input);
   } catch {
-    console.log(JSON.stringify({ error: "Invalid JSON input or no input provided" }));
+    console.error("skill-router: invalid JSON input or no input provided");
+    process.exit(1);
+  }
+  if (!inputData || typeof inputData !== "object" || Array.isArray(inputData) || typeof inputData.task !== "string" || inputData.task.trim().length === 0) {
+    console.error('skill-router: input must be an object with a non-empty "task" string');
     process.exit(1);
   }
   const result = route(inputData);
   console.log(JSON.stringify(result, null, 2));
 }
-if (process.argv[1] && process.argv[1].includes("skill-router")) {
+var isDirectExecution = typeof process.argv[1] === "string" && resolve(process.argv[1]) === fileURLToPath(import.meta.url);
+if (isDirectExecution) {
   main().catch((err) => {
     console.error("Error:", err);
     process.exit(1);

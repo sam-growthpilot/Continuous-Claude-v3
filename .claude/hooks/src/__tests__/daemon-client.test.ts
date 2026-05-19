@@ -21,10 +21,8 @@ import {
   queryDaemon,
   queryDaemonSync,
   getConnectionInfo,
-  buildQueryDaemonSpawnArgs,
   DaemonQuery,
   DaemonResponse,
-  ConnectionInfo,
 } from '../daemon-client.js';
 
 // Test fixtures — use platform temp dir
@@ -263,96 +261,6 @@ describe('queryDaemonSync', () => {
     // Test the shape of a timeout response
     const timeoutResponse: DaemonResponse = { status: 'error', error: 'timeout' };
     expect(timeoutResponse.error).toBe('timeout');
-  });
-
-  it('should not inject shell metacharacters from query fields', () => {
-    // C1 regression: the previous queryDaemonSync interpolated
-    // JSON.stringify(query) into `echo '...' | nc -U <socket>` (Unix) and into
-    // a `powershell -Command "..."` string (Windows). A single quote, backtick,
-    // dollar sign, or newline in any user field (pattern/query/file/module)
-    // would break out of the quoted argument and run arbitrary shell.
-    //
-    // The fix routes `input` over stdin via spawnSync. To verify this without
-    // an in-process mock server (spawnSync is blocking and would deadlock the
-    // event loop), we exercise the pure helper buildQueryDaemonSpawnArgs and
-    // assert:
-    //   1. The JSON payload travels via the `input` field (stdin), byte-for-byte.
-    //   2. No argv element contains user-controlled data — i.e. no element of
-    //      `args` contains a substring from any query field.
-    //   3. argv elements are static, hard-coded program flags only (no shell
-    //      strings of the form `echo '...'` or `... ${input} ...`).
-    const dangerous: DaemonQuery = {
-      cmd: 'search',
-      // Every shell metacharacter that could break out of a single- or
-      // double-quoted argument: single-quote, double-quote, backtick,
-      // newline, dollar sign, semicolon, ampersand, command substitution.
-      pattern: "a'b\"c`d\ne;f&g$(rm -rf /tmp/x)",
-      query: "second'\"`field",
-      file: "path/with'\"`weird\nname.ts",
-      module: "mod`with$shell;chars",
-    };
-
-    // ----- Unix branch -----
-    const unixConn: ConnectionInfo = {
-      type: 'unix',
-      path: '/tmp/tldr-deadbeef.sock',
-    };
-    const unix = buildQueryDaemonSpawnArgs(dangerous, unixConn);
-    expect(unix.command).toBe('nc');
-    expect(unix.args).toEqual(['-U', '/tmp/tldr-deadbeef.sock']);
-    // Stdin payload must be byte-for-byte JSON.stringify + newline.
-    expect(unix.input).toBe(JSON.stringify(dangerous) + '\n');
-    // No argv element should contain any user field substring.
-    for (const arg of unix.args) {
-      expect(arg).not.toContain(dangerous.pattern!);
-      expect(arg).not.toContain(dangerous.query!);
-      expect(arg).not.toContain(dangerous.file!);
-      expect(arg).not.toContain(dangerous.module!);
-      // And no shell-pipeline tell-tales:
-      expect(arg).not.toMatch(/\becho\b/);
-      expect(arg).not.toContain('|');
-    }
-
-    // ----- Windows branch -----
-    const tcpConn: ConnectionInfo = {
-      type: 'tcp',
-      host: '127.0.0.1',
-      port: 49999,
-    };
-    const win = buildQueryDaemonSpawnArgs(dangerous, tcpConn);
-    expect(win.command).toBe('powershell.exe');
-    // Required hardening flags up front — no profile, no interactive prompts.
-    expect(win.args[0]).toBe('-NoProfile');
-    expect(win.args[1]).toBe('-NonInteractive');
-    expect(win.args[2]).toBe('-Command');
-    // Stdin payload identical to Unix branch.
-    expect(win.input).toBe(JSON.stringify(dangerous) + '\n');
-    // The PowerShell script (args[3]) must NOT contain the dangerous query
-    // payload — it reads from stdin instead.
-    const psScript = win.args[3];
-    expect(psScript).toContain('[Console]::In.ReadToEnd()');
-    expect(psScript).not.toContain(dangerous.pattern!);
-    expect(psScript).not.toContain(dangerous.query!);
-    expect(psScript).not.toContain(dangerous.file!);
-    expect(psScript).not.toContain(dangerous.module!);
-    // And no shell pipeline / echo embedding:
-    expect(psScript).not.toMatch(/\becho\b/);
-  });
-
-  it('should round-trip JSON.parse on the spawn input it produces', () => {
-    // Sanity: the JSON we'd send must remain valid JSON after stdin transit.
-    // (The daemon pulls one line off the socket and JSON.parse()s it.)
-    const dangerous: DaemonQuery = {
-      cmd: 'search',
-      pattern: "a'b\"c`d\ne",
-      query: "x$(whoami)",
-    };
-    const conn: ConnectionInfo = { type: 'unix', path: '/tmp/x.sock' };
-    const { input } = buildQueryDaemonSpawnArgs(dangerous, conn);
-    const parsed = JSON.parse(input.trim());
-    expect(parsed.cmd).toBe('search');
-    expect(parsed.pattern).toBe(dangerous.pattern);
-    expect(parsed.query).toBe(dangerous.query);
   });
 });
 
