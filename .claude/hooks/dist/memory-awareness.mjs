@@ -1,5 +1,5 @@
 // src/memory-awareness.ts
-import { readFileSync as readFileSync3, existsSync as existsSync4, mkdirSync as mkdirSync2, appendFileSync } from "fs";
+import { readFileSync as readFileSync2, existsSync as existsSync3 } from "fs";
 import * as path from "path";
 import { spawnSync } from "child_process";
 
@@ -96,377 +96,9 @@ function logHook(sessionId, hookName) {
   writeFileSync(filePath, JSON.stringify(activity), { encoding: "utf-8" });
 }
 
-// src/shared/intent-extractor.ts
-var STOP_WORDS = /* @__PURE__ */ new Set([
-  "a",
-  "an",
-  "the",
-  "is",
-  "are",
-  "was",
-  "were",
-  "be",
-  "been",
-  "being",
-  "have",
-  "has",
-  "had",
-  "do",
-  "does",
-  "did",
-  "will",
-  "would",
-  "could",
-  "should",
-  "may",
-  "might",
-  "must",
-  "can",
-  "to",
-  "of",
-  "in",
-  "for",
-  "on",
-  "with",
-  "at",
-  "by",
-  "from",
-  "as",
-  "into",
-  "through",
-  "during",
-  "before",
-  "after",
-  "above",
-  "below",
-  "between",
-  "under",
-  "again",
-  "further",
-  "then",
-  "once",
-  "here",
-  "there",
-  "when",
-  "where",
-  "why",
-  "how",
-  "all",
-  "each",
-  "few",
-  "more",
-  "most",
-  "other",
-  "some",
-  "such",
-  "no",
-  "nor",
-  "not",
-  "only",
-  "own",
-  "same",
-  "so",
-  "than",
-  "too",
-  "very",
-  "s",
-  "t",
-  "just",
-  "don",
-  "now",
-  "i",
-  "me",
-  "my",
-  "you",
-  "your",
-  "we",
-  "help",
-  "with",
-  "our",
-  "they",
-  "them",
-  "their",
-  "it",
-  "its",
-  "this",
-  "that",
-  "these",
-  "what",
-  "which",
-  "who",
-  "whom",
-  "and",
-  "but",
-  "if",
-  "or",
-  "because",
-  "until",
-  "while",
-  "about",
-  "against",
-  "also",
-  "get",
-  "got",
-  "make",
-  "want",
-  "need",
-  "look",
-  "see",
-  "use",
-  "like",
-  "know",
-  "think",
-  "take",
-  "come",
-  "go",
-  "say",
-  "said",
-  "tell",
-  "please",
-  "help",
-  "let",
-  "sure",
-  "recall",
-  "remember",
-  "similar",
-  "problems",
-  "issues"
-]);
-var META_PATTERNS = [
-  /^(can you|could you|would you|please|help me|i want to|i need to|let's|lets)\s+/gi,
-  /^(show me|tell me|find|search for|look for|recall|remember)\s+/gi,
-  /^(how do i|how can i|how to|what is|what are|where is|where are)\s+/gi,
-  /\s+(for me|please|thanks|thank you)$/gi,
-  /\?$/g
-];
-function extractKeywords(prompt) {
-  if (typeof prompt !== "string") return "";
-  const words = prompt.toLowerCase().replace(/[^\w\s-]/g, " ").split(/\s+/).filter((w) => w.length > 2 && !STOP_WORDS.has(w));
-  return [...new Set(words)].slice(0, 5).join(" ");
-}
-function extractIntent(prompt) {
-  if (typeof prompt !== "string") return "";
-  let intent = prompt.trim();
-  for (const pattern of META_PATTERNS) {
-    intent = intent.replace(pattern, "");
-  }
-  intent = intent.trim();
-  if (intent.length < 5) {
-    return extractKeywords(prompt);
-  }
-  return intent;
-}
-
-// src/shared/embedding-client.ts
-import { existsSync as existsSync3, readFileSync as readFileSync2 } from "fs";
-import { spawn } from "child_process";
-import { tmpdir } from "os";
-import { join as join3, resolve } from "path";
-import * as net from "net";
-var DAEMON_INFO_PATH = join3(tmpdir(), "ccv3-embedding.json");
-var FRAME_SIZE_CAP_BYTES = 100 * 1024 * 1024;
-var DEFAULT_PING_TIMEOUT_MS = 200;
-var EXPECTED_MODEL = "BAAI/bge-large-en-v1.5";
-var EXPECTED_DIM = 1024;
-function sendFrame(sock, obj) {
-  const payload = Buffer.from(JSON.stringify(obj), "utf-8");
-  if (payload.length > FRAME_SIZE_CAP_BYTES) {
-    throw new Error(`frame too large: ${payload.length} bytes`);
-  }
-  const header = Buffer.alloc(4);
-  header.writeUInt32BE(payload.length, 0);
-  sock.write(Buffer.concat([header, payload]));
-}
-function recvFrame(sock, timeoutMs) {
-  return new Promise((res, rej) => {
-    let received = Buffer.alloc(0);
-    let expectedLen = null;
-    let settled = false;
-    const finish = (cb) => {
-      if (settled) return;
-      settled = true;
-      sock.removeAllListeners("data");
-      sock.removeAllListeners("error");
-      sock.removeAllListeners("close");
-      sock.removeAllListeners("timeout");
-      sock.setTimeout(0);
-      cb();
-    };
-    sock.setTimeout(timeoutMs, () => {
-      finish(() => rej(new Error("frame read timeout")));
-    });
-    sock.on("error", (err) => {
-      finish(() => rej(err));
-    });
-    sock.on("close", () => {
-      finish(
-        () => rej(new Error(`socket closed after ${received.length} bytes`))
-      );
-    });
-    sock.on("data", (chunk) => {
-      received = Buffer.concat([received, chunk]);
-      if (expectedLen === null && received.length >= 4) {
-        expectedLen = received.readUInt32BE(0);
-        if (expectedLen > FRAME_SIZE_CAP_BYTES) {
-          finish(() => rej(new Error(`frame too large: ${expectedLen} bytes`)));
-          return;
-        }
-      }
-      if (expectedLen !== null && received.length >= 4 + expectedLen) {
-        const payload = received.subarray(4, 4 + expectedLen);
-        try {
-          const parsed = JSON.parse(payload.toString("utf-8"));
-          finish(() => res(parsed));
-        } catch (err) {
-          finish(() => rej(err));
-        }
-      }
-    });
-  });
-}
-function readDaemonInfo() {
-  if (!existsSync3(DAEMON_INFO_PATH)) return null;
-  try {
-    const raw = readFileSync2(DAEMON_INFO_PATH, "utf-8");
-    const obj = JSON.parse(raw);
-    if (typeof obj !== "object" || obj === null || typeof obj.pid !== "number" || typeof obj.port !== "number" || typeof obj.started_at !== "number" || typeof obj.model !== "string" || typeof obj.dim !== "number") {
-      return null;
-    }
-    return obj;
-  } catch {
-    return null;
-  }
-}
-function isDaemonAlive(info) {
-  if (info.pid <= 0) return false;
-  try {
-    process.kill(info.pid, 0);
-    return true;
-  } catch (err) {
-    if (err && err.code === "EPERM") return true;
-    return false;
-  }
-}
-async function pingDaemon(info, timeoutMs = DEFAULT_PING_TIMEOUT_MS) {
-  return new Promise((res) => {
-    const sock = new net.Socket();
-    let settled = false;
-    const cleanup = (val) => {
-      if (settled) return;
-      settled = true;
-      try {
-        sock.setTimeout(0);
-        sock.destroy();
-      } catch {
-      }
-      res(val);
-    };
-    const connectTimer = setTimeout(() => cleanup(null), timeoutMs);
-    sock.once("error", () => {
-      clearTimeout(connectTimer);
-      cleanup(null);
-    });
-    sock.connect(info.port, "127.0.0.1", () => {
-      clearTimeout(connectTimer);
-      try {
-        sock.setNoDelay(true);
-      } catch {
-      }
-      try {
-        sendFrame(sock, { cmd: "ping" });
-      } catch {
-        cleanup(null);
-        return;
-      }
-      recvFrame(sock, timeoutMs).then((reply) => {
-        if (reply && typeof reply === "object" && typeof reply.ok === "boolean" && typeof reply.ready === "boolean") {
-          cleanup(reply);
-        } else {
-          cleanup(null);
-        }
-      }).catch(() => cleanup(null));
-    });
-  });
-}
-async function isDaemonReady() {
-  const info = readDaemonInfo();
-  if (!info) return false;
-  if (!isDaemonAlive(info)) return false;
-  if (info.model !== EXPECTED_MODEL || info.dim !== EXPECTED_DIM) return false;
-  const reply = await pingDaemon(info);
-  if (!reply) return false;
-  if (!reply.ok || !reply.ready) return false;
-  if (reply.model && reply.model !== EXPECTED_MODEL) return false;
-  if (reply.dim && reply.dim !== EXPECTED_DIM) return false;
-  return true;
-}
-function resolveRepoRoot() {
-  const envDir = process.env.CLAUDE_PROJECT_DIR;
-  if (envDir && existsSync3(join3(envDir, "opc"))) {
-    return resolve(envDir);
-  }
-  try {
-    const entry = process.argv[1];
-    if (entry) {
-      let dir = resolve(entry);
-      for (let i = 0; i < 10; i++) {
-        const parent = resolve(dir, "..");
-        if (parent === dir) break;
-        dir = parent;
-        if (existsSync3(join3(dir, "opc", "scripts", "core", "embedding_daemon.py"))) {
-          return dir;
-        }
-      }
-    }
-  } catch {
-  }
-  return null;
-}
-var _spawnAttempted = false;
-function ensureDaemonRunning() {
-  if (_spawnAttempted) return;
-  _spawnAttempted = true;
-  const info = readDaemonInfo();
-  if (info && isDaemonAlive(info)) return;
-  const repoRoot = resolveRepoRoot();
-  if (!repoRoot) {
-    console.error(
-      "[embedding-client] cannot locate repo root; daemon will not be spawned"
-    );
-    return;
-  }
-  try {
-    const child = spawn(
-      "uv",
-      ["run", "--project", "opc", "python", "opc/scripts/core/embedding_daemon.py", "--daemon"],
-      {
-        cwd: repoRoot,
-        detached: true,
-        stdio: "ignore",
-        // shell: true is needed on Windows for `uv` (a .exe shim) to
-        // resolve via PATH from a detached spawn -- without it, ENOENT.
-        shell: process.platform === "win32"
-      }
-    );
-    child.on("error", (err) => {
-      console.error(
-        `[embedding-client] daemon spawn error: ${err.message ?? err}`
-      );
-    });
-    child.unref();
-  } catch (err) {
-    console.error(
-      `[embedding-client] daemon spawn failed: ${err?.message ?? err}`
-    );
-  }
-}
-
 // src/memory-awareness.ts
-var TEXT_ONLY_FLOOR = 0.05;
-var HYBRID_FLOOR = 0.01;
-var LOCAL_SCORE_NORMALIZE = 0.1;
 function readStdin() {
-  return readFileSync3(0, "utf-8");
+  return readFileSync2(0, "utf-8");
 }
 function expandGitQuery(prompt) {
   const lower = prompt.toLowerCase().trim();
@@ -498,10 +130,167 @@ function expandGitQuery(prompt) {
   }
   return null;
 }
+function extractIntent(prompt) {
+  const metaPhrases = [
+    /^(can you|could you|would you|please|help me|i want to|i need to|let's|lets)\s+/gi,
+    /^(show me|tell me|find|search for|look for|recall|remember)\s+/gi,
+    /^(how do i|how can i|how to|what is|what are|where is|where are)\s+/gi,
+    /\s+(for me|please|thanks|thank you)$/gi,
+    /\?$/g
+  ];
+  let intent = prompt.trim();
+  for (const pattern of metaPhrases) {
+    intent = intent.replace(pattern, "");
+  }
+  intent = intent.trim();
+  if (intent.length < 5) {
+    return extractKeywords(prompt);
+  }
+  return intent;
+}
+function extractKeywords(prompt) {
+  const stopWords = /* @__PURE__ */ new Set([
+    "a",
+    "an",
+    "the",
+    "is",
+    "are",
+    "was",
+    "were",
+    "be",
+    "been",
+    "being",
+    "have",
+    "has",
+    "had",
+    "do",
+    "does",
+    "did",
+    "will",
+    "would",
+    "could",
+    "should",
+    "may",
+    "might",
+    "must",
+    "can",
+    "to",
+    "of",
+    "in",
+    "for",
+    "on",
+    "with",
+    "at",
+    "by",
+    "from",
+    "as",
+    "into",
+    "through",
+    "during",
+    "before",
+    "after",
+    "above",
+    "below",
+    "between",
+    "under",
+    "again",
+    "further",
+    "then",
+    "once",
+    "here",
+    "there",
+    "when",
+    "where",
+    "why",
+    "how",
+    "all",
+    "each",
+    "few",
+    "more",
+    "most",
+    "other",
+    "some",
+    "such",
+    "no",
+    "nor",
+    "not",
+    "only",
+    "own",
+    "same",
+    "so",
+    "than",
+    "too",
+    "very",
+    "s",
+    "t",
+    "just",
+    "don",
+    "now",
+    "i",
+    "me",
+    "my",
+    "you",
+    "your",
+    "we",
+    "help",
+    "with",
+    "our",
+    "they",
+    "them",
+    "their",
+    "it",
+    "its",
+    "this",
+    "that",
+    "these",
+    "what",
+    "which",
+    "who",
+    "whom",
+    "and",
+    "but",
+    "if",
+    "or",
+    "because",
+    "until",
+    "while",
+    "about",
+    "against",
+    "also",
+    "get",
+    "got",
+    "make",
+    "want",
+    "need",
+    "look",
+    "see",
+    "use",
+    "like",
+    "know",
+    "think",
+    "take",
+    "come",
+    "go",
+    "say",
+    "said",
+    "tell",
+    "please",
+    "help",
+    "let",
+    "sure",
+    "recall",
+    "remember",
+    "similar",
+    "problems",
+    "issues"
+  ]);
+  const words = prompt.toLowerCase().replace(/[^\w\s-]/g, " ").split(/\s+/).filter((w) => w.length > 2 && !stopWords.has(w));
+  return [...new Set(words)].slice(0, 5).join(" ");
+}
 function checkLocalMemory(intent, projectDir) {
   const homeDir = process.env.HOME || process.env.USERPROFILE || "";
   const projectMemoryScript = path.join(homeDir, ".claude", "scripts", "core", "project_memory.py");
-  if (!existsSync4(projectMemoryScript)) return [];
+  if (!existsSync3(projectMemoryScript)) return null;
   try {
     const result = spawnSync("uv", [
       "run",
@@ -520,26 +309,30 @@ function checkLocalMemory(intent, projectDir) {
       timeout: 2e3,
       killSignal: "SIGKILL"
     });
-    if (result.status !== 0 || !result.stdout) return [];
+    if (result.status !== 0 || !result.stdout) return null;
     const data = JSON.parse(result.stdout);
-    if (!data.results || data.results.length === 0) return [];
-    return data.results.slice(0, 3).map((r) => ({
+    if (!data.results || data.results.length === 0) return null;
+    const results = data.results.slice(0, 3).map((r) => ({
       id: r.task_id || r.id || "local",
       type: "LOCAL_HANDOFF",
       content: r.summary || r.content || "",
-      // Normalize local similarity (~0.5) into ts_rank range so the merge
-      // sort/floor doesn't unfairly favor local rows.
-      score: (r.similarity || 0.5) * LOCAL_SCORE_NORMALIZE
+      score: r.similarity || 0.5
     }));
+    return { count: data.count || results.length, results };
   } catch {
-    return [];
+    return null;
   }
 }
-function checkDbMemory(intent, _projectDir, useHybrid) {
+function checkMemoryRelevance(intent, projectDir) {
+  if (!intent || intent.length < 3) return null;
+  const localMatch = checkLocalMemory(intent, projectDir);
+  if (localMatch) {
+    return localMatch;
+  }
   const opcDir = getOpcDir();
-  if (!opcDir) return [[], false];
+  if (!opcDir) return null;
   const searchTerm = intent.replace(/[_\/]/g, " ").replace(/\b\w{1,2}\b/g, "").replace(/\s+/g, " ").trim();
-  const args = [
+  const result = spawnSync("uv", [
     "run",
     "python",
     "scripts/core/recall_learnings.py",
@@ -547,31 +340,27 @@ function checkDbMemory(intent, _projectDir, useHybrid) {
     searchTerm,
     "--k",
     "3",
-    "--json"
-  ];
-  if (!useHybrid) {
-    args.push("--text-only");
-  }
-  const result = spawnSync("uv", args, {
+    "--json",
+    "--text-only"
+  ], {
     encoding: "utf-8",
     cwd: opcDir,
     env: {
       ...process.env,
       PYTHONPATH: opcDir
     },
-    timeout: 12e3,
+    timeout: 2e3,
     killSignal: "SIGKILL"
   });
-  const timedOut = result.signal === "SIGKILL";
   if (result.status !== 0 || !result.stdout) {
-    return [[], timedOut];
+    return null;
   }
   try {
     const data = JSON.parse(result.stdout);
     if (!data.results || data.results.length === 0) {
-      return [[], false];
+      return null;
     }
-    const results = (data.results || []).map((r) => {
+    const results = data.results.slice(0, 3).map((r) => {
       const content = r.content || "";
       const preview = content.split("\n").filter((l) => l.trim().length > 0).map((l) => l.trim()).join(" ").slice(0, 120);
       return {
@@ -581,77 +370,15 @@ function checkDbMemory(intent, _projectDir, useHybrid) {
         score: r.score || 0
       };
     });
-    return [results, false];
+    return {
+      count: data.results.length,
+      results
+    };
   } catch {
-    return [[], false];
-  }
-}
-function mergeResults(local, db) {
-  if ((!local || local.length === 0) && (!db || db.length === 0)) {
     return null;
-  }
-  const localTagged = (local || []).map((r) => ({ ...r, __src: "local" }));
-  const dbTagged = (db || []).map((r) => ({ ...r, __src: "db" }));
-  const combined = [...localTagged, ...dbTagged];
-  const byId = /* @__PURE__ */ new Map();
-  for (const row of combined) {
-    const existing = byId.get(row.id);
-    if (!existing) {
-      byId.set(row.id, { row, crossed: false });
-    } else {
-      const crossed = existing.crossed || existing.row.__src !== row.__src;
-      const winner = row.score > existing.row.score ? row : existing.row;
-      byId.set(row.id, { row: winner, crossed });
-    }
-  }
-  const deduped = Array.from(byId.values());
-  deduped.sort((a, b) => b.row.score - a.row.score);
-  const top = deduped.slice(0, 3);
-  if (top.length === 0) return null;
-  const sources = /* @__PURE__ */ new Set();
-  for (const t of top) {
-    sources.add(t.row.__src);
-    if (t.crossed) sources.add("merged");
-  }
-  const source = sources.has("merged") || sources.size > 1 ? "merged" : sources.has("local") ? "local" : "db";
-  const cleaned = top.map(({ row }) => ({
-    id: row.id,
-    type: row.type,
-    content: row.content,
-    score: row.score
-  }));
-  return {
-    count: deduped.length,
-    results: cleaned,
-    source
-  };
-}
-function applyFloor(match, floor) {
-  if (!match) return null;
-  const filtered = match.results.filter((r) => (r.score ?? 0) >= floor);
-  if (filtered.length === 0) return null;
-  return {
-    count: filtered.length,
-    results: filtered,
-    source: match.source
-  };
-}
-function getRecallLogPath(projectDir) {
-  const dir = path.join(projectDir, ".claude", "logs");
-  try {
-    mkdirSync2(dir, { recursive: true });
-  } catch {
-  }
-  return path.join(dir, "memory-recall.jsonl");
-}
-function logRecallFire(entry, projectDir) {
-  try {
-    appendFileSync(getRecallLogPath(projectDir), JSON.stringify(entry) + "\n");
-  } catch {
   }
 }
 async function main() {
-  const t0 = Date.now();
   const input = JSON.parse(readStdin());
   const projectDir = process.env.CLAUDE_PROJECT_DIR || input.cwd;
   if (process.env.CLAUDE_AGENT_ID) {
@@ -672,43 +399,7 @@ async function main() {
     outputContinue();
     return;
   }
-  let daemonReady = false;
-  try {
-    daemonReady = await isDaemonReady();
-  } catch {
-    daemonReady = false;
-  }
-  const mode = daemonReady ? "hybrid" : "text-only";
-  if (!daemonReady) {
-    try {
-      ensureDaemonRunning();
-    } catch {
-    }
-  }
-  const local = checkLocalMemory(intent, projectDir);
-  const [db, dbTimedOut] = checkDbMemory(intent, projectDir, daemonReady);
-  const mergedRaw = mergeResults(local, db);
-  const floorApplied = daemonReady ? HYBRID_FLOOR : TEXT_ONLY_FLOOR;
-  const match = applyFloor(mergedRaw, floorApplied);
-  const topScoreRaw = mergedRaw && mergedRaw.results.length > 0 ? mergedRaw.results.reduce((m, r) => Math.max(m, r.score ?? 0), 0) : 0;
-  const logEntry = {
-    timestamp: (/* @__PURE__ */ new Date()).toISOString(),
-    session_id: input.session_id || "unknown",
-    subagent: process.env.CLAUDE_AGENT_ID || null,
-    intent,
-    results_count: mergedRaw ? mergedRaw.count : 0,
-    top_score: topScoreRaw,
-    kept_after_floor: match ? match.results.length : 0,
-    source: match ? match.source : mergedRaw ? mergedRaw.source : "empty",
-    mode,
-    daemon_ready: daemonReady,
-    total_elapsed_ms: Date.now() - t0,
-    floor_applied: floorApplied,
-    // MEDIUM-2 (arbiter 2.1): true = subprocess SIGKILLed before returning
-    // output; false = completed normally (even if results_count is 0).
-    db_subprocess_timed_out: dbTimedOut
-  };
-  logRecallFire(logEntry, projectDir);
+  const match = checkMemoryRelevance(intent, projectDir);
   if (match) {
     try {
       logHook(input.session_id, "memory-awareness");
@@ -733,12 +424,3 @@ Use /recall "${intent}" for full content. Disclose if helpful.`;
 main().catch(() => {
   outputContinue();
 });
-export {
-  HYBRID_FLOOR,
-  LOCAL_SCORE_NORMALIZE,
-  TEXT_ONLY_FLOOR,
-  applyFloor,
-  extractIntent,
-  extractKeywords,
-  mergeResults
-};

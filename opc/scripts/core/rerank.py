@@ -166,6 +166,12 @@ def rerank(
         score_list = [float(s) for s in scores]
 
     for cand, score in zip(candidates, score_list):
+        # INTENTIONAL: mutates the input candidate dicts in place. The by_id
+        # map in recall_learnings._apply_rerank relies on this so the
+        # rehydration step can read rerank_score from the original dict via
+        # the shared reference. Safe under single-threaded use; if this code
+        # is ever called concurrently on shared candidate lists, audit.
+        # (Phase 2 MEDIUM-3)
         cand["rerank_score"] = score
 
     candidates.sort(key=lambda c: c.get("rerank_score", float("-inf")), reverse=True)
@@ -433,15 +439,54 @@ def _pid_alive(pid: int) -> bool:
         return False
 
 
+def ping_daemon(timeout_s: float = 0.2) -> dict[str, Any] | None:
+    """TCP ping the rerank daemon. Returns the response dict or None.
+
+    Lighter than a full rerank request; used by ``daemon_is_alive`` to
+    confirm the server is accepting connections (not just PID-alive).
+    """
+    info = read_daemon_info()
+    if not info:
+        return None
+    port = int(info.get("port", 0))
+    if port <= 0:
+        return None
+    try:
+        with socket.create_connection(("127.0.0.1", port), timeout=timeout_s) as sock:
+            try:
+                sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
+            except OSError:
+                pass
+            sock.settimeout(timeout_s)
+            _send_frame(sock, {"cmd": "ping"})
+            return _recv_frame(sock)
+    except (OSError, EOFError, json.JSONDecodeError):
+        return None
+
+
 def daemon_is_alive() -> tuple[bool, dict[str, Any] | None]:
-    """Return (alive, info) for the rerank daemon."""
+    """Return (alive, info) for the rerank daemon.
+
+    Checks both PID liveness and a TCP ping so callers don't attempt a
+    full rerank request against a daemon that is still binding its port.
+    There is a window between process spawn and ``serve_forever()`` where
+    the PID is alive but the socket is not yet accepting -- a PID-only
+    check would return True and the subsequent ``rerank_via_daemon`` call
+    would fail and fall back to subprocess. The TCP ping closes this window.
+    (Phase 2 MEDIUM-1)
+    """
     info = read_daemon_info()
     if not info:
         return False, None
     pid = int(info.get("pid", 0))
     if not _pid_alive(pid):
         return False, info
-    return True, info
+    # PID is alive; confirm the TCP server is actually accepting connections.
+    reply = ping_daemon(timeout_s=0.2)
+    if reply and reply.get("status") == "ok":
+        return True, info
+    # Ping failed -- PID alive but socket not yet ready (or daemon hung).
+    return False, info
 
 
 def rerank_via_daemon(
@@ -540,12 +585,12 @@ def _run_bench(args: argparse.Namespace) -> int:
         times.append((time.perf_counter() - t0) * 1000)
 
     times.sort()
-    # Percentiles use math.ceil nearest-rank, matching eval_recall._percentile.
-    # For even n, p50 averages the two middle values (true median).
-    n = len(times)
-    _mid = n // 2
-    p50_ms = (times[_mid - 1] + times[_mid]) / 2.0 if n % 2 == 0 else times[_mid]
-    p95_ms = times[min(n - 1, int(math.ceil(n * 0.95)) - 1)]
+    # Delegate to shared helpers in core.utils so all bench modes stay in sync.
+    # (Phase 2 MEDIUM-4: previously duplicated across rerank.py, eval_recall.py,
+    # and embedding_daemon.py.)
+    from core.utils import percentile as _pct, median as _median  # noqa: PLC0415
+    p50_ms = _median(times)
+    p95_ms = _pct(times, 95)
     out = {
         "cold_ms": cold_ms,
         "warmup_ms": warmup_ms,

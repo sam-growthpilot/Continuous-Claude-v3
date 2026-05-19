@@ -14,7 +14,8 @@ re-runs all hit a systematic failure mode where every `recall_learnings.py
 resource-contention or model-cache corruption issue triggered by leftover
 daemon processes from earlier runs.
 
-The 33 complete pairs cover all 6 learning types and both scopes (PROJECT
+The 33 complete pairs cover 5 of 6 learning types (FAILED_APPROACH pairs at
+positions 39-43 not reached in this partial run) and both scopes (PROJECT
 and GLOBAL). The decision-gate verdict below should be treated as
 **indicative, not authoritative** — Task 3.2 should re-run the eval on a
 clean system before relying on the result.
@@ -94,6 +95,14 @@ latency. The subprocess overhead (uv venv resolution + python import + DB
 connect + model load) dominates. The actual rerank decision should be made
 against the in-process daemon ping P95 (which kraken's bench measured at
 4-7s in 1.2).
+
+**Scope note:** The baseline + reranked NDCG numbers here were measured with
+`recall_learnings.py --all-projects` because the eval set spans multiple
+projects' PROJECT-scope entries. Production hook recall
+(`memory-awareness.ts`, `agent-recall-injector.ts`) is CWD-scoped, so
+real-world baseline NDCG will be lower (less competition) and the absolute
+reranker lift may be larger. The +110.4% relative lift is the gate metric
+and remains directionally robust.
 
 ## Comparison Breakdown
 

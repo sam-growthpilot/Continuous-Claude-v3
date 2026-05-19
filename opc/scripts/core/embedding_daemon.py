@@ -584,13 +584,12 @@ def _run_bench() -> int:
         times.append((time.perf_counter() - t0) * 1000)
 
     times.sort()
-    # Percentiles use math.ceil nearest-rank for p95, matching rerank.py's
-    # post-fix bench (commit 83d1308). True median for p50 (averages the
-    # two middle values for even n).
-    n = len(times)
-    _mid = n // 2
-    p50_ms = (times[_mid - 1] + times[_mid]) / 2.0 if n % 2 == 0 else times[_mid]
-    p95_ms = times[min(n - 1, int(math.ceil(n * 0.95)) - 1)]
+    # Delegate to shared helpers in core.utils so all bench modes stay in sync.
+    # (Phase 2 MEDIUM-4: previously duplicated across rerank.py, eval_recall.py,
+    # and embedding_daemon.py.)
+    from core.utils import percentile as _pct, median as _median  # noqa: PLC0415
+    p50_ms = _median(times)
+    p95_ms = _pct(times, 95)
     out = {
         "cold_ms": cold_ms,
         "warmup_ms": warmup_ms,

@@ -29,7 +29,7 @@
  * code -- only conventions.
  */
 
-import { existsSync, readFileSync } from 'fs';
+import { existsSync, readFileSync, unlinkSync } from 'fs';
 import { spawn } from 'child_process';
 import { tmpdir } from 'os';
 import { join, resolve } from 'path';
@@ -240,16 +240,20 @@ export async function pingDaemon(
       res(val);
     };
 
-    // Connect-side timeout. If we don't connect in `timeoutMs` we bail.
-    const connectTimer = setTimeout(() => cleanup(null), timeoutMs);
+    // Single overall timer covering connect + send + recv. Previously two
+    // independent timers (connectTimer + recvFrame timeout) caused a
+    // worst-case wall time of 2 * timeoutMs. One timer means the budget is
+    // always respected end-to-end. (T#11 HIGH-2)
+    const overallTimer = setTimeout(() => cleanup(null), timeoutMs);
 
     sock.once('error', () => {
-      clearTimeout(connectTimer);
+      clearTimeout(overallTimer);
       cleanup(null);
     });
 
     sock.connect(info.port, '127.0.0.1', () => {
-      clearTimeout(connectTimer);
+      // Connect succeeded. overallTimer is still running — it now covers
+      // send + recv as well. Do NOT reset it here.
       try {
         sock.setNoDelay(true);
       } catch {
@@ -258,11 +262,15 @@ export async function pingDaemon(
       try {
         sendFrame(sock, { cmd: 'ping' });
       } catch {
+        clearTimeout(overallTimer);
         cleanup(null);
         return;
       }
-      recvFrame(sock, timeoutMs)
+      // Pass 0 to recvFrame so it has no internal timeout — the overall
+      // timer above is the single budget for the whole operation.
+      recvFrame(sock, 0)
         .then((reply) => {
+          clearTimeout(overallTimer);
           if (
             reply &&
             typeof reply === 'object' &&
@@ -274,7 +282,10 @@ export async function pingDaemon(
             cleanup(null);
           }
         })
-        .catch(() => cleanup(null));
+        .catch(() => {
+          clearTimeout(overallTimer);
+          cleanup(null);
+        });
     });
   });
 }
@@ -358,16 +369,44 @@ export async function embedText(
  * Use this to gate "do hybrid (vector + FTS) recall this prompt vs fall
  * back to text-only".
  */
+/**
+ * Remove the daemon discovery file. Called when the daemon is confirmed dead
+ * to prevent stale files from blocking future liveness checks. Best-effort:
+ * file may not exist, or we may lack permission. (T#11 LOW-2)
+ */
+function _cleanupDiscoveryFile(): void {
+  try {
+    if (existsSync(DAEMON_INFO_PATH)) {
+      unlinkSync(DAEMON_INFO_PATH);
+    }
+  } catch {
+    /* best-effort cleanup — permissions or race with daemon restart */
+  }
+}
+
 export async function isDaemonReady(): Promise<boolean> {
   const info = readDaemonInfo();
   if (!info) return false;
-  if (!isDaemonAlive(info)) return false;
+  if (!isDaemonAlive(info)) {
+    // PID is dead. Remove the stale discovery file so the next caller
+    // doesn't repeat the liveness check against an already-dead PID.
+    // (T#11 LOW-2: daemon SIGKILLed skips the Python finally block that
+    // normally calls _delete_daemon_info(), leaving a stale file behind.)
+    _cleanupDiscoveryFile();
+    return false;
+  }
   // Sanity-check model + dim before doing the network ping. A daemon
   // running a different model would silently produce vectors that don't
   // match the archival_memory schema.
   if (info.model !== EXPECTED_MODEL || info.dim !== EXPECTED_DIM) return false;
   const reply = await pingDaemon(info);
-  if (!reply) return false;
+  if (!reply) {
+    // Ping failed even though PID is alive — TCP socket not accepting or
+    // daemon is hung. Clean up the stale discovery file so the next caller
+    // triggers a fresh spawn attempt rather than looping through dead state.
+    _cleanupDiscoveryFile();
+    return false;
+  }
   if (!reply.ok || !reply.ready) return false;
   // Optional: re-verify the model from the ping reply (defends against
   // a daemon that wrote a stale discovery file).

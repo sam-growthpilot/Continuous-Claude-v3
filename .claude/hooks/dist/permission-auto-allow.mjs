@@ -17,7 +17,7 @@ function main() {
     emitAllow();
     return;
   }
-  if (input.tool_name === "AskUserQuestion") {
+  if (input.tool_name === "AskUserQuestion" || input.tool_name === "ExitPlanMode") {
     process.stdout.write("{}");
     return;
   }

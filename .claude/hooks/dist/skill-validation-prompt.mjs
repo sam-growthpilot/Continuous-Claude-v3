@@ -1,49 +1,4 @@
-var __defProp = Object.defineProperty;
-var __getOwnPropDesc = Object.getOwnPropertyDescriptor;
-var __getOwnPropNames = Object.getOwnPropertyNames;
-var __hasOwnProp = Object.prototype.hasOwnProperty;
-var __esm = (fn, res) => function __init() {
-  return fn && (res = (0, fn[__getOwnPropNames(fn)[0]])(fn = 0)), res;
-};
-var __export = (target, all) => {
-  for (var name in all)
-    __defProp(target, name, { get: all[name], enumerable: true });
-};
-var __copyProps = (to, from, except, desc) => {
-  if (from && typeof from === "object" || typeof from === "function") {
-    for (let key of __getOwnPropNames(from))
-      if (!__hasOwnProp.call(to, key) && key !== except)
-        __defProp(to, key, { get: () => from[key], enumerable: !(desc = __getOwnPropDesc(from, key)) || desc.enumerable });
-  }
-  return to;
-};
-var __toCommonJS = (mod) => __copyProps(__defProp({}, "__esModule", { value: true }), mod);
-
-// src/shared/project-id.ts
-var project_id_exports = {};
-__export(project_id_exports, {
-  getActiveProjectId: () => getActiveProjectId,
-  getProjectId: () => getProjectId
-});
-import { createHash } from "node:crypto";
-import { resolve } from "node:path";
-function getProjectId(projectDir) {
-  const absPath = resolve(projectDir);
-  return createHash("sha256").update(absPath).digest("hex").substring(0, 16);
-}
-function getActiveProjectId() {
-  const dir = process.env.CLAUDE_PROJECT_DIR || process.cwd();
-  return getProjectId(dir);
-}
-var init_project_id = __esm({
-  "src/shared/project-id.ts"() {
-    "use strict";
-  }
-});
-
 // src/skill-validation-prompt.ts
-import { createHash as createHash2 } from "node:crypto";
-import { resolve as resolvePath } from "node:path";
 var AMBIGUOUS_KEYWORDS = /* @__PURE__ */ new Set([
   "commit",
   "push",
@@ -198,30 +153,16 @@ async function validateSkillRelevance(match, llmCall) {
     };
   }
 }
-function getValidationCacheKey(skillName, projectId) {
-  const scope = projectId && projectId.length > 0 ? projectId : "global";
-  return `${skillName}::${scope}`;
-}
-function resolveProjectIdFromEnv() {
-  try {
-    const mod = (init_project_id(), __toCommonJS(project_id_exports));
-    if (mod && typeof mod.getActiveProjectId === "function") {
-      return mod.getActiveProjectId();
-    }
-  } catch {
-  }
-  const dir = process.env.CLAUDE_PROJECT_DIR || process.cwd();
-  return createHash2("sha256").update(resolvePath(dir)).digest("hex").substring(0, 16);
-}
-function filterValidatedSkills(matches, validationResults, confidenceThreshold = 0.5, projectId) {
-  const effectiveProjectId = projectId ?? resolveProjectIdFromEnv();
+function filterValidatedSkills(matches, validationResults, confidenceThreshold = 0.5) {
   return matches.filter((match) => {
-    const scopedKey = getValidationCacheKey(match.skillName, effectiveProjectId);
-    const result = effectiveProjectId ? validationResults.get(scopedKey) : validationResults.get(scopedKey) ?? validationResults.get(match.skillName);
+    const result = validationResults.get(match.skillName);
     if (!result) {
       return true;
     }
-    if (result.decision === "skip" && result.confidence >= confidenceThreshold) {
+    if (result.decision === "skip") {
+      return false;
+    }
+    if (result.confidence < confidenceThreshold) {
       return false;
     }
     return true;
@@ -230,7 +171,6 @@ function filterValidatedSkills(matches, validationResults, confidenceThreshold =
 export {
   buildValidationPrompt,
   filterValidatedSkills,
-  getValidationCacheKey,
   parseValidationResponse,
   shouldValidateWithLLM,
   validateSkillRelevance

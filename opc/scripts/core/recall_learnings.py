@@ -1403,6 +1403,10 @@ def _apply_rerank(
         if full is None:
             continue
         # Attach rerank_score onto the original candidate dict.
+        # rerank.rerank() mutates its input dicts in place (sets rerank_score
+        # on each slim row). The by_id map above holds references to those
+        # same dicts, so we can read rerank_score from slim_row and write
+        # it onto the full candidate. Single-threaded use only. (Phase 2 MEDIUM-3)
         full["rerank_score"] = float(slim_row.get("rerank_score", 0.0))
         hydrated.append(full)
 

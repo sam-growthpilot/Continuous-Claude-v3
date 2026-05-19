@@ -4,7 +4,6 @@ import * as path from "path";
 
 // src/transcript-parser.ts
 import * as fs from "fs";
-import { pathToFileURL } from "url";
 function parseTranscript(transcriptPath) {
   const summary = {
     lastTodos: [],
@@ -16,12 +15,7 @@ function parseTranscript(transcriptPath) {
   if (!fs.existsSync(transcriptPath)) {
     return summary;
   }
-  let content;
-  try {
-    content = fs.readFileSync(transcriptPath, "utf-8");
-  } catch {
-    return summary;
-  }
+  const content = fs.readFileSync(transcriptPath, "utf-8");
   const lines = content.split("\n").filter((line) => line.trim());
   const allToolCalls = [];
   const modifiedFiles = /* @__PURE__ */ new Set();
@@ -49,15 +43,11 @@ function parseTranscript(transcriptPath) {
           if (toolName === "TodoWrite" || toolName.toLowerCase().includes("todowrite")) {
             const input = entry.tool_input;
             if (input?.todos) {
-              lastTodoState = input.todos.map((t, idx) => {
-                const rawStatus = t.status;
-                const status = rawStatus === "pending" || rawStatus === "in_progress" || rawStatus === "completed" ? rawStatus : "pending";
-                return {
-                  id: t.id || `todo-${idx}`,
-                  content: t.content || "",
-                  status
-                };
-              });
+              lastTodoState = input.todos.map((t, idx) => ({
+                id: t.id || `todo-${idx}`,
+                content: t.content || "",
+                status: t.status || "pending"
+              }));
             }
           }
           if (toolName === "Edit" || toolName === "Write" || toolName.toLowerCase().includes("edit") || toolName.toLowerCase().includes("write")) {
@@ -108,60 +98,6 @@ function parseTranscript(transcriptPath) {
   summary.errorsEncountered = errors.slice(-5);
   return summary;
 }
-function yamlSafe(value) {
-  if (value === null || value === void 0) return "";
-  const s = typeof value === "string" ? value : String(value);
-  let out = "";
-  for (let i = 0; i < s.length; i++) {
-    const ch = s.charCodeAt(i);
-    if (ch === 92) {
-      out += "\\\\";
-      continue;
-    }
-    if (ch === 34) {
-      out += '\\"';
-      continue;
-    }
-    if (ch === 9) {
-      out += "\\t";
-      continue;
-    }
-    if (ch === 10) {
-      out += "\\n";
-      continue;
-    }
-    if (ch === 13) {
-      out += "\\r";
-      continue;
-    }
-    if (ch === 0) {
-      out += "\\0";
-      continue;
-    }
-    if (ch === 8) {
-      out += "\\b";
-      continue;
-    }
-    if (ch === 12) {
-      out += "\\f";
-      continue;
-    }
-    if (ch < 32 || ch >= 127 && ch < 160) {
-      out += "\\x" + ch.toString(16).padStart(2, "0");
-      continue;
-    }
-    out += s[i];
-  }
-  return out;
-}
-function yamlScalar(value) {
-  if (value === null || value === void 0) return '""';
-  const s = typeof value === "string" ? value : String(value);
-  if (s.length === 0 || /[^A-Za-z0-9 _./\-]/.test(s) || /^\s|\s$/.test(s) || /^[-?@`!&*|>'%,\[\]\{\}#]/.test(s)) {
-    return `"${yamlSafe(s)}"`;
-  }
-  return s;
-}
 function generateAutoHandoff(summary, sessionName) {
   const timestamp = (/* @__PURE__ */ new Date()).toISOString();
   const dateOnly = timestamp.split("T")[0];
@@ -172,20 +108,20 @@ function generateAutoHandoff(summary, sessionName) {
   const currentTask = inProgress[0]?.content || pending[0]?.content || "Continue from auto-compact";
   const goalSummary = completed.length > 0 ? `Completed ${completed.length} task(s) before auto-compact` : "Session auto-compacted";
   lines.push("---");
-  lines.push(`session: ${yamlScalar(sessionName)}`);
-  lines.push(`date: ${yamlScalar(dateOnly)}`);
+  lines.push(`session: ${sessionName}`);
+  lines.push(`date: ${dateOnly}`);
   lines.push("status: partial");
   lines.push("outcome: PARTIAL_PLUS");
   lines.push("---");
   lines.push("");
-  lines.push(`goal: ${yamlScalar(goalSummary)}`);
-  lines.push(`now: ${yamlScalar(currentTask)}`);
+  lines.push(`goal: ${goalSummary}`);
+  lines.push(`now: ${currentTask}`);
   lines.push("test: # No test command captured");
   lines.push("");
   lines.push("done_this_session:");
   if (completed.length > 0) {
     completed.forEach((t) => {
-      lines.push(`  - task: "${yamlSafe(t.content)}"`);
+      lines.push(`  - task: "${t.content.replace(/"/g, '\\"')}"`);
       lines.push("    files: []");
     });
   } else {
@@ -196,7 +132,7 @@ function generateAutoHandoff(summary, sessionName) {
   lines.push("blockers:");
   if (summary.errorsEncountered.length > 0) {
     summary.errorsEncountered.slice(0, 3).forEach((e) => {
-      const safeError = yamlSafe(typeof e === "string" ? e.substring(0, 100) : String(e).substring(0, 100));
+      const safeError = e.replace(/"/g, '\\"').substring(0, 100);
       lines.push(`  - "${safeError}"`);
     });
   } else {
@@ -206,7 +142,7 @@ function generateAutoHandoff(summary, sessionName) {
   lines.push("questions:");
   if (pending.length > 0) {
     pending.slice(0, 3).forEach((t) => {
-      lines.push(`  - "Resume: ${yamlSafe(t.content)}"`);
+      lines.push(`  - "Resume: ${t.content.replace(/"/g, '\\"')}"`);
     });
   } else {
     lines.push("  []");
@@ -216,13 +152,13 @@ function generateAutoHandoff(summary, sessionName) {
   lines.push('  - auto_compact: "Context limit reached, auto-compacted"');
   lines.push("");
   lines.push("findings:");
-  lines.push(`  - tool_calls: "${yamlSafe(summary.recentToolCalls.length + " recent tool calls")}"`);
-  lines.push(`  - files_modified: "${yamlSafe(summary.filesModified.length + " files changed")}"`);
+  lines.push(`  - tool_calls: "${summary.recentToolCalls.length} recent tool calls"`);
+  lines.push(`  - files_modified: "${summary.filesModified.length} files changed"`);
   lines.push("");
   lines.push("worked:");
   const successfulTools = summary.recentToolCalls.filter((t) => t.success);
   if (successfulTools.length > 0) {
-    lines.push(`  - "${yamlSafe(successfulTools.map((t) => t.name).join(", ") + " completed successfully")}"`);
+    lines.push(`  - "${successfulTools.map((t) => t.name).join(", ")} completed successfully"`);
   } else {
     lines.push("  []");
   }
@@ -230,18 +166,18 @@ function generateAutoHandoff(summary, sessionName) {
   lines.push("failed:");
   const failedTools = summary.recentToolCalls.filter((t) => !t.success);
   if (failedTools.length > 0) {
-    lines.push(`  - "${yamlSafe(failedTools.map((t) => t.name).join(", ") + " encountered errors")}"`);
+    lines.push(`  - "${failedTools.map((t) => t.name).join(", ")} encountered errors"`);
   } else {
     lines.push("  []");
   }
   lines.push("");
   lines.push("next:");
   if (inProgress.length > 0) {
-    lines.push(`  - "Continue: ${yamlSafe(inProgress[0].content)}"`);
+    lines.push(`  - "Continue: ${inProgress[0].content.replace(/"/g, '\\"')}"`);
   }
   if (pending.length > 0) {
     pending.slice(0, 2).forEach((t) => {
-      lines.push(`  - "${yamlSafe(t.content)}"`);
+      lines.push(`  - "${t.content.replace(/"/g, '\\"')}"`);
     });
   }
   if (inProgress.length === 0 && pending.length === 0) {
@@ -253,14 +189,14 @@ function generateAutoHandoff(summary, sessionName) {
   lines.push("  modified:");
   if (summary.filesModified.length > 0) {
     summary.filesModified.slice(0, 10).forEach((f) => {
-      lines.push(`    - "${yamlSafe(f)}"`);
+      lines.push(`    - "${f}"`);
     });
   } else {
     lines.push("    []");
   }
   return lines.join("\n");
 }
-var isMainModule = Boolean(process.argv[1]) && import.meta.url === pathToFileURL(process.argv[1]).href;
+var isMainModule = import.meta.url === `file://${process.argv[1]}`;
 if (isMainModule) {
   const args = process.argv.slice(2);
   if (args.length === 0) {

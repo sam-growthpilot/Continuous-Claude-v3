@@ -61,9 +61,7 @@ async function main() {
   const homeDir = process.env.HOME || process.env.USERPROFILE || "";
   const claudeDir = homeDir ? `${homeDir}/.claude`.replace(/\\/g, "/") : "";
   const normalizedProject = project.replace(/\\/g, "/");
-  const projectSegments = project.split(/[\\/]/);
-  const isClaudeInfra = projectSegments.includes(".claude");
-  if (claudeDir && (normalizedProject === claudeDir || isClaudeInfra)) {
+  if (claudeDir && (normalizedProject === claudeDir || normalizedProject.includes("/.claude"))) {
     console.log(JSON.stringify({ result: "continue" }));
     return;
   }

@@ -467,20 +467,16 @@ def run_recall(
 # ---------------------------------------------------------------------------
 
 def _percentile(values: list[float], p: float) -> float:
-    """Nearest-rank percentile with linear interpolation (statistics.quantiles)."""
+    """Nearest-rank percentile. Delegates to core.utils.percentile.
+
+    (Phase 2 MEDIUM-4: previously an inline linear-interpolation formula.
+    Replaced with the canonical nearest-rank implementation shared across
+    rerank.py, eval_recall.py, and embedding_daemon.py.)
+    """
     if not values:
         return 0.0
-    if len(values) == 1:
-        return float(values[0])
-    # statistics.quantiles uses 'exclusive' by default. Use 'inclusive' so
-    # P95 of a 5-element sample is the 95th-percentile rank, not extrapolated.
-    sorted_vals = sorted(values)
-    k = (len(sorted_vals) - 1) * (p / 100.0)
-    f = int(math.floor(k))
-    c = int(math.ceil(k))
-    if f == c:
-        return float(sorted_vals[f])
-    return float(sorted_vals[f] + (sorted_vals[c] - sorted_vals[f]) * (k - f))
+    from core.utils import percentile as _pct  # noqa: PLC0415
+    return _pct(values, p)
 
 
 def aggregate_arm(
