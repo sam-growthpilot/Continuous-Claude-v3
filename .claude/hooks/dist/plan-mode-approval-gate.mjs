@@ -181,6 +181,12 @@ function decideGate(params) {
   if (params.bypassEnv) return { action: "allow" };
   if (params.goalActive) return { action: "allow" };
   if (params.ralphActive) return { action: "allow" };
+  if (params.permissionMode === "bypassPermissions") {
+    return {
+      action: "deny",
+      reason: "Plan-mode approval gate: ExitPlanMode is blocked while Claude Code is running with --dangerously-skip-permissions. The plan-approval dialog is suppressed in that mode, so this gate cannot ask. To proceed: (a) use AskUserQuestion to get explicit user approval, then set BYPASS_PLAN_GATE=1 in the environment and retry ExitPlanMode; (b) restart Claude Code without --dangerously-skip-permissions; or (c) run inside /goal or /ralph for autonomous flows."
+    };
+  }
   return {
     action: "ask",
     reason: "Plan-mode approval gate: confirm before exiting plan mode and executing the proposed plan. Set BYPASS_PLAN_GATE=1 to skip this gate, or run /goal / /ralph to auto-bypass for autonomous flows."
@@ -232,6 +238,48 @@ function isGoalModeActive(projectDir, sessionId) {
     return false;
   }
 }
+function detectUnderlyingPermissionMode(text) {
+  if (!text) return null;
+  const lines = text.split("\n");
+  for (let i = lines.length - 1; i >= 0; i--) {
+    const line = lines[i].trim();
+    if (!line) continue;
+    if (!line.includes('"permissionMode"')) continue;
+    try {
+      const obj = JSON.parse(line);
+      const mode = obj?.permissionMode;
+      if (typeof mode !== "string") continue;
+      if (mode === "plan") continue;
+      return mode;
+    } catch {
+    }
+  }
+  return null;
+}
+function resolveEffectivePermissionMode(projectDir, sessionId) {
+  if (!sessionId) return null;
+  try {
+    const mangled = mangleProjectDir(projectDir);
+    const transcriptPath = join4(
+      homedir2(),
+      ".claude",
+      "projects",
+      mangled,
+      `${sessionId}.jsonl`
+    );
+    let size = 0;
+    try {
+      size = statSync2(transcriptPath).size;
+    } catch {
+      return null;
+    }
+    if (size === 0 || size > MAX_TRANSCRIPT_BYTES) return null;
+    const text = readFileSync3(transcriptPath, "utf-8");
+    return detectUnderlyingPermissionMode(text);
+  } catch {
+    return null;
+  }
+}
 function emitAllow() {
   console.log(JSON.stringify({}));
 }
@@ -240,6 +288,16 @@ function emitAsk(reason) {
     hookSpecificOutput: {
       hookEventName: "PreToolUse",
       permissionDecision: "ask",
+      permissionDecisionReason: reason
+    }
+  };
+  console.log(JSON.stringify(output));
+}
+function emitDeny(reason) {
+  const output = {
+    hookSpecificOutput: {
+      hookEventName: "PreToolUse",
+      permissionDecision: "deny",
       permissionDecisionReason: reason
     }
   };
@@ -278,25 +336,50 @@ function main() {
     } catch {
       goalActive = false;
     }
+    const rawPermissionMode = input.permission_mode;
+    let permissionMode = rawPermissionMode;
+    if (rawPermissionMode === "plan") {
+      try {
+        const resolved = resolveEffectivePermissionMode(projectDir, sessionId);
+        if (resolved) permissionMode = resolved;
+        else permissionMode = void 0;
+      } catch {
+        permissionMode = void 0;
+      }
+    }
     const decision = decideGate({
       toolName: input.tool_name,
       bypassEnv,
       ralphActive,
-      goalActive
+      goalActive,
+      permissionMode
     });
     try {
       logHook(sessionId, "plan-mode-approval-gate");
     } catch {
     }
     if (decision.action === "ask") {
-      log2.info("Forcing plan-mode approval dialog", { sessionId });
+      log2.info("Forcing plan-mode approval dialog", {
+        sessionId,
+        rawPermissionMode,
+        permissionMode
+      });
       emitAsk(decision.reason);
+    } else if (decision.action === "deny") {
+      log2.info("Denying ExitPlanMode in bypass-permissions mode", {
+        sessionId,
+        rawPermissionMode,
+        permissionMode
+      });
+      emitDeny(decision.reason);
     } else {
       log2.info("Allowing ExitPlanMode without prompt", {
         sessionId,
         bypassEnv,
         goalActive,
-        ralphActive
+        ralphActive,
+        rawPermissionMode,
+        permissionMode
       });
       emitAllow();
     }
@@ -311,6 +394,8 @@ if (!process.env.VITEST) {
 export {
   decideGate,
   detectGoalActiveFromTranscript,
+  detectUnderlyingPermissionMode,
   isGoalModeActive,
-  mangleProjectDir
+  mangleProjectDir,
+  resolveEffectivePermissionMode
 };

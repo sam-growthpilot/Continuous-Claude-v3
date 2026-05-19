@@ -1,15 +1,19 @@
 /**
  * Tests for plan-mode-approval-gate PreToolUse hook.
  *
- * The gate forces an interactive approval dialog before ExitPlanMode runs,
- * even in --dangerously-skip-permissions mode. PreToolUse "ask" decisions
- * survive bypass mode (unlike PermissionRequest, which is skipped entirely).
+ * The gate forces approval before ExitPlanMode runs. In normal mode it
+ * emits `permissionDecision: "ask"` to surface the interactive dialog.
+ * In `--dangerously-skip-permissions` (bypass) mode, Claude Code v2.1.144
+ * silently swallows the `ask` and auto-approves via PermissionRequest, so
+ * the gate emits `permissionDecision: "deny"` instead.
  *
  * Decision matrix:
  *   - Non-ExitPlanMode tool                              -> allow
  *   - ExitPlanMode + BYPASS_PLAN_GATE=1                  -> allow
  *   - ExitPlanMode + /goal active                        -> allow
  *   - ExitPlanMode + Ralph active                        -> allow
+ *   - ExitPlanMode + permissionMode = bypassPermissions  -> deny
+ *   - ExitPlanMode + permissionMode = plan/acceptEdits   -> ask
  *   - ExitPlanMode + no bypass + no goal + no Ralph      -> ask
  */
 
@@ -17,6 +21,7 @@ import { describe, it, expect } from 'vitest';
 import {
   decideGate,
   detectGoalActiveFromTranscript,
+  detectUnderlyingPermissionMode,
   mangleProjectDir,
 } from '../plan-mode-approval-gate.js';
 
@@ -61,6 +66,79 @@ describe('decideGate', () => {
 
   it('bypass env takes priority over ask', () => {
     expect(decideGate({ ...base, bypassEnv: true, goalActive: false, ralphActive: false }).action).toBe('allow');
+  });
+
+  // ---------------------------------------------------------------------------
+  // Bypass-mode (`--dangerously-skip-permissions`) handling.
+  //
+  // In bypass mode, Claude Code v2.1.144 silently swallows
+  // `permissionDecision: "ask"` and auto-approves ExitPlanMode via the
+  // PermissionRequest layer ~187 ms later. To make the gate effective, we
+  // emit `deny` when permissionMode === 'bypassPermissions'. Every existing
+  // allow path (env override, /goal, /ralph) must still win over deny so
+  // autonomous flows are unaffected.
+  // ---------------------------------------------------------------------------
+
+  it('denies ExitPlanMode when permissionMode is bypassPermissions', () => {
+    const result = decideGate({ ...base, permissionMode: 'bypassPermissions' });
+    expect(result.action).toBe('deny');
+  });
+
+  it('bypass env wins over bypass-mode deny', () => {
+    const result = decideGate({
+      ...base,
+      bypassEnv: true,
+      permissionMode: 'bypassPermissions',
+    });
+    expect(result.action).toBe('allow');
+  });
+
+  it('goalActive wins over bypass-mode deny', () => {
+    const result = decideGate({
+      ...base,
+      goalActive: true,
+      permissionMode: 'bypassPermissions',
+    });
+    expect(result.action).toBe('allow');
+  });
+
+  it('ralphActive wins over bypass-mode deny', () => {
+    const result = decideGate({
+      ...base,
+      ralphActive: true,
+      permissionMode: 'bypassPermissions',
+    });
+    expect(result.action).toBe('allow');
+  });
+
+  it('permissionMode default produces ask', () => {
+    const result = decideGate({ ...base, permissionMode: 'default' });
+    expect(result.action).toBe('ask');
+  });
+
+  it('permissionMode plan produces ask', () => {
+    // Plan mode layered on top of a non-bypass underlying mode: still ask.
+    const result = decideGate({ ...base, permissionMode: 'plan' });
+    expect(result.action).toBe('ask');
+  });
+
+  it('permissionMode acceptEdits produces ask (NOT treated as bypass)', () => {
+    // acceptEdits suppresses Edit/Write dialogs only, not ExitPlanMode.
+    // Guard against future scope creep that conflates the two.
+    const result = decideGate({ ...base, permissionMode: 'acceptEdits' });
+    expect(result.action).toBe('ask');
+  });
+
+  it('deny reason contains override + bypass-mode keywords', () => {
+    const result = decideGate({ ...base, permissionMode: 'bypassPermissions' });
+    expect(result.action).toBe('deny');
+    if (result.action === 'deny') {
+      expect(result.reason).toContain('BYPASS_PLAN_GATE');
+      expect(result.reason).toContain('AskUserQuestion');
+      expect(result.reason).toContain('--dangerously-skip-permissions');
+      expect(result.reason).toContain('/goal');
+      expect(result.reason).toContain('/ralph');
+    }
   });
 });
 
@@ -146,5 +224,85 @@ describe('detectGoalActiveFromTranscript', () => {
       attachmentLine({ type: 'goal_status', sentinel: true, met: false }),
     ].join('\n');
     expect(detectGoalActiveFromTranscript(text)).toBe(true);
+  });
+});
+
+describe('detectUnderlyingPermissionMode', () => {
+  // Synthetic transcript lines that mirror the shape Claude Code writes
+  // for permission-mode changes. Real lines carry many more fields; we
+  // only assert on the `permissionMode` value the scanner cares about.
+  function modeLine(mode: string, extra: Record<string, unknown> = {}): string {
+    return JSON.stringify({ type: 'system', permissionMode: mode, ...extra });
+  }
+
+  it('returns null when text is empty', () => {
+    expect(detectUnderlyingPermissionMode('')).toBe(null);
+  });
+
+  it('returns null when no permissionMode entries exist', () => {
+    const text = [
+      '{"type":"user","content":"hi"}',
+      '{"type":"assistant","content":"hello"}',
+    ].join('\n');
+    expect(detectUnderlyingPermissionMode(text)).toBe(null);
+  });
+
+  it('returns null when only "plan" entries exist (no underlying mode resolvable)', () => {
+    const text = [modeLine('plan'), modeLine('plan'), modeLine('plan')].join('\n');
+    expect(detectUnderlyingPermissionMode(text)).toBe(null);
+  });
+
+  it('returns bypassPermissions when it is the most recent non-plan entry', () => {
+    const text = [
+      modeLine('default'),
+      modeLine('bypassPermissions'),
+      modeLine('plan'),
+      modeLine('plan'),
+    ].join('\n');
+    expect(detectUnderlyingPermissionMode(text)).toBe('bypassPermissions');
+  });
+
+  it('returns default when default is more recent than bypassPermissions', () => {
+    const text = [
+      modeLine('bypassPermissions'),
+      modeLine('default'),
+      modeLine('plan'),
+    ].join('\n');
+    expect(detectUnderlyingPermissionMode(text)).toBe('default');
+  });
+
+  it('returns acceptEdits when it is the most recent non-plan entry', () => {
+    const text = [modeLine('default'), modeLine('acceptEdits'), modeLine('plan')].join('\n');
+    expect(detectUnderlyingPermissionMode(text)).toBe('acceptEdits');
+  });
+
+  it('skips malformed JSON lines but still resolves the next valid one', () => {
+    const text = [
+      modeLine('bypassPermissions'),
+      '{this is not json}',
+      modeLine('plan'),
+    ].join('\n');
+    expect(detectUnderlyingPermissionMode(text)).toBe('bypassPermissions');
+  });
+
+  it('skips lines that mention permissionMode but are not valid entries', () => {
+    // A bash command that greps for permissionMode leaves a trace; the
+    // pre-filter matches it, but JSON.parse + field check should reject it.
+    const text = [
+      '{"type":"tool_use","input":{"command":"grep permissionMode foo.jsonl"}}',
+      modeLine('bypassPermissions'),
+    ].join('\n');
+    expect(detectUnderlyingPermissionMode(text)).toBe('bypassPermissions');
+  });
+
+  it('returns null when only matches are bash commands mentioning permissionMode', () => {
+    const text = '{"type":"tool_use","input":{"command":"grep permissionMode"}}';
+    expect(detectUnderlyingPermissionMode(text)).toBe(null);
+  });
+
+  it('handles a single non-plan entry as the resolved mode', () => {
+    expect(detectUnderlyingPermissionMode(modeLine('bypassPermissions'))).toBe(
+      'bypassPermissions',
+    );
   });
 });

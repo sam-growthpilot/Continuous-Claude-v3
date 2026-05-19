@@ -2,12 +2,29 @@
 /**
  * Plan Mode Approval Gate
  *
- * PreToolUse hook on ExitPlanMode. Forces an interactive approval dialog
- * before ExitPlanMode runs, even when Claude Code is in
- * `--dangerously-skip-permissions` (bypass) mode. PreToolUse "ask"
- * decisions survive bypass mode, unlike the PermissionRequest layer
- * (where `permission-auto-allow` and bypass mode otherwise auto-approve
- * ExitPlanMode).
+ * PreToolUse hook on ExitPlanMode. Forces approval before ExitPlanMode
+ * runs.
+ *
+ * In normal sessions the gate emits `permissionDecision: "ask"` so the
+ * native plan-approval dialog surfaces. Empirically (Claude Code
+ * v2.1.144, repro at `~/.claude/projects/.../<sid>.jsonl` around
+ * `toolUseID: toolu_01DxXT1EGgUdZf7mi1buDwiK`), `ask` is silently
+ * swallowed when the session was started with
+ * `--dangerously-skip-permissions`: 187 ms after the gate's `ask`,
+ * Claude Code's built-in PermissionRequest layer auto-allows
+ * ExitPlanMode without any human in the loop. The previous header
+ * comment claimed `ask` survives bypass mode -- that was wrong. The
+ * gate therefore emits `permissionDecision: "deny"` whenever bypass
+ * mode is detected, and `ask` in every other mode.
+ *
+ * Bypass detection: `input.permission_mode` is read directly. When it
+ * reports `"plan"` (plan mode layered on top of an underlying session
+ * mode), `detectUnderlyingPermissionMode` walks the transcript JSONL
+ * backward to find the most recent non-plan `permissionMode` entry and
+ * uses that as the effective mode. Both paths are kept so the hook is
+ * robust whether Claude Code reports the layered or the underlying mode
+ * for ExitPlanMode -- which path actually fires can change between
+ * Claude Code releases without us having to redeploy.
  *
  * Behavior:
  *   - BYPASS_PLAN_GATE=1 set                   -> allow (manual override)
@@ -21,6 +38,15 @@
  *                                                 transcript JSONL)
  *   - Ralph is active in this project          -> allow (mid-loop plan
  *                                                 exits flow through)
+ *   - Effective permissionMode = bypassPermissions
+ *                                              -> deny (ask is swallowed
+ *                                                 in bypass mode, so the
+ *                                                 gate must hard-block;
+ *                                                 user override is the
+ *                                                 BYPASS_PLAN_GATE=1 env
+ *                                                 var or AskUserQuestion
+ *                                                 followed by the env
+ *                                                 override)
  *   - Otherwise                                -> ask (force user dialog)
  *
  * Fails open on ALL errors.
@@ -39,6 +65,13 @@ interface HookInput {
   session_id?: string;
   tool_name?: string;
   tool_input?: Record<string, unknown>;
+  // The active permission mode reported by Claude Code. Observed values:
+  // 'default', 'plan', 'acceptEdits', 'bypassPermissions'. When the
+  // session was started with --dangerously-skip-permissions the field
+  // reports 'bypassPermissions' directly OR 'plan' when plan mode is
+  // layered on top -- main() resolves the layered case via the
+  // transcript scan below.
+  permission_mode?: string;
 }
 
 export interface GateDecisionInput {
@@ -46,17 +79,39 @@ export interface GateDecisionInput {
   bypassEnv: boolean;
   ralphActive: boolean;
   goalActive: boolean;
+  // The EFFECTIVE underlying permission mode. main() is responsible for
+  // resolving the layered 'plan' case via detectUnderlyingPermissionMode
+  // before passing this in.
+  permissionMode?: string;
 }
 
 export type GateDecision =
   | { action: 'allow' }
-  | { action: 'ask'; reason: string };
+  | { action: 'ask'; reason: string }
+  | { action: 'deny'; reason: string };
 
 export function decideGate(params: GateDecisionInput): GateDecision {
   if (params.toolName !== 'ExitPlanMode') return { action: 'allow' };
+  // Explicit overrides take priority over bypass-mode deny so that the
+  // operator-set BYPASS_PLAN_GATE env var and the autonomous /goal and
+  // /ralph flows can still exit plan mode in a bypass session.
   if (params.bypassEnv) return { action: 'allow' };
   if (params.goalActive) return { action: 'allow' };
   if (params.ralphActive) return { action: 'allow' };
+  if (params.permissionMode === 'bypassPermissions') {
+    return {
+      action: 'deny',
+      reason:
+        'Plan-mode approval gate: ExitPlanMode is blocked while Claude ' +
+        'Code is running with --dangerously-skip-permissions. The plan-' +
+        'approval dialog is suppressed in that mode, so this gate cannot ' +
+        'ask. To proceed: (a) use AskUserQuestion to get explicit user ' +
+        'approval, then set BYPASS_PLAN_GATE=1 in the environment and ' +
+        'retry ExitPlanMode; (b) restart Claude Code without ' +
+        '--dangerously-skip-permissions; or (c) run inside /goal or ' +
+        '/ralph for autonomous flows.',
+    };
+  }
   return {
     action: 'ask',
     reason:
@@ -160,6 +215,88 @@ export function isGoalModeActive(projectDir: string, sessionId: string): boolean
 }
 
 // ---------------------------------------------------------------------------
+// Underlying-permission-mode detection via transcript JSONL
+// ---------------------------------------------------------------------------
+
+/**
+ * Pure: scan transcript-tail text backward for the most recent
+ * `permissionMode` entry whose value is NOT `"plan"` and return that
+ * value. Returns `null` if no resolvable underlying mode was found.
+ *
+ * Why this exists: when the user toggles plan mode (Shift+Tab) inside a
+ * `--dangerously-skip-permissions` session, `input.permission_mode` on
+ * the ExitPlanMode call MAY report `"plan"` (the layered mode) instead
+ * of `"bypassPermissions"` (the underlying mode). We can't tell from
+ * the input alone, so we mirror `isGoalModeActive`'s transcript walk
+ * to find the most recent underlying mode. The gate then makes its
+ * deny/ask decision off the resolved value.
+ *
+ * The transcript contains many JSONL line shapes; we only care about
+ * entries that JSON-parse and expose a top-level `permissionMode` string.
+ * Bash command lines that merely mention "permissionMode" as part of a
+ * grep / cat command are filtered out by the parse + field check.
+ */
+export function detectUnderlyingPermissionMode(text: string): string | null {
+  if (!text) return null;
+  const lines = text.split('\n');
+  for (let i = lines.length - 1; i >= 0; i--) {
+    const line = lines[i].trim();
+    if (!line) continue;
+    // Cheap pre-filter to avoid parsing every line.
+    if (!line.includes('"permissionMode"')) continue;
+    try {
+      const obj = JSON.parse(line);
+      const mode = obj?.permissionMode;
+      if (typeof mode !== 'string') continue;
+      if (mode === 'plan') continue;
+      return mode;
+    } catch {
+      // skip malformed lines
+    }
+  }
+  return null;
+}
+
+/**
+ * Resolve the effective permission mode by reading the transcript for
+ * the given (projectDir, sessionId) and returning the most recent
+ * non-plan `permissionMode`. Returns `null` if the transcript can't be
+ * read or contains no resolvable entries.
+ *
+ * Same boundedness/safety policy as `isGoalModeActive`: hard 16MB cap,
+ * fail-closed on any error so a missing transcript never bypasses the
+ * gate. Caller decides what to do with `null` (treat as undefined, fall
+ * back to the raw input field, etc).
+ */
+export function resolveEffectivePermissionMode(
+  projectDir: string,
+  sessionId: string,
+): string | null {
+  if (!sessionId) return null;
+  try {
+    const mangled = mangleProjectDir(projectDir);
+    const transcriptPath = join(
+      homedir(),
+      '.claude',
+      'projects',
+      mangled,
+      `${sessionId}.jsonl`,
+    );
+    let size = 0;
+    try {
+      size = statSync(transcriptPath).size;
+    } catch {
+      return null;
+    }
+    if (size === 0 || size > MAX_TRANSCRIPT_BYTES) return null;
+    const text = readFileSync(transcriptPath, 'utf-8');
+    return detectUnderlyingPermissionMode(text);
+  } catch {
+    return null;
+  }
+}
+
+// ---------------------------------------------------------------------------
 // Hook plumbing
 // ---------------------------------------------------------------------------
 
@@ -172,6 +309,17 @@ function emitAsk(reason: string): void {
     hookSpecificOutput: {
       hookEventName: 'PreToolUse',
       permissionDecision: 'ask',
+      permissionDecisionReason: reason,
+    },
+  };
+  console.log(JSON.stringify(output));
+}
+
+function emitDeny(reason: string): void {
+  const output = {
+    hookSpecificOutput: {
+      hookEventName: 'PreToolUse',
+      permissionDecision: 'deny',
       permissionDecisionReason: reason,
     },
   };
@@ -217,11 +365,34 @@ function main(): void {
       goalActive = false;
     }
 
+    // Resolve the EFFECTIVE permission mode.
+    //
+    // We don't fully trust input.permission_mode because Claude Code may
+    // report the layered mode ('plan') rather than the underlying session
+    // mode ('bypassPermissions'). We implement defensively for BOTH:
+    //   - If the input field reports 'plan', scan the transcript backward
+    //     for the most recent non-plan permissionMode and use that.
+    //   - Otherwise, the input field IS the effective mode.
+    // If the transcript scan yields null we leave permissionMode undefined,
+    // which falls through to the existing 'ask' path.
+    const rawPermissionMode = input.permission_mode;
+    let permissionMode: string | undefined = rawPermissionMode;
+    if (rawPermissionMode === 'plan') {
+      try {
+        const resolved = resolveEffectivePermissionMode(projectDir, sessionId);
+        if (resolved) permissionMode = resolved;
+        else permissionMode = undefined;
+      } catch {
+        permissionMode = undefined;
+      }
+    }
+
     const decision = decideGate({
       toolName: input.tool_name,
       bypassEnv,
       ralphActive,
       goalActive,
+      permissionMode,
     });
 
     try {
@@ -231,14 +402,27 @@ function main(): void {
     }
 
     if (decision.action === 'ask') {
-      log.info('Forcing plan-mode approval dialog', { sessionId });
+      log.info('Forcing plan-mode approval dialog', {
+        sessionId,
+        rawPermissionMode,
+        permissionMode,
+      });
       emitAsk(decision.reason);
+    } else if (decision.action === 'deny') {
+      log.info('Denying ExitPlanMode in bypass-permissions mode', {
+        sessionId,
+        rawPermissionMode,
+        permissionMode,
+      });
+      emitDeny(decision.reason);
     } else {
       log.info('Allowing ExitPlanMode without prompt', {
         sessionId,
         bypassEnv,
         goalActive,
         ralphActive,
+        rawPermissionMode,
+        permissionMode,
       });
       emitAllow();
     }
