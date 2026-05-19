@@ -76,9 +76,9 @@ function findRoadmapPath(projectDir) {
   return null;
 }
 function formatCommitEntry(commit, date) {
-  const typeLabel = commit.type !== "other" ? `[${commit.type}]` : "";
+  const typeLabel = commit.type !== "other" ? commit.type : "";
   const scopeLabel = commit.scope ? `(${commit.scope})` : "";
-  const prefix = typeLabel && scopeLabel ? `${typeLabel}${scopeLabel} ` : typeLabel ? `${typeLabel} ` : scopeLabel ? `${scopeLabel} ` : "";
+  const prefix = typeLabel && scopeLabel ? `${typeLabel}${scopeLabel}: ` : typeLabel ? `${typeLabel}: ` : scopeLabel ? `${scopeLabel} ` : "";
   const hashLabel = commit.hash ? ` \`${commit.hash.slice(0, 7)}\`` : "";
   return `- [x] ${prefix}${commit.description} (${date})${hashLabel}`;
 }
@@ -217,3 +217,6 @@ main().catch((err) => {
   console.error("[git-commit-roadmap] Error:", err.message);
   console.log(JSON.stringify({ result: "continue" }));
 });
+export {
+  formatCommitEntry
+};

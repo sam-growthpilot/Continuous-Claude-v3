@@ -122,11 +122,11 @@ function findRoadmapPath(projectDir: string): string | null {
   return null;
 }
 
-function formatCommitEntry(commit: ParsedCommit, date: string): string {
-  const typeLabel = commit.type !== 'other' ? `[${commit.type}]` : '';
+export function formatCommitEntry(commit: ParsedCommit, date: string): string {
+  const typeLabel = commit.type !== 'other' ? commit.type : '';
   const scopeLabel = commit.scope ? `(${commit.scope})` : '';
-  const prefix = typeLabel && scopeLabel ? `${typeLabel}${scopeLabel} ` :
-                 typeLabel ? `${typeLabel} ` :
+  const prefix = typeLabel && scopeLabel ? `${typeLabel}${scopeLabel}: ` :
+                 typeLabel ? `${typeLabel}: ` :
                  scopeLabel ? `${scopeLabel} ` : '';
   const hashLabel = commit.hash ? ` \`${commit.hash.slice(0, 7)}\`` : '';
 
