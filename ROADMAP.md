@@ -2,19 +2,18 @@
 
 ## Current Focus
 
-**Memory System — Phase 2 follow-ups + Task #11 hook-time recall path**
+**Phase 2 follow-ups + Task #11 polish** — clean up carry-forward items from both shipped stories before committing to Phase 3 (Graphiti + FalkorDB graph memory layer).
 
-Phase 2 reranker shipped 2026-05-18 as opt-in (`--rerank` flag). Next priorities:
-
-1. **Task #11 — hook-time semantic recall path decision:** Choose between (a) BGE daemon, (b) OpenAI text-embedding-3-small (~300ms, no subprocess), or (c) accept text-only at hook time. Findings in `thoughts/shared/embedding-mode-task11.md`.
-2. **Phase 2 clean re-run:** 42/42 eval (33/42 completed; Docker crashed mid-eval). Re-run once Docker stable to confirm full-set NDCG@5.
-3. **MEDIUM follow-ups (critic 3.1):** MEDIUM-1 (TCP ping in `daemon_is_alive`), MEDIUM-2 (6-type claim vs 5 in partial data), MEDIUM-3 (in-place mutation comment), MEDIUM-4 (percentile helper extraction), MEDIUM-5 (eval scope doc).
-4. **Unit tests** for `rerank.py` core functions.
-
-**Decision doc:** `docs/phase2-reranker-decision-2026-05-18.md`
-**Plan:** `~/.claude/plans/im-not-sure-if-compressed-donut.md`
+Priority order:
+1. Phase 2 follow-ups: clean 42/42 reranker re-run (Docker stable required), MEDIUM-1..5 from critic 3.1, unit tests for `rerank.py`
+2. Task #11 polish: HIGH-2 `pingDaemon` double-timeout, MEDIUM-2 test isolation fragility, MEDIUM-3 missing `memory-awareness.test.ts`
+3. Phase 3 kickoff once above are resolved or explicitly deferred
 
 ## Completed
+- [x] Memory System — Task #11 BGE embedding daemon shipped default-on (2026-05-18) — hook-time hybrid recall enabled, Phase 1 Windows timeout regression repaired. Commits: `36b241a` `0f12c43` `3912209` `e8566b3` `57b6724`
+- [x] Memory System — Phase 2 follow-ups + Task #11 hook-time recall path (2026-05-19)
+- [x] [fix](memory) hook subprocess timeout + test isolation + timeout diagnostic (2026-05-18) `e8566b3`
+- [x] [fix](memory) mode-aware floor split (hybrid 0.01, text-only 0.05) (2026-05-18) `3912209`
 - [x] Memory System Upgrade — Phase 2: Cross-encoder reranker shipped opt-in (2026-05-18) — NDCG@5 +110% lift; P95 latency 95s/5s fails 500ms gate; `--rerank` stays opt-in. Commits: `31169eb` `5d13b7f` `4f97be3` `b6cc578` `4d4dbff` `f40e4e2` `83d1308`
 - [x] [fix](memory) correct rerank bench percentile + bump eval daemon timeout (2026-05-18) `83d1308`
 - [x] [feat](memory) add NDCG@5 + latency eval harness for Phase 2 reranker (2026-05-17) `b6cc578`
