@@ -492,7 +492,10 @@ function ensureDaemonRunning() {
         stdio: "ignore",
         // shell: true is needed on Windows for `uv` (a .exe shim) to
         // resolve via PATH from a detached spawn -- without it, ENOENT.
-        shell: process.platform === "win32"
+        shell: process.platform === "win32",
+        // Suppress the cmd.exe console window on Windows. Without this,
+        // shell:true causes a visible cmd window for every daemon spawn.
+        windowsHide: true
       }
     );
     child.on("error", (err) => {
