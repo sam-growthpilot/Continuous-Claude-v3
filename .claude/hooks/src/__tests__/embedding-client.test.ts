@@ -13,8 +13,9 @@
  * Python daemon at opc/scripts/core/embedding_daemon.py.
  */
 
-import { describe, it, expect, beforeAll, afterAll, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, vi, beforeAll, afterAll, beforeEach, afterEach } from 'vitest';
 import * as net from 'net';
+import { spawn } from 'child_process';
 import { writeFileSync, readFileSync, unlinkSync, existsSync } from 'fs';
 import {
   readDaemonInfo,
@@ -26,6 +27,26 @@ import {
   __test,
   type DaemonInfo,
 } from '../shared/embedding-client.js';
+
+// ---------------------------------------------------------------------------
+// Mock child_process.spawn so the lockfile-mutex tests never fire a real
+// subprocess. Without this mock, every ensureDaemonRunning() call launches
+// `uv run --project opc python ...` which downloads ~1.34 GB of BGE model
+// weights into each test's fake-HOME temp dir, leaking gigabytes per run.
+// Only `spawn` is replaced; `spawnSync` remains real so other test helpers
+// (memory-awareness tests) are unaffected.
+// ---------------------------------------------------------------------------
+vi.mock('child_process', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('child_process')>();
+  return {
+    ...actual,
+    spawn: vi.fn(() => ({
+      on: vi.fn(),
+      unref: vi.fn(),
+      pid: 99999,
+    })),
+  };
+});
 
 const DISCOVERY_PATH = __test.DAEMON_INFO_PATH;
 const SPAWN_LOCK_PATH = __test.SPAWN_LOCK_PATH;
@@ -119,6 +140,9 @@ afterAll(() => {
   }
 });
 
+// Get a typed reference to the mocked spawn for use in lockfile-mutex tests.
+const mockedSpawn = vi.mocked(spawn);
+
 beforeEach(() => {
   if (existsSync(DISCOVERY_PATH)) {
     try { unlinkSync(DISCOVERY_PATH); } catch { /* ignore */ }
@@ -127,6 +151,8 @@ beforeEach(() => {
     try { unlinkSync(SPAWN_LOCK_PATH); } catch { /* ignore */ }
   }
   __test.resetSpawnAttempted();
+  // Reset spawn mock call history so each test starts clean.
+  mockedSpawn.mockClear();
 });
 
 afterEach(() => {
@@ -490,6 +516,9 @@ describe('ensureDaemonRunning: cross-process spawn lockfile mutex', () => {
     // The lockfile should still have the original fakePid — we did not overwrite it.
     const lockAfter = JSON.parse(readFileSync(SPAWN_LOCK_PATH, 'utf-8'));
     expect(lockAfter.pid).toBe(fakePid);
+
+    // No real subprocess must have been spawned — the mutex blocked it.
+    expect(mockedSpawn).not.toHaveBeenCalled();
   });
 
   it('overwrites a stale lockfile (>TTL old) and writes our own pid', () => {
@@ -505,12 +534,18 @@ describe('ensureDaemonRunning: cross-process spawn lockfile mutex', () => {
     const after = Math.floor(Date.now() / 1000);
 
     // The lockfile should now contain our pid (overwrote the stale one).
-    // (spawn may fail because uv isn't present in CI — that's fine; the
-    //  lockfile write happens before the spawn attempt.)
     const lock = JSON.parse(readFileSync(SPAWN_LOCK_PATH, 'utf-8'));
     expect(lock.pid).toBe(process.pid);
     expect(lock.started_at).toBeGreaterThanOrEqual(before);
     expect(lock.started_at).toBeLessThanOrEqual(after);
+
+    // Spawn should have been attempted exactly once (stale lock → proceed).
+    expect(mockedSpawn).toHaveBeenCalledOnce();
+    expect(mockedSpawn).toHaveBeenCalledWith(
+      'uv',
+      ['run', '--project', 'opc', 'python', 'opc/scripts/core/embedding_daemon.py', '--daemon'],
+      expect.objectContaining({ detached: true }),
+    );
   });
 
   it('writes lockfile with current pid and fresh timestamp on first call', () => {
@@ -527,14 +562,20 @@ describe('ensureDaemonRunning: cross-process spawn lockfile mutex', () => {
     expect(lock.pid).toBe(process.pid);
     expect(lock.started_at).toBeGreaterThanOrEqual(before);
     expect(lock.started_at).toBeLessThanOrEqual(after);
+
+    // Spawn should have been attempted exactly once.
+    expect(mockedSpawn).toHaveBeenCalledOnce();
+    expect(mockedSpawn).toHaveBeenCalledWith(
+      'uv',
+      ['run', '--project', 'opc', 'python', 'opc/scripts/core/embedding_daemon.py', '--daemon'],
+      expect.objectContaining({ detached: true }),
+    );
   });
 
   it('_spawnAttempted fast-path: second call in same process skips lockfile check', () => {
-    // First call: write lockfile.
+    // First call: write lockfile and (mock-)spawn.
     ensureDaemonRunning();
-    const lockAfterFirst = existsSync(SPAWN_LOCK_PATH)
-      ? JSON.parse(readFileSync(SPAWN_LOCK_PATH, 'utf-8'))
-      : null;
+    expect(mockedSpawn).toHaveBeenCalledOnce();
 
     // Overwrite the lockfile with a different pid to detect if the second
     // call would read/rewrite it.
@@ -546,5 +587,8 @@ describe('ensureDaemonRunning: cross-process spawn lockfile mutex', () => {
     // Lockfile should still have pid 77777 (second call did not touch it).
     const lockAfterSecond = JSON.parse(readFileSync(SPAWN_LOCK_PATH, 'utf-8'));
     expect(lockAfterSecond.pid).toBe(77777);
+
+    // Spawn should still have been called only once (fast-path skipped second call).
+    expect(mockedSpawn).toHaveBeenCalledOnce();
   });
 });
