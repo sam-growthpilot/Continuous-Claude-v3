@@ -285,6 +285,46 @@ class TestDaemonIsAlive:
 
 
 # ---------------------------------------------------------------------------
+# Group B2 — daemon_is_alive ping timeout (Bug A regression)
+#
+# Asserts that daemon_is_alive() calls ping_daemon with timeout_s >= 1.0.
+# Pre-fix the value was 0.2 s, which caused spurious fallbacks to cold
+# subprocess load (~230 s) under load. Fixed to 1.5 s (mirrors the TS fix
+# in embedding-client.ts commit 0a2d4e1).
+# ---------------------------------------------------------------------------
+
+
+class TestDaemonIsAlivePingTimeout:
+    def test_ping_timeout_is_at_least_one_second(self, tmp_path, monkeypatch):
+        """daemon_is_alive() must call ping_daemon with timeout_s >= 1.0 s.
+
+        Bug A regression: pre-fix value was 0.2 s, causing spurious fallbacks
+        to cold subprocess load under moderate load.
+        """
+        from scripts.core import rerank
+
+        captured: list[float] = []
+
+        def _fake_ping(timeout_s: float = 0.2) -> dict | None:
+            captured.append(timeout_s)
+            return {"status": "ok"}
+
+        fake_info = {"pid": int(__import__("os").getpid()), "port": 9999, "started_at": 0.0}
+
+        monkeypatch.setattr(rerank, "read_daemon_info", lambda: fake_info)
+        monkeypatch.setattr(rerank, "_pid_alive", lambda pid: True)
+        monkeypatch.setattr(rerank, "ping_daemon", _fake_ping)
+
+        rerank.daemon_is_alive()
+
+        assert captured, "ping_daemon was never called"
+        assert captured[0] >= 1.0, (
+            f"Bug A regression: ping_daemon called with timeout_s={captured[0]!r}, "
+            "expected >= 1.0 s (was 0.2 s pre-fix)"
+        )
+
+
+# ---------------------------------------------------------------------------
 # Group C — Frame protocol (_send_frame / _recv_frame)
 # ---------------------------------------------------------------------------
 

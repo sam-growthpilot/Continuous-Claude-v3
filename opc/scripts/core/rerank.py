@@ -482,7 +482,7 @@ def daemon_is_alive() -> tuple[bool, dict[str, Any] | None]:
     if not _pid_alive(pid):
         return False, info
     # PID is alive; confirm the TCP server is actually accepting connections.
-    reply = ping_daemon(timeout_s=0.2)
+    reply = ping_daemon(timeout_s=1.5)
     if reply and reply.get("status") == "ok":
         return True, info
     # Ping failed -- PID alive but socket not yet ready (or daemon hung).

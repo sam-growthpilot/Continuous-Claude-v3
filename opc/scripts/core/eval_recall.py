@@ -73,6 +73,13 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+# Bootstrap sys.path so `core.*` is importable when this script is run directly
+# (mirrors the pattern in recall_learnings.py:57). Must come before any project
+# imports so failures surface at launch, not mid-eval.
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
+
+from core.utils import percentile as _pct  # noqa: E402
+
 # Daemon discovery file path mirrors rerank.py's DAEMON_INFO_PATH so we can
 # inspect it without importing the rerank module (which would pull torch
 # transitively). Kept in sync with opc/scripts/core/rerank.py:72.
@@ -475,7 +482,6 @@ def _percentile(values: list[float], p: float) -> float:
     """
     if not values:
         return 0.0
-    from core.utils import percentile as _pct  # noqa: PLC0415
     return _pct(values, p)
 
 
