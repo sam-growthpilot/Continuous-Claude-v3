@@ -325,8 +325,65 @@ def _delete_daemon_info() -> None:
         pass
 
 
+def _check_existing_daemon() -> bool:
+    """Return True if another healthy daemon instance is already running.
+
+    Defense-in-depth startup guard (Task #21). Called at the top of
+    ``_run_daemon`` BEFORE the 30s model load.  If this returns True the
+    caller should ``sys.exit(0)`` cleanly without loading the model.
+
+    Decision table
+    ~~~~~~~~~~~~~~
+    * Discovery file absent                    → False (proceed, we're first)
+    * File present, PID dead                   → False (stale; proceed)
+    * File present, PID alive, ping fails      → False (broken instance; take over)
+    * File present, PID alive, wrong model     → False (different model; take over)
+    * File present, PID alive, ping ok, model matches → True (exit cleanly)
+
+    The discovery file is NOT deleted on a dead-PID find — we let the normal
+    startup path overwrite it, avoiding a delete-then-crash race.
+    """
+    info = read_daemon_info()
+    if not info:
+        return False
+
+    pid = int(info.get("pid", 0))
+    port = int(info.get("port", 0))
+
+    if not _pid_alive(pid):
+        return False
+
+    # PID is alive — try a ping with 1500ms timeout.
+    try:
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+            sock.settimeout(1.5)
+            sock.connect(("127.0.0.1", port))
+            _send_frame(sock, {"cmd": "ping"})
+            reply = _recv_frame(sock)
+    except (OSError, ConnectionRefusedError, EOFError, ValueError, json.JSONDecodeError):
+        # Any failure: can't reach the daemon — proceed (it's broken).
+        return False
+
+    # Ping succeeded — check that the model matches.
+    if reply.get("model") != MODEL_NAME:
+        return False
+
+    # Another healthy instance is running.
+    print(
+        f"[embedding] daemon: another instance alive (pid={pid} port={port}) — exiting",
+        file=sys.stderr,
+        flush=True,
+    )
+    return True
+
+
 def _run_daemon(port: int) -> int:
     """Run the embedding daemon on 127.0.0.1:port (port=0 means pick free)."""
+    # Defense-in-depth: if another daemon is already running (and healthy),
+    # exit before paying the 30s model-load cost.
+    if _check_existing_daemon():
+        return 0
+
     # Pre-load the model BEFORE binding the port AND BEFORE writing the
     # discovery file. Clients that see the discovery file assume the
     # daemon is hot and ready to serve.
