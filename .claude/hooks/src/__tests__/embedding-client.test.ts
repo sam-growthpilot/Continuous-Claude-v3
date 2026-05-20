@@ -15,18 +15,21 @@
 
 import { describe, it, expect, beforeAll, afterAll, beforeEach, afterEach } from 'vitest';
 import * as net from 'net';
-import { writeFileSync, unlinkSync, existsSync } from 'fs';
+import { writeFileSync, readFileSync, unlinkSync, existsSync } from 'fs';
 import {
   readDaemonInfo,
   isDaemonAlive,
   pingDaemon,
   embedText,
   isDaemonReady,
+  ensureDaemonRunning,
   __test,
   type DaemonInfo,
 } from '../shared/embedding-client.js';
 
 const DISCOVERY_PATH = __test.DAEMON_INFO_PATH;
+const SPAWN_LOCK_PATH = __test.SPAWN_LOCK_PATH;
+const SPAWN_LOCK_TTL_MS = __test.SPAWN_LOCK_TTL_MS;
 const EXPECTED_MODEL = __test.EXPECTED_MODEL;
 const EXPECTED_DIM = __test.EXPECTED_DIM;
 
@@ -120,12 +123,18 @@ beforeEach(() => {
   if (existsSync(DISCOVERY_PATH)) {
     try { unlinkSync(DISCOVERY_PATH); } catch { /* ignore */ }
   }
+  if (existsSync(SPAWN_LOCK_PATH)) {
+    try { unlinkSync(SPAWN_LOCK_PATH); } catch { /* ignore */ }
+  }
   __test.resetSpawnAttempted();
 });
 
 afterEach(() => {
   if (existsSync(DISCOVERY_PATH)) {
     try { unlinkSync(DISCOVERY_PATH); } catch { /* ignore */ }
+  }
+  if (existsSync(SPAWN_LOCK_PATH)) {
+    try { unlinkSync(SPAWN_LOCK_PATH); } catch { /* ignore */ }
   }
 });
 
@@ -423,5 +432,119 @@ describe('frame protocol', () => {
     } finally {
       await new Promise<void>((res) => server.close(() => res()));
     }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Bug-fix regression tests (transient ping + cross-process spawn mutex)
+// ---------------------------------------------------------------------------
+
+describe('isDaemonReady: transient ping failure does not delete discovery file', () => {
+  it('returns false but leaves discovery file intact when pingDaemon returns null with alive PID', async () => {
+    // Pick a port we just closed so nothing is listening — pingDaemon will
+    // return null (connection refused / timeout). We use a short ping timeout
+    // so the test runs quickly.
+    const probe = net.createServer();
+    await new Promise<void>((res) => probe.listen(0, '127.0.0.1', () => res()));
+    const closedPort = (probe.address() as any).port;
+    await new Promise<void>((res) => probe.close(() => res()));
+
+    // Write a valid discovery file pointing to this (dead) port but with
+    // an alive PID (the current process).
+    writeFileSync(
+      DISCOVERY_PATH,
+      JSON.stringify({
+        pid: process.pid, // alive — PID check passes
+        port: closedPort, // nothing listening → pingDaemon returns null
+        started_at: Date.now() / 1000,
+        model: EXPECTED_MODEL,
+        dim: EXPECTED_DIM,
+      }),
+    );
+
+    // isDaemonReady uses DEFAULT_PING_TIMEOUT_MS (1500ms). We rely on
+    // connection-refused being near-instant (kernel sends RST immediately),
+    // so this resolves in <50ms in practice.
+    const ready = await isDaemonReady();
+
+    expect(ready).toBe(false);
+
+    // BUG 1 REGRESSION: the discovery file must still exist.
+    // Pre-fix: _cleanupDiscoveryFile() was called on ping null → file deleted.
+    // Post-fix: transient ping miss leaves the file intact.
+    expect(existsSync(DISCOVERY_PATH)).toBe(true);
+  });
+});
+
+describe('ensureDaemonRunning: cross-process spawn lockfile mutex', () => {
+  it('does NOT write a new lockfile when an existing one is less than TTL old', () => {
+    // Write a fresh lockfile (age = 0s, well within 60s TTL) with a fake PID.
+    const fakePid = process.pid + 1000;
+    const originalLock = JSON.stringify({ pid: fakePid, started_at: Math.floor(Date.now() / 1000) });
+    writeFileSync(SPAWN_LOCK_PATH, originalLock);
+
+    // ensureDaemonRunning should bail after reading the fresh lockfile.
+    // It will NOT overwrite the lockfile (pid would change to process.pid if it did).
+    ensureDaemonRunning();
+
+    // The lockfile should still have the original fakePid — we did not overwrite it.
+    const lockAfter = JSON.parse(readFileSync(SPAWN_LOCK_PATH, 'utf-8'));
+    expect(lockAfter.pid).toBe(fakePid);
+  });
+
+  it('overwrites a stale lockfile (>TTL old) and writes our own pid', () => {
+    // Write a stale lockfile (age = TTL + 10s → expired).
+    const staleTs = Math.floor((Date.now() - SPAWN_LOCK_TTL_MS - 10_000) / 1000);
+    writeFileSync(
+      SPAWN_LOCK_PATH,
+      JSON.stringify({ pid: 99999, started_at: staleTs }),
+    );
+
+    const before = Math.floor(Date.now() / 1000);
+    ensureDaemonRunning();
+    const after = Math.floor(Date.now() / 1000);
+
+    // The lockfile should now contain our pid (overwrote the stale one).
+    // (spawn may fail because uv isn't present in CI — that's fine; the
+    //  lockfile write happens before the spawn attempt.)
+    const lock = JSON.parse(readFileSync(SPAWN_LOCK_PATH, 'utf-8'));
+    expect(lock.pid).toBe(process.pid);
+    expect(lock.started_at).toBeGreaterThanOrEqual(before);
+    expect(lock.started_at).toBeLessThanOrEqual(after);
+  });
+
+  it('writes lockfile with current pid and fresh timestamp on first call', () => {
+    // No existing lockfile.
+    expect(existsSync(SPAWN_LOCK_PATH)).toBe(false);
+
+    const before = Math.floor(Date.now() / 1000);
+    ensureDaemonRunning();
+    const after = Math.floor(Date.now() / 1000);
+
+    // The lockfile must have been written before the spawn attempt.
+    expect(existsSync(SPAWN_LOCK_PATH)).toBe(true);
+    const lock = JSON.parse(readFileSync(SPAWN_LOCK_PATH, 'utf-8'));
+    expect(lock.pid).toBe(process.pid);
+    expect(lock.started_at).toBeGreaterThanOrEqual(before);
+    expect(lock.started_at).toBeLessThanOrEqual(after);
+  });
+
+  it('_spawnAttempted fast-path: second call in same process skips lockfile check', () => {
+    // First call: write lockfile.
+    ensureDaemonRunning();
+    const lockAfterFirst = existsSync(SPAWN_LOCK_PATH)
+      ? JSON.parse(readFileSync(SPAWN_LOCK_PATH, 'utf-8'))
+      : null;
+
+    // Overwrite the lockfile with a different pid to detect if the second
+    // call would read/rewrite it.
+    writeFileSync(SPAWN_LOCK_PATH, JSON.stringify({ pid: 77777, started_at: 1 }));
+
+    // Second call in the same process — _spawnAttempted is true, returns immediately.
+    ensureDaemonRunning();
+
+    // Lockfile should still have pid 77777 (second call did not touch it).
+    const lockAfterSecond = JSON.parse(readFileSync(SPAWN_LOCK_PATH, 'utf-8'));
+    expect(lockAfterSecond.pid).toBe(77777);
   });
 });

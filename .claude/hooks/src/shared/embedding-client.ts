@@ -29,7 +29,7 @@
  * code -- only conventions.
  */
 
-import { existsSync, readFileSync, unlinkSync } from 'fs';
+import { existsSync, readFileSync, unlinkSync, writeFileSync } from 'fs';
 import { spawn } from 'child_process';
 import { tmpdir } from 'os';
 import { join, resolve } from 'path';
@@ -42,11 +42,36 @@ import * as net from 'net';
 /** Discovery file path. Daemon writes this AFTER warmup. */
 const DAEMON_INFO_PATH = join(tmpdir(), 'ccv3-embedding.json');
 
+/**
+ * Cross-process spawn mutex lockfile. Written before we fire the daemon
+ * spawn subprocess; read by sibling hook processes to avoid racing.
+ *
+ * Contents: JSON { "pid": number, "started_at": number } (epoch seconds).
+ * Atime guard: 60 seconds. The BGE model cold-load takes ~30s; 60s gives
+ * a safe envelope before we consider a lockfile "stale" and proceed.
+ *
+ * The lockfile is intentionally never deleted by the spawner — it either
+ * ages out (>60s) or is overwritten by the next spawner. Simpler than
+ * tracking spawn success/failure across processes.
+ */
+const SPAWN_LOCK_PATH = join(tmpdir(), 'ccv3-embedding-spawn.lock');
+
+/** How long (ms) a spawn lockfile stays valid before we treat it as stale. */
+const SPAWN_LOCK_TTL_MS = 60_000;
+
 /** Frame size cap (matches Python daemon's 100 MB sanity check). */
 const FRAME_SIZE_CAP_BYTES = 100 * 1024 * 1024;
 
-/** Default ping timeout: 200ms (matches Python EMBED_DAEMON_PING_TIMEOUT_S). */
-const DEFAULT_PING_TIMEOUT_MS = 200;
+/**
+ * Default ping timeout: 1500ms.
+ *
+ * Ping must tolerate cold-cache misses on multi-session systems; 200ms
+ * produced false-negative cascades pre-fix because the 1.5GB resident
+ * model can briefly stall under multi-session memory pressure. The hot
+ * embed path budget is also 1500ms (DEFAULT_EMBED_TIMEOUT_MS), so we
+ * match that ceiling here.
+ */
+const DEFAULT_PING_TIMEOUT_MS = 1500;
 
 /** Default embed timeout: 1500ms (hot encode is ~30-100ms, slack for cold cases). */
 const DEFAULT_EMBED_TIMEOUT_MS = 1500;
@@ -401,10 +426,16 @@ export async function isDaemonReady(): Promise<boolean> {
   if (info.model !== EXPECTED_MODEL || info.dim !== EXPECTED_DIM) return false;
   const reply = await pingDaemon(info);
   if (!reply) {
-    // Ping failed even though PID is alive — TCP socket not accepting or
-    // daemon is hung. Clean up the stale discovery file so the next caller
-    // triggers a fresh spawn attempt rather than looping through dead state.
-    _cleanupDiscoveryFile();
+    // Ping returned null — either a transient TCP hiccup (200ms→1500ms budget
+    // still exceeded under multi-session load) or the daemon is temporarily
+    // unresponsive. We do NOT delete the discovery file here: a transient ping
+    // miss is not evidence that the daemon is dead. Deleting the file would
+    // cause the next hook fire to see "no daemon" and call ensureDaemonRunning(),
+    // spawning a duplicate process — the exact cascade we're fixing.
+    //
+    // We clean up the discovery file only on confirmed-dead PID (above) or
+    // model/dim mismatch (above). Transient TCP failures → return false so the
+    // caller falls back to text-only, but leave the file intact for retry.
     return false;
   }
   if (!reply.ok || !reply.ready) return false;
@@ -468,8 +499,47 @@ function resolveRepoRoot(): string | null {
  * daemon itself is idempotent across processes (the port is already in
  * use, so a second daemon would fail to bind), but skipping the spawn
  * call avoids the subprocess overhead.
+ *
+ * This is a fast-path optimization only. The cross-process source of truth
+ * is the SPAWN_LOCK_PATH filesystem lockfile — see ensureDaemonRunning().
  */
 let _spawnAttempted = false;
+
+/**
+ * Read the spawn lockfile. Returns the parsed contents or null if missing,
+ * unreadable, or malformed.
+ */
+function _readSpawnLock(): { pid: number; started_at: number } | null {
+  try {
+    if (!existsSync(SPAWN_LOCK_PATH)) return null;
+    const raw = readFileSync(SPAWN_LOCK_PATH, 'utf-8');
+    const obj = JSON.parse(raw);
+    if (
+      typeof obj !== 'object' ||
+      obj === null ||
+      typeof obj.pid !== 'number' ||
+      typeof obj.started_at !== 'number'
+    ) {
+      return null;
+    }
+    return obj as { pid: number; started_at: number };
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Write the spawn lockfile with the current pid + epoch-seconds timestamp.
+ * Best-effort: failures are silently ignored (we proceed to spawn regardless).
+ */
+function _writeSpawnLock(): void {
+  try {
+    const data = JSON.stringify({ pid: process.pid, started_at: Math.floor(Date.now() / 1000) });
+    writeFileSync(SPAWN_LOCK_PATH, data);
+  } catch {
+    /* best-effort — if we can't write the lock, spawn anyway */
+  }
+}
 
 /**
  * Fire-and-forget: spawn the embedding daemon detached, if it isn't
@@ -483,14 +553,38 @@ let _spawnAttempted = false;
  * (the daemon is up). If the discovery file is present but PID is dead,
  * we still spawn -- the new daemon will overwrite the stale info file
  * after warmup.
+ *
+ * Cross-process spawn mutex: every hook invocation is a separate Node
+ * subprocess, so the module-level _spawnAttempted flag always starts
+ * false. With 2+ Claude sessions open, every prompt would race to spawn.
+ * We use a filesystem lockfile (SPAWN_LOCK_PATH) as the cross-process
+ * mutex: if the lockfile exists and is <60s old, another process is
+ * already handling the spawn and we skip.
  */
 export function ensureDaemonRunning(): void {
+  // Step 1: fast-path — already attempted in this Node process.
   if (_spawnAttempted) return;
   _spawnAttempted = true;
 
-  // Bail early if a healthy daemon is already running.
+  // Step 2: bail if a healthy daemon is already running.
   const info = readDaemonInfo();
   if (info && isDaemonAlive(info)) return;
+
+  // Step 3: cross-process mutex — check the lockfile.
+  const lock = _readSpawnLock();
+  if (lock !== null) {
+    const ageMs = Date.now() - lock.started_at * 1000;
+    if (ageMs < SPAWN_LOCK_TTL_MS) {
+      // Another process wrote a fresh lockfile — it's handling the spawn.
+      // Skip to avoid a parallel spawn race.
+      return;
+    }
+    // Lockfile is stale (>60s). The previous spawner either failed or the
+    // daemon is still loading. Fall through and try again.
+  }
+
+  // Step 4: write our lockfile before spawning.
+  _writeSpawnLock();
 
   const repoRoot = resolveRepoRoot();
   if (!repoRoot) {
@@ -541,6 +635,8 @@ export function ensureDaemonRunning(): void {
  */
 export const __test = {
   DAEMON_INFO_PATH,
+  SPAWN_LOCK_PATH,
+  SPAWN_LOCK_TTL_MS,
   FRAME_SIZE_CAP_BYTES,
   DEFAULT_PING_TIMEOUT_MS,
   DEFAULT_EMBED_TIMEOUT_MS,

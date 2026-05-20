@@ -258,14 +258,16 @@ function extractIntent(prompt) {
 }
 
 // src/shared/embedding-client.ts
-import { existsSync as existsSync3, readFileSync as readFileSync2, unlinkSync } from "fs";
+import { existsSync as existsSync3, readFileSync as readFileSync2, unlinkSync, writeFileSync as writeFileSync2 } from "fs";
 import { spawn } from "child_process";
 import { tmpdir } from "os";
 import { join as join3, resolve } from "path";
 import * as net from "net";
 var DAEMON_INFO_PATH = join3(tmpdir(), "ccv3-embedding.json");
+var SPAWN_LOCK_PATH = join3(tmpdir(), "ccv3-embedding-spawn.lock");
+var SPAWN_LOCK_TTL_MS = 6e4;
 var FRAME_SIZE_CAP_BYTES = 100 * 1024 * 1024;
-var DEFAULT_PING_TIMEOUT_MS = 200;
+var DEFAULT_PING_TIMEOUT_MS = 1500;
 var EXPECTED_MODEL = "BAAI/bge-large-en-v1.5";
 var EXPECTED_DIM = 1024;
 function sendFrame(sock, obj) {
@@ -410,7 +412,6 @@ async function isDaemonReady() {
   if (info.model !== EXPECTED_MODEL || info.dim !== EXPECTED_DIM) return false;
   const reply = await pingDaemon(info);
   if (!reply) {
-    _cleanupDiscoveryFile();
     return false;
   }
   if (!reply.ok || !reply.ready) return false;
@@ -441,11 +442,39 @@ function resolveRepoRoot() {
   return null;
 }
 var _spawnAttempted = false;
+function _readSpawnLock() {
+  try {
+    if (!existsSync3(SPAWN_LOCK_PATH)) return null;
+    const raw = readFileSync2(SPAWN_LOCK_PATH, "utf-8");
+    const obj = JSON.parse(raw);
+    if (typeof obj !== "object" || obj === null || typeof obj.pid !== "number" || typeof obj.started_at !== "number") {
+      return null;
+    }
+    return obj;
+  } catch {
+    return null;
+  }
+}
+function _writeSpawnLock() {
+  try {
+    const data = JSON.stringify({ pid: process.pid, started_at: Math.floor(Date.now() / 1e3) });
+    writeFileSync2(SPAWN_LOCK_PATH, data);
+  } catch {
+  }
+}
 function ensureDaemonRunning() {
   if (_spawnAttempted) return;
   _spawnAttempted = true;
   const info = readDaemonInfo();
   if (info && isDaemonAlive(info)) return;
+  const lock = _readSpawnLock();
+  if (lock !== null) {
+    const ageMs = Date.now() - lock.started_at * 1e3;
+    if (ageMs < SPAWN_LOCK_TTL_MS) {
+      return;
+    }
+  }
+  _writeSpawnLock();
   const repoRoot = resolveRepoRoot();
   if (!repoRoot) {
     console.error(
