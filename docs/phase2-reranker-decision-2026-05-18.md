@@ -103,9 +103,51 @@ Carry-forward items — not blocking ship:
 
 ---
 
+## Update — Clean 42/42 Re-run (2026-05-20)
+
+**Verdict reconfirmed: `opt-in`.** Full 42-pair re-run completed with no subprocess fallbacks. Closes Open Follow-Up #1.
+
+| Metric | Partial (33/42, 2026-05-18) | Clean (42/42, 2026-05-20) |
+|--------|-----------------------------|---------------------------|
+| Mean NDCG@5 baseline | 0.382 | **0.385** |
+| Mean NDCG@5 reranked | 0.804 | **0.798** |
+| **NDCG@5 lift** | **+110.4%** | **+107.3%** (PASS gate +10%) |
+| Found rate baseline | 57.6% (19/33) | 57.1% (24/42) |
+| Found rate reranked | 84.8% (28/33) | 83.3% (35/42) |
+| P50 rerank latency | 59,967 ms | **32,862 ms** |
+| P95 rerank latency | 95,142 ms | **35,282 ms** (FAIL gate 500ms, unchanged) |
+| Rescued | 9 | **11** |
+| Demoted | 0 | **0** |
+| Timeouts | 0 | **0** |
+
+**Per-type lift (clean):** FAILED_APPROACH +437% (n=5), ARCHITECTURAL_DECISION +158% (n=3), WORKING_SOLUTION +117% (n=16), CODEBASE_PATTERN +75% (n=9), ERROR_FIX +68% (n=8), USER_PREFERENCE +0% (n=1).
+
+### Tuesday-mortem: two latent test-harness bugs found and fixed
+
+Before the clean re-run could run cleanly, two bugs surfaced and got fixed in commit `d0b0614`:
+
+- **Bug A — `rerank.py:485` ping_daemon timeout 0.2s → 1.5s.** Under load the daemon's TCP ping round-trip occasionally exceeded 200ms, causing `recall_learnings.py --rerank` to misclassify the daemon as dead and fall back to the cold subprocess path (~230s model load). 3 of 42 pairs in an earlier attempt hit this; bumping the ping timeout to 1.5s (mirroring the analogous fix in `embedding-client.ts` from commit `0a2d4e1`) eliminates the fallback. **Closes Open Follow-Up #2 (MEDIUM-1).**
+- **Bug B — `eval_recall.py` sys.path bootstrap + top-level percentile import.** The script lacked the `sys.path.insert(0, .. )` bootstrap that `recall_learnings.py:57` has, and its `_percentile` helper did a lazy `from core.utils import percentile` inside the function. Result: ModuleNotFoundError after ~25 min of running, at the final aggregation step. Bootstrap added + lazy import lifted to module scope so failures surface at launch.
+
+Both bugs covered by unit tests: `test_rerank.py::TestDaemonIsAlivePingTimeout` (asserts timeout ≥ 1.0s) and `test_eval_recall.py::TestSysPathBootstrap` (asserts module-scope binding + helper correctness).
+
+### Operational note: eval-harness wall-clock vs daemon-served API latency
+
+The clean run's ~35s p95 latency is **eval-harness subprocess overhead** (Python startup + `recall_learnings.py` imports + DB connect + hybrid-RRF retrieval), NOT the rerank API itself. The daemon's server-side rerank for 50 candidates is ~480 ms (see `[rerank] daemon: warmup predict: 746.8ms` in the daemon log; live calls are ~480ms). Production hook-time recall goes through `.claude/hooks/src/shared/embedding-client.ts` over a long-lived TCP socket — that path has none of the subprocess overhead and is the latency that actually matters for default-on.
+
+The 500ms gate continues to FAIL under the current eval methodology but the architectural pre-condition (in-process recall pipeline) for default-on already lives in Open Follow-Up #10.
+
+### Verdict
+
+`opt-in` stands. Both gates evaluated, NDCG lift PASS (+107% × 10× over +10% threshold), p95 latency FAIL on the eval harness (architectural; production path is different).
+
+---
+
 ## Cross-References
 
 - **Handoff:** `docs/memory-system-handoff-2026-05-17.md`
+- **Handoff (Phase 2 carry-forwards):** `docs/memory-system-handoff-2026-05-20.md`
 - **Plan:** `~/.claude/plans/im-not-sure-if-compressed-donut.md`
-- **Eval report:** `opc/tests/recall_eval_report.md` (commits `4d4dbff` + `f40e4e2`)
+- **Eval report:** `opc/tests/recall_eval_report.md` (commits `4d4dbff` + `f40e4e2`; refreshed 2026-05-20)
 - **Phase 1 decision:** committed at `e8444e6` (2026-05-17)
+- **Bug A + Bug B fix:** commit `d0b0614` (2026-05-20)

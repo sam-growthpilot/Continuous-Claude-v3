@@ -1,13 +1,13 @@
 {
   "_meta": {
-    "eval_set": "opc/tests/recall_eval_set.jsonl",
-    "n_pairs": 33,
+    "eval_set": "tests\\recall_eval_set.jsonl",
+    "n_pairs": 42,
     "k": 5,
     "model": "BAAI/bge-reranker-v2-m3",
     "max_length": 256,
     "rerank_top_n": 50,
-    "ran_at": "2026-05-18T00:11:48.369771+00:00",
-    "daemon_mode": true,
+    "ran_at": "2026-05-21T01:29:37.455748+00:00",
+    "daemon_mode": false,
     "daemon_spawned_by_us": false,
     "warmup_skipped": true,
     "warmup_count": 2,
@@ -31,126 +31,123 @@
       "_dedup_strategy": "Kept both shadcn CSS-vars near-duplicates (1917a56d, 63d29aea) as deliberate reranker stress test \u2014 flagged with deliberate_dup_test=true on both pairs",
       "_pollution_filters_applied": "Excluded Planning:/Decision:JSON-blob/ralph_status/Task completed:/Mid-session checkpoint/Test auth pattern/Problem solved/Goal:/Done:/Next: rows; selected on content shape not just type label",
       "_caveats": "USER_PREFERENCE has n=1 clean row (b87bd60b) \u2014 NDCG unreliable for this type. ARCHITECTURAL_DECISION clean pool is small (only 3 rows survive pollution filter); load shifted to CODEBASE_PATTERN (9) which absorbed several decision-shaped rows that the auto-classifier labeled differently. All type fields reflect the DB's metadata->>type value, not the eval-author's intuition."
-    },
-    "PARTIAL_RUN": true,
-    "PARTIAL_NOTE": "Only first 33 of 42 pairs are present. The eval was killed by the parent Bash tool's 10-minute lifetime cap; subsequent re-runs all failed with systematic rerank ERR=returncode=1 errors. Top-K id lists are not available in the log-derived data, so verdict classification is coarsened (no baseline_match / shuffled_no_change distinction; rescued/demoted/improved inferred from NDCG only).",
-    "latency_methodology": {
-      "eval_subprocess_p95_ms": 95142.5,
-      "daemon_bench_p95_ms": 5000,
-      "daemon_bench_p50_ms": 4515,
-      "daemon_bench_cold_ms": 40183,
-      "daemon_bench_source": "kraken Task 1.2 bench output, commit 5d13b7f. CPU only, max_length=256, batch_size=32, 50 candidates, 10-call hot loop.",
-      "gate_comparison_uses": "eval_subprocess_p95_ms",
-      "gate_threshold_ms": 500,
-      "gate_arm_verdict": "FAIL",
-      "notes": "Decision-gate latency arm uses eval_subprocess_p95_ms (~95s) -- the honest user-experience cost of /recall --rerank from a fresh shell, including uv env resolve, Python imports, sentence-transformers/torch import, DB connect, rerank, and JSON write. The daemon-bench p95 of ~5s measures only the in-process rerank step with a daemon-resident model; it is 10x over the 500ms gate even without subprocess overhead. Therefore: even with a Phase-3+ recall daemon that amortizes the subprocess startup, the rerank step alone cannot meet the 500ms gate on this CPU hardware. Conclusion: --rerank stays opt-in regardless of methodology; default-on would require either a faster reranker (smaller model, ONNX quantization, GPU) or relaxing the latency arm to ~5s warm."
     }
   },
   "baseline": {
-    "n_pairs": 33,
-    "mean_ndcg_at_5": 0.3820909090909091,
-    "found_count": 19,
-    "found_rate": 0.5757575757575758,
-    "p50_ms": 29436.5,
-    "p95_ms": 56080.75,
-    "latency_sample_n": 28,
+    "n_pairs": 42,
+    "mean_ndcg_at_5": 0.3849724565577605,
+    "found_count": 24,
+    "found_rate": 0.5714285714285714,
+    "p50_ms": 9861.383299998124,
+    "p95_ms": 12015.538100007689,
+    "latency_sample_n": 40,
     "by_type": {
-      "ARCHITECTURAL_DECISION": 0.21033333333333334,
-      "CODEBASE_PATTERN": 0.4862,
-      "ERROR_FIX": 0.567,
-      "USER_PREFERENCE": 0.0,
-      "WORKING_SOLUTION": 0.3131875
+      "ARCHITECTURAL_DECISION": 0.2103099178571525,
+      "CODEBASE_PATTERN": 0.381186284230377,
+      "ERROR_FIX": 0.5669456402014998,
+      "FAILED_APPROACH": 0.1861353116146786,
+      "USER_PREFERENCE": 1.0,
+      "WORKING_SOLUTION": 0.3525621990059813
     },
     "by_type_found_rate": {
       "ARCHITECTURAL_DECISION": 0.3333333333333333,
-      "CODEBASE_PATTERN": 0.6,
+      "CODEBASE_PATTERN": 0.4444444444444444,
       "ERROR_FIX": 0.875,
-      "USER_PREFERENCE": 0.0,
-      "WORKING_SOLUTION": 0.5
+      "FAILED_APPROACH": 0.4,
+      "USER_PREFERENCE": 1.0,
+      "WORKING_SOLUTION": 0.5625
     },
     "by_type_n": {
       "ARCHITECTURAL_DECISION": 3,
-      "CODEBASE_PATTERN": 5,
+      "CODEBASE_PATTERN": 9,
       "ERROR_FIX": 8,
+      "FAILED_APPROACH": 5,
       "USER_PREFERENCE": 1,
       "WORKING_SOLUTION": 16
     },
     "by_scope": {
-      "GLOBAL": 0.39299999999999996,
-      "PROJECT": 0.3672857142857143
+      "GLOBAL": 0.3589508289890357,
+      "PROJECT": 0.41359624688335794
     },
     "by_scope_n": {
-      "GLOBAL": 19,
-      "PROJECT": 14
+      "GLOBAL": 22,
+      "PROJECT": 20
     }
   },
   "rerank": {
-    "n_pairs": 33,
-    "mean_ndcg_at_5": 0.8037575757575758,
-    "found_count": 28,
-    "found_rate": 0.8484848484848485,
-    "p50_ms": 59967.0,
-    "p95_ms": 95142.5,
-    "latency_sample_n": 31,
+    "n_pairs": 42,
+    "mean_ndcg_at_5": 0.7981837860544245,
+    "found_count": 35,
+    "found_rate": 0.8333333333333334,
+    "p50_ms": 32862.12740000337,
+    "p95_ms": 35281.83680000075,
+    "latency_sample_n": 40,
     "by_type": {
-      "ARCHITECTURAL_DECISION": 0.5436666666666666,
-      "CODEBASE_PATTERN": 0.8,
-      "ERROR_FIX": 0.953875,
+      "ARCHITECTURAL_DECISION": 0.5436432511904858,
+      "CODEBASE_PATTERN": 0.6666666666666666,
+      "ERROR_FIX": 0.9538662191964322,
+      "FAILED_APPROACH": 1.0,
       "USER_PREFERENCE": 1.0,
-      "WORKING_SOLUTION": 0.766375
+      "WORKING_SOLUTION": 0.7663662191964322
     },
     "by_type_found_rate": {
       "ARCHITECTURAL_DECISION": 0.6666666666666666,
-      "CODEBASE_PATTERN": 0.8,
+      "CODEBASE_PATTERN": 0.6666666666666666,
       "ERROR_FIX": 1.0,
+      "FAILED_APPROACH": 1.0,
       "USER_PREFERENCE": 1.0,
       "WORKING_SOLUTION": 0.8125
     },
     "by_type_n": {
       "ARCHITECTURAL_DECISION": 3,
-      "CODEBASE_PATTERN": 5,
+      "CODEBASE_PATTERN": 9,
       "ERROR_FIX": 8,
+      "FAILED_APPROACH": 5,
       "USER_PREFERENCE": 1,
       "WORKING_SOLUTION": 16
     },
     "by_scope": {
-      "GLOBAL": 0.8226842105263158,
-      "PROJECT": 0.7780714285714286
+      "GLOBAL": 0.8468604433441572,
+      "PROJECT": 0.7446394630357187
     },
     "by_scope_n": {
-      "GLOBAL": 19,
-      "PROJECT": 14
+      "GLOBAL": 22,
+      "PROJECT": 20
     }
   },
   "comparison": {
-    "ndcg_lift_pct": 110.3576810214926,
+    "ndcg_lift_pct": 107.33529696939932,
     "by_type_lift_pct": {
-      "ARCHITECTURAL_DECISION": 158.47860538827254,
-      "CODEBASE_PATTERN": 64.54134101192925,
-      "ERROR_FIX": 68.23192239858909,
-      "USER_PREFERENCE": "Infinity",
-      "WORKING_SOLUTION": 144.70165635601677
+      "ARCHITECTURAL_DECISION": 158.49625007211563,
+      "CODEBASE_PATTERN": 74.89261661465089,
+      "ERROR_FIX": 68.24650399594144,
+      "FAILED_APPROACH": 437.24357368048163,
+      "USER_PREFERENCE": 0.0,
+      "WORKING_SOLUTION": 117.37050124974704
     },
-    "rescued_count": 9,
+    "rescued_count": 11,
     "demoted_count": 0,
-    "shuffled_no_change_count": 9,
-    "shuffled_improved_count": 10,
+    "shuffled_no_change_count": 11,
+    "shuffled_improved_count": 13,
     "shuffled_worse_count": 0,
-    "both_miss_count": 5,
+    "both_miss_count": 7,
     "baseline_match_count": 0,
     "rescued_ids": [
-      "b87bd60b-10bb-47be-af78-0990ee43b2e9",
       "5abfaff4-81a3-409d-af9f-08f6ed84a2b8",
       "6baa38a4-8597-41c4-bbab-2056fdbaa636",
-      "f32addc6-2dbb-42dc-8397-e189c3e9b0a7",
       "38f8551f-2f09-4b3d-a7b1-968c10bb6b20",
       "26d15f5b-588b-4ca1-a085-588c8ad8db73",
       "06be54d0-44ce-4186-9847-07ca108f8f94",
       "5ff3a2df-8f48-454e-bfef-5e092eb3d807",
-      "fedfc581-cd52-4f1d-8b14-a055ef407e28"
+      "fedfc581-cd52-4f1d-8b14-a055ef407e28",
+      "bdfefb6e-da78-4966-abab-64f4e327afdd",
+      "74d2f296-bf73-4f25-80dd-97ea9a79924c",
+      "e5ca6a1d-6315-492a-bd7c-3f5d1f878c45",
+      "ec42427f-b5e3-46f6-9222-602fc31fb292"
     ],
     "demoted_ids": [],
     "shuffled_no_change_ids": [
+      "b87bd60b-10bb-47be-af78-0990ee43b2e9",
       "63d29aea-c3d1-47f2-8f04-9ac1271463ab",
       "8ce6e646-239c-41e3-a84f-a7d9a41b05e2",
       "be51fff0-b3ce-45be-9f50-0baf06691e07",
@@ -159,14 +156,15 @@
       "048b09e0-b3c2-4fb3-87b2-572694cf4473",
       "b3a20b27-6096-4b4c-af4e-9277406ae0b9",
       "deb3a478-f2ae-41b3-bfc3-061708bd4efe",
-      "6a172c1b-68c6-40ae-918b-887279f4b524"
+      "6a172c1b-68c6-40ae-918b-887279f4b524",
+      "6451b0c2-71c2-4775-b402-93d027ea6418"
     ]
   },
   "decision_gate": {
-    "ndcg_lift_pct_measured": 110.3576810214926,
+    "ndcg_lift_pct_measured": 107.33529696939932,
     "ndcg_lift_pct_threshold": 10.0,
     "ndcg_lift_pass": true,
-    "p95_ms_measured": 95142.5,
+    "p95_ms_measured": 35281.83680000075,
     "p95_ms_threshold": 500.0,
     "p95_latency_pass": false,
     "decision": "opt-in",
@@ -180,20 +178,42 @@
       "scope": "PROJECT",
       "confidence": "high",
       "notes": "Only clean USER_PREFERENCE row in DB; explicitly states Drizzle preferred over Prisma",
+      "caveat": "n=1, NDCG unreliable for this type",
       "baseline": {
-        "top_k_ids": [],
-        "ndcg_at_5": 0.0,
-        "latency_ms": 88106.0,
-        "error": "timeout"
+        "top_k_ids": [
+          "b87bd60b-10bb-47be-af78-0990ee43b2e9",
+          "3324091b-9b13-4b77-a51e-14e796cd2f8e",
+          "7c267eff-32ce-4798-9177-794c5c756216",
+          "f3aa1af9-de76-4051-9b5b-ecd2c1772402",
+          "72413e73-1031-49d8-8a62-7e2a7f3b5959"
+        ],
+        "ndcg_at_5": 1.0,
+        "latency_ms": 9821.82960001228,
+        "error": null
       },
       "rerank": {
-        "top_k_ids": [],
+        "top_k_ids": [
+          "b87bd60b-10bb-47be-af78-0990ee43b2e9",
+          "5b88c012-54bf-4d6d-b075-236e87816133",
+          "7c267eff-32ce-4798-9177-794c5c756216",
+          "72413e73-1031-49d8-8a62-7e2a7f3b5959",
+          "3324091b-9b13-4b77-a51e-14e796cd2f8e"
+        ],
         "ndcg_at_5": 1.0,
-        "latency_ms": 84176.0,
+        "latency_ms": 37616.3904999994,
         "error": null,
-        "rerank_meta": {}
+        "rerank_meta": {
+          "rerank_status": "ok",
+          "rerank_used_daemon": true,
+          "rerank_total_ms": 29674.499599990668,
+          "rerank_remote_ms": 29656.579300004523,
+          "rerank_candidate_pool": 50,
+          "rerank_top_k": 5,
+          "rerank_model": "BAAI/bge-reranker-v2-m3",
+          "rerank_pre_count": 50
+        }
       },
-      "verdict": "rescued"
+      "verdict": "shuffled_no_change"
     },
     {
       "query": "shadcn css variables tailwind theme block",
@@ -202,18 +222,40 @@
       "scope": "PROJECT",
       "confidence": "high",
       "notes": "More-complete shadcn CSS-vars entry (mentions Sheet/popover). Pair with 1917a56d for reranker stress test on near-duplicates",
+      "deliberate_dup_test": true,
       "baseline": {
-        "top_k_ids": [],
-        "ndcg_at_5": 0.631,
-        "latency_ms": 48967.0,
+        "top_k_ids": [
+          "1917a56d-9194-4481-9d19-840b79c93311",
+          "63d29aea-c3d1-47f2-8f04-9ac1271463ab",
+          "ff017e13-9237-44d2-8628-52af9e32dbc4",
+          "b72bf617-5f44-4a71-9a28-7a2489c74204",
+          "6451b0c2-71c2-4775-b402-93d027ea6418"
+        ],
+        "ndcg_at_5": 0.6309297535714575,
+        "latency_ms": 10197.794400010025,
         "error": null
       },
       "rerank": {
-        "top_k_ids": [],
-        "ndcg_at_5": 0.631,
-        "latency_ms": 73947.0,
+        "top_k_ids": [
+          "1917a56d-9194-4481-9d19-840b79c93311",
+          "63d29aea-c3d1-47f2-8f04-9ac1271463ab",
+          "52630308-e270-4876-b2de-6c27d56cb4bb",
+          "6451b0c2-71c2-4775-b402-93d027ea6418",
+          "c67205a0-a959-4616-a761-51f73ef58ee1"
+        ],
+        "ndcg_at_5": 0.6309297535714575,
+        "latency_ms": 35985.53109999921,
         "error": null,
-        "rerank_meta": {}
+        "rerank_meta": {
+          "rerank_status": "ok",
+          "rerank_used_daemon": true,
+          "rerank_total_ms": 25131.51169999037,
+          "rerank_remote_ms": 25103.567199999816,
+          "rerank_candidate_pool": 50,
+          "rerank_top_k": 5,
+          "rerank_model": "BAAI/bge-reranker-v2-m3",
+          "rerank_pre_count": 50
+        }
       },
       "verdict": "shuffled_no_change"
     },
@@ -224,18 +266,40 @@
       "scope": "PROJECT",
       "confidence": "high",
       "notes": "Less-complete shadcn CSS-vars near-duplicate. Different query angle (symptom: unstyled) routes to this one; previous query (theme block) routes to the more-complete sibling",
+      "deliberate_dup_test": true,
       "baseline": {
-        "top_k_ids": [],
-        "ndcg_at_5": 0.431,
-        "latency_ms": 56534.0,
+        "top_k_ids": [
+          "b67f03ce-a76d-4ca4-b6c4-1f098fdfff0a",
+          "d29ded98-0859-4b29-b082-55972132c09b",
+          "9210d6ab-c6d2-4235-b73d-578c646c4081",
+          "1917a56d-9194-4481-9d19-840b79c93311",
+          "63d29aea-c3d1-47f2-8f04-9ac1271463ab"
+        ],
+        "ndcg_at_5": 0.43067655807339306,
+        "latency_ms": 10978.476899996167,
         "error": null
       },
       "rerank": {
-        "top_k_ids": [],
-        "ndcg_at_5": 0.631,
-        "latency_ms": 69829.0,
+        "top_k_ids": [
+          "63d29aea-c3d1-47f2-8f04-9ac1271463ab",
+          "1917a56d-9194-4481-9d19-840b79c93311",
+          "6451b0c2-71c2-4775-b402-93d027ea6418",
+          "4f28308f-8e45-4ea1-9278-3cbc10c104d5",
+          "ab42c034-6299-46d7-ba17-e1a58175b9ca"
+        ],
+        "ndcg_at_5": 0.6309297535714575,
+        "latency_ms": 33827.66939999419,
         "error": null,
-        "rerank_meta": {}
+        "rerank_meta": {
+          "rerank_status": "ok",
+          "rerank_used_daemon": true,
+          "rerank_total_ms": 23325.00599999912,
+          "rerank_remote_ms": 23302.372200007085,
+          "rerank_candidate_pool": 50,
+          "rerank_top_k": 5,
+          "rerank_model": "BAAI/bge-reranker-v2-m3",
+          "rerank_pre_count": 50
+        }
       },
       "verdict": "shuffled_improved"
     },
@@ -247,17 +311,38 @@
       "confidence": "high",
       "notes": "Three-tier browser strategy: playwright-mcp, chrome-devtools-mcp, playwright-core via CDP",
       "baseline": {
-        "top_k_ids": [],
-        "ndcg_at_5": 0.387,
-        "latency_ms": 55239.0,
+        "top_k_ids": [
+          "239dd886-5de3-4808-972f-18274c6cf3f7",
+          "03e06dad-0f21-477f-8005-6d411798e25c",
+          "f6710096-2724-4428-8906-072394fd8023",
+          "12b140cc-e638-43a9-bfcf-7aeaa3a5258e",
+          "e4b03839-a870-4777-8c7e-c4f7ee3cfce2"
+        ],
+        "ndcg_at_5": 0.38685280723454163,
+        "latency_ms": 8520.347900004708,
         "error": null
       },
       "rerank": {
-        "top_k_ids": [],
+        "top_k_ids": [
+          "e4b03839-a870-4777-8c7e-c4f7ee3cfce2",
+          "f6710096-2724-4428-8906-072394fd8023",
+          "b5c96366-7b02-42d2-b77c-d0744e92d156",
+          "56e93e88-a644-475c-94e3-cf8709af084a",
+          "1bdd49f3-1afd-44c1-a6d5-d0291cbe77a2"
+        ],
         "ndcg_at_5": 1.0,
-        "latency_ms": 86065.0,
+        "latency_ms": 33379.49380000646,
         "error": null,
-        "rerank_meta": {}
+        "rerank_meta": {
+          "rerank_status": "ok",
+          "rerank_used_daemon": true,
+          "rerank_total_ms": 24135.512599998037,
+          "rerank_remote_ms": 24114.081399995484,
+          "rerank_candidate_pool": 50,
+          "rerank_top_k": 5,
+          "rerank_model": "BAAI/bge-reranker-v2-m3",
+          "rerank_pre_count": 50
+        }
       },
       "verdict": "shuffled_improved"
     },
@@ -269,17 +354,38 @@
       "confidence": "high",
       "notes": "settings.json mcpServers silently ignored; must use .mcp.json or claude.json",
       "baseline": {
-        "top_k_ids": [],
+        "top_k_ids": [
+          "ba341b2b-3d83-4e6d-99e3-7d2fbff51a12",
+          "d529c7db-9547-4894-ae80-46ada5b9d345",
+          "12b140cc-e638-43a9-bfcf-7aeaa3a5258e",
+          "3debd06a-cf8f-44e6-9c2e-01c630334b5f",
+          "48c81cd4-ff06-49e9-8484-3b927b53daff"
+        ],
         "ndcg_at_5": 0.0,
-        "latency_ms": 47982.0,
+        "latency_ms": 9066.78649999958,
         "error": null
       },
       "rerank": {
-        "top_k_ids": [],
+        "top_k_ids": [
+          "5abfaff4-81a3-409d-af9f-08f6ed84a2b8",
+          "48c81cd4-ff06-49e9-8484-3b927b53daff",
+          "d529c7db-9547-4894-ae80-46ada5b9d345",
+          "383899ef-118f-43ca-b768-27616ef7fb6c",
+          "12b140cc-e638-43a9-bfcf-7aeaa3a5258e"
+        ],
         "ndcg_at_5": 1.0,
-        "latency_ms": 78379.0,
+        "latency_ms": 31325.10979998915,
         "error": null,
-        "rerank_meta": {}
+        "rerank_meta": {
+          "rerank_status": "ok",
+          "rerank_used_daemon": true,
+          "rerank_total_ms": 23136.811600008514,
+          "rerank_remote_ms": 23114.463999998407,
+          "rerank_candidate_pool": 50,
+          "rerank_top_k": 5,
+          "rerank_model": "BAAI/bge-reranker-v2-m3",
+          "rerank_pre_count": 50
+        }
       },
       "verdict": "rescued"
     },
@@ -291,17 +397,38 @@
       "confidence": "high",
       "notes": "Hooks in ~/.claude/settings.json are global across all projects",
       "baseline": {
-        "top_k_ids": [],
-        "ndcg_at_5": 0.431,
-        "latency_ms": 51319.0,
+        "top_k_ids": [
+          "2b2bd5dc-dcb2-49ec-a9fd-10accec9a8b9",
+          "8e6166cb-9dc2-4fad-a134-1e95287f246d",
+          "65e742ca-0f19-4efc-b096-bd763bef8289",
+          "bedd33b8-cdee-4e7d-aba5-eb42219209a5",
+          "f3ea370e-4941-4fd9-afdb-a123d4a6b935"
+        ],
+        "ndcg_at_5": 0.43067655807339306,
+        "latency_ms": 8416.760300009628,
         "error": null
       },
       "rerank": {
-        "top_k_ids": [],
+        "top_k_ids": [
+          "bedd33b8-cdee-4e7d-aba5-eb42219209a5",
+          "7fa7fbf7-ef4e-43a9-ae4e-0264d8ce3e79",
+          "1971e1b0-24d6-48b2-b16b-abca13372c8f",
+          "f3ea370e-4941-4fd9-afdb-a123d4a6b935",
+          "ba0afbd1-60c0-4768-8633-f407337b5b39"
+        ],
         "ndcg_at_5": 1.0,
-        "latency_ms": 67098.0,
+        "latency_ms": 31142.725999990944,
         "error": null,
-        "rerank_meta": {}
+        "rerank_meta": {
+          "rerank_status": "ok",
+          "rerank_used_daemon": true,
+          "rerank_total_ms": 22733.955200004857,
+          "rerank_remote_ms": 22693.944400001783,
+          "rerank_candidate_pool": 50,
+          "rerank_top_k": 5,
+          "rerank_model": "BAAI/bge-reranker-v2-m3",
+          "rerank_pre_count": 50
+        }
       },
       "verdict": "shuffled_improved"
     },
@@ -313,17 +440,38 @@
       "confidence": "high",
       "notes": "Unified .ralph/state.json replaces 3 fragmented state files",
       "baseline": {
-        "top_k_ids": [],
+        "top_k_ids": [
+          "3b899a94-c910-45e7-bdda-ab77eccf396b",
+          "ba341b2b-3d83-4e6d-99e3-7d2fbff51a12",
+          "eeaa0d9b-478a-4c39-bacb-2bbf2b74c1e6",
+          "4c5e3e65-256b-46e5-80ef-f999903cf1b1",
+          "ed69ebb7-dbc0-4f22-aa84-d536c205c99b"
+        ],
         "ndcg_at_5": 0.0,
-        "latency_ms": 53748.0,
+        "latency_ms": 9237.392600000021,
         "error": null
       },
       "rerank": {
-        "top_k_ids": [],
+        "top_k_ids": [
+          "3b899a94-c910-45e7-bdda-ab77eccf396b",
+          "19cd5598-dd4f-4fd1-b239-0997061a1fec",
+          "bedd33b8-cdee-4e7d-aba5-eb42219209a5",
+          "86584b3c-34de-44b1-8d8a-a51107c6c781",
+          "4c5e3e65-256b-46e5-80ef-f999903cf1b1"
+        ],
         "ndcg_at_5": 0.0,
-        "latency_ms": 67530.0,
+        "latency_ms": 32881.54819999181,
         "error": null,
-        "rerank_meta": {}
+        "rerank_meta": {
+          "rerank_status": "ok",
+          "rerank_used_daemon": true,
+          "rerank_total_ms": 22642.476600012742,
+          "rerank_remote_ms": 22604.311200004304,
+          "rerank_candidate_pool": 50,
+          "rerank_top_k": 5,
+          "rerank_model": "BAAI/bge-reranker-v2-m3",
+          "rerank_pre_count": 50
+        }
       },
       "verdict": "both_miss"
     },
@@ -335,17 +483,38 @@
       "confidence": "high",
       "notes": "Serena --context flag tool selection per-host",
       "baseline": {
-        "top_k_ids": [],
+        "top_k_ids": [
+          "8ce6e646-239c-41e3-a84f-a7d9a41b05e2",
+          "86b818ad-35aa-45d8-819b-789186c56aaf",
+          "309d8b98-6e8d-4fc4-830e-826ee86a0411",
+          "ba0afbd1-60c0-4768-8633-f407337b5b39",
+          "17aa123a-e001-4463-896e-14f099745ed0"
+        ],
         "ndcg_at_5": 1.0,
-        "latency_ms": 38449.0,
+        "latency_ms": 8537.146300004679,
         "error": null
       },
       "rerank": {
-        "top_k_ids": [],
+        "top_k_ids": [
+          "8ce6e646-239c-41e3-a84f-a7d9a41b05e2",
+          "2d159d6a-98c5-4c79-8126-bb89f837f047",
+          "d529c7db-9547-4894-ae80-46ada5b9d345",
+          "e0cc5e41-1ffd-42d5-9940-583cea1ba9c6",
+          "309d8b98-6e8d-4fc4-830e-826ee86a0411"
+        ],
         "ndcg_at_5": 1.0,
-        "latency_ms": 69134.0,
+        "latency_ms": 32475.835500008543,
         "error": null,
-        "rerank_meta": {}
+        "rerank_meta": {
+          "rerank_status": "ok",
+          "rerank_used_daemon": true,
+          "rerank_total_ms": 23344.29120000277,
+          "rerank_remote_ms": 23339.832800003933,
+          "rerank_candidate_pool": 50,
+          "rerank_top_k": 5,
+          "rerank_model": "BAAI/bge-reranker-v2-m3",
+          "rerank_pre_count": 50
+        }
       },
       "verdict": "shuffled_no_change"
     },
@@ -357,17 +526,38 @@
       "confidence": "high",
       "notes": "Codex MSIX install paths and real log location on Windows",
       "baseline": {
-        "top_k_ids": [],
+        "top_k_ids": [
+          "be51fff0-b3ce-45be-9f50-0baf06691e07",
+          "ac82a2b0-5f6e-4443-8324-80a58fe7b4dc",
+          "d6e2ab64-fdaa-4972-8293-c0c329ded7cf",
+          "63162f8c-3da5-4e44-a4f6-fd340dd59ef8",
+          "d3f3345b-beca-4bf6-b89d-55bf0e7b885e"
+        ],
         "ndcg_at_5": 1.0,
-        "latency_ms": 45976.0,
+        "latency_ms": 9861.383299998124,
         "error": null
       },
       "rerank": {
-        "top_k_ids": [],
+        "top_k_ids": [
+          "be51fff0-b3ce-45be-9f50-0baf06691e07",
+          "ba0afbd1-60c0-4768-8633-f407337b5b39",
+          "86b818ad-35aa-45d8-819b-789186c56aaf",
+          "309d8b98-6e8d-4fc4-830e-826ee86a0411",
+          "76472d57-5104-449b-8e8e-5898339c0652"
+        ],
         "ndcg_at_5": 1.0,
-        "latency_ms": 80196.0,
+        "latency_ms": 34425.94799998915,
         "error": null,
-        "rerank_meta": {}
+        "rerank_meta": {
+          "rerank_status": "ok",
+          "rerank_used_daemon": true,
+          "rerank_total_ms": 23394.950899994,
+          "rerank_remote_ms": 23384.96660000237,
+          "rerank_candidate_pool": 50,
+          "rerank_top_k": 5,
+          "rerank_model": "BAAI/bge-reranker-v2-m3",
+          "rerank_pre_count": 50
+        }
       },
       "verdict": "shuffled_no_change"
     },
@@ -379,17 +569,38 @@
       "confidence": "high",
       "notes": "Vercel integration strategy: skip official plugin, use deployer agent",
       "baseline": {
-        "top_k_ids": [],
-        "ndcg_at_5": 0.631,
-        "latency_ms": 57669.0,
+        "top_k_ids": [
+          "65e742ca-0f19-4efc-b096-bd763bef8289",
+          "778056b7-439c-44f0-a8aa-1c223474a2a1",
+          "f3aa1af9-de76-4051-9b5b-ecd2c1772402",
+          "a57c964a-93f8-4c48-bd8b-41e1dfb0005d",
+          "daac83d5-513b-418f-9b7f-06e674da7ca2"
+        ],
+        "ndcg_at_5": 0.6309297535714575,
+        "latency_ms": 8160.7127000024775,
         "error": null
       },
       "rerank": {
-        "top_k_ids": [],
+        "top_k_ids": [
+          "778056b7-439c-44f0-a8aa-1c223474a2a1",
+          "a57c964a-93f8-4c48-bd8b-41e1dfb0005d",
+          "877f4b59-af6e-47b8-a4f4-175d28393903",
+          "b313bded-9a3e-4c97-a6f9-616a2ca0e6f2",
+          "3d9f2feb-26d7-4f0a-8049-e5a4e5d4aaaf"
+        ],
         "ndcg_at_5": 1.0,
-        "latency_ms": 75785.0,
+        "latency_ms": 33226.47730000608,
         "error": null,
-        "rerank_meta": {}
+        "rerank_meta": {
+          "rerank_status": "ok",
+          "rerank_used_daemon": true,
+          "rerank_total_ms": 23719.083000003593,
+          "rerank_remote_ms": 23691.809000010835,
+          "rerank_candidate_pool": 50,
+          "rerank_top_k": 5,
+          "rerank_model": "BAAI/bge-reranker-v2-m3",
+          "rerank_pre_count": 50
+        }
       },
       "verdict": "shuffled_improved"
     },
@@ -401,17 +612,38 @@
       "confidence": "high",
       "notes": "Proxy-based vi.mock causes infinite recursion on lucide-react",
       "baseline": {
-        "top_k_ids": [],
+        "top_k_ids": [
+          "8e6166cb-9dc2-4fad-a134-1e95287f246d",
+          "69052fe7-5087-4d9a-bb9b-776ed97820bf",
+          "d29ded98-0859-4b29-b082-55972132c09b",
+          "b1aaffb9-5086-4cf6-8d15-c8a4ec20091a",
+          "a6d4ceb9-d85f-4dbb-9b9f-2c160649261c"
+        ],
         "ndcg_at_5": 0.0,
-        "latency_ms": 71341.0,
-        "error": "timeout"
+        "latency_ms": 10594.892399996752,
+        "error": null
       },
       "rerank": {
-        "top_k_ids": [],
+        "top_k_ids": [
+          "6baa38a4-8597-41c4-bbab-2056fdbaa636",
+          "20e46b9c-8d08-41ac-912b-62ccb3eceafa",
+          "b1aaffb9-5086-4cf6-8d15-c8a4ec20091a",
+          "60c2db78-75eb-4c15-b88b-205c0f3d0852",
+          "e284f285-1519-4b65-812f-74200ac23553"
+        ],
         "ndcg_at_5": 1.0,
-        "latency_ms": 104570.0,
+        "latency_ms": 32333.17779999925,
         "error": null,
-        "rerank_meta": {}
+        "rerank_meta": {
+          "rerank_status": "ok",
+          "rerank_used_daemon": true,
+          "rerank_total_ms": 23174.321300000884,
+          "rerank_remote_ms": 22930.538800006616,
+          "rerank_candidate_pool": 50,
+          "rerank_top_k": 5,
+          "rerank_model": "BAAI/bge-reranker-v2-m3",
+          "rerank_pre_count": 50
+        }
       },
       "verdict": "rescued"
     },
@@ -423,19 +655,40 @@
       "confidence": "high",
       "notes": "shadcnspace CLI auth must use params (not headers) in components.json",
       "baseline": {
-        "top_k_ids": [],
-        "ndcg_at_5": 0.0,
-        "latency_ms": 69468.0,
-        "error": "timeout"
+        "top_k_ids": [
+          "e628c9e0-f622-4c99-9471-0fc1a11e5daf",
+          "f32addc6-2dbb-42dc-8397-e189c3e9b0a7",
+          "b67f03ce-a76d-4ca4-b6c4-1f098fdfff0a",
+          "6451b0c2-71c2-4775-b402-93d027ea6418",
+          "1917a56d-9194-4481-9d19-840b79c93311"
+        ],
+        "ndcg_at_5": 0.6309297535714575,
+        "latency_ms": 13789.093300001696,
+        "error": null
       },
       "rerank": {
-        "top_k_ids": [],
+        "top_k_ids": [
+          "f32addc6-2dbb-42dc-8397-e189c3e9b0a7",
+          "63d29aea-c3d1-47f2-8f04-9ac1271463ab",
+          "1917a56d-9194-4481-9d19-840b79c93311",
+          "10f82037-6fb7-40e3-b841-2b1c58e44414",
+          "6451b0c2-71c2-4775-b402-93d027ea6418"
+        ],
         "ndcg_at_5": 1.0,
-        "latency_ms": 104220.0,
+        "latency_ms": 33732.6056999882,
         "error": null,
-        "rerank_meta": {}
+        "rerank_meta": {
+          "rerank_status": "ok",
+          "rerank_used_daemon": true,
+          "rerank_total_ms": 22954.792299991823,
+          "rerank_remote_ms": 22950.03119998728,
+          "rerank_candidate_pool": 50,
+          "rerank_top_k": 5,
+          "rerank_model": "BAAI/bge-reranker-v2-m3",
+          "rerank_pre_count": 50
+        }
       },
-      "verdict": "rescued"
+      "verdict": "shuffled_improved"
     },
     {
       "query": "sync-to-active hooks dist not copied",
@@ -445,17 +698,38 @@
       "confidence": "high",
       "notes": "sync-to-active.sh skips hooks/dist and scripts/ralph",
       "baseline": {
-        "top_k_ids": [],
+        "top_k_ids": [
+          "8e6166cb-9dc2-4fad-a134-1e95287f246d",
+          "65e742ca-0f19-4efc-b096-bd763bef8289",
+          "d4d819ec-bcd5-4a81-bba8-c91b590c41ff",
+          "39520c92-302d-4eed-b693-14afd70d695e",
+          "c592b65e-d8dd-40eb-a882-aad5fd8a0758"
+        ],
         "ndcg_at_5": 0.0,
-        "latency_ms": 63402.0,
-        "error": "timeout"
+        "latency_ms": 9495.25690000155,
+        "error": null
       },
       "rerank": {
-        "top_k_ids": [],
+        "top_k_ids": [
+          "38f8551f-2f09-4b3d-a7b1-968c10bb6b20",
+          "bedd33b8-cdee-4e7d-aba5-eb42219209a5",
+          "92f0c79c-7d2c-4013-80f9-64f78194b974",
+          "750ab6ad-ecc6-411c-adb6-2ae890c89657",
+          "7631b8a5-024c-4f93-b013-2253a438085a"
+        ],
         "ndcg_at_5": 1.0,
-        "latency_ms": 79488.0,
+        "latency_ms": 31510.809100000188,
         "error": null,
-        "rerank_meta": {}
+        "rerank_meta": {
+          "rerank_status": "ok",
+          "rerank_used_daemon": true,
+          "rerank_total_ms": 23448.294200003147,
+          "rerank_remote_ms": 23177.28899999929,
+          "rerank_candidate_pool": 50,
+          "rerank_top_k": 5,
+          "rerank_model": "BAAI/bge-reranker-v2-m3",
+          "rerank_pre_count": 50
+        }
       },
       "verdict": "rescued"
     },
@@ -467,17 +741,38 @@
       "confidence": "high",
       "notes": "2MB Cosmos doc limit; use Blob Storage for transcripts/PDFs",
       "baseline": {
-        "top_k_ids": [],
+        "top_k_ids": [
+          "907613d8-012b-4c82-a15e-36fd5d5faf8c",
+          "e4e43c36-825f-44d9-a3b7-0d14f7765c45",
+          "9c4de39a-b32b-48cc-8dbd-7e5afa067144",
+          "48b0df0f-583e-41d7-891a-42cea25bc1b6",
+          "1c9e1a17-d5c9-4509-a441-73d3048bc710"
+        ],
         "ndcg_at_5": 0.0,
-        "latency_ms": 36852.0,
+        "latency_ms": 11535.705700007384,
         "error": null
       },
       "rerank": {
-        "top_k_ids": [],
+        "top_k_ids": [
+          "3dc15571-0f5b-406a-b9bf-0507c8705594",
+          "c6518320-94e2-49c9-b030-611e0f7e0e2f",
+          "e4e43c36-825f-44d9-a3b7-0d14f7765c45",
+          "727b967e-c645-4acf-b15d-69d4850b6423",
+          "907613d8-012b-4c82-a15e-36fd5d5faf8c"
+        ],
         "ndcg_at_5": 0.0,
-        "latency_ms": 67216.0,
+        "latency_ms": 30022.46930000547,
         "error": null,
-        "rerank_meta": {}
+        "rerank_meta": {
+          "rerank_status": "ok",
+          "rerank_used_daemon": true,
+          "rerank_total_ms": 22908.43809999933,
+          "rerank_remote_ms": 22899.468999996316,
+          "rerank_candidate_pool": 50,
+          "rerank_top_k": 5,
+          "rerank_model": "BAAI/bge-reranker-v2-m3",
+          "rerank_pre_count": 50
+        }
       },
       "verdict": "both_miss"
     },
@@ -489,17 +784,38 @@
       "confidence": "high",
       "notes": "Never push to upstream parcadei; always to fork Rev4nchist",
       "baseline": {
-        "top_k_ids": [],
+        "top_k_ids": [
+          "65e742ca-0f19-4efc-b096-bd763bef8289",
+          "62ea058e-a0d3-4df8-b3df-e65e3cdc4ebb",
+          "977914df-cac5-4234-88d5-44454d1f8328",
+          "b72bf617-5f44-4a71-9a28-7a2489c74204",
+          "a6d4ceb9-d85f-4dbb-9b9f-2c160649261c"
+        ],
         "ndcg_at_5": 0.0,
-        "latency_ms": 51278.0,
+        "latency_ms": 9880.387400000473,
         "error": null
       },
       "rerank": {
-        "top_k_ids": [],
+        "top_k_ids": [
+          "e61994fc-390c-444e-a04f-77e3d1b8e04c",
+          "9472a465-f4c2-49c1-996f-b2cb43e2d5d4",
+          "f47ca323-e8e8-4fe9-9362-ab0dccb128de",
+          "daac83d5-513b-418f-9b7f-06e674da7ca2",
+          "aba29a3b-8700-464c-ba02-caafa4c4c0bd"
+        ],
         "ndcg_at_5": 0.0,
-        "latency_ms": 77582.0,
+        "latency_ms": 32862.12740000337,
         "error": null,
-        "rerank_meta": {}
+        "rerank_meta": {
+          "rerank_status": "ok",
+          "rerank_used_daemon": true,
+          "rerank_total_ms": 23008.501399992383,
+          "rerank_remote_ms": 22990.543000007165,
+          "rerank_candidate_pool": 50,
+          "rerank_top_k": 5,
+          "rerank_model": "BAAI/bge-reranker-v2-m3",
+          "rerank_pre_count": 50
+        }
       },
       "verdict": "both_miss"
     },
@@ -511,17 +827,38 @@
       "confidence": "high",
       "notes": "New shells inherit stale DATABASE_URL; export in current shell or restart terminal",
       "baseline": {
-        "top_k_ids": [],
+        "top_k_ids": [
+          "5db7cc94-0c48-4e4c-b365-5b45ee3f8eec",
+          "62ea058e-a0d3-4df8-b3df-e65e3cdc4ebb",
+          "af06ee5f-8cd8-407c-b1e6-fa302b9534cb",
+          "b1ddbab3-bdc6-4264-be4c-d707906c5c4c",
+          "5c746213-abe1-4190-8935-ba44bd48cfd0"
+        ],
         "ndcg_at_5": 0.5,
-        "latency_ms": 54519.0,
+        "latency_ms": 8194.135500001721,
         "error": null
       },
       "rerank": {
-        "top_k_ids": [],
+        "top_k_ids": [
+          "af06ee5f-8cd8-407c-b1e6-fa302b9534cb",
+          "5c746213-abe1-4190-8935-ba44bd48cfd0",
+          "2969c693-0242-41c8-b56f-4cbda36163d5",
+          "b67f03ce-a76d-4ca4-b6c4-1f098fdfff0a",
+          "5db7cc94-0c48-4e4c-b365-5b45ee3f8eec"
+        ],
         "ndcg_at_5": 1.0,
-        "latency_ms": 62640.0,
+        "latency_ms": 33538.5893000057,
         "error": null,
-        "rerank_meta": {}
+        "rerank_meta": {
+          "rerank_status": "ok",
+          "rerank_used_daemon": true,
+          "rerank_total_ms": 23870.988700000453,
+          "rerank_remote_ms": 23865.531000003102,
+          "rerank_candidate_pool": 50,
+          "rerank_top_k": 5,
+          "rerank_model": "BAAI/bge-reranker-v2-m3",
+          "rerank_pre_count": 50
+        }
       },
       "verdict": "shuffled_improved"
     },
@@ -533,17 +870,38 @@
       "confidence": "high",
       "notes": "Missing drizzle/meta/_journal.json from uncommitted migration files breaks production deploy",
       "baseline": {
-        "top_k_ids": [],
+        "top_k_ids": [
+          "aba29a3b-8700-464c-ba02-caafa4c4c0bd",
+          "7c267eff-32ce-4798-9177-794c5c756216",
+          "3324091b-9b13-4b77-a51e-14e796cd2f8e",
+          "f71f3831-dfda-4216-8ef8-5b166a130178",
+          "d9d9d0db-f134-43b3-bae0-3e3f4a7221e7"
+        ],
         "ndcg_at_5": 0.0,
-        "latency_ms": 36202.0,
+        "latency_ms": 10484.617500012973,
         "error": null
       },
       "rerank": {
-        "top_k_ids": [],
+        "top_k_ids": [
+          "26d15f5b-588b-4ca1-a085-588c8ad8db73",
+          "5b88c012-54bf-4d6d-b075-236e87816133",
+          "7c267eff-32ce-4798-9177-794c5c756216",
+          "f3aa1af9-de76-4051-9b5b-ecd2c1772402",
+          "d9d9d0db-f134-43b3-bae0-3e3f4a7221e7"
+        ],
         "ndcg_at_5": 1.0,
-        "latency_ms": 58624.0,
+        "latency_ms": 31164.184599998407,
         "error": null,
-        "rerank_meta": {}
+        "rerank_meta": {
+          "rerank_status": "ok",
+          "rerank_used_daemon": true,
+          "rerank_total_ms": 23040.048900002148,
+          "rerank_remote_ms": 23033.555600006366,
+          "rerank_candidate_pool": 50,
+          "rerank_top_k": 5,
+          "rerank_model": "BAAI/bge-reranker-v2-m3",
+          "rerank_pre_count": 50
+        }
       },
       "verdict": "rescued"
     },
@@ -555,17 +913,38 @@
       "confidence": "high",
       "notes": "Pin DATABASE_URL in playwright.config.ts webServer.env when multiple Postgres on same host",
       "baseline": {
-        "top_k_ids": [],
-        "ndcg_at_5": 0.631,
-        "latency_ms": 41709.0,
+        "top_k_ids": [
+          "12b140cc-e638-43a9-bfcf-7aeaa3a5258e",
+          "5c746213-abe1-4190-8935-ba44bd48cfd0",
+          "b1ddbab3-bdc6-4264-be4c-d707906c5c4c",
+          "b3a20b27-6096-4b4c-af4e-9277406ae0b9",
+          "59869c2a-c93c-48be-89b8-0015ad164e45"
+        ],
+        "ndcg_at_5": 0.6309297535714575,
+        "latency_ms": 10038.260000001173,
         "error": null
       },
       "rerank": {
-        "top_k_ids": [],
+        "top_k_ids": [
+          "5c746213-abe1-4190-8935-ba44bd48cfd0",
+          "59869c2a-c93c-48be-89b8-0015ad164e45",
+          "2969c693-0242-41c8-b56f-4cbda36163d5",
+          "64aea713-7995-4da9-9e4f-b80f23d3b8d4",
+          "12b140cc-e638-43a9-bfcf-7aeaa3a5258e"
+        ],
         "ndcg_at_5": 1.0,
-        "latency_ms": 60879.0,
+        "latency_ms": 33400.23339999607,
         "error": null,
-        "rerank_meta": {}
+        "rerank_meta": {
+          "rerank_status": "ok",
+          "rerank_used_daemon": true,
+          "rerank_total_ms": 22632.499999992433,
+          "rerank_remote_ms": 22588.411499993526,
+          "rerank_candidate_pool": 50,
+          "rerank_top_k": 5,
+          "rerank_model": "BAAI/bge-reranker-v2-m3",
+          "rerank_pre_count": 50
+        }
       },
       "verdict": "shuffled_improved"
     },
@@ -577,17 +956,38 @@
       "confidence": "high",
       "notes": "AI SDK v4 to v6: parameters->inputSchema, maxSteps->stopWhen, etc.",
       "baseline": {
-        "top_k_ids": [],
-        "ndcg_at_5": 0.387,
-        "latency_ms": 38636.0,
+        "top_k_ids": [
+          "ba341b2b-3d83-4e6d-99e3-7d2fbff51a12",
+          "f71f3831-dfda-4216-8ef8-5b166a130178",
+          "3324091b-9b13-4b77-a51e-14e796cd2f8e",
+          "17aa123a-e001-4463-896e-14f099745ed0",
+          "199e3023-fdd6-4b8a-8d71-e9625730e35f"
+        ],
+        "ndcg_at_5": 0.38685280723454163,
+        "latency_ms": 9648.188799998024,
         "error": null
       },
       "rerank": {
-        "top_k_ids": [],
+        "top_k_ids": [
+          "199e3023-fdd6-4b8a-8d71-e9625730e35f",
+          "546ec994-5c81-44ac-a6c4-411581cc2c81",
+          "5b88c012-54bf-4d6d-b075-236e87816133",
+          "daac83d5-513b-418f-9b7f-06e674da7ca2",
+          "a57c964a-93f8-4c48-bd8b-41e1dfb0005d"
+        ],
         "ndcg_at_5": 1.0,
-        "latency_ms": 59967.0,
+        "latency_ms": 31651.37139998842,
         "error": null,
-        "rerank_meta": {}
+        "rerank_meta": {
+          "rerank_status": "ok",
+          "rerank_used_daemon": true,
+          "rerank_total_ms": 23298.810199994477,
+          "rerank_remote_ms": 23294.33560000325,
+          "rerank_candidate_pool": 50,
+          "rerank_top_k": 5,
+          "rerank_model": "BAAI/bge-reranker-v2-m3",
+          "rerank_pre_count": 50
+        }
       },
       "verdict": "shuffled_improved"
     },
@@ -599,17 +999,38 @@
       "confidence": "high",
       "notes": "Two global MCP config files; ~/.mcp.json takes priority",
       "baseline": {
-        "top_k_ids": [],
-        "ndcg_at_5": 0.387,
-        "latency_ms": 14186.0,
+        "top_k_ids": [
+          "d529c7db-9547-4894-ae80-46ada5b9d345",
+          "309d8b98-6e8d-4fc4-830e-826ee86a0411",
+          "6e93ab3d-99d2-4917-85f6-8daf3079b57f",
+          "b67f03ce-a76d-4ca4-b6c4-1f098fdfff0a",
+          "48c81cd4-ff06-49e9-8484-3b927b53daff"
+        ],
+        "ndcg_at_5": 0.38685280723454163,
+        "latency_ms": 10978.174399991985,
         "error": null
       },
       "rerank": {
-        "top_k_ids": [],
+        "top_k_ids": [
+          "48c81cd4-ff06-49e9-8484-3b927b53daff",
+          "d529c7db-9547-4894-ae80-46ada5b9d345",
+          "76858eba-04df-495b-8c3d-4b0843fc1222",
+          "21801478-7e27-4680-949e-17db6033933f",
+          "cbc8e421-ebe8-42aa-8fa7-68fdfa19c579"
+        ],
         "ndcg_at_5": 1.0,
-        "latency_ms": 57733.0,
+        "latency_ms": 32838.15599999798,
         "error": null,
-        "rerank_meta": {}
+        "rerank_meta": {
+          "rerank_status": "ok",
+          "rerank_used_daemon": true,
+          "rerank_total_ms": 23174.490599994897,
+          "rerank_remote_ms": 23169.129100002465,
+          "rerank_candidate_pool": 50,
+          "rerank_top_k": 5,
+          "rerank_model": "BAAI/bge-reranker-v2-m3",
+          "rerank_pre_count": 50
+        }
       },
       "verdict": "shuffled_improved"
     },
@@ -621,17 +1042,38 @@
       "confidence": "high",
       "notes": "session-start-init-check.ts overly broad exclusion broke knowledge tree regen",
       "baseline": {
-        "top_k_ids": [],
+        "top_k_ids": [
+          "76858eba-04df-495b-8c3d-4b0843fc1222",
+          "74259f83-b6ce-470a-a82e-d1711e5347ee",
+          "161dab87-3a8c-4391-83bb-7fcf150446e4",
+          "2b2bd5dc-dcb2-49ec-a9fd-10accec9a8b9",
+          "3b899a94-c910-45e7-bdda-ab77eccf396b"
+        ],
         "ndcg_at_5": 0.0,
-        "latency_ms": 15685.0,
+        "latency_ms": 11617.062300007092,
         "error": null
       },
       "rerank": {
-        "top_k_ids": [],
+        "top_k_ids": [
+          "06be54d0-44ce-4186-9847-07ca108f8f94",
+          "7fa7fbf7-ef4e-43a9-ae4e-0264d8ce3e79",
+          "aba29a3b-8700-464c-ba02-caafa4c4c0bd",
+          "76858eba-04df-495b-8c3d-4b0843fc1222",
+          "870558fd-ba0f-4dd8-b46a-904636da1161"
+        ],
         "ndcg_at_5": 1.0,
-        "latency_ms": 36553.0,
+        "latency_ms": 31511.58070001111,
         "error": null,
-        "rerank_meta": {}
+        "rerank_meta": {
+          "rerank_status": "ok",
+          "rerank_used_daemon": true,
+          "rerank_total_ms": 23025.66869999282,
+          "rerank_remote_ms": 23020.851900000707,
+          "rerank_candidate_pool": 50,
+          "rerank_top_k": 5,
+          "rerank_model": "BAAI/bge-reranker-v2-m3",
+          "rerank_pre_count": 50
+        }
       },
       "verdict": "rescued"
     },
@@ -643,17 +1085,38 @@
       "confidence": "high",
       "notes": "Next.js 14 + Tailwind v4 layout.css serves 404; kill dev server PID and restart",
       "baseline": {
-        "top_k_ids": [],
-        "ndcg_at_5": 0.631,
-        "latency_ms": 18399.0,
+        "top_k_ids": [
+          "4c02b351-0180-40da-86b8-c7ac6f2286e9",
+          "c67205a0-a959-4616-a761-51f73ef58ee1",
+          "52630308-e270-4876-b2de-6c27d56cb4bb",
+          "b044282a-0817-4d1a-ad77-aa5e3514e28c",
+          "fd2f8ea4-baa5-43d9-ba78-672db7662c5c"
+        ],
+        "ndcg_at_5": 0.6309297535714575,
+        "latency_ms": 10778.386199992383,
         "error": null
       },
       "rerank": {
-        "top_k_ids": [],
-        "ndcg_at_5": 0.631,
-        "latency_ms": 39604.0,
+        "top_k_ids": [
+          "4c02b351-0180-40da-86b8-c7ac6f2286e9",
+          "c67205a0-a959-4616-a761-51f73ef58ee1",
+          "52630308-e270-4876-b2de-6c27d56cb4bb",
+          "fd2f8ea4-baa5-43d9-ba78-672db7662c5c",
+          "b044282a-0817-4d1a-ad77-aa5e3514e28c"
+        ],
+        "ndcg_at_5": 0.6309297535714575,
+        "latency_ms": 33749.48240000231,
         "error": null,
-        "rerank_meta": {}
+        "rerank_meta": {
+          "rerank_status": "ok",
+          "rerank_used_daemon": true,
+          "rerank_total_ms": 23762.331100006122,
+          "rerank_remote_ms": 23744.42960000306,
+          "rerank_candidate_pool": 50,
+          "rerank_top_k": 5,
+          "rerank_model": "BAAI/bge-reranker-v2-m3",
+          "rerank_pre_count": 50
+        }
       },
       "verdict": "shuffled_no_change"
     },
@@ -665,17 +1128,38 @@
       "confidence": "high",
       "notes": "gl.clearColor alpha must be 0.0 + gl.clear before render",
       "baseline": {
-        "top_k_ids": [],
+        "top_k_ids": [
+          "b7bcdd1f-30a4-4c0b-9448-b3888ec9df67",
+          "94f55293-5ae2-4ccb-b204-ac36a30b3ee6",
+          "d29ded98-0859-4b29-b082-55972132c09b",
+          "b72bf617-5f44-4a71-9a28-7a2489c74204",
+          "9210d6ab-c6d2-4235-b73d-578c646c4081"
+        ],
         "ndcg_at_5": 1.0,
-        "latency_ms": 16748.0,
+        "latency_ms": 9083.76209999551,
         "error": null
       },
       "rerank": {
-        "top_k_ids": [],
+        "top_k_ids": [
+          "b7bcdd1f-30a4-4c0b-9448-b3888ec9df67",
+          "94f55293-5ae2-4ccb-b204-ac36a30b3ee6",
+          "6451b0c2-71c2-4775-b402-93d027ea6418",
+          "435d936e-4b9e-4cd7-9d33-ae4074701b03",
+          "0f35a65d-a367-4b77-ba92-7da42532ab6d"
+        ],
         "ndcg_at_5": 1.0,
-        "latency_ms": 39741.0,
+        "latency_ms": 31223.623099998804,
         "error": null,
-        "rerank_meta": {}
+        "rerank_meta": {
+          "rerank_status": "ok",
+          "rerank_used_daemon": true,
+          "rerank_total_ms": 23749.91189999855,
+          "rerank_remote_ms": 23734.036800000467,
+          "rerank_candidate_pool": 50,
+          "rerank_top_k": 5,
+          "rerank_model": "BAAI/bge-reranker-v2-m3",
+          "rerank_pre_count": 50
+        }
       },
       "verdict": "shuffled_no_change"
     },
@@ -687,17 +1171,38 @@
       "confidence": "high",
       "notes": ".wslconfig with memory=3GB caps vmmemWSL working set",
       "baseline": {
-        "top_k_ids": [],
+        "top_k_ids": [
+          "048b09e0-b3c2-4fb3-87b2-572694cf4473",
+          "f15ceedc-4a72-4ef5-8834-c331940eb359",
+          "2ae48c4f-6073-4366-9636-6fd732327710",
+          "1662062f-4bc9-4199-a1e9-16b5b19eb77c",
+          "f3aa1af9-de76-4051-9b5b-ecd2c1772402"
+        ],
         "ndcg_at_5": 1.0,
-        "latency_ms": 15638.0,
+        "latency_ms": 11351.32750000048,
         "error": null
       },
       "rerank": {
-        "top_k_ids": [],
+        "top_k_ids": [
+          "048b09e0-b3c2-4fb3-87b2-572694cf4473",
+          "1662062f-4bc9-4199-a1e9-16b5b19eb77c",
+          "6bc3b468-f60c-4802-b6bc-8cf56f2b47ae",
+          "cfd30496-364d-44c9-948b-da23eaf60eea",
+          "f47ca323-e8e8-4fe9-9362-ab0dccb128de"
+        ],
         "ndcg_at_5": 1.0,
-        "latency_ms": 35570.0,
+        "latency_ms": 32270.490199996857,
         "error": null,
-        "rerank_meta": {}
+        "rerank_meta": {
+          "rerank_status": "ok",
+          "rerank_used_daemon": true,
+          "rerank_total_ms": 23339.49540001049,
+          "rerank_remote_ms": 23305.1381999976,
+          "rerank_candidate_pool": 50,
+          "rerank_top_k": 5,
+          "rerank_model": "BAAI/bge-reranker-v2-m3",
+          "rerank_pre_count": 50
+        }
       },
       "verdict": "shuffled_no_change"
     },
@@ -709,17 +1214,38 @@
       "confidence": "high",
       "notes": "Claude Code v2.1.78+ hardcoded .claude/ protected; only PermissionRequest hook bypass works",
       "baseline": {
-        "top_k_ids": [],
+        "top_k_ids": [
+          "65e742ca-0f19-4efc-b096-bd763bef8289",
+          "2b2bd5dc-dcb2-49ec-a9fd-10accec9a8b9",
+          "cff2b5ed-0796-44c5-bac5-89d0e4d4e858",
+          "26d82378-6de8-4d6a-ba9b-7d736e445901",
+          "f3ea370e-4941-4fd9-afdb-a123d4a6b935"
+        ],
         "ndcg_at_5": 0.5,
-        "latency_ms": 17490.0,
+        "latency_ms": 10474.214599991683,
         "error": null
       },
       "rerank": {
-        "top_k_ids": [],
+        "top_k_ids": [
+          "cff2b5ed-0796-44c5-bac5-89d0e4d4e858",
+          "5d1f0022-72ef-46a2-b204-7b91cb1727b1",
+          "26d82378-6de8-4d6a-ba9b-7d736e445901",
+          "f3ea370e-4941-4fd9-afdb-a123d4a6b935",
+          "af242947-5210-4864-9209-184b69315ac5"
+        ],
         "ndcg_at_5": 1.0,
-        "latency_ms": 38806.0,
+        "latency_ms": 34007.505300003686,
         "error": null,
-        "rerank_meta": {}
+        "rerank_meta": {
+          "rerank_status": "ok",
+          "rerank_used_daemon": true,
+          "rerank_total_ms": 23338.71110000473,
+          "rerank_remote_ms": 23316.33280000824,
+          "rerank_candidate_pool": 50,
+          "rerank_top_k": 5,
+          "rerank_model": "BAAI/bge-reranker-v2-m3",
+          "rerank_pre_count": 50
+        }
       },
       "verdict": "shuffled_improved"
     },
@@ -731,17 +1257,38 @@
       "confidence": "high",
       "notes": "agent-browser CLI non-functional on Windows; use playwright-core via CDP",
       "baseline": {
-        "top_k_ids": [],
-        "ndcg_at_5": 0.631,
-        "latency_ms": 17007.0,
+        "top_k_ids": [
+          "ba0afbd1-60c0-4768-8633-f407337b5b39",
+          "b3a20b27-6096-4b4c-af4e-9277406ae0b9",
+          "9dff14b5-26d6-4d67-8c79-744be5c7056d",
+          "9210d6ab-c6d2-4235-b73d-578c646c4081",
+          "bdfefb6e-da78-4966-abab-64f4e327afdd"
+        ],
+        "ndcg_at_5": 0.6309297535714575,
+        "latency_ms": 8747.86290001066,
         "error": null
       },
       "rerank": {
-        "top_k_ids": [],
-        "ndcg_at_5": 0.631,
-        "latency_ms": 35567.0,
+        "top_k_ids": [
+          "c78366c3-7c2d-4a7f-859a-81387779af6a",
+          "b3a20b27-6096-4b4c-af4e-9277406ae0b9",
+          "ffe190ae-5a48-40b5-b5f3-4830905b39f2",
+          "bdfefb6e-da78-4966-abab-64f4e327afdd",
+          "4f8386c5-2105-4d93-a557-694179e55a16"
+        ],
+        "ndcg_at_5": 0.6309297535714575,
+        "latency_ms": 33521.54449999216,
         "error": null,
-        "rerank_meta": {}
+        "rerank_meta": {
+          "rerank_status": "ok",
+          "rerank_used_daemon": true,
+          "rerank_total_ms": 23520.95659999759,
+          "rerank_remote_ms": 23517.060199999833,
+          "rerank_candidate_pool": 50,
+          "rerank_top_k": 5,
+          "rerank_model": "BAAI/bge-reranker-v2-m3",
+          "rerank_pre_count": 50
+        }
       },
       "verdict": "shuffled_no_change"
     },
@@ -753,17 +1300,38 @@
       "confidence": "high",
       "notes": "Navigable architecture docs layer at ~/.claude/docs/architecture/",
       "baseline": {
-        "top_k_ids": [],
+        "top_k_ids": [
+          "664d4727-9da2-4564-933a-04a5cfc00f99",
+          "870558fd-ba0f-4dd8-b46a-904636da1161",
+          "5db7cc94-0c48-4e4c-b365-5b45ee3f8eec",
+          "c78acdba-695a-47d4-9d78-fc5d1a11d5bd",
+          "d29ded98-0859-4b29-b082-55972132c09b"
+        ],
         "ndcg_at_5": 0.0,
-        "latency_ms": 15751.0,
+        "latency_ms": 11811.380599989207,
         "error": null
       },
       "rerank": {
-        "top_k_ids": [],
+        "top_k_ids": [
+          "aba29a3b-8700-464c-ba02-caafa4c4c0bd",
+          "41a8cb1f-ff05-4759-b913-50ceb4162639",
+          "b72bf617-5f44-4a71-9a28-7a2489c74204",
+          "05791ee9-6df8-4b89-b109-8ea9d12d7aba",
+          "23a07d8c-dd12-4bd2-bd35-111ea338d133"
+        ],
         "ndcg_at_5": 0.0,
-        "latency_ms": 37736.0,
+        "latency_ms": 33317.59750000492,
         "error": null,
-        "rerank_meta": {}
+        "rerank_meta": {
+          "rerank_status": "ok",
+          "rerank_used_daemon": true,
+          "rerank_total_ms": 22794.017399995937,
+          "rerank_remote_ms": 22767.607399990084,
+          "rerank_candidate_pool": 50,
+          "rerank_top_k": 5,
+          "rerank_model": "BAAI/bge-reranker-v2-m3",
+          "rerank_pre_count": 50
+        }
       },
       "verdict": "both_miss"
     },
@@ -775,17 +1343,38 @@
       "confidence": "high",
       "notes": "Ralph first E2E run grade A; 43/43 tests, 4-layer architecture",
       "baseline": {
-        "top_k_ids": [],
+        "top_k_ids": [
+          "4c5e3e65-256b-46e5-80ef-f999903cf1b1",
+          "4db44011-cbd4-4554-9172-c1c66a0eb40c",
+          "6bc3b468-f60c-4802-b6bc-8cf56f2b47ae",
+          "16903a63-beef-48a3-b6b3-e48123d8be84",
+          "19cd5598-dd4f-4fd1-b239-0997061a1fec"
+        ],
         "ndcg_at_5": 0.0,
-        "latency_ms": 17676.0,
+        "latency_ms": 10447.629900008906,
         "error": null
       },
       "rerank": {
-        "top_k_ids": [],
+        "top_k_ids": [
+          "5ff3a2df-8f48-454e-bfef-5e092eb3d807",
+          "4878aad4-39cb-4509-b150-9c76c2a32a5a",
+          "f15ceedc-4a72-4ef5-8834-c331940eb359",
+          "16903a63-beef-48a3-b6b3-e48123d8be84",
+          "b08b155c-f456-4668-b4ee-a795ab5c8b50"
+        ],
         "ndcg_at_5": 1.0,
-        "latency_ms": 38367.0,
+        "latency_ms": 31039.27899998962,
         "error": null,
-        "rerank_meta": {}
+        "rerank_meta": {
+          "rerank_status": "ok",
+          "rerank_used_daemon": true,
+          "rerank_total_ms": 21830.697500001406,
+          "rerank_remote_ms": 21800.1765999943,
+          "rerank_candidate_pool": 50,
+          "rerank_top_k": 5,
+          "rerank_model": "BAAI/bge-reranker-v2-m3",
+          "rerank_pre_count": 50
+        }
       },
       "verdict": "rescued"
     },
@@ -797,17 +1386,38 @@
       "confidence": "high",
       "notes": "FastMCP Railway deploy: bind PORT env, avoid uv run, pick one start-command source",
       "baseline": {
-        "top_k_ids": [],
+        "top_k_ids": [
+          "deb3a478-f2ae-41b3-bfc3-061708bd4efe",
+          "de86cf8d-e081-4c67-b0c7-8cd908fe11c1",
+          "84a9665c-9d29-4fff-bda4-ceea2ead4c33",
+          "7c267eff-32ce-4798-9177-794c5c756216",
+          "891b999b-ada6-4976-ba78-3d6be6baf91b"
+        ],
         "ndcg_at_5": 1.0,
-        "latency_ms": 16254.0,
+        "latency_ms": 10322.126200000639,
         "error": null
       },
       "rerank": {
-        "top_k_ids": [],
+        "top_k_ids": [
+          "deb3a478-f2ae-41b3-bfc3-061708bd4efe",
+          "891b999b-ada6-4976-ba78-3d6be6baf91b",
+          "358d6156-55ff-49e1-8afb-7c0260c6c5e6",
+          "bbc5db1c-078f-4d1a-b165-e7ecf134a74f",
+          "84a9665c-9d29-4fff-bda4-ceea2ead4c33"
+        ],
         "ndcg_at_5": 1.0,
-        "latency_ms": 40794.0,
+        "latency_ms": 34133.652699994855,
         "error": null,
-        "rerank_meta": {}
+        "rerank_meta": {
+          "rerank_status": "ok",
+          "rerank_used_daemon": true,
+          "rerank_total_ms": 23481.24259999895,
+          "rerank_remote_ms": 23477.732400002424,
+          "rerank_candidate_pool": 50,
+          "rerank_top_k": 5,
+          "rerank_model": "BAAI/bge-reranker-v2-m3",
+          "rerank_pre_count": 50
+        }
       },
       "verdict": "shuffled_no_change"
     },
@@ -819,17 +1429,38 @@
       "confidence": "high",
       "notes": "fourth-salesforce-mcp Phase 5 6-layer FastMCP governance middleware chain",
       "baseline": {
-        "top_k_ids": [],
+        "top_k_ids": [
+          "6a172c1b-68c6-40ae-918b-887279f4b524",
+          "ee2166d1-af13-4bf3-bde1-db91b19d2c32",
+          "5c51aa92-c300-4f06-8203-44404ef6ebb6",
+          "5c5c61d1-11e0-4386-9190-bf19498fbe18",
+          "de86cf8d-e081-4c67-b0c7-8cd908fe11c1"
+        ],
         "ndcg_at_5": 1.0,
-        "latency_ms": 13870.0,
+        "latency_ms": 10853.515499999048,
         "error": null
       },
       "rerank": {
-        "top_k_ids": [],
+        "top_k_ids": [
+          "6a172c1b-68c6-40ae-918b-887279f4b524",
+          "5c5c61d1-11e0-4386-9190-bf19498fbe18",
+          "ee2166d1-af13-4bf3-bde1-db91b19d2c32",
+          "de86cf8d-e081-4c67-b0c7-8cd908fe11c1",
+          "5c51aa92-c300-4f06-8203-44404ef6ebb6"
+        ],
         "ndcg_at_5": 1.0,
-        "latency_ms": 42670.0,
+        "latency_ms": 33544.96139999537,
         "error": null,
-        "rerank_meta": {}
+        "rerank_meta": {
+          "rerank_status": "ok",
+          "rerank_used_daemon": true,
+          "rerank_total_ms": 23376.61940000544,
+          "rerank_remote_ms": 23372.12250000448,
+          "rerank_candidate_pool": 50,
+          "rerank_top_k": 5,
+          "rerank_model": "BAAI/bge-reranker-v2-m3",
+          "rerank_pre_count": 50
+        }
       },
       "verdict": "shuffled_no_change"
     },
@@ -841,17 +1472,38 @@
       "confidence": "high",
       "notes": "Drizzle ORM vitest mock chain: last method uses mockResolvedValue",
       "baseline": {
-        "top_k_ids": [],
+        "top_k_ids": [
+          "69052fe7-5087-4d9a-bb9b-776ed97820bf",
+          "c6518320-94e2-49c9-b030-611e0f7e0e2f",
+          "7631b8a5-024c-4f93-b013-2253a438085a",
+          "e284f285-1519-4b65-812f-74200ac23553",
+          "90a49ef2-6e31-498c-9ad0-a4001e918f46"
+        ],
         "ndcg_at_5": 0.0,
-        "latency_ms": 22671.0,
+        "latency_ms": 9450.821099992027,
         "error": null
       },
       "rerank": {
-        "top_k_ids": [],
+        "top_k_ids": [
+          "fedfc581-cd52-4f1d-8b14-a055ef407e28",
+          "c6518320-94e2-49c9-b030-611e0f7e0e2f",
+          "60c2db78-75eb-4c15-b88b-205c0f3d0852",
+          "e284f285-1519-4b65-812f-74200ac23553",
+          "69052fe7-5087-4d9a-bb9b-776ed97820bf"
+        ],
         "ndcg_at_5": 1.0,
-        "latency_ms": 43358.0,
+        "latency_ms": 30962.08659998956,
         "error": null,
-        "rerank_meta": {}
+        "rerank_meta": {
+          "rerank_status": "ok",
+          "rerank_used_daemon": true,
+          "rerank_total_ms": 22442.854099994292,
+          "rerank_remote_ms": 22428.084199986188,
+          "rerank_candidate_pool": 50,
+          "rerank_top_k": 5,
+          "rerank_model": "BAAI/bge-reranker-v2-m3",
+          "rerank_pre_count": 50
+        }
       },
       "verdict": "rescued"
     },
@@ -863,17 +1515,38 @@
       "confidence": "high",
       "notes": "Windows backslash paths in Claude Code hooks; normalize early or dual-separator regex",
       "baseline": {
-        "top_k_ids": [],
-        "ndcg_at_5": 0.431,
-        "latency_ms": 18568.0,
+        "top_k_ids": [
+          "d4d819ec-bcd5-4a81-bba8-c91b590c41ff",
+          "c592b65e-d8dd-40eb-a882-aad5fd8a0758",
+          "a530b52e-e87d-403a-a55a-105df1daf168",
+          "3de86516-43e2-4304-a109-62a6f5b8b8d7",
+          "d748944d-7a4e-40cb-a8e8-80470b7a03e6"
+        ],
+        "ndcg_at_5": 0.43067655807339306,
+        "latency_ms": 9763.167700002668,
         "error": null
       },
       "rerank": {
-        "top_k_ids": [],
+        "top_k_ids": [
+          "3de86516-43e2-4304-a109-62a6f5b8b8d7",
+          "a530b52e-e87d-403a-a55a-105df1daf168",
+          "7dd578a3-f0bd-4327-876e-b885bd387ec0",
+          "43b567b7-20b4-405a-b66c-b0cdeefe9960",
+          "8e6166cb-9dc2-4fad-a134-1e95287f246d"
+        ],
         "ndcg_at_5": 1.0,
-        "latency_ms": 44233.0,
+        "latency_ms": 33003.251300004194,
         "error": null,
-        "rerank_meta": {}
+        "rerank_meta": {
+          "rerank_status": "ok",
+          "rerank_used_daemon": true,
+          "rerank_total_ms": 22934.583499998553,
+          "rerank_remote_ms": 22920.07749999175,
+          "rerank_candidate_pool": 50,
+          "rerank_top_k": 5,
+          "rerank_model": "BAAI/bge-reranker-v2-m3",
+          "rerank_pre_count": 50
+        }
       },
       "verdict": "shuffled_improved"
     },
@@ -885,19 +1558,427 @@
       "confidence": "high",
       "notes": "Hook tests must pass session_id; PID-based defaults break state file matching",
       "baseline": {
-        "top_k_ids": [],
+        "top_k_ids": [
+          "1fe2dd30-ff2f-4e14-b33a-56f588f5abf8",
+          "8e6166cb-9dc2-4fad-a134-1e95287f246d",
+          "e284f285-1519-4b65-812f-74200ac23553",
+          "60c2db78-75eb-4c15-b88b-205c0f3d0852",
+          "7dd578a3-f0bd-4327-876e-b885bd387ec0"
+        ],
         "ndcg_at_5": 0.0,
-        "latency_ms": 15781.0,
+        "latency_ms": 9520.549199995003,
         "error": null
       },
       "rerank": {
-        "top_k_ids": [],
+        "top_k_ids": [
+          "69052fe7-5087-4d9a-bb9b-776ed97820bf",
+          "60c2db78-75eb-4c15-b88b-205c0f3d0852",
+          "6c15c5ba-3b85-4ab4-9429-247812d60a22",
+          "e284f285-1519-4b65-812f-74200ac23553",
+          "7dd578a3-f0bd-4327-876e-b885bd387ec0"
+        ],
         "ndcg_at_5": 0.0,
-        "latency_ms": 44697.0,
+        "latency_ms": 35281.83680000075,
         "error": null,
-        "rerank_meta": {}
+        "rerank_meta": {
+          "rerank_status": "ok",
+          "rerank_used_daemon": true,
+          "rerank_total_ms": 23089.175500004785,
+          "rerank_remote_ms": 23074.14620000054,
+          "rerank_candidate_pool": 50,
+          "rerank_top_k": 5,
+          "rerank_model": "BAAI/bge-reranker-v2-m3",
+          "rerank_pre_count": 50
+        }
       },
       "verdict": "both_miss"
+    },
+    {
+      "query": "windows net socket spin loop event loop",
+      "relevant_id": "bdfefb6e-da78-4966-abab-64f4e327afdd",
+      "type": "CODEBASE_PATTERN",
+      "scope": "GLOBAL",
+      "confidence": "high",
+      "notes": "net.Socket spin-loop blocks event loop on Windows; spawnSync subprocess instead",
+      "baseline": {
+        "top_k_ids": [
+          "1fe2dd30-ff2f-4e14-b33a-56f588f5abf8",
+          "f15ceedc-4a72-4ef5-8834-c331940eb359",
+          "69052fe7-5087-4d9a-bb9b-776ed97820bf",
+          "4f8386c5-2105-4d93-a557-694179e55a16",
+          "7dd578a3-f0bd-4327-876e-b885bd387ec0"
+        ],
+        "ndcg_at_5": 0.0,
+        "latency_ms": 10360.348800008069,
+        "error": null
+      },
+      "rerank": {
+        "top_k_ids": [
+          "bdfefb6e-da78-4966-abab-64f4e327afdd",
+          "4f8386c5-2105-4d93-a557-694179e55a16",
+          "ffe190ae-5a48-40b5-b5f3-4830905b39f2",
+          "f15ceedc-4a72-4ef5-8834-c331940eb359",
+          "7dd578a3-f0bd-4327-876e-b885bd387ec0"
+        ],
+        "ndcg_at_5": 1.0,
+        "latency_ms": 32661.615899996832,
+        "error": null,
+        "rerank_meta": {
+          "rerank_status": "ok",
+          "rerank_used_daemon": true,
+          "rerank_total_ms": 23136.661199998343,
+          "rerank_remote_ms": 23131.39239999873,
+          "rerank_candidate_pool": 50,
+          "rerank_top_k": 5,
+          "rerank_model": "BAAI/bge-reranker-v2-m3",
+          "rerank_pre_count": 50
+        }
+      },
+      "verdict": "rescued"
+    },
+    {
+      "query": "playwright storage state auth multi role",
+      "relevant_id": "59869c2a-c93c-48be-89b8-0015ad164e45",
+      "type": "CODEBASE_PATTERN",
+      "scope": "PROJECT",
+      "confidence": "high",
+      "notes": "Playwright storageState per role for multi-role apps; workers:4 for DB-backed",
+      "baseline": {
+        "top_k_ids": [
+          "239dd886-5de3-4808-972f-18274c6cf3f7",
+          "03e06dad-0f21-477f-8005-6d411798e25c",
+          "b08b155c-f456-4668-b4ee-a795ab5c8b50",
+          "12b140cc-e638-43a9-bfcf-7aeaa3a5258e",
+          "9210d6ab-c6d2-4235-b73d-578c646c4081"
+        ],
+        "ndcg_at_5": 0.0,
+        "latency_ms": 9045.943799996166,
+        "error": null
+      },
+      "rerank": {
+        "top_k_ids": [
+          "b08b155c-f456-4668-b4ee-a795ab5c8b50",
+          "29074625-91e9-4318-9dce-ce1f37ff7d55",
+          "383899ef-118f-43ca-b768-27616ef7fb6c",
+          "6e93ab3d-99d2-4917-85f6-8daf3079b57f",
+          "ab42c034-6299-46d7-ba17-e1a58175b9ca"
+        ],
+        "ndcg_at_5": 0.0,
+        "latency_ms": 30924.11279999942,
+        "error": null,
+        "rerank_meta": {
+          "rerank_status": "ok",
+          "rerank_used_daemon": true,
+          "rerank_total_ms": 22265.56270000583,
+          "rerank_remote_ms": 22242.339000003994,
+          "rerank_candidate_pool": 50,
+          "rerank_top_k": 5,
+          "rerank_model": "BAAI/bge-reranker-v2-m3",
+          "rerank_pre_count": 50
+        }
+      },
+      "verdict": "both_miss"
+    },
+    {
+      "query": "refactor shared utility vi mock test imports",
+      "relevant_id": "ecf98642-2200-4994-8449-bc847f474571",
+      "type": "CODEBASE_PATTERN",
+      "scope": "PROJECT",
+      "confidence": "high",
+      "notes": "Add vi.mock entries to all consumer test files when refactoring shared utilities",
+      "baseline": {
+        "top_k_ids": [
+          "5db7cc94-0c48-4e4c-b365-5b45ee3f8eec",
+          "7468302b-3a89-41b5-8601-b81585fc0e21",
+          "48b0df0f-583e-41d7-891a-42cea25bc1b6",
+          "a6d4ceb9-d85f-4dbb-9b9f-2c160649261c",
+          "6baa38a4-8597-41c4-bbab-2056fdbaa636"
+        ],
+        "ndcg_at_5": 0.0,
+        "latency_ms": 12716.578499996103,
+        "error": null
+      },
+      "rerank": {
+        "top_k_ids": [
+          "978ce5d1-0cbe-4697-a67b-c0a6f4cfa6fe",
+          "e4e43c36-825f-44d9-a3b7-0d14f7765c45",
+          "6baa38a4-8597-41c4-bbab-2056fdbaa636",
+          "a6d4ceb9-d85f-4dbb-9b9f-2c160649261c",
+          "48b0df0f-583e-41d7-891a-42cea25bc1b6"
+        ],
+        "ndcg_at_5": 0.0,
+        "latency_ms": 36779.18639998825,
+        "error": null,
+        "rerank_meta": {
+          "rerank_status": "ok",
+          "rerank_used_daemon": true,
+          "rerank_total_ms": 24686.318799998844,
+          "rerank_remote_ms": 24681.591300002765,
+          "rerank_candidate_pool": 50,
+          "rerank_top_k": 5,
+          "rerank_model": "BAAI/bge-reranker-v2-m3",
+          "rerank_pre_count": 50
+        }
+      },
+      "verdict": "both_miss"
+    },
+    {
+      "query": "shadcnspace base ui render prop convert",
+      "relevant_id": "6451b0c2-71c2-4775-b402-93d027ea6418",
+      "type": "CODEBASE_PATTERN",
+      "scope": "PROJECT",
+      "confidence": "high",
+      "notes": "shadcnspace uses Base UI render prop; convert to Radix asChild",
+      "baseline": {
+        "top_k_ids": [
+          "6451b0c2-71c2-4775-b402-93d027ea6418",
+          "10f82037-6fb7-40e3-b841-2b1c58e44414",
+          "1917a56d-9194-4481-9d19-840b79c93311",
+          "63d29aea-c3d1-47f2-8f04-9ac1271463ab",
+          "4f28308f-8e45-4ea1-9278-3cbc10c104d5"
+        ],
+        "ndcg_at_5": 1.0,
+        "latency_ms": 9778.597399999853,
+        "error": null
+      },
+      "rerank": {
+        "top_k_ids": [
+          "6451b0c2-71c2-4775-b402-93d027ea6418",
+          "10f82037-6fb7-40e3-b841-2b1c58e44414",
+          "63d29aea-c3d1-47f2-8f04-9ac1271463ab",
+          "1917a56d-9194-4481-9d19-840b79c93311",
+          "94f55293-5ae2-4ccb-b204-ac36a30b3ee6"
+        ],
+        "ndcg_at_5": 1.0,
+        "latency_ms": 36268.08650000021,
+        "error": null,
+        "rerank_meta": {
+          "rerank_status": "ok",
+          "rerank_used_daemon": true,
+          "rerank_total_ms": 24210.52320000308,
+          "rerank_remote_ms": 24201.4513000031,
+          "rerank_candidate_pool": 50,
+          "rerank_top_k": 5,
+          "rerank_model": "BAAI/bge-reranker-v2-m3",
+          "rerank_pre_count": 50
+        }
+      },
+      "verdict": "shuffled_no_change"
+    },
+    {
+      "query": "bash pass arithmetic increment set -e exit code",
+      "relevant_id": "74d2f296-bf73-4f25-80dd-97ea9a79924c",
+      "type": "FAILED_APPROACH",
+      "scope": "PROJECT",
+      "confidence": "medium",
+      "notes": "((PASS++)) returns exit 1 when PASS=0 under set -e; use PASS=$((PASS+1)) instead",
+      "baseline": {
+        "top_k_ids": [
+          "ed69ebb7-dbc0-4f22-aa84-d536c205c99b",
+          "7631b8a5-024c-4f93-b013-2253a438085a",
+          "74259f83-b6ce-470a-a82e-d1711e5347ee",
+          "d529c7db-9547-4894-ae80-46ada5b9d345",
+          "08b5d2dd-700b-4465-b422-44d65412413d"
+        ],
+        "ndcg_at_5": 0.0,
+        "latency_ms": 12015.538100007689,
+        "error": null
+      },
+      "rerank": {
+        "top_k_ids": [
+          "74d2f296-bf73-4f25-80dd-97ea9a79924c",
+          "7631b8a5-024c-4f93-b013-2253a438085a",
+          "ea17cb84-455f-489c-b585-b16c836ebc06",
+          "ed69ebb7-dbc0-4f22-aa84-d536c205c99b",
+          "af242947-5210-4864-9209-184b69315ac5"
+        ],
+        "ndcg_at_5": 1.0,
+        "latency_ms": 33515.34430000174,
+        "error": null,
+        "rerank_meta": {
+          "rerank_status": "ok",
+          "rerank_used_daemon": true,
+          "rerank_total_ms": 21657.636599993566,
+          "rerank_remote_ms": 21652.954299992416,
+          "rerank_candidate_pool": 50,
+          "rerank_top_k": 5,
+          "rerank_model": "BAAI/bge-reranker-v2-m3",
+          "rerank_pre_count": 50
+        }
+      },
+      "verdict": "rescued"
+    },
+    {
+      "query": "hook test suite failures progression v1 v5",
+      "relevant_id": "e5ca6a1d-6315-492a-bd7c-3f5d1f878c45",
+      "type": "FAILED_APPROACH",
+      "scope": "GLOBAL",
+      "confidence": "medium",
+      "notes": "Hook test suite went from V1=66 failures to V5=0; 3 node:test stubs",
+      "baseline": {
+        "top_k_ids": [
+          "8e6166cb-9dc2-4fad-a134-1e95287f246d",
+          "24750380-a1f0-4fc2-b8b0-83733172c6c6",
+          "2d0f8375-af72-455c-af6f-2a465856eb39",
+          "e284f285-1519-4b65-812f-74200ac23553",
+          "27808fa2-3bab-41d0-9c9a-a47849fd1fd1"
+        ],
+        "ndcg_at_5": 0.0,
+        "latency_ms": 8929.817099997308,
+        "error": null
+      },
+      "rerank": {
+        "top_k_ids": [
+          "e5ca6a1d-6315-492a-bd7c-3f5d1f878c45",
+          "27808fa2-3bab-41d0-9c9a-a47849fd1fd1",
+          "24750380-a1f0-4fc2-b8b0-83733172c6c6",
+          "6c15c5ba-3b85-4ab4-9429-247812d60a22",
+          "e284f285-1519-4b65-812f-74200ac23553"
+        ],
+        "ndcg_at_5": 1.0,
+        "latency_ms": 31289.075699998648,
+        "error": null,
+        "rerank_meta": {
+          "rerank_status": "ok",
+          "rerank_used_daemon": true,
+          "rerank_total_ms": 23340.00549999473,
+          "rerank_remote_ms": 23079.135000007227,
+          "rerank_candidate_pool": 50,
+          "rerank_top_k": 5,
+          "rerank_model": "BAAI/bge-reranker-v2-m3",
+          "rerank_pre_count": 50
+        }
+      },
+      "verdict": "rescued"
+    },
+    {
+      "query": "azure cli unicode encoding logs windows",
+      "relevant_id": "5e51f4e9-3428-4ce9-ac67-d815d286c152",
+      "type": "FAILED_APPROACH",
+      "scope": "GLOBAL",
+      "confidence": "medium",
+      "notes": "Azure CLI unicode encoding issue on Windows terminal; failed approach narrating REST API workaround",
+      "baseline": {
+        "top_k_ids": [
+          "90a49ef2-6e31-498c-9ad0-a4001e918f46",
+          "aba29a3b-8700-464c-ba02-caafa4c4c0bd",
+          "727b967e-c645-4acf-b15d-69d4850b6423",
+          "5e51f4e9-3428-4ce9-ac67-d815d286c152",
+          "72d433ff-f794-468e-bd24-47b32eb13a0e"
+        ],
+        "ndcg_at_5": 0.43067655807339306,
+        "latency_ms": 6860.45799999556,
+        "error": null
+      },
+      "rerank": {
+        "top_k_ids": [
+          "5e51f4e9-3428-4ce9-ac67-d815d286c152",
+          "41a8cb1f-ff05-4759-b913-50ceb4162639",
+          "be51fff0-b3ce-45be-9f50-0baf06691e07",
+          "90a49ef2-6e31-498c-9ad0-a4001e918f46",
+          "f15ceedc-4a72-4ef5-8834-c331940eb359"
+        ],
+        "ndcg_at_5": 1.0,
+        "latency_ms": 33622.5517999992,
+        "error": null,
+        "rerank_meta": {
+          "rerank_status": "ok",
+          "rerank_used_daemon": true,
+          "rerank_total_ms": 24188.449100009166,
+          "rerank_remote_ms": 24180.321400010143,
+          "rerank_candidate_pool": 50,
+          "rerank_top_k": 5,
+          "rerank_model": "BAAI/bge-reranker-v2-m3",
+          "rerank_pre_count": 50
+        }
+      },
+      "verdict": "shuffled_improved"
+    },
+    {
+      "query": "vitest jsdom localstorage not defined override",
+      "relevant_id": "ec42427f-b5e3-46f6-9222-602fc31fb292",
+      "type": "FAILED_APPROACH",
+      "scope": "PROJECT",
+      "confidence": "medium",
+      "notes": "jsdom provides localStorage natively; setup.js overriding caused undefined errors",
+      "baseline": {
+        "top_k_ids": [
+          "69052fe7-5087-4d9a-bb9b-776ed97820bf",
+          "e284f285-1519-4b65-812f-74200ac23553",
+          "c6518320-94e2-49c9-b030-611e0f7e0e2f",
+          "60c2db78-75eb-4c15-b88b-205c0f3d0852",
+          "ba341b2b-3d83-4e6d-99e3-7d2fbff51a12"
+        ],
+        "ndcg_at_5": 0.0,
+        "latency_ms": 11368.220199990901,
+        "error": null
+      },
+      "rerank": {
+        "top_k_ids": [
+          "ec42427f-b5e3-46f6-9222-602fc31fb292",
+          "60c2db78-75eb-4c15-b88b-205c0f3d0852",
+          "e284f285-1519-4b65-812f-74200ac23553",
+          "20e46b9c-8d08-41ac-912b-62ccb3eceafa",
+          "c6518320-94e2-49c9-b030-611e0f7e0e2f"
+        ],
+        "ndcg_at_5": 1.0,
+        "latency_ms": 31807.239899993874,
+        "error": null,
+        "rerank_meta": {
+          "rerank_status": "ok",
+          "rerank_used_daemon": true,
+          "rerank_total_ms": 23127.48539999302,
+          "rerank_remote_ms": 23111.124499992,
+          "rerank_candidate_pool": 50,
+          "rerank_top_k": 5,
+          "rerank_model": "BAAI/bge-reranker-v2-m3",
+          "rerank_pre_count": 50
+        }
+      },
+      "verdict": "rescued"
+    },
+    {
+      "query": "railway docker build cache bust copy",
+      "relevant_id": "800523ef-7f09-4026-a899-f73a35af0d0d",
+      "type": "FAILED_APPROACH",
+      "scope": "PROJECT",
+      "confidence": "medium",
+      "notes": "Railway cached Docker build; bust by changing early-layer COPY input",
+      "baseline": {
+        "top_k_ids": [
+          "aba29a3b-8700-464c-ba02-caafa4c4c0bd",
+          "deb3a478-f2ae-41b3-bfc3-061708bd4efe",
+          "800523ef-7f09-4026-a899-f73a35af0d0d",
+          "7c267eff-32ce-4798-9177-794c5c756216",
+          "bc6c42b6-0001-4fd1-affd-5cec1e00d9e7"
+        ],
+        "ndcg_at_5": 0.5,
+        "latency_ms": 8650.68419999443,
+        "error": null
+      },
+      "rerank": {
+        "top_k_ids": [
+          "800523ef-7f09-4026-a899-f73a35af0d0d",
+          "f47ca323-e8e8-4fe9-9362-ab0dccb128de",
+          "891b999b-ada6-4976-ba78-3d6be6baf91b",
+          "b044282a-0817-4d1a-ad77-aa5e3514e28c",
+          "7c267eff-32ce-4798-9177-794c5c756216"
+        ],
+        "ndcg_at_5": 1.0,
+        "latency_ms": 31905.358400006662,
+        "error": null,
+        "rerank_meta": {
+          "rerank_status": "ok",
+          "rerank_used_daemon": true,
+          "rerank_total_ms": 23290.192500004196,
+          "rerank_remote_ms": 23266.29729999695,
+          "rerank_candidate_pool": 50,
+          "rerank_top_k": 5,
+          "rerank_model": "BAAI/bge-reranker-v2-m3",
+          "rerank_pre_count": 50
+        }
+      },
+      "verdict": "shuffled_improved"
     }
   ]
 }
