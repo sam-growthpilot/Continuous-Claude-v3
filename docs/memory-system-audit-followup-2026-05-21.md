@@ -10,6 +10,40 @@
 
 **CONDITIONAL GO → ship as production with the P0 fixes landed.** Two BLOCKER findings exist in code but did not reproduce in Phase 2 live probes; both are filed below as sharp edges with explicit triggers and recovery runbooks. The system passed every live gate (8/10 recall, p95 1958ms, all failure modes degrade observably, telemetry monotonic).
 
+---
+
+## Confidence-firming pass (2026-05-21 evening, post-audit)
+
+After the initial audit was committed, a confidence-firming pass surfaced **3 additional issues** that the deep audit missed. All three were fixed in the same session.
+
+### Tests run
+
+1. **Cross-project scope isolation** — ✓ VERIFIED. Source entry from project `6a596c70d2f0d36b` was correctly filtered when querying from `addc92d926988bb9` (continuous-claude). Default `mode='project'` filter works.
+2. **Multi-session concurrent recall** — ✓ VERIFIED. Two parallel `recall_learnings.py` calls completed in 2417/2456 ms vs 2378 ms sequential baseline (~40 ms overhead). Daemon count unchanged (no race).
+3. **Corpus quality 20-entry sample** — ~15-25 % noise rate measured. Caught one obvious failure: 2000-char repetition of "this is important data." that passed the L0 gate.
+
+### New findings that the audit missed (now fixed)
+
+| # | Finding | Severity | Fix |
+|---|---------|----------|-----|
+| F1 | `~/.claude/scripts/core/project_memory.py` was MISSING — `memory-awareness.ts:142` silently returned `[]`; `checkLocalMemory` had been a no-op in production | P0 | Copied file + added sync rule in `scripts/sync-to-active.sh` |
+| F2 | 244 archival_memory rows (45 % of corpus) tagged `scope=PROJECT` + `project_id=NULL` — unfilterable under default `mode='project'` (dead) | P0 | Backfilled to `scope=GLOBAL` (content is general-purpose). Backup at `opc/tests/backfill-2026-05-21-pre-rows.csv` |
+| F3 | L0 quality gate too permissive — pure repetition (e.g. "phrase × 50") passed all existing checks | P1 | Added uniqueness-ratio repetition check (threshold 0.25, fires only for content ≥ 200 chars). 3 new tests pass. |
+
+### Confidence verdict after firming pass
+
+**HIGH confidence** across:
+- Hot-path latency + regression coverage + telemetry observability (unchanged)
+- Cross-project scope isolation (newly verified live)
+- Multi-session concurrent recall (newly verified live)
+- L0 gate now catches obvious repetition
+
+**Residual MEDIUM confidence** (acknowledged, not closing):
+- Corpus quality is ~15-25 % noisy at HEAD; the L0 gate fix will reduce future-store noise but doesn't retroactively clean. Periodic `/memory-curate` runs can help.
+- 2 BLOCKERs (race + host-RAM) still filed; mitigations in place.
+
+
+
 Full reviewer breakdown:
 - `principal-reviewer/audit-2026-05-21.md` — architecture (1 BLOCKER, 4 HIGH)
 - `critic` (inline in session) — implementation quality (3 HIGH, 4 MEDIUM, 4 LOW)

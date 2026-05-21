@@ -245,6 +245,21 @@ def validate_learning_quality(
     if newline_ratio > 0.15 and len(stripped) > 500:
         return {"passes": False, "reason": "high_newline_ratio (likely code dump)"}
 
+    # 4b. Reject verbatim repetition (e.g., "this is important data. " × N).
+    # Only applies to longer content (>=200 chars) -- short content legitimately
+    # reuses words (e.g., "always use X, never use Y"). Threshold 0.25 is
+    # conservative: normal prose sits at 0.40-0.60, code snippets 0.30-0.45.
+    if len(stripped) >= 200:
+        words = stripped.split()
+        if words:
+            uniqueness_ratio = len(set(w.lower() for w in words)) / len(words)
+            if uniqueness_ratio < 0.25:
+                return {
+                    "passes": False,
+                    "reason": "repetition",
+                    "detail": f"uniqueness_ratio={uniqueness_ratio:.2f} (threshold 0.25)",
+                }
+
     # 5. Boost: if content has quality signals, always pass
     content_lower = stripped.lower()
     signal_count = sum(1 for s in QUALITY_SIGNALS if s in content_lower)

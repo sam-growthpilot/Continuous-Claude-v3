@@ -70,6 +70,21 @@ copy_dir() {
     done < <(find "$src_path" -type f ! -name "*.pid" ! -name "*.lock" ! -path "*/.tldr/*" ! -path "*/node_modules/*" ! -path "*/cache/*" ! -path "*/dist/*" 2>/dev/null)
 }
 
+# Regenerate .json sidecars from .md frontmatter before copying agents.
+# This ensures any .md edits are reflected in the .json files that claude_spawn.py reads.
+SYNC_AGENT_JSON="$SCRIPT_DIR/sync-agent-json.py"
+if [[ -f "$SYNC_AGENT_JSON" ]]; then
+    if $DRY_RUN; then
+        echo "[DRY RUN] Would regenerate agent .json sidecars from .md frontmatter"
+    else
+        $VERBOSE && echo "Regenerating agent .json sidecars..." || true
+        python "$SYNC_AGENT_JSON" --target "$REPO_CLAUDE/agents" --apply \
+            $( $VERBOSE && echo "--verbose" || true ) 2>&1 \
+            | python -c "import json,sys; d=json.load(sys.stdin); print(f'  agent-json-sync: {d[\"summary\"][\"updated\"]} updated, {d[\"summary\"][\"no_change\"]} unchanged')" \
+            || echo "  Warning: agent .json sidecar sync failed (non-fatal)"
+    fi
+fi
+
 for dir in $SYNC_DIRS; do
     copy_dir "$dir"
 done
@@ -145,6 +160,19 @@ if [[ -d "$TEMPLATES_SRC" ]]; then
             $VERBOSE && echo "Copied: templates/ralph/$local_name" || true
         fi
     done
+fi
+
+# Sync opc/scripts/core/project_memory.py → scripts/core/ (needed by memory-awareness.ts)
+CORE_SRC="$REPO_ROOT/opc/scripts/core/project_memory.py"
+CORE_DST="$ACTIVE_CLAUDE/scripts/core/project_memory.py"
+if [[ -f "$CORE_SRC" ]]; then
+    $DRY_RUN || mkdir -p "$(dirname "$CORE_DST")"
+    if $DRY_RUN; then
+        echo "[DRY RUN] Would copy: $CORE_SRC -> $CORE_DST"
+    else
+        cp "$CORE_SRC" "$CORE_DST"
+        $VERBOSE && echo "Copied: opc/scripts/core/project_memory.py -> scripts/core/project_memory.py" || true
+    fi
 fi
 
 # Sync scripts/ralph/*.py (create target directory if needed for fresh installs)

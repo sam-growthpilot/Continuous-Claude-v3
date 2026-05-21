@@ -296,3 +296,49 @@ def test_v1_category_mapping_complete():
         assert v2_type in store_learning.LEARNING_TYPES, (
             f"v1 maps to {v2_type} which is not in LEARNING_TYPES"
         )
+
+
+# ---------------------------------------------------------------------------
+# Repetition gate (fix #3 — 2026-05-21)
+# ---------------------------------------------------------------------------
+
+
+def test_repetition_check_rejects_repeated_phrase():
+    """Content that is mostly one phrase repeated N times is rejected."""
+    repeated = ("this is important data. " * 50).strip()
+    result = store_learning.validate_learning_quality(
+        repeated, learning_type="WORKING_SOLUTION", _internal_caller=True
+    )
+    assert result["passes"] is False, f"Expected rejection, got: {result}"
+    assert result["reason"] == "repetition"
+
+
+def test_repetition_check_passes_normal_prose():
+    """Normal multi-paragraph learning with mixed vocabulary passes."""
+    normal = (
+        "When debugging hook failures on Windows, check whether the dist/*.mjs file "
+        "was rebuilt after editing src/*.ts. The most common cause is a stale bundle. "
+        "Run `cd .claude/hooks && npm run build` to rebuild. Additionally, verify the "
+        "hook is registered in settings.json using the Node.js atomic read-modify-write "
+        "pattern rather than the Edit tool, which races with Claude Code's own writes. "
+        "This pattern applies to all hooks, not just the memory-awareness hook."
+    )
+    result = store_learning.validate_learning_quality(
+        normal, learning_type="WORKING_SOLUTION", _internal_caller=True
+    )
+    assert result["passes"] is True, f"Expected pass, got: {result}"
+
+
+def test_repetition_check_skipped_for_short_content():
+    """Content shorter than 200 chars bypasses the repetition check entirely."""
+    # Repeat a word many times but stay under 200 chars — should not be caught.
+    short_repeated = "fix fix fix fix fix fix fix fix fix fix"
+    assert len(short_repeated) < 200
+    # Gate may reject for other reasons (too_short) but NOT repetition.
+    result = store_learning.validate_learning_quality(
+        short_repeated, learning_type="WORKING_SOLUTION", _internal_caller=True
+    )
+    if not result["passes"]:
+        assert result.get("reason") != "repetition", (
+            "Short content must not be rejected for repetition"
+        )
