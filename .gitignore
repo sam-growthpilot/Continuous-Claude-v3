@@ -155,6 +155,12 @@ opc/init-db.sql.bak
 opc/ISOLATED_SETUP.md
 opc/docker-compose.memory.yml
 
+# Editor/linter backup files (e.g. *.bak, *.bak.20260518-224215, *.orig)
+# git-auto-commit hook used to sweep these in; ignore globally.
+*.bak
+*.bak.*
+*.orig
+
 # Personal/local development (not for release)
 .claude/agents/brenner.md
 .claude/skills/rigg-eval.md
