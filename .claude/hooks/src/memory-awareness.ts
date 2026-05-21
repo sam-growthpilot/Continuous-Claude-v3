@@ -531,8 +531,14 @@ async function main() {
   }
 }
 
-main().catch(() => {
-  // Silent fail - don't block user prompts
+main().catch((err) => {
+  // Don't break Claude on hook errors -- but emit to stderr so silent
+  // degradation is visible in process logs.
+  try {
+    process.stderr.write(`[memory-awareness] main() error: ${err?.stack || err}\n`);
+  } catch {
+    // best-effort; don't crash the catch handler itself
+  }
   outputContinue();
 });
 

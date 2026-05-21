@@ -439,7 +439,7 @@ def _pid_alive(pid: int) -> bool:
         return False
 
 
-def ping_daemon(timeout_s: float = 0.2) -> dict[str, Any] | None:
+def ping_daemon(timeout_s: float = 1.5) -> dict[str, Any] | None:
     """TCP ping the rerank daemon. Returns the response dict or None.
 
     Lighter than a full rerank request; used by ``daemon_is_alive`` to

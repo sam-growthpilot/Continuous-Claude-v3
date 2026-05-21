@@ -1,28 +1,57 @@
 #!/usr/bin/env python3
-"""Semantic recall of session learnings from archival_memory.
+"""Recall learnings from archival_memory backed by Postgres + pgvector.
 
-Searches the archival_memory table for session_learning entries
-using vector similarity search.
+Default mode is hybrid RRF (Reciprocal Rank Fusion) combining text (FTS)
+and vector (pgvector cosine) ranks. The vector arm calls the local BGE
+embedding daemon (BAAI/bge-large-en-v1.5) over TCP loopback for query
+embedding; falls back to in-process embedding if the daemon is unreachable.
+
+MODES (mutually exclusive flags):
+    default (no flag): hybrid RRF -- combines FTS + pgvector ranks.
+        The --threshold CLI default (0.2) is scaled by 0.01 internally
+        because RRF scores cluster in the 0.01-0.03 range.
+    --text-only:       FTS only. No embeddings; no daemon dependency.
+        Uses the --threshold value directly (FTS ts_rank scale).
+    --vector-only:     pgvector cosine similarity only (no FTS arm).
+        Accepts --threshold raw (0.0-1.0 cosine scale). Supports
+        --recency for time-weighted ranking.
+    --rerank:          opt-in stage-2 cross-encoder rerank
+        (BAAI/bge-reranker-v2-m3) over the top-N RRF candidates.
+        Requires the rerank daemon (rerank.py --daemon) for
+        production-acceptable latency. Applied after RRF, before output.
+    --pageindex:       PageIndex tree-based search (ROADMAP, docs).
+    --hybrid:          Combined vector memory + PageIndex search.
+
+OUTPUT:
+    Default: human-readable ranked list with scores and metadata.
+    --json: machine-readable JSON array (used by memory-awareness.ts hook).
+
+OPERATIONAL:
+    Scope partitioning: rows tagged scope=PROJECT are filtered to the
+        current project (CLAUDE_PROJECT_ID or resolved from CWD).
+        scope=GLOBAL rows are always visible across all projects.
+        Pass --scope all to disable filtering.
+    Decay weighting: _apply_decay() down-weights older entries so
+        more recent learnings rank higher at equal similarity.
+    Dedup: store_learning.py uses 0.85 cosine similarity threshold
+        at write time; near-duplicate entries are rejected at storage.
 
 USAGE:
-    # Simple search (top 5 results, local embeddings)
-    uv run python scripts/recall_learnings.py --query "authentication patterns"
+    # Default hybrid RRF (recommended)
+    uv run python scripts/core/recall_learnings.py --query "auth patterns"
 
     # More results
-    uv run python scripts/recall_learnings.py --query "database schema" --k 10
+    uv run python scripts/core/recall_learnings.py --query "db schema" --k 10
 
-    # Voyage embeddings (higher quality, requires VOYAGE_API_KEY)
-    uv run python scripts/recall_learnings.py --query "errors" --provider voyage
+    # Text-only (faster, no daemon required)
+    uv run python scripts/core/recall_learnings.py --query "errors" --text-only
 
-    # Phase 2: cross-encoder rerank (hybrid RRF only; default off until Task 3.2 decision gate)
-    uv run python scripts/recall_learnings.py --query "memory hardening" --rerank
-
-Workflow:
-    Query -> Embed (Local/Voyage) -> Vector Search (pgvector) -> Return
+    # With cross-encoder rerank (requires rerank daemon)
+    uv run python scripts/core/recall_learnings.py --query "memory hardening" --rerank
 
 Environment:
-    VOYAGE_API_KEY - For Voyage embeddings (optional)
-    PostgreSQL with pgvector extension
+    DATABASE_URL      - Postgres connection string (opc/.env is authoritative)
+    VOYAGE_API_KEY    - For Voyage embeddings provider (optional, legacy)
 """
 
 from __future__ import annotations
@@ -223,7 +252,10 @@ DEFAULT_DECAY_LAMBDA = 0.02
 # or non-local provider) routes through the in-process EmbeddingService
 # path. The provider arg must equal "local" to use the daemon -- Voyage
 # is API-backed and doesn't have the cold-start problem.
-EMBED_DAEMON_PING_TIMEOUT_S = 0.2
+EMBED_DAEMON_PING_TIMEOUT_S = 1.5
+# Mirrors DEFAULT_PING_TIMEOUT_MS = 1500 in embedding-client.ts (lines 67-73).
+# Prior value was 0.2 s. The TS hook correctly used 1500ms, but Python re-pinged
+# at 200ms, slipping under load → fell to in-process embed → 12s SIGKILL.
 # Was 30.0 — too loose for hook path (8-12s subprocess budget).
 # 5.0 still gives 30x safety margin over warm p95 ~157ms; hung daemon
 # now caught before the hook itself times out.

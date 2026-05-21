@@ -1,8 +1,8 @@
 # Memory System Handoff — 2026-05-21
 
-**Status:** SUCCEEDED — daemon hardening (commits `d0b0614` + `f9ca075`) shipped to `fork/main`. Phase 5 verification re-run after a clean Claude Code restart confirmed GREEN across all 7 criteria. memory-cleanup-round-1 story closed.
+**Status:** SUCCEEDED — daemon hardening (`d0b0614` + `f9ca075`) shipped to `fork/main`. Phase 5 verification GREEN across all 7 criteria. **Deep audit run 2026-05-21 evening: CONDITIONAL GO → unconditional GO after 5 P0 fixes landed. memory-cleanup-round-1 closed.**
 
-**Trigger for next session:** Nothing pending on memory hardening. If the same symptoms recur (recall slow, `kept_after_floor:0` rate climbs), the first diagnostic is host memory pressure — see "Re-verification (2026-05-21 afternoon)" below.
+**Trigger for next session:** Nothing pending on memory hardening hot path. If the same symptoms recur (recall slow, `kept_after_floor:0` rate climbs), first diagnostic is host memory pressure — see "Re-verification (2026-05-21 afternoon)" below. Known sharp edges + P1/P2 follow-ups tracked in `docs/memory-system-audit-followup-2026-05-21.md`.
 
 **Branch:** `main` (pushed to `fork`)
 **Last commit:** `f9ca075`
@@ -40,7 +40,58 @@ First memory-relevant prompt after a fresh session **may** see `daemon_ready:fal
 ### Open follow-ups (not blockers, ship-ready)
 
 1. **Text-only floor calibration (optional):** Lowering `TEXT_ONLY_FLOOR` from `0.05` to `~0.03` would catch borderline hits during the daemon warm-up window. Trade-off: more noise when the daemon is unreachable for non-warm reasons. Not urgent — daemon-warm path already covers the common case.
-2. **memory-recall.jsonl rotation oddity:** The file ended this session with only 8 entries (all from 2026-05-19 pageindex queries), but earlier in the same session had ~50+ entries including 2026-05-21 user-prompt hooks. Something rewrites or filters the log. Worth tracing if anyone wants reliable telemetry. Not a blocker — the hook itself works.
+2. **memory-recall.jsonl rotation oddity:** The file ended this session with only 8 entries (all from 2026-05-19 pageindex queries), but earlier in the same session had ~50+ entries including 2026-05-21 user-prompt hooks. Something rewrites or filters the log. Worth tracing if anyone wants reliable telemetry. Not a blocker — the hook itself works. **Update (2026-05-21 evening): did not reproduce in audit Phase 2d — 78 lines monotonic over 30s.**
+
+---
+
+## Deep Audit (2026-05-21 evening) — Unconditional GO ✅
+
+Ran a 5-reviewer parallel audit (principal-reviewer, critic, profiler, arbiter, scribe) + 4 live behavioral probes (Phase 2a–2d) to validate the system before declaring it production-ready. Verdict: **CONDITIONAL GO → unconditional GO after 5 P0 fixes landed** in this commit.
+
+**Synthesis file:** `.claude/cache/agents/review-agent/synthesis-2026-05-21.md`
+**Filed-issues + deferred work:** `docs/memory-system-audit-followup-2026-05-21.md`
+
+### Live audit gates (all PASS)
+
+- **2a Recall quality:** 8/10 hand-picked queries hit (gate ≥ 7). Top scores 0.014–0.033 above the 0.01 hybrid floor. Semantically relevant matches.
+- **2b Latency distribution (5 warm runs):** p95 total 1958 ms (gate < 5000 ms); p95 embed 129 ms; very consistent.
+- **2c Failure modes (live induced):**
+  - Daemon kill → text-only fallback 1.3 s ✓; hybrid in-process fallback 10.85 s ⚠ (close to 12 s hook ceiling)
+  - Rerank: hook-irrelevant (hook never passes `--rerank`) ✓
+  - DB ACCESS EXCLUSIVE lock 15 s → recall blocked 13.3 s then completed when released. A 12 s hook would have SIGKILL'd cleanly (no partial-result path; observable via `db_subprocess_timed_out`).
+- **2d Telemetry:** `memory-recall.jsonl` monotonic over 30 s (78 lines stable). Rotation oddity from yesterday did not reproduce.
+
+### P0 fixes that shipped (this commit)
+
+| # | File:line | Fix | Why |
+|---|-----------|-----|-----|
+| 1 | `recall_learnings.py:226` | `EMBED_DAEMON_PING_TIMEOUT_S` 0.2 → 1.5 | TS-side pings at 1.5 s; Python re-pinged at 0.2 s. Asymmetry was the architectural-cause of the historical 86 % `kept_after_floor:0` pattern. |
+| 2 | `rerank.py:442` | `ping_daemon` default kwarg 0.2 → 1.5 | Bug A fixed the call site (`d0b0614`) but missed the default. Future callers would silently regress. |
+| 3 | `embedding_daemon.py:656` | `_run_bench` undefined `n` → `len(times)` | Every `--bench` invocation crashed with NameError. The latency verification gate was broken. |
+| 4 | `memory-awareness.ts:534` | Add stderr trace to `main().catch()` | Silent error swallow = invisible production degradation. |
+| 5 | `recall_learnings.py:1-26` | Rewrite stale docstring | Was pre-Phase-1 (still said Voyage-primary). Misleads any agent reading it. |
+
+### 2 BLOCKERs filed as known sharp edges (do not block GO)
+
+Both have explicit triggers + recovery runbooks in `memory-system-audit-followup-2026-05-21.md`:
+
+- **BLOCKER-1** — Spawn race in `_check_existing_daemon` (Python-side gap). TS-side lockfile mutex closes the common path; gap is real but rare. Trigger: concurrent cold-starts. Recovery: identify orphan PID, single-targeted kill.
+- **BLOCKER-2** — No host-memory-pressure defense. Yesterday's RED was this exact mode. P0 fix #1 (ping asymmetry) removes the primary trigger; residual sensitivity to free-RAM < 2 GB remains. Recovery: free RAM, daemon refaults itself.
+
+### Deferred work (tracked in audit-followup doc)
+
+- P1 follow-ups: sequential local+DB checks (parallel-ize for ~30-50 % latency win), stale-discovery-file cleanup, dedup-error stderr, etc.
+- P2 architectural items: exclusive-lockfile primitive, host-RAM probe, partial-result path on 12 s SIGKILL.
+- P3 cosmetics: count-field inflation, docstring nits.
+
+### What this means for ongoing work
+
+Memory recall is **safe to rely on day-to-day**. Two operational notes:
+
+1. **Watch host RAM.** If free < 2 GB sustained, expect degraded recall. First move on any regression is freeing memory, not editing code.
+2. **The `_check_existing_daemon` guard works for the common case but isn't bulletproof.** Don't try to "fix" supervisor/worker process pairs — they're normal.
+
+memory-cleanup-round-1 story is permanently closed.
 
 ---
 

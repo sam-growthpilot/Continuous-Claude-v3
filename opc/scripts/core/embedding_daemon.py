@@ -653,7 +653,7 @@ def _run_bench() -> int:
         "p50_ms": p50_ms,
         "p95_ms": p95_ms,
         "all_ms": times,
-        "iterations": n,
+        "iterations": len(times),
         "model": MODEL_NAME,
         "dim": EMBEDDING_DIM,
     }
