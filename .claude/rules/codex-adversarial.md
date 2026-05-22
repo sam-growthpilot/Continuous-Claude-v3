@@ -60,6 +60,10 @@ When `review-agent` synthesizes Phase 1 findings, codex-adversary output is trea
 
 Findings that BOTH critic and codex-adversary flag are high-confidence - the cross-model lift is exactly the findings only one side catches.
 
+## Telemetry: codex-lift.jsonl
+
+Every `/review` and `/premortem` run that includes Codex appends one row to `.claude/logs/codex-lift.jsonl` with: `claude_only`, `codex_only`, `both` counts plus `skill`, `scope`, `ts`, `via`. Schema and query patterns documented in `.claude/logs/codex-lift.README.md`. The `codex_only` count IS the cross-model lift — if it's consistently zero, the Codex pass isn't earning its quota cost and should be reconsidered.
+
 ## Integration Files
 
 | File | Role |

@@ -1,11 +1,11 @@
 ---
 name: review
-description: Comprehensive code review workflow - parallel specialized reviews → synthesis
+description: Comprehensive code review workflow - parallel specialized reviews → synthesis (includes cross-model Codex adversarial pass by default)
 ---
 
 # /review - Code Review Workflow
 
-Multi-perspective code review with parallel specialists.
+Multi-perspective code review with parallel specialists, including a cross-model adversarial pass via OpenAI Codex. Same-family reviewers share blind spots — Codex (different training family) provides cross-model triangulation. See `.claude/rules/codex-adversarial.md` for the full convention.
 
 ## When to Use
 
@@ -19,20 +19,25 @@ Multi-perspective code review with parallel specialists.
 ## Workflow Overview
 
 ```
-         ┌──────────┐
-         │  critic  │ ─┐
-         │ (code)   │  │
-         └──────────┘  │
-                       │
-         ┌──────────┐  │      ┌──────────────┐
-         │plan-reviewer│ ─┼────▶ │ review-agent │
-         │ (plan)   │  │      │ (synthesis)  │
-         └──────────┘  │      └──────────────┘
-                       │
-         ┌──────────┐  │
-         │plan-reviewer│ ─┘
-         │ (change) │
-         └──────────┘
+         ┌──────────────┐
+         │   critic     │ ─┐
+         │   (code)     │  │
+         └──────────────┘  │
+                           │
+         ┌──────────────┐  │
+         │ plan-reviewer│ ─┤
+         │   (plan)     │  │      ┌──────────────┐
+         └──────────────┘  ├────▶ │ review-agent │
+                           │      │ (synthesis)  │
+         ┌──────────────┐  │      └──────────────┘
+         │ plan-reviewer│ ─┤
+         │   (change)   │  │
+         └──────────────┘  │
+                           │
+         ┌──────────────┐  │
+         │codex-adversary│ ─┘   ← Cross-model (OpenAI Codex)
+         │ (mode=code)  │
+         └──────────────┘
 
          Parallel                Sequential
          perspectives            synthesis
@@ -45,6 +50,7 @@ Multi-perspective code review with parallel specialists.
 | 1 | **critic** | Code quality, patterns, readability | Parallel |
 | 1 | **plan-reviewer** | Architecture, plan adherence | Parallel |
 | 1 | **plan-reviewer** | Change impact, risk assessment | Parallel |
+| 1 | **codex-adversary** | Cross-model adversarial review (different training family) | Parallel |
 | 2 | **review-agent** | Synthesize all reviews, final verdict | After 1 |
 
 ## Review Perspectives
@@ -52,6 +58,7 @@ Multi-perspective code review with parallel specialists.
 - **critic**: Is this good code? (Style, patterns, readability)
 - **plan-reviewer**: Does this match the design? (Architecture, plan)
 - **plan-reviewer**: Is this change safe? (Risk, impact, regressions)
+- **codex-adversary**: What would a different model family catch? (Cross-model triangulation — see `.claude/rules/codex-adversarial.md`)
 - **review-agent**: Overall assessment and recommendations
 
 ## Execution
@@ -112,8 +119,28 @@ Task(
   run_in_background=true
 )
 
-# Wait for all parallel reviews
-[Check TaskOutput for all three]
+# Cross-model adversarial review (skip if --no-codex flag passed)
+# See .claude/rules/codex-adversarial.md for cost/quota guidance.
+Task(
+  subagent_type="codex-adversary",
+  prompt="""
+  ## Mode
+  code
+
+  ## Scope
+  base ref: [BASE_REF, e.g. main or HEAD~1]
+
+  ## Focus
+  [optional — e.g. "auth boundary", "data loss paths", or omit to let Codex pick]
+
+  ## Codebase
+  $CLAUDE_PROJECT_DIR
+  """,
+  run_in_background=true
+)
+
+# Wait for all four parallel reviews
+[Check TaskOutput for all four]
 ```
 
 ### Phase 2: Synthesis
@@ -128,28 +155,59 @@ Task(
   - critic: [code quality findings]
   - plan-reviewer: [architecture findings]
   - plan-reviewer: [change impact findings]
+  - codex-adversary: [cross-model findings — prefix each with [Codex] in output]
+
+  Treat codex-adversary as a DISTINCT cross-model input — NOT pooled with critic.
+  Findings BOTH critic and codex-adversary flag are high-confidence.
+  Findings only codex-adversary flags are the cross-model lift.
 
   Create final review:
   - Overall verdict (APPROVE / REQUEST_CHANGES / NEEDS_DISCUSSION)
-  - Prioritized action items
+  - Prioritized action items (group: both-flagged, claude-only, [Codex]-only)
   - Blocking vs non-blocking issues
   - Summary for PR description
   """
 )
 ```
 
+### Phase 3: Telemetry
+
+After synthesis, append one row to `.claude/logs/codex-lift.jsonl`:
+
+```bash
+mkdir -p "$CLAUDE_PROJECT_DIR/.claude/logs"
+jq -nc \
+  --arg ts "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+  --arg skill "review" \
+  --arg scope "[SCOPE]" \
+  --argjson critic_count <N> \
+  --argjson codex_count <N> \
+  --argjson both_count <N> \
+  '{ts:$ts, skill:$skill, scope:$scope, critic_only:($critic_count - $both_count), codex_only:($codex_count - $both_count), both:$both_count, via:"direct"}' \
+  >> "$CLAUDE_PROJECT_DIR/.claude/logs/codex-lift.jsonl"
+```
+
+This is the actual signal of value — track cross-model lift over time.
+
 ## Review Modes
 
 ### Full Review
 ```
 User: /review
-→ All four agents, comprehensive review
+→ All five agents (critic + 2x plan-reviewer + codex-adversary + review-agent), comprehensive review
 ```
 
 ### Quick Review
 ```
 User: /review --quick
 → critic only, fast feedback
+```
+
+### No Codex
+```
+User: /review --no-codex
+→ Skip codex-adversary (saves a Codex turn). Use for trivial diffs, doc-only changes,
+  or when ChatGPT subscription quota is constrained. See .claude/rules/codex-adversarial.md.
 ```
 
 ### Security Focus
@@ -174,8 +232,9 @@ Claude: Starting /review workflow...
 Phase 1: Running parallel reviews...
 ┌────────────────────────────────────────────┐
 │ critic: Reviewing code quality...          │
-│ plan-reviewer: Checking architecture...         │
-│ plan-reviewer: Assessing change impact...         │
+│ plan-reviewer: Checking architecture...    │
+│ plan-reviewer: Assessing change impact...  │
+│ codex-adversary: Cross-model review...     │
 └────────────────────────────────────────────┘
 
 critic: Found 2 issues
@@ -188,6 +247,11 @@ plan-reviewer: Medium risk
 - Affects: login, signup, password reset
 - Breaking change: session token format
 
+codex-adversary: verdict=needs-attention, 3 findings
+- [Codex] auth.ts:42 — session token rotation not idempotent under concurrent login
+- [Codex] login.ts:88 — missing input validation in login() (agrees with critic)
+- [Codex] session.ts:14 — token format change has no migration path for in-flight sessions
+
 Phase 2: Synthesizing...
 
 ┌─────────────────────────────────────────────┐
@@ -195,16 +259,19 @@ Phase 2: Synthesizing...
 ├─────────────────────────────────────────────┤
 │ Verdict: REQUEST_CHANGES                    │
 │                                             │
-│ Blocking:                                   │
+│ Cross-model agreement (high confidence):    │
 │ 1. Add input validation to login()          │
+│    (both critic + [Codex])                  │
+│                                             │
+│ [Codex]-only (cross-model lift):            │
+│ 2. Session token rotation race condition    │
+│ 3. No migration path for in-flight sessions │
 │                                             │
 │ Non-blocking:                               │
-│ 2. Standardize error messages               │
+│ 4. Standardize error messages (critic)      │
 │                                             │
-│ Notes:                                      │
-│ - Document session token format change      │
-│ - Consider migration path for existing      │
-│   sessions                                  │
+│ Telemetry: critic_only=1, codex_only=2,     │
+│   both=1 (logged to codex-lift.jsonl)       │
 └─────────────────────────────────────────────┘
 ```
 

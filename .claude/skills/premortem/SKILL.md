@@ -1,20 +1,21 @@
 ---
 name: premortem
-description: Identify failure modes before they occur using structured risk analysis
-allowed-tools: [Read, Grep, Glob, Task, AskUserQuestion, TodoWrite]
+description: Identify failure modes before they occur using structured risk analysis, with cross-model Codex adversarial pass
+allowed-tools: [Read, Grep, Glob, Task, AskUserQuestion, TodoWrite, Bash]
 ---
 
 # Pre-Mortem
 
-Identify failure modes before they occur by systematically questioning plans, designs, and implementations. Based on Gary Klein's technique, popularized by Shreyas Doshi (Stripe).
+Identify failure modes before they occur by systematically questioning plans, designs, and implementations. Based on Gary Klein's technique, popularized by Shreyas Doshi (Stripe). Augmented with a cross-model adversarial pass via OpenAI Codex — same training family = same blind spots, so Codex (different family) finds the tigers Claude misses.
 
 ## Usage
 
 ```
-/premortem              # Auto-detect context, choose depth
+/premortem              # Auto-detect context, choose depth (includes Codex pass)
 /premortem quick        # Force quick analysis (plans, PRs)
 /premortem deep         # Force deep analysis (before implementation)
 /premortem <file>       # Analyze specific plan or code
+/premortem --no-codex   # Skip Codex adversarial pass (Claude-only)
 ```
 
 ## Core Concept
@@ -214,6 +215,49 @@ premortem:
       items_failed: ["<item1>", "<item2>"]
 ```
 
+### Step 2.5: Cross-Model Adversarial Pass (Codex)
+
+Same training family = same blind spots. After Claude's verified tigers/elephants/paper_tigers list is built, run an adversarial pass through OpenAI Codex (different training family) to find risks Claude missed.
+
+**Skip if** `--no-codex` flag was passed OR the target is a trivial doc-only change OR the user has exhausted ChatGPT subscription quota this session. See `.claude/rules/codex-adversarial.md`.
+
+```
+# Spawn codex-adversary in plan mode pointed at the plan file
+Task(
+  subagent_type="codex-adversary",
+  prompt="""
+  ## Mode
+  plan
+
+  ## Scope
+  [absolute path to plan file being pre-mortemed]
+
+  ## Focus
+  Identify failure modes Claude missed. Claude already found:
+  [list claude_tigers with one-line descriptions]
+
+  Look for additional tigers (clear threats), elephants (unspoken concerns),
+  or cases where Claude's paper_tigers were dismissed incorrectly.
+  Different training family = different blind spots — that's the value.
+
+  ## Codebase
+  $CLAUDE_PROJECT_DIR
+  """
+)
+```
+
+**Merge convention:** Codex findings get prefixed `[Codex]` and merged into the same tigers/elephants/paper_tigers lists. Findings that BOTH Claude and Codex flag get marked `confidence: cross-model-agreed` — these are the high-confidence ones to act on first. Findings only Codex flags are the **cross-model lift** — track these as the actual value signal of this step.
+
+```yaml
+# Merged output (Claude tigers + Codex tigers, deduplicated by file:line + risk)
+tigers:
+  - risk: "<description>"
+    location: "file.py:42"
+    severity: high|medium
+    sources: [claude, codex]   # NEW: which model(s) found it
+    mitigation_checked: "<what was NOT found>"
+```
+
 ### Step 3: Present Risks via AskUserQuestion
 
 **BLOCKING:** Present findings and require user decision.
@@ -287,8 +331,29 @@ Append to the plan file:
 ### Pre-Mortem Run:
 - Date: {timestamp}
 - Mode: {quick|deep}
-- Tigers: {count} | Elephants: {count}
+- Codex pass: {yes|skipped (--no-codex)}
+- Tigers: {total} (claude-only: {N}, codex-only: {N}, both: {N}) | Elephants: {count}
 ```
+
+### Step 6: Telemetry
+
+After the user response is handled, append one row to `.claude/logs/codex-lift.jsonl`:
+
+```bash
+mkdir -p "$CLAUDE_PROJECT_DIR/.claude/logs"
+jq -nc \
+  --arg ts "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+  --arg skill "premortem" \
+  --arg scope "[plan path or scope]" \
+  --argjson claude_only <N> \
+  --argjson codex_only <N> \
+  --argjson both <N> \
+  --arg via "direct" \
+  '{ts:$ts, skill:$skill, scope:$scope, claude_only:$claude_only, codex_only:$codex_only, both:$both, via:$via}' \
+  >> "$CLAUDE_PROJECT_DIR/.claude/logs/codex-lift.jsonl"
+```
+
+The `codex_only` count is the cross-model lift — the value Codex actually added beyond what Claude found. Track over time to validate the Codex pass is worth the quota.
 
 ## Integration Points
 

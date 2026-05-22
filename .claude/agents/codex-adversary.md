@@ -59,12 +59,17 @@ If the plan is >300KB, summarize the section headings and feed the full body for
 
 ## Step 3: Locate the Adversarial System Prompt
 
-The plugin ships a purpose-built adversarial framing. Prefer it - it stays in sync with upstream improvements:
+Lookup order (first hit wins):
+
+1. **Repo-vendored copy** at `$CLAUDE_PROJECT_DIR/vendor/codex-plugin-cc/prompts/adversarial-review.md` — the canonical CCv3 framing, source of truth, stable across machines.
+2. **Plugin cache copies** (if codex-plugin-cc is installed) — vendor-shipped, may drift from CCv3 expectations.
+3. **Inline fallback below** — last resort if neither is available.
 
 ```bash
-# Search known plugin install paths in order
+# Search in priority order
 ADVERSARIAL_PROMPT_FILE=""
 for candidate in \
+  "$CLAUDE_PROJECT_DIR/vendor/codex-plugin-cc/prompts/adversarial-review.md" \
   "$HOME/.claude/plugins/cache/openai/codex-plugin-cc"/*/plugins/codex/prompts/adversarial-review.md \
   "$HOME/.claude/plugins/cache"/*/codex/*/prompts/adversarial-review.md \
   "$HOME/.claude/plugins/cache"/*/codex-plugin-cc/*/plugins/codex/prompts/adversarial-review.md; do
@@ -75,7 +80,7 @@ for candidate in \
 done
 ```
 
-If the file is found, prepend its contents to your prompt. If not (plugin not installed or moved), fall back to the inline framing below.
+If the file is found, prepend its contents to your prompt. If not (neither vendored nor plugin-installed), fall back to the inline framing below.
 
 ### Inline Fallback Framing
 
