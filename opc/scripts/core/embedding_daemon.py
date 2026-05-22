@@ -50,6 +50,7 @@ Usage::
 from __future__ import annotations
 
 import argparse
+import atexit
 import json
 import math
 import os
@@ -75,6 +76,13 @@ EMBEDDING_DIM = 1024
 
 # Daemon discovery file. Cross-platform via tempfile.gettempdir().
 DAEMON_INFO_PATH = Path(tempfile.gettempdir()) / "ccv3-embedding.json"
+
+# BLOCKER-1 (memory-system-next-steps-2026-05-21): cross-process exclusive
+# lock used to serialize daemon startup across non-TS spawn paths (Windows
+# Task Scheduler pre-warm, direct CLI invocations). The TS-side spawn lock
+# in embedding-client.ts covers the hook path; this closes the gap for
+# everything else.
+DAEMON_LOCK_PATH = Path(tempfile.gettempdir()) / "ccv3-embedding-daemon.lock"
 
 
 def load_model() -> Any:
@@ -377,8 +385,142 @@ def _check_existing_daemon() -> bool:
     return True
 
 
+def _acquire_exclusive_lock(lock_path: Path = DAEMON_LOCK_PATH) -> int | None:
+    """Cross-process exclusive lock on the daemon startup path.
+
+    Returns an open file descriptor on success (caller must keep it open for
+    the lifetime of the daemon). Returns ``None`` if another process already
+    holds the lock.
+
+    Why this exists (BLOCKER-1): two daemon spawners that both pass
+    ``_check_existing_daemon()`` at the same instant can race and end up
+    with two model-load processes, two port binds, and a stomped discovery
+    file. The TS-side spawn lock in ``embedding-client.ts`` covers the
+    hook path; this OS-level lock covers Windows Task Scheduler pre-warm,
+    direct CLI starts, and any other path the TS lock doesn't see.
+
+    Implementation:
+        * Windows uses ``msvcrt.locking(fd, LK_NBLCK, 1)`` on byte 0.
+        * POSIX uses ``fcntl.flock(fd, LOCK_EX | LOCK_NB)``.
+        * On success we register an ``atexit`` hook to close the fd and
+          unlink the lock file. Lock contents are the holder's PID for
+          debugging — never load-bearing, since the OS owns the actual lock.
+        * Failure modes (file-open error, lock contention) return ``None``
+          and do NOT register cleanup, so a losing acquirer never deletes
+          the winning daemon's lock file.
+
+    Args:
+        lock_path: Path of the lock file. Defaults to DAEMON_LOCK_PATH but
+            tests can pass a temp path to avoid cross-test interference.
+
+    Returns:
+        Open file descriptor, or ``None`` if another holder exists.
+    """
+    try:
+        fd = os.open(str(lock_path), os.O_RDWR | os.O_CREAT, 0o644)
+    except OSError as exc:
+        print(
+            f"[embedding] daemon: lock open failed: {exc}",
+            file=sys.stderr,
+            flush=True,
+        )
+        return None
+
+    try:
+        if sys.platform == "win32":
+            import msvcrt  # noqa: PLC0415
+            try:
+                msvcrt.locking(fd, msvcrt.LK_NBLCK, 1)
+            except OSError:
+                os.close(fd)
+                return None
+        else:
+            import fcntl  # noqa: PLC0415
+            try:
+                fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            except OSError:
+                os.close(fd)
+                return None
+    except Exception:
+        # Defensive: any unexpected error releasing the lock-related
+        # imports/syscalls. Treat as "couldn't acquire" so we don't half-hold.
+        try:
+            os.close(fd)
+        except OSError:
+            pass
+        return None
+
+    # Write the holder PID for debugging. Best-effort — failure here does
+    # NOT release the lock (the OS still owns it via the fd).
+    try:
+        os.lseek(fd, 0, os.SEEK_SET)
+        os.write(fd, f"{os.getpid()}\n".encode("utf-8"))
+        try:
+            os.fsync(fd)
+        except OSError:
+            # Some filesystems (e.g. some Windows temp filesystems) don't
+            # support fsync on this kind of handle. Not fatal.
+            pass
+    except OSError:
+        pass
+
+    # Register cleanup ONLY on the success path. A loser that already
+    # returned None never reaches this line, so it can't unlink the
+    # winner's lock file.
+    def _cleanup(_fd: int = fd, _path: Path = lock_path) -> None:
+        try:
+            os.close(_fd)
+        except OSError:
+            pass
+        try:
+            os.unlink(str(_path))
+        except OSError:
+            pass
+
+    atexit.register(_cleanup)
+    return fd
+
+
+def _hide_own_console_on_windows() -> None:
+    """Hide our own console window on Windows so a Bash-spawned or
+    Task-Scheduler-spawned daemon doesn't clutter the taskbar.
+
+    No-op on POSIX. Fail-open if the Win32 call doesn't work (e.g., daemon
+    launched without an attached console). The hook spawn path already passes
+    ``windowsHide: true``; this protects the non-hook paths.
+    """
+    if sys.platform != "win32":
+        return
+    try:
+        import ctypes  # noqa: PLC0415
+        hwnd = ctypes.windll.kernel32.GetConsoleWindow()  # type: ignore[attr-defined]
+        if hwnd:
+            ctypes.windll.user32.ShowWindow(hwnd, 0)  # type: ignore[attr-defined]  # SW_HIDE
+    except Exception:
+        # Don't break the daemon over a UX nicety.
+        pass
+
+
 def _run_daemon(port: int) -> int:
     """Run the embedding daemon on 127.0.0.1:port (port=0 means pick free)."""
+    # UX: hide our console window on Windows regardless of who spawned us.
+    _hide_own_console_on_windows()
+
+    # BLOCKER-1: cross-process exclusive lock. Two spawners that both pass
+    # _check_existing_daemon() at the same instant would race and end up
+    # with two model-load processes. The TS spawn lock covers the hook
+    # path; this covers non-TS spawners (Task Scheduler, direct CLI).
+    # We keep the fd alive for the daemon's lifetime — closing it (via
+    # atexit) releases the OS-level lock automatically.
+    _lock_fd = _acquire_exclusive_lock()
+    if _lock_fd is None:
+        print(
+            "[embedding] daemon: another daemon holds the startup lock — exiting",
+            file=sys.stderr,
+            flush=True,
+        )
+        return 0
+
     # Defense-in-depth: if another daemon is already running (and healthy),
     # exit before paying the 30s model-load cost.
     if _check_existing_daemon():

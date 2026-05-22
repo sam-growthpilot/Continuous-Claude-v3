@@ -333,8 +333,31 @@ def _delete_daemon_info() -> None:
         pass
 
 
+def _hide_own_console_on_windows() -> None:
+    """Hide our own console window on Windows so a Bash-spawned or
+    Task-Scheduler-spawned daemon doesn't clutter the taskbar.
+
+    No-op on POSIX. Fail-open if the Win32 call doesn't work (e.g., daemon
+    launched without an attached console). The hook spawn path already passes
+    ``windowsHide: true``; this protects the non-hook paths.
+    """
+    if sys.platform != "win32":
+        return
+    try:
+        import ctypes  # noqa: PLC0415
+        hwnd = ctypes.windll.kernel32.GetConsoleWindow()  # type: ignore[attr-defined]
+        if hwnd:
+            ctypes.windll.user32.ShowWindow(hwnd, 0)  # type: ignore[attr-defined]  # SW_HIDE
+    except Exception:
+        # Don't break the daemon over a UX nicety.
+        pass
+
+
 def _run_daemon(port: int) -> int:
     """Run the rerank daemon on 127.0.0.1:port (port=0 means pick free)."""
+    # UX: hide our console window on Windows regardless of who spawned us.
+    _hide_own_console_on_windows()
+
     # Pre-load the model BEFORE binding the port so clients don't connect to
     # a daemon that's still warming.
     print("[rerank] daemon: pre-loading model...", file=sys.stderr, flush=True)

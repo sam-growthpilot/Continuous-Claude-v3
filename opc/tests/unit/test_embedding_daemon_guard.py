@@ -21,6 +21,7 @@ import pytest
 from scripts.core.embedding_daemon import (
     MODEL_NAME,
     _check_existing_daemon,
+    _hide_own_console_on_windows,
 )
 
 
@@ -179,3 +180,28 @@ def test_connection_refused_returns_false():
         result = _check_existing_daemon()
 
     assert result is False
+
+
+# ---------------------------------------------------------------------------
+# _hide_own_console_on_windows() — contract tests for Item 3a
+# ---------------------------------------------------------------------------
+
+def test_hide_own_console_is_safe_to_call():
+    """Callable and never raises, regardless of platform or console state."""
+    _hide_own_console_on_windows()
+
+
+def test_hide_own_console_posix_is_noop():
+    """On non-Windows, returns immediately without importing ctypes."""
+    with patch("scripts.core.embedding_daemon.sys") as mock_sys:
+        mock_sys.platform = "linux"
+        _hide_own_console_on_windows()
+
+
+def test_hide_own_console_fails_open_on_ctypes_error():
+    """If the Win32 API call blows up, we swallow it (UX nicety, not critical)."""
+    with patch("scripts.core.embedding_daemon.sys") as mock_sys:
+        mock_sys.platform = "win32"
+        # Force the inline ctypes import inside the function to explode.
+        with patch.dict(sys.modules, {"ctypes": None}):
+            _hide_own_console_on_windows()

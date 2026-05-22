@@ -32,12 +32,14 @@
 
 import { readFileSync, existsSync, mkdirSync, appendFileSync } from 'fs';
 import * as path from 'path';
+import * as os from 'os';
 import { spawnSync } from 'child_process';
 import { getOpcDir } from './shared/opc-path.js';
 import { outputContinue } from './shared/output.js';
 import { logHook } from './shared/session-activity.js';
 import { extractIntent, extractKeywords } from './shared/intent-extractor.js';
 import { isDaemonReady, ensureDaemonRunning } from './shared/embedding-client.js';
+import { emitBraintrustScore } from './shared/braintrust-score.js';
 
 const TEXT_ONLY_FLOOR = 0.05;  // FTS ts_rank scores: 0.05-0.5 typical
 const HYBRID_FLOOR = 0.01;     // RRF fused scores: 0.01-0.03 typical
@@ -419,6 +421,73 @@ function logRecallFire(entry: RecallLogEntry, projectDir: string): void {
   }
 }
 
+// ---------------------------------------------------------------------------
+// Braintrust span-id resolution (Phase 2.1, story braintrust-scoring)
+//
+// The Python `braintrust_hooks.py user_prompt_submit` handler stores per-
+// session span state at ~/.claude/state/braintrust_sessions/<session_id>.json.
+// Each turn it bumps `current_turn_span_id` to a fresh uuid (the span that
+// owns this turn's tool calls). The root span persists in `root_span_id`.
+//
+// We prefer the turn span when attaching `memory_recall_relevance` because
+// the score is logically a per-turn signal -- the user just submitted a
+// prompt and we measured how well memory recall served that specific turn.
+// If for some reason the turn span isn't recorded yet (race with the Python
+// handler, sampled-out session, missing state file), we fall back to the
+// root span so the score still lands somewhere visible in Braintrust.
+//
+// Returns null when no span id is available -- the helper is fail-open so
+// the score emit will skip silently.
+// ---------------------------------------------------------------------------
+
+interface BraintrustSessionState {
+  root_span_id?: string;
+  current_turn_span_id?: string;
+  project_id?: string;
+  sampled_out?: boolean;
+}
+
+interface ResolvedSpan {
+  spanId: string;
+  attachedTo: 'turn' | 'root';
+}
+
+function readBraintrustSessionState(sessionId: string): BraintrustSessionState | null {
+  if (!sessionId) return null;
+  try {
+    const homeDir = process.env.HOME || process.env.USERPROFILE || os.homedir();
+    if (!homeDir) return null;
+    const statePath = path.join(
+      homeDir,
+      '.claude',
+      'state',
+      'braintrust_sessions',
+      `${sessionId}.json`,
+    );
+    if (!existsSync(statePath)) return null;
+    const raw = readFileSync(statePath, 'utf-8');
+    return JSON.parse(raw) as BraintrustSessionState;
+  } catch {
+    // Fail-open: any I/O or parse error means we just skip the score.
+    return null;
+  }
+}
+
+function resolveBraintrustSpan(sessionId: string): ResolvedSpan | null {
+  const state = readBraintrustSessionState(sessionId);
+  if (!state) return null;
+  // Sampled-out sessions have no spans to attach to.
+  if (state.sampled_out) return null;
+
+  if (state.current_turn_span_id && state.current_turn_span_id.length > 0) {
+    return { spanId: state.current_turn_span_id, attachedTo: 'turn' };
+  }
+  if (state.root_span_id && state.root_span_id.length > 0) {
+    return { spanId: state.root_span_id, attachedTo: 'root' };
+  }
+  return null;
+}
+
 async function main() {
   const t0 = Date.now();
   const input: UserPromptSubmitInput = JSON.parse(readStdin());
@@ -509,6 +578,46 @@ async function main() {
   };
   logRecallFire(logEntry, projectDir);
 
+  // Phase 2.1 (story braintrust-scoring): emit memory_recall_relevance score
+  // to Braintrust. Fail-open by design -- the helper itself never throws,
+  // and we additionally guard with try/catch so any unexpected failure can't
+  // break the hook pipeline.
+  //
+  // Span-id resolution: this hook runs BEFORE the Python braintrust_hooks.py
+  // user_prompt_submit handler, so the NEW turn span doesn't exist yet at
+  // emit time. We attach to root_span_id (which DOES persist across turns)
+  // and tag the score with metadata.attached_to so downstream queries can
+  // tell session-summary scores from turn-attached ones. When/if a future
+  // refactor reorders the Python handler before us, prefer the turn span.
+  try {
+    const span = resolveBraintrustSpan(input.session_id || '');
+    if (span) {
+      // Don't await -- score emission is fire-and-forget. The helper has a
+      // 2s timeout and swallows errors. Awaiting would add up to 2s of
+      // latency to every UserPromptSubmit, which is unacceptable.
+      void emitBraintrustScore({
+        spanId: span.spanId,
+        scores: {
+          memory_recall_relevance: topScoreRaw,
+          memory_recall_hit:
+            match && match.results.length > 0 ? 1.0 : 0.0,
+        },
+        metadata: {
+          attached_to: span.attachedTo,
+          results_count: logEntry.results_count,
+          kept_after_floor: logEntry.kept_after_floor,
+          mode: logEntry.mode,
+          daemon_ready: logEntry.daemon_ready,
+          total_elapsed_ms: logEntry.total_elapsed_ms,
+          intent: logEntry.intent,
+          floor_applied: logEntry.floor_applied,
+        },
+      });
+    }
+  } catch {
+    /* fail-open: never let score emission break the hook */
+  }
+
   if (match) {
     // Log that this hook fired (only when it actually finds memories)
     try { logHook(input.session_id, 'memory-awareness'); } catch { /* never break */ }
@@ -531,14 +640,8 @@ async function main() {
   }
 }
 
-main().catch((err) => {
-  // Don't break Claude on hook errors -- but emit to stderr so silent
-  // degradation is visible in process logs.
-  try {
-    process.stderr.write(`[memory-awareness] main() error: ${err?.stack || err}\n`);
-  } catch {
-    // best-effort; don't crash the catch handler itself
-  }
+main().catch(() => {
+  // Silent fail - don't block user prompts
   outputContinue();
 });
 
