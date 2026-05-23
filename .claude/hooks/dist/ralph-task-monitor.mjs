@@ -1,8 +1,8 @@
 #!/usr/bin/env node
 
 // src/ralph-task-monitor.ts
-import { readFileSync as readFileSync2, existsSync as existsSync3 } from "fs";
-import { join as join3 } from "path";
+import { readFileSync as readFileSync3, existsSync as existsSync4 } from "fs";
+import { join as join4 } from "path";
 import { spawnSync } from "child_process";
 
 // src/shared/logger.ts
@@ -101,6 +101,143 @@ function readRalphUnifiedState(projectDir) {
   }
 }
 
+// src/shared/braintrust-score.ts
+import { readFileSync as readFileSync2, existsSync as existsSync3 } from "node:fs";
+import { join as join3 } from "node:path";
+import { homedir as homedir2 } from "node:os";
+var BRAINTRUST_FEEDBACK_TIMEOUT_MS = 2e3;
+var DEFAULT_API_URL = "https://api.braintrust.dev";
+var DEFAULT_PROJECT_NAME = "claude-code";
+var projectIdCache = {};
+var loadedEnvPaths = /* @__PURE__ */ new Set();
+function defaultEnvPath() {
+  return join3(homedir2(), ".claude", ".env");
+}
+function loadEnv(envPath) {
+  const path = envPath ?? defaultEnvPath();
+  if (loadedEnvPaths.has(path)) return;
+  loadedEnvPaths.add(path);
+  try {
+    if (!existsSync3(path)) return;
+    const text = readFileSync2(path, "utf8");
+    for (const raw of text.split(/\r?\n/)) {
+      const line = raw.trim();
+      if (line.length === 0) continue;
+      if (line.startsWith("#")) continue;
+      const eq = line.indexOf("=");
+      if (eq <= 0) continue;
+      const key = line.slice(0, eq).trim();
+      if (key.length === 0) continue;
+      let value = line.slice(eq + 1).trim();
+      if (value.length >= 2 && (value.startsWith('"') && value.endsWith('"') || value.startsWith("'") && value.endsWith("'"))) {
+        value = value.slice(1, -1);
+      }
+      if (process.env[key] === void 0) {
+        process.env[key] = value;
+      }
+    }
+  } catch {
+  }
+}
+function getApiUrl() {
+  return process.env.BRAINTRUST_API_URL || DEFAULT_API_URL;
+}
+function getApiKey() {
+  const key = process.env.BRAINTRUST_API_KEY;
+  return key && key.length > 0 ? key : null;
+}
+function isTraceEnabled() {
+  loadEnv();
+  return (process.env.TRACE_TO_BRAINTRUST || "").toLowerCase() === "true";
+}
+function logErr(msg) {
+  try {
+    process.stderr.write(`[braintrust-score] ${msg}
+`);
+  } catch {
+  }
+}
+async function resolveProjectId(apiKey) {
+  const directId = process.env.BRAINTRUST_CC_PROJECT_ID;
+  if (directId && directId.length > 0) {
+    return directId;
+  }
+  const projectName = process.env.BRAINTRUST_CC_PROJECT || DEFAULT_PROJECT_NAME;
+  const cached = projectIdCache[projectName];
+  if (cached) return cached;
+  try {
+    const url = getApiUrl() + "/v1/project?project_name=" + encodeURIComponent(projectName);
+    const resp = await fetch(url, {
+      method: "GET",
+      headers: {
+        Authorization: `Bearer ${apiKey}`,
+        "Content-Type": "application/json"
+      },
+      signal: AbortSignal.timeout(BRAINTRUST_FEEDBACK_TIMEOUT_MS)
+    });
+    if (!resp.ok) {
+      logErr(`project lookup ${projectName}: HTTP ${resp.status}`);
+      return null;
+    }
+    const data = await resp.json();
+    const objects = data?.objects;
+    if (!objects || objects.length === 0) {
+      logErr(`project lookup ${projectName}: no objects`);
+      return null;
+    }
+    const id = objects[0]?.id;
+    if (!id) {
+      logErr(`project lookup ${projectName}: object missing id`);
+      return null;
+    }
+    projectIdCache[projectName] = id;
+    return id;
+  } catch (e) {
+    logErr(`project lookup ${projectName} failed: ${e.message}`);
+    return null;
+  }
+}
+async function emitBraintrustScore(opts) {
+  try {
+    if (!isTraceEnabled()) return;
+    const apiKey = getApiKey();
+    if (!apiKey) return;
+    if (!opts.spanId || opts.spanId.length === 0) return;
+    if (!opts.scores || Object.keys(opts.scores).length === 0) return;
+    const projectId = await resolveProjectId(apiKey);
+    if (!projectId) return;
+    const entry = {
+      id: opts.spanId,
+      scores: opts.scores
+    };
+    if (opts.metadata !== void 0) {
+      entry.metadata = opts.metadata;
+    }
+    if (opts.comment !== void 0) {
+      entry.comment = opts.comment;
+    }
+    const url = `${getApiUrl()}/v1/project_logs/${projectId}/feedback`;
+    try {
+      const resp = await fetch(url, {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${apiKey}`,
+          "Content-Type": "application/json"
+        },
+        body: JSON.stringify({ feedback: [entry] }),
+        signal: AbortSignal.timeout(BRAINTRUST_FEEDBACK_TIMEOUT_MS)
+      });
+      if (!resp.ok) {
+        logErr(`feedback POST ${opts.spanId}: HTTP ${resp.status}`);
+      }
+    } catch (e) {
+      logErr(`feedback POST ${opts.spanId} failed: ${e.message}`);
+    }
+  } catch (e) {
+    logErr(`unexpected error: ${e.message}`);
+  }
+}
+
 // src/ralph-task-monitor.ts
 var log2 = createLogger("ralph-task-monitor");
 var STRUCTURED_JSON_RE = /\{"ralph_status"\s*:\s*\{[^}]+\}\s*\}/;
@@ -126,9 +263,65 @@ var FAILURE_PATTERNS = [
 ];
 function readStdin() {
   try {
-    return readFileSync2(0, "utf-8");
+    return readFileSync3(0, "utf-8");
   } catch {
     return "{}";
+  }
+}
+function computeAgentTaskScore(input) {
+  if (input.transition === "failed") return 0;
+  const retries = typeof input.retries === "number" ? input.retries : 0;
+  return retries === 0 ? 1 : 0.5;
+}
+function buildAgentTaskScorePayload(input) {
+  const spanId = (process.env.BRAINTRUST_SESSION_ID || "").trim();
+  if (!spanId) return null;
+  const score = computeAgentTaskScore(input);
+  return {
+    spanId,
+    scores: {
+      agent_task_success: score
+    },
+    metadata: {
+      task_id: input.taskId,
+      task_name: input.taskName || "",
+      agent: input.agent || "unknown",
+      retries: typeof input.retries === "number" ? input.retries : 0,
+      duration_s: typeof input.durationS === "number" ? input.durationS : 0,
+      transition: input.transition,
+      hook: "ralph-task-monitor"
+    }
+  };
+}
+function readRalphTaskById(projectDir, taskId) {
+  const state = readRalphUnifiedState(projectDir);
+  if (!state || !Array.isArray(state.tasks)) return null;
+  const task = state.tasks.find((t) => String(t.id) === String(taskId));
+  if (!task) return null;
+  return {
+    id: String(task.id),
+    status: String(task.status),
+    name: typeof task.name === "string" ? task.name : void 0,
+    agent: typeof task.agent === "string" ? task.agent : void 0,
+    retries: typeof task.retries === "number" ? task.retries : void 0,
+    duration_s: typeof task.duration_s === "number" ? task.duration_s : void 0
+  };
+}
+function emitRalphTaskScore(projectDir, taskId, transition, fallbackAgent) {
+  try {
+    const task = readRalphTaskById(projectDir, taskId);
+    const payload = buildAgentTaskScorePayload({
+      taskId,
+      taskName: task?.name,
+      agent: task?.agent || fallbackAgent,
+      retries: task?.retries,
+      durationS: task?.duration_s,
+      transition
+    });
+    if (payload) {
+      void emitBraintrustScore(payload);
+    }
+  } catch {
   }
 }
 function detectStructuredJSON(text) {
@@ -187,8 +380,8 @@ function detectOutcome(text) {
 }
 function getV2ScriptPath() {
   const homeDir = process.env.HOME || process.env.USERPROFILE || "";
-  const v2Script = join3(homeDir, ".claude", "scripts", "ralph", "ralph-state-v2.py");
-  return existsSync3(v2Script) ? v2Script : null;
+  const v2Script = join4(homeDir, ".claude", "scripts", "ralph", "ralph-state-v2.py");
+  return existsSync4(v2Script) ? v2Script : null;
 }
 async function main() {
   let input = {};
@@ -234,6 +427,12 @@ async function main() {
         structuredResult.reason || "Agent reported failure"
       ], { encoding: "utf-8", timeout: 5e3 });
     }
+    emitRalphTaskScore(
+      projectDir,
+      structuredResult.taskId,
+      structuredResult.success ? "complete" : "failed",
+      agentType
+    );
     const marker = structuredResult.success ? "complete" : `failed: ${structuredResult.reason || "unknown"}`;
     const deployInfo = structuredResult.deploy_status ? ` [deploy: ${structuredResult.deploy_status}]` : "";
     const message2 = `
@@ -275,6 +474,7 @@ RALPH TASK MONITOR: ${agentType} -> task ${structuredResult.taskId} ${marker}${d
             "--id",
             taskId
           ], { encoding: "utf-8", timeout: 5e3 });
+          emitRalphTaskScore(projectDir, taskId, "complete", agentType);
           const message2 = `
 RALPH TASK MONITOR: ${agentType} -> task ${taskId} complete (generic JSON status)
 `;
@@ -312,6 +512,12 @@ RALPH TASK MONITOR: ${agentType} -> task ${taskId} complete (generic JSON status
         xmlResult.reason || "Agent reported failure"
       ], { encoding: "utf-8", timeout: 5e3 });
     }
+    emitRalphTaskScore(
+      projectDir,
+      xmlResult.taskId,
+      xmlResult.success ? "complete" : "failed",
+      agentType
+    );
     const marker = xmlResult.success ? "complete" : `failed: ${xmlResult.reason || "unknown"}`;
     const message2 = `
 RALPH TASK MONITOR: ${agentType} -> task ${xmlResult.taskId} ${marker} (XML tag)
@@ -392,6 +598,12 @@ RALPH TASK MONITOR: ${agentType} -> task ${xmlResult.taskId} ${marker} (XML tag)
         outcome.reason || "Agent reported failure"
       ], { encoding: "utf-8", timeout: 5e3 });
     }
+    emitRalphTaskScore(
+      projectDir,
+      taskId,
+      outcome.success ? "complete" : "failed",
+      agentType
+    );
   }
   const statusLines = [
     "",
@@ -411,5 +623,11 @@ RALPH TASK MONITOR: ${agentType} -> task ${xmlResult.taskId} ${marker} (XML tag)
   const message = statusLines.join("\n");
   console.log(JSON.stringify({ hookSpecificOutput: { hookEventName: "PostToolUse", additionalContext: message } }));
 }
-main().catch(() => {
-});
+if (!process.env.VITEST) {
+  main().catch(() => {
+  });
+}
+export {
+  buildAgentTaskScorePayload,
+  computeAgentTaskScore
+};

@@ -9,6 +9,7 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import * as os from 'os';
+import { emitBraintrustScore } from './shared/braintrust-score.js';
 
 // ============================================
 // Types
@@ -172,6 +173,60 @@ export function checkHookHealth(hookInfo: HookFileInfo): HookHealthResult {
   return { hookName, status: 'healthy', hookEvent };
 }
 
+// ---------------------------------------------------------------------------
+// Phase 3a (story braintrust-scoring): hook_health_ratio score payload.
+//
+// Emits once per SessionStart. The score is registered_count / total_dist_count
+// where:
+//   * total_dist_count = how many distinct hook commands settings.json points
+//     at (i.e. the registered hook count -- equivalent to results.length).
+//   * registered_count = how many of those dist files actually exist on disk
+//     (status === 'healthy' OR 'stale'; both mean the file is registered AND
+//     present, just stale needs a rebuild).
+//
+// Returns null when:
+//   * No hooks are registered (denominator 0 -- no signal to emit)
+//   * No spanId is available (no parent span to attach to)
+//
+// Metadata: { registered, total, missing_list: [up to 10 missing names] }.
+// ---------------------------------------------------------------------------
+
+export interface HookHealthScoreInput {
+  results: HookHealthResult[];
+  spanId: string;
+}
+
+/**
+ * Build the emit payload for hook_health_ratio. Pure -- exported for tests.
+ */
+export function buildHookHealthRatioPayload(
+  input: HookHealthScoreInput,
+): { spanId: string; scores: Record<string, number>; metadata: Record<string, unknown> } | null {
+  const { results, spanId } = input;
+  if (!spanId || spanId.length === 0) return null;
+  const total = results.length;
+  if (total === 0) return null;
+  // "Registered" here means the file exists on disk (healthy or stale).
+  // Missing is the only "broken" state -- the dist file is absent.
+  const missing = results.filter((r) => r.status === 'missing');
+  const registered = total - missing.length;
+  const ratio = registered / total;
+  // Cap the missing list at 10 names to keep metadata bounded.
+  const missingList = missing.slice(0, 10).map((r) => r.hookName);
+  return {
+    spanId,
+    scores: {
+      hook_health_ratio: ratio,
+    },
+    metadata: {
+      registered,
+      total,
+      missing_list: missingList,
+      hook: 'hook-health-monitor',
+    },
+  };
+}
+
 /**
  * Format the health check results into a human-readable report.
  */
@@ -256,6 +311,20 @@ async function main() {
     // Check health of each hook
     const results = hookFiles.map(hf => checkHookHealth(hf));
 
+    // Phase 3a: emit hook_health_ratio score (once per session-start). The
+    // helper is fail-open; we additionally wrap in try/catch so any unexpected
+    // failure can't block the health-report context injection below.
+    try {
+      const spanId = (process.env.BRAINTRUST_SESSION_ID || '').trim()
+        || (input.session_id || '');
+      const payload = buildHookHealthRatioPayload({ results, spanId });
+      if (payload) {
+        void emitBraintrustScore(payload);
+      }
+    } catch {
+      /* fail-open: never let score emission break the hook */
+    }
+
     // Format the report
     const report = formatHealthReport(results);
 
@@ -283,7 +352,9 @@ async function main() {
   }
 }
 
-main().catch((err) => {
-  console.error(err);
-  console.log(JSON.stringify({ result: 'continue' }));
-});
+if (!process.env.VITEST) {
+  main().catch((err) => {
+    console.error(err);
+    console.log(JSON.stringify({ result: 'continue' }));
+  });
+}

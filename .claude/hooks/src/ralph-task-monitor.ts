@@ -17,6 +17,7 @@ import { join } from 'path';
 import { spawnSync } from 'child_process';
 import { createLogger } from './shared/logger.js';
 import { readRalphUnifiedState } from './shared/state-schema.js';
+import { emitBraintrustScore } from './shared/braintrust-score.js';
 
 const log = createLogger('ralph-task-monitor');
 
@@ -86,6 +87,129 @@ function readStdin(): string {
     return readFileSync(0, 'utf-8');
   } catch {
     return '{}';
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Phase 3a (story braintrust-scoring): agent_task_success score emit.
+//
+// Emits a 0-1 score per Ralph task transition. Scoring rubric (from the plan):
+//   * complete + retries === 0     -> 1.0 (clean completion)
+//   * complete + retries > 0       -> 0.5 (partial credit, recovered)
+//   * failed                       -> 0.0
+//
+// spanId resolution: prefer BRAINTRUST_SESSION_ID env (set by the Python hook
+// chain when running inside a Claude Code session). The helper is fail-open,
+// so a missing span just skips emission silently.
+//
+// Metadata: { task_id, task_name, agent, retries, duration_s }.
+// ---------------------------------------------------------------------------
+
+export type RalphTaskTransition = 'complete' | 'failed';
+
+export interface RalphTaskScoreInput {
+  taskId: string;
+  taskName?: string;
+  agent?: string;
+  retries?: number;
+  durationS?: number;
+  transition: RalphTaskTransition;
+}
+
+/**
+ * Compute the agent_task_success score per the rubric above.
+ * Pure -- exported for unit testing.
+ */
+export function computeAgentTaskScore(input: RalphTaskScoreInput): number {
+  if (input.transition === 'failed') return 0.0;
+  // complete
+  const retries = typeof input.retries === 'number' ? input.retries : 0;
+  return retries === 0 ? 1.0 : 0.5;
+}
+
+/**
+ * Build the emit payload for agent_task_success. Returns null when no span
+ * id is available (the helper would skip the POST anyway, but returning null
+ * lets the caller avoid the unnecessary call and lets us assert on the
+ * payload shape in tests).
+ *
+ * Exported for unit testing -- main() wires this to emitBraintrustScore.
+ */
+export function buildAgentTaskScorePayload(
+  input: RalphTaskScoreInput,
+): { spanId: string; scores: Record<string, number>; metadata: Record<string, unknown> } | null {
+  const spanId = (process.env.BRAINTRUST_SESSION_ID || '').trim();
+  if (!spanId) return null;
+  const score = computeAgentTaskScore(input);
+  return {
+    spanId,
+    scores: {
+      agent_task_success: score,
+    },
+    metadata: {
+      task_id: input.taskId,
+      task_name: input.taskName || '',
+      agent: input.agent || 'unknown',
+      retries: typeof input.retries === 'number' ? input.retries : 0,
+      duration_s: typeof input.durationS === 'number' ? input.durationS : 0,
+      transition: input.transition,
+      hook: 'ralph-task-monitor',
+    },
+  };
+}
+
+/**
+ * Read a task from .ralph/state.json by id. Returns null when the state
+ * file is missing, the version doesn't match, or the task isn't found.
+ *
+ * We re-read state AFTER the python task-complete/task-fail spawnSync so
+ * the retries/duration_s fields reflect the post-transition state (e.g.
+ * task-fail bumps retries).
+ */
+function readRalphTaskById(
+  projectDir: string,
+  taskId: string,
+): { id: string; status: string; name?: string; agent?: string; retries?: number; duration_s?: number } | null {
+  const state = readRalphUnifiedState(projectDir);
+  if (!state || !Array.isArray(state.tasks)) return null;
+  const task = state.tasks.find((t) => String(t.id) === String(taskId));
+  if (!task) return null;
+  return {
+    id: String(task.id),
+    status: String(task.status),
+    name: typeof task.name === 'string' ? task.name : undefined,
+    agent: typeof task.agent === 'string' ? task.agent : undefined,
+    retries: typeof task.retries === 'number' ? task.retries : undefined,
+    duration_s: typeof task.duration_s === 'number' ? task.duration_s : undefined,
+  };
+}
+
+/**
+ * Fire-and-forget Braintrust emit for a Ralph task transition. Wraps all
+ * state reads and helper calls in try/catch so a score-emit failure can
+ * never break the primary task-monitor flow.
+ */
+function emitRalphTaskScore(
+  projectDir: string,
+  taskId: string,
+  transition: RalphTaskTransition,
+  fallbackAgent?: string,
+): void {
+  try {
+    const task = readRalphTaskById(projectDir, taskId);
+    const payload = buildAgentTaskScorePayload({
+      taskId,
+      taskName: task?.name,
+      agent: task?.agent || fallbackAgent,
+      retries: task?.retries,
+      durationS: task?.duration_s,
+      transition,
+    });
+    if (payload) {
+      void emitBraintrustScore(payload);
+    }
+  } catch {
+    /* fail-open: never let score emission break the hook */
   }
 }
 
@@ -222,6 +346,16 @@ async function main() {
       ], { encoding: 'utf-8', timeout: 5000 });
     }
 
+    // Phase 3a: emit agent_task_success score. State has been mutated by the
+    // task-complete/task-fail spawn above, so retries/duration_s reflect the
+    // post-transition values.
+    emitRalphTaskScore(
+      projectDir,
+      structuredResult.taskId,
+      structuredResult.success ? 'complete' : 'failed',
+      agentType,
+    );
+
     const marker = structuredResult.success ? 'complete' : `failed: ${structuredResult.reason || 'unknown'}`;
     const deployInfo = structuredResult.deploy_status ? ` [deploy: ${structuredResult.deploy_status}]` : '';
     const message = `\nRALPH TASK MONITOR: ${agentType} -> task ${structuredResult.taskId} ${marker}${deployInfo} (structured JSON)\n`;
@@ -263,6 +397,8 @@ async function main() {
           spawnSync('python', [
             v2Script, '-p', projectDir, 'task-complete', '--id', taskId
           ], { encoding: 'utf-8', timeout: 5000 });
+          // Phase 3a: emit agent_task_success score (post-transition state).
+          emitRalphTaskScore(projectDir, taskId, 'complete', agentType);
           const message = `\nRALPH TASK MONITOR: ${agentType} -> task ${taskId} complete (generic JSON status)\n`;
           console.log(JSON.stringify({ hookSpecificOutput: { hookEventName: 'PostToolUse', additionalContext: message } }));
           return;
@@ -288,6 +424,14 @@ async function main() {
         '--error', xmlResult.reason || 'Agent reported failure'
       ], { encoding: 'utf-8', timeout: 5000 });
     }
+
+    // Phase 3a: emit agent_task_success score (post-transition state).
+    emitRalphTaskScore(
+      projectDir,
+      xmlResult.taskId,
+      xmlResult.success ? 'complete' : 'failed',
+      agentType,
+    );
 
     const marker = xmlResult.success ? 'complete' : `failed: ${xmlResult.reason || 'unknown'}`;
     const message = `\nRALPH TASK MONITOR: ${agentType} -> task ${xmlResult.taskId} ${marker} (XML tag)\n`;
@@ -367,6 +511,13 @@ async function main() {
         '--error', outcome.reason || 'Agent reported failure'
       ], { encoding: 'utf-8', timeout: 5000 });
     }
+    // Phase 3a: emit agent_task_success score (post-transition state).
+    emitRalphTaskScore(
+      projectDir,
+      taskId,
+      outcome.success ? 'complete' : 'failed',
+      agentType,
+    );
   }
 
   const statusLines = [
@@ -390,6 +541,8 @@ async function main() {
   console.log(JSON.stringify({ hookSpecificOutput: { hookEventName: 'PostToolUse', additionalContext: message } }));
 }
 
-main().catch(() => {
-  // Fail silently — monitoring is non-critical
-});
+if (!process.env.VITEST) {
+  main().catch(() => {
+    // Fail silently — monitoring is non-critical
+  });
+}

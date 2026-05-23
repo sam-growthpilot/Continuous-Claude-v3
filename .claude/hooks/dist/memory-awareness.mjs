@@ -1,6 +1,7 @@
 // src/memory-awareness.ts
-import { readFileSync as readFileSync3, existsSync as existsSync4, mkdirSync as mkdirSync2, appendFileSync } from "fs";
+import { readFileSync as readFileSync4, existsSync as existsSync5, mkdirSync as mkdirSync2, appendFileSync } from "fs";
 import * as path from "path";
+import * as os from "os";
 import { spawnSync } from "child_process";
 
 // src/shared/opc-path.ts
@@ -511,55 +512,140 @@ function ensureDaemonRunning() {
   }
 }
 
-// src/shared/host-ram.ts
-import { spawnSync as defaultSpawnSync } from "child_process";
-import { readFileSync as defaultReadFileSync } from "fs";
-var HOST_RAM_FLOOR_BYTES = 2 * 1024 * 1024 * 1024;
-function getHostRamFloorBytes() {
-  const raw = process.env.CCV3_HOST_RAM_FLOOR_BYTES;
-  if (!raw) return HOST_RAM_FLOOR_BYTES;
-  const parsed = parseInt(raw, 10);
-  if (Number.isNaN(parsed) || parsed <= 0) return HOST_RAM_FLOOR_BYTES;
-  return parsed;
+// src/shared/braintrust-score.ts
+import { readFileSync as readFileSync3, existsSync as existsSync4 } from "node:fs";
+import { join as join4 } from "node:path";
+import { homedir } from "node:os";
+var BRAINTRUST_FEEDBACK_TIMEOUT_MS = 2e3;
+var DEFAULT_API_URL = "https://api.braintrust.dev";
+var DEFAULT_PROJECT_NAME = "claude-code";
+var projectIdCache = {};
+var loadedEnvPaths = /* @__PURE__ */ new Set();
+function defaultEnvPath() {
+  return join4(homedir(), ".claude", ".env");
 }
-var PROBE_TIMEOUT_MS = 1500;
-function getFreeRamBytes(spawnFn = defaultSpawnSync, readFileFn = defaultReadFileSync, platform = process.platform) {
-  const override = process.env.CCV3_HOST_RAM_OVERRIDE_BYTES;
-  if (override) {
-    const parsed = parseInt(override, 10);
-    if (!Number.isNaN(parsed) && parsed > 0) return parsed;
-  }
+function loadEnv(envPath) {
+  const path2 = envPath ?? defaultEnvPath();
+  if (loadedEnvPaths.has(path2)) return;
+  loadedEnvPaths.add(path2);
   try {
-    if (platform === "win32") {
-      const result = spawnFn(
-        "powershell",
-        [
-          "-NoProfile",
-          "-NonInteractive",
-          "-Command",
-          "(Get-CimInstance Win32_OperatingSystem).FreePhysicalMemory"
-        ],
-        { timeout: PROBE_TIMEOUT_MS, encoding: "utf-8" }
-      );
-      const out = typeof result.stdout === "string" ? result.stdout : result.stdout?.toString("utf-8") ?? "";
-      const kb2 = parseInt(out.trim(), 10);
-      if (Number.isNaN(kb2) || kb2 <= 0) {
-        return Number.POSITIVE_INFINITY;
+    if (!existsSync4(path2)) return;
+    const text = readFileSync3(path2, "utf8");
+    for (const raw of text.split(/\r?\n/)) {
+      const line = raw.trim();
+      if (line.length === 0) continue;
+      if (line.startsWith("#")) continue;
+      const eq = line.indexOf("=");
+      if (eq <= 0) continue;
+      const key = line.slice(0, eq).trim();
+      if (key.length === 0) continue;
+      let value = line.slice(eq + 1).trim();
+      if (value.length >= 2 && (value.startsWith('"') && value.endsWith('"') || value.startsWith("'") && value.endsWith("'"))) {
+        value = value.slice(1, -1);
       }
-      return kb2 * 1024;
+      if (process.env[key] === void 0) {
+        process.env[key] = value;
+      }
     }
-    const meminfo = readFileFn("/proc/meminfo", "utf-8");
-    const match = meminfo.match(/^MemAvailable:\s+(\d+)\s+kB/m);
-    if (!match) {
-      return Number.POSITIVE_INFINITY;
-    }
-    const kb = parseInt(match[1], 10);
-    if (Number.isNaN(kb) || kb <= 0) {
-      return Number.POSITIVE_INFINITY;
-    }
-    return kb * 1024;
   } catch {
-    return Number.POSITIVE_INFINITY;
+  }
+}
+function getApiUrl() {
+  return process.env.BRAINTRUST_API_URL || DEFAULT_API_URL;
+}
+function getApiKey() {
+  const key = process.env.BRAINTRUST_API_KEY;
+  return key && key.length > 0 ? key : null;
+}
+function isTraceEnabled() {
+  loadEnv();
+  return (process.env.TRACE_TO_BRAINTRUST || "").toLowerCase() === "true";
+}
+function logErr(msg) {
+  try {
+    process.stderr.write(`[braintrust-score] ${msg}
+`);
+  } catch {
+  }
+}
+async function resolveProjectId(apiKey) {
+  const directId = process.env.BRAINTRUST_CC_PROJECT_ID;
+  if (directId && directId.length > 0) {
+    return directId;
+  }
+  const projectName = process.env.BRAINTRUST_CC_PROJECT || DEFAULT_PROJECT_NAME;
+  const cached = projectIdCache[projectName];
+  if (cached) return cached;
+  try {
+    const url = getApiUrl() + "/v1/project?project_name=" + encodeURIComponent(projectName);
+    const resp = await fetch(url, {
+      method: "GET",
+      headers: {
+        Authorization: `Bearer ${apiKey}`,
+        "Content-Type": "application/json"
+      },
+      signal: AbortSignal.timeout(BRAINTRUST_FEEDBACK_TIMEOUT_MS)
+    });
+    if (!resp.ok) {
+      logErr(`project lookup ${projectName}: HTTP ${resp.status}`);
+      return null;
+    }
+    const data = await resp.json();
+    const objects = data?.objects;
+    if (!objects || objects.length === 0) {
+      logErr(`project lookup ${projectName}: no objects`);
+      return null;
+    }
+    const id = objects[0]?.id;
+    if (!id) {
+      logErr(`project lookup ${projectName}: object missing id`);
+      return null;
+    }
+    projectIdCache[projectName] = id;
+    return id;
+  } catch (e) {
+    logErr(`project lookup ${projectName} failed: ${e.message}`);
+    return null;
+  }
+}
+async function emitBraintrustScore(opts) {
+  try {
+    if (!isTraceEnabled()) return;
+    const apiKey = getApiKey();
+    if (!apiKey) return;
+    if (!opts.spanId || opts.spanId.length === 0) return;
+    if (!opts.scores || Object.keys(opts.scores).length === 0) return;
+    const projectId = await resolveProjectId(apiKey);
+    if (!projectId) return;
+    const entry = {
+      id: opts.spanId,
+      scores: opts.scores
+    };
+    if (opts.metadata !== void 0) {
+      entry.metadata = opts.metadata;
+    }
+    if (opts.comment !== void 0) {
+      entry.comment = opts.comment;
+    }
+    const url = `${getApiUrl()}/v1/project_logs/${projectId}/feedback`;
+    try {
+      const resp = await fetch(url, {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${apiKey}`,
+          "Content-Type": "application/json"
+        },
+        body: JSON.stringify({ feedback: [entry] }),
+        signal: AbortSignal.timeout(BRAINTRUST_FEEDBACK_TIMEOUT_MS)
+      });
+      if (!resp.ok) {
+        logErr(`feedback POST ${opts.spanId}: HTTP ${resp.status}`);
+      }
+    } catch (e) {
+      logErr(`feedback POST ${opts.spanId} failed: ${e.message}`);
+    }
+  } catch (e) {
+    logErr(`unexpected error: ${e.message}`);
   }
 }
 
@@ -568,7 +654,7 @@ var TEXT_ONLY_FLOOR = 0.05;
 var HYBRID_FLOOR = 0.01;
 var LOCAL_SCORE_NORMALIZE = 0.1;
 function readStdin() {
-  return readFileSync3(0, "utf-8");
+  return readFileSync4(0, "utf-8");
 }
 function expandGitQuery(prompt) {
   const lower = prompt.toLowerCase().trim();
@@ -603,7 +689,7 @@ function expandGitQuery(prompt) {
 function checkLocalMemory(intent, projectDir) {
   const homeDir = process.env.HOME || process.env.USERPROFILE || "";
   const projectMemoryScript = path.join(homeDir, ".claude", "scripts", "core", "project_memory.py");
-  if (!existsSync4(projectMemoryScript)) return [];
+  if (!existsSync5(projectMemoryScript)) return [];
   try {
     const result = spawnSync("uv", [
       "run",
@@ -752,6 +838,37 @@ function logRecallFire(entry, projectDir) {
   } catch {
   }
 }
+function readBraintrustSessionState(sessionId) {
+  if (!sessionId) return null;
+  try {
+    const homeDir = process.env.HOME || process.env.USERPROFILE || os.homedir();
+    if (!homeDir) return null;
+    const statePath = path.join(
+      homeDir,
+      ".claude",
+      "state",
+      "braintrust_sessions",
+      `${sessionId}.json`
+    );
+    if (!existsSync5(statePath)) return null;
+    const raw = readFileSync4(statePath, "utf-8");
+    return JSON.parse(raw);
+  } catch {
+    return null;
+  }
+}
+function resolveBraintrustSpan(sessionId) {
+  const state = readBraintrustSessionState(sessionId);
+  if (!state) return null;
+  if (state.sampled_out) return null;
+  if (state.current_turn_span_id && state.current_turn_span_id.length > 0) {
+    return { spanId: state.current_turn_span_id, attachedTo: "turn" };
+  }
+  if (state.root_span_id && state.root_span_id.length > 0) {
+    return { spanId: state.root_span_id, attachedTo: "root" };
+  }
+  return null;
+}
 async function main() {
   const t0 = Date.now();
   const input = JSON.parse(readStdin());
@@ -774,27 +891,14 @@ async function main() {
     outputContinue();
     return;
   }
-  const freeRamBytes = getFreeRamBytes();
-  const hostRamFloor = getHostRamFloorBytes();
-  const hostMemoryPressured = freeRamBytes < hostRamFloor;
-  let embedFallbackReason = null;
-  if (hostMemoryPressured) {
-    process.stderr.write(
-      `[memory-awareness] host RAM low: ${(freeRamBytes / 1024 / 1024 / 1024).toFixed(2)} GB free (floor ${(hostRamFloor / 1024 / 1024 / 1024).toFixed(2)} GB); forcing text-only
-`
-    );
-    embedFallbackReason = "host_memory_pressure";
-  }
   let daemonReady = false;
-  if (!hostMemoryPressured) {
-    try {
-      daemonReady = await isDaemonReady();
-    } catch {
-      daemonReady = false;
-    }
+  try {
+    daemonReady = await isDaemonReady();
+  } catch {
+    daemonReady = false;
   }
   const mode = daemonReady ? "hybrid" : "text-only";
-  if (!daemonReady && !hostMemoryPressured) {
+  if (!daemonReady) {
     try {
       ensureDaemonRunning();
     } catch {
@@ -821,14 +925,32 @@ async function main() {
     floor_applied: floorApplied,
     // MEDIUM-2 (arbiter 2.1): true = subprocess SIGKILLed before returning
     // output; false = completed normally (even if results_count is 0).
-    db_subprocess_timed_out: dbTimedOut,
-    // BLOCKER-2: host-RAM probe diagnostics. free_ram_bytes is null when
-    // the probe fell through to fail-open (Number.POSITIVE_INFINITY).
-    host_memory_pressure: hostMemoryPressured,
-    free_ram_bytes: Number.isFinite(freeRamBytes) ? freeRamBytes : null,
-    embed_fallback_reason: embedFallbackReason
+    db_subprocess_timed_out: dbTimedOut
   };
   logRecallFire(logEntry, projectDir);
+  try {
+    const span = resolveBraintrustSpan(input.session_id || "");
+    if (span) {
+      void emitBraintrustScore({
+        spanId: span.spanId,
+        scores: {
+          memory_recall_relevance: topScoreRaw,
+          memory_recall_hit: match && match.results.length > 0 ? 1 : 0
+        },
+        metadata: {
+          attached_to: span.attachedTo,
+          results_count: logEntry.results_count,
+          kept_after_floor: logEntry.kept_after_floor,
+          mode: logEntry.mode,
+          daemon_ready: logEntry.daemon_ready,
+          total_elapsed_ms: logEntry.total_elapsed_ms,
+          intent: logEntry.intent,
+          floor_applied: logEntry.floor_applied
+        }
+      });
+    }
+  } catch {
+  }
   if (match) {
     try {
       logHook(input.session_id, "memory-awareness");

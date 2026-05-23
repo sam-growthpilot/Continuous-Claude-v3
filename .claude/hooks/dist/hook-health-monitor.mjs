@@ -2,6 +2,145 @@
 import * as fs from "fs";
 import * as path from "path";
 import * as os from "os";
+
+// src/shared/braintrust-score.ts
+import { readFileSync, existsSync } from "node:fs";
+import { join } from "node:path";
+import { homedir } from "node:os";
+var BRAINTRUST_FEEDBACK_TIMEOUT_MS = 2e3;
+var DEFAULT_API_URL = "https://api.braintrust.dev";
+var DEFAULT_PROJECT_NAME = "claude-code";
+var projectIdCache = {};
+var loadedEnvPaths = /* @__PURE__ */ new Set();
+function defaultEnvPath() {
+  return join(homedir(), ".claude", ".env");
+}
+function loadEnv(envPath) {
+  const path2 = envPath ?? defaultEnvPath();
+  if (loadedEnvPaths.has(path2)) return;
+  loadedEnvPaths.add(path2);
+  try {
+    if (!existsSync(path2)) return;
+    const text = readFileSync(path2, "utf8");
+    for (const raw of text.split(/\r?\n/)) {
+      const line = raw.trim();
+      if (line.length === 0) continue;
+      if (line.startsWith("#")) continue;
+      const eq = line.indexOf("=");
+      if (eq <= 0) continue;
+      const key = line.slice(0, eq).trim();
+      if (key.length === 0) continue;
+      let value = line.slice(eq + 1).trim();
+      if (value.length >= 2 && (value.startsWith('"') && value.endsWith('"') || value.startsWith("'") && value.endsWith("'"))) {
+        value = value.slice(1, -1);
+      }
+      if (process.env[key] === void 0) {
+        process.env[key] = value;
+      }
+    }
+  } catch {
+  }
+}
+function getApiUrl() {
+  return process.env.BRAINTRUST_API_URL || DEFAULT_API_URL;
+}
+function getApiKey() {
+  const key = process.env.BRAINTRUST_API_KEY;
+  return key && key.length > 0 ? key : null;
+}
+function isTraceEnabled() {
+  loadEnv();
+  return (process.env.TRACE_TO_BRAINTRUST || "").toLowerCase() === "true";
+}
+function logErr(msg) {
+  try {
+    process.stderr.write(`[braintrust-score] ${msg}
+`);
+  } catch {
+  }
+}
+async function resolveProjectId(apiKey) {
+  const directId = process.env.BRAINTRUST_CC_PROJECT_ID;
+  if (directId && directId.length > 0) {
+    return directId;
+  }
+  const projectName = process.env.BRAINTRUST_CC_PROJECT || DEFAULT_PROJECT_NAME;
+  const cached = projectIdCache[projectName];
+  if (cached) return cached;
+  try {
+    const url = getApiUrl() + "/v1/project?project_name=" + encodeURIComponent(projectName);
+    const resp = await fetch(url, {
+      method: "GET",
+      headers: {
+        Authorization: `Bearer ${apiKey}`,
+        "Content-Type": "application/json"
+      },
+      signal: AbortSignal.timeout(BRAINTRUST_FEEDBACK_TIMEOUT_MS)
+    });
+    if (!resp.ok) {
+      logErr(`project lookup ${projectName}: HTTP ${resp.status}`);
+      return null;
+    }
+    const data = await resp.json();
+    const objects = data?.objects;
+    if (!objects || objects.length === 0) {
+      logErr(`project lookup ${projectName}: no objects`);
+      return null;
+    }
+    const id = objects[0]?.id;
+    if (!id) {
+      logErr(`project lookup ${projectName}: object missing id`);
+      return null;
+    }
+    projectIdCache[projectName] = id;
+    return id;
+  } catch (e) {
+    logErr(`project lookup ${projectName} failed: ${e.message}`);
+    return null;
+  }
+}
+async function emitBraintrustScore(opts) {
+  try {
+    if (!isTraceEnabled()) return;
+    const apiKey = getApiKey();
+    if (!apiKey) return;
+    if (!opts.spanId || opts.spanId.length === 0) return;
+    if (!opts.scores || Object.keys(opts.scores).length === 0) return;
+    const projectId = await resolveProjectId(apiKey);
+    if (!projectId) return;
+    const entry = {
+      id: opts.spanId,
+      scores: opts.scores
+    };
+    if (opts.metadata !== void 0) {
+      entry.metadata = opts.metadata;
+    }
+    if (opts.comment !== void 0) {
+      entry.comment = opts.comment;
+    }
+    const url = `${getApiUrl()}/v1/project_logs/${projectId}/feedback`;
+    try {
+      const resp = await fetch(url, {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${apiKey}`,
+          "Content-Type": "application/json"
+        },
+        body: JSON.stringify({ feedback: [entry] }),
+        signal: AbortSignal.timeout(BRAINTRUST_FEEDBACK_TIMEOUT_MS)
+      });
+      if (!resp.ok) {
+        logErr(`feedback POST ${opts.spanId}: HTTP ${resp.status}`);
+      }
+    } catch (e) {
+      logErr(`feedback POST ${opts.spanId} failed: ${e.message}`);
+    }
+  } catch (e) {
+    logErr(`unexpected error: ${e.message}`);
+  }
+}
+
+// src/hook-health-monitor.ts
 function parseHookCommands(settings) {
   const hooks = settings.hooks;
   if (!hooks || typeof hooks !== "object") {
@@ -64,6 +203,28 @@ function checkHookHealth(hookInfo) {
   }
   return { hookName, status: "healthy", hookEvent };
 }
+function buildHookHealthRatioPayload(input) {
+  const { results, spanId } = input;
+  if (!spanId || spanId.length === 0) return null;
+  const total = results.length;
+  if (total === 0) return null;
+  const missing = results.filter((r) => r.status === "missing");
+  const registered = total - missing.length;
+  const ratio = registered / total;
+  const missingList = missing.slice(0, 10).map((r) => r.hookName);
+  return {
+    spanId,
+    scores: {
+      hook_health_ratio: ratio
+    },
+    metadata: {
+      registered,
+      total,
+      missing_list: missingList,
+      hook: "hook-health-monitor"
+    }
+  };
+}
 function formatHealthReport(results) {
   if (results.length === 0) {
     return "Hook Health: No hooks registered";
@@ -122,6 +283,14 @@ async function main() {
       return;
     }
     const results = hookFiles.map((hf) => checkHookHealth(hf));
+    try {
+      const spanId = (process.env.BRAINTRUST_SESSION_ID || "").trim() || (input.session_id || "");
+      const payload = buildHookHealthRatioPayload({ results, spanId });
+      if (payload) {
+        void emitBraintrustScore(payload);
+      }
+    } catch {
+    }
     const report = formatHealthReport(results);
     const hasIssues = results.some((r) => r.status !== "healthy");
     const output = { result: "continue" };
@@ -140,11 +309,14 @@ async function main() {
     console.log(JSON.stringify({ result: "continue" }));
   }
 }
-main().catch((err) => {
-  console.error(err);
-  console.log(JSON.stringify({ result: "continue" }));
-});
+if (!process.env.VITEST) {
+  main().catch((err) => {
+    console.error(err);
+    console.log(JSON.stringify({ result: "continue" }));
+  });
+}
 export {
+  buildHookHealthRatioPayload,
   checkHookHealth,
   formatHealthReport,
   parseHookCommands
