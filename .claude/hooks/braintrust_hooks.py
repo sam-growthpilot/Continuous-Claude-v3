@@ -287,7 +287,14 @@ def session_start(input_data: dict) -> dict:
 
 
 def session_end(input_data: dict) -> dict:
-    """Handle SessionEnd hook."""
+    """Handle SessionEnd hook.
+
+    Closes the root span in Braintrust so traces have an end timestamp. Before
+    this fix, root spans were never finalized: spans showed start timestamps
+    only and Braintrust UI computed open-ended durations. We emit a merge-event
+    keyed on root_span_id with metrics.end so Braintrust merges the close into
+    the existing root span.
+    """
     debug("SessionEnd hook triggered")
 
     if not TRACE_ENABLED:
@@ -297,10 +304,50 @@ def session_end(input_data: dict) -> dict:
     if not session_id:
         return {"result": "continue"}
 
+    # Skip sampled-out sessions (they have no root span to close)
+    if get_session_value(session_id, "sampled_out"):
+        log("INFO", f"Session ended (sampled out): {session_id}")
+        return {"result": "continue"}
+
     root_span_id = get_session_value(session_id, "root_span_id")
+    project_id = get_session_value(session_id, "project_id")
     turn_count = get_session_value(session_id, "turn_count") or 0
 
-    log("INFO", f"Session ended: {session_id} (turns={turn_count})")
+    # If we never created a root span (e.g., API failure on session_start),
+    # there's nothing to close. Log locally and exit clean.
+    if not root_span_id or not project_id:
+        log(
+            "INFO",
+            f"Session ended (no root span): {session_id} (turns={turn_count})",
+        )
+        return {"result": "continue"}
+
+    # POST a merge event that closes the root span with an end timestamp.
+    # Pattern mirrors the `stop` hook's turn finalization (lines ~707-714):
+    # we emit `_is_merge: True` so Braintrust merges this update into the
+    # existing event keyed by `id` rather than creating a new event.
+    end_time = int(datetime.now().timestamp())
+    close_event = {
+        "id": root_span_id,
+        "_is_merge": True,
+        "metrics": {"end": end_time},
+        "metadata": {
+            "turn_count": turn_count,
+            "session_ended": get_timestamp(),
+        },
+    }
+
+    try:
+        insert_span(project_id, close_event)
+        log(
+            "INFO",
+            f"Session ended: {session_id} (turns={turn_count}, root_span closed at {end_time})",
+        )
+    except Exception as e:
+        # Fail-open: local log success is still valuable for ops, even if the
+        # Braintrust POST fails. Don't break the hook pipeline.
+        log("ERROR", f"Session end span-close failed for {session_id}: {e}")
+
     return {"result": "continue"}
 
 
@@ -372,6 +419,36 @@ def _truncate_payload(data: Any, max_chars: int = TOOL_PAYLOAD_MAX_CHARS) -> Any
     return data
 
 
+def _detect_tool_error(resp: Any) -> bool:
+    """Detect whether a PostToolUse tool_response represents a failed call.
+
+    Phase 2.3 (story braintrust-scoring). Used by post_tool_use to compute
+    the tool_call_success span score. Reads the original tool_response BEFORE
+    truncation so we don't accidentally classify a truncated success payload
+    as an error just because the truncated tail mentions "error".
+
+    Detection rules (any one is sufficient):
+      * dict.is_error is True
+      * dict.error is a non-empty string OR True
+      * dict.success is False
+
+    Everything else (including non-dict responses and dicts with none of
+    these flags set) is treated as success.
+    """
+    if not isinstance(resp, dict):
+        return False
+    if resp.get("is_error") is True:
+        return True
+    err = resp.get("error")
+    if isinstance(err, str) and err.strip():
+        return True
+    if err is True:
+        return True
+    if resp.get("success") is False:
+        return True
+    return False
+
+
 def post_tool_use(input_data: dict) -> dict:
     """Handle PostToolUse hook."""
     debug("PostToolUse hook triggered")
@@ -404,11 +481,27 @@ def post_tool_use(input_data: dict) -> dict:
     span_id = generate_uuid()
     timestamp = get_timestamp()
     tool_input = input_data.get("tool_input", {})
-    tool_output = input_data.get("tool_response", input_data.get("output", {}))
+    tool_response_raw = input_data.get("tool_response", input_data.get("output", {}))
 
-    # Truncate payloads to reduce data volume
+    # Phase 2.3 (story braintrust-scoring): compute tool_call_success BEFORE
+    # truncating tool_output so we read the original `is_error` / `error` /
+    # `success` fields rather than a truncated string fragment.
+    #
+    # Claude Code's tool_response shape varies by tool, but the conventions
+    # we observe across hook payloads are:
+    #   * dict with `is_error: True`     -> failed tool call
+    #   * dict with non-empty `error`    -> failed tool call
+    #   * dict with `success: False`     -> failed tool call
+    #   * anything else (incl. missing)  -> treat as success
+    #
+    # Defaulting to success because most successful tool calls don't bother
+    # setting any flag on the happy path. Marking unknown as failure would
+    # bias the score downward and confuse the time-series.
+    tool_error = _detect_tool_error(tool_response_raw)
+
+    # Truncate payloads to reduce data volume (AFTER error detection above)
     tool_input = _truncate_payload(tool_input)
-    tool_output = _truncate_payload(tool_output)
+    tool_output = _truncate_payload(tool_response_raw)
 
     # Determine span name
     if tool_name in ("Write", "Edit", "MultiEdit"):
@@ -433,10 +526,20 @@ def post_tool_use(input_data: dict) -> dict:
             "name": span_name,
             "type": "tool",
         },
+        # Phase 2.3: attach tool_call_success score directly to the span
+        # event at insert time. Braintrust accepts `scores` on insert
+        # payloads (distinct from the /feedback endpoint used for
+        # after-the-fact scoring via the TS helper). Quota note: the
+        # EXCLUDED_TOOLS guard above filters out Read/Glob/Grep/etc. BEFORE
+        # we get here, so we only emit a score for tools we already pay to
+        # trace -- no extra budget cost.
+        "scores": {
+            "tool_call_success": 0.0 if tool_error else 1.0,
+        },
     }
 
     insert_span(project_id, event)
-    log("INFO", f"Tool: {span_name}")
+    log("INFO", f"Tool: {span_name} (success={not tool_error})")
     return {"result": "continue"}
 
 

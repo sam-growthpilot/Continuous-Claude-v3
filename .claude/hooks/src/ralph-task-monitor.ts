@@ -185,16 +185,19 @@ function readRalphTaskById(
 }
 
 /**
- * Fire-and-forget Braintrust emit for a Ralph task transition. Wraps all
- * state reads and helper calls in try/catch so a score-emit failure can
- * never break the primary task-monitor flow.
+ * Braintrust emit for a Ralph task transition. Must be awaited — hook
+ * subprocesses exit immediately after returning output, and a void/fire-and-
+ * forget call would kill the in-flight HTTPS POST before it completes.
+ * BRAINTRUST_FEEDBACK_TIMEOUT_MS (2 s) bounds the latency. Wraps all state
+ * reads and helper calls in try/catch so a score-emit failure can never break
+ * the primary task-monitor flow.
  */
-function emitRalphTaskScore(
+async function emitRalphTaskScore(
   projectDir: string,
   taskId: string,
   transition: RalphTaskTransition,
   fallbackAgent?: string,
-): void {
+): Promise<void> {
   try {
     const task = readRalphTaskById(projectDir, taskId);
     const payload = buildAgentTaskScorePayload({
@@ -206,7 +209,7 @@ function emitRalphTaskScore(
       transition,
     });
     if (payload) {
-      void emitBraintrustScore(payload);
+      await emitBraintrustScore(payload);
     }
   } catch {
     /* fail-open: never let score emission break the hook */
@@ -349,7 +352,7 @@ async function main() {
     // Phase 3a: emit agent_task_success score. State has been mutated by the
     // task-complete/task-fail spawn above, so retries/duration_s reflect the
     // post-transition values.
-    emitRalphTaskScore(
+    await emitRalphTaskScore(
       projectDir,
       structuredResult.taskId,
       structuredResult.success ? 'complete' : 'failed',
@@ -398,7 +401,7 @@ async function main() {
             v2Script, '-p', projectDir, 'task-complete', '--id', taskId
           ], { encoding: 'utf-8', timeout: 5000 });
           // Phase 3a: emit agent_task_success score (post-transition state).
-          emitRalphTaskScore(projectDir, taskId, 'complete', agentType);
+          await emitRalphTaskScore(projectDir, taskId, 'complete', agentType);
           const message = `\nRALPH TASK MONITOR: ${agentType} -> task ${taskId} complete (generic JSON status)\n`;
           console.log(JSON.stringify({ hookSpecificOutput: { hookEventName: 'PostToolUse', additionalContext: message } }));
           return;
@@ -426,7 +429,7 @@ async function main() {
     }
 
     // Phase 3a: emit agent_task_success score (post-transition state).
-    emitRalphTaskScore(
+    await emitRalphTaskScore(
       projectDir,
       xmlResult.taskId,
       xmlResult.success ? 'complete' : 'failed',
@@ -512,7 +515,7 @@ async function main() {
       ], { encoding: 'utf-8', timeout: 5000 });
     }
     // Phase 3a: emit agent_task_success score (post-transition state).
-    emitRalphTaskScore(
+    await emitRalphTaskScore(
       projectDir,
       taskId,
       outcome.success ? 'complete' : 'failed',

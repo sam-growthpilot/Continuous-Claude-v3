@@ -578,46 +578,6 @@ async function main() {
   };
   logRecallFire(logEntry, projectDir);
 
-  // Phase 2.1 (story braintrust-scoring): emit memory_recall_relevance score
-  // to Braintrust. Fail-open by design -- the helper itself never throws,
-  // and we additionally guard with try/catch so any unexpected failure can't
-  // break the hook pipeline.
-  //
-  // Span-id resolution: this hook runs BEFORE the Python braintrust_hooks.py
-  // user_prompt_submit handler, so the NEW turn span doesn't exist yet at
-  // emit time. We attach to root_span_id (which DOES persist across turns)
-  // and tag the score with metadata.attached_to so downstream queries can
-  // tell session-summary scores from turn-attached ones. When/if a future
-  // refactor reorders the Python handler before us, prefer the turn span.
-  try {
-    const span = resolveBraintrustSpan(input.session_id || '');
-    if (span) {
-      // Don't await -- score emission is fire-and-forget. The helper has a
-      // 2s timeout and swallows errors. Awaiting would add up to 2s of
-      // latency to every UserPromptSubmit, which is unacceptable.
-      void emitBraintrustScore({
-        spanId: span.spanId,
-        scores: {
-          memory_recall_relevance: topScoreRaw,
-          memory_recall_hit:
-            match && match.results.length > 0 ? 1.0 : 0.0,
-        },
-        metadata: {
-          attached_to: span.attachedTo,
-          results_count: logEntry.results_count,
-          kept_after_floor: logEntry.kept_after_floor,
-          mode: logEntry.mode,
-          daemon_ready: logEntry.daemon_ready,
-          total_elapsed_ms: logEntry.total_elapsed_ms,
-          intent: logEntry.intent,
-          floor_applied: logEntry.floor_applied,
-        },
-      });
-    }
-  } catch {
-    /* fail-open: never let score emission break the hook */
-  }
-
   if (match) {
     // Log that this hook fired (only when it actually finds memories)
     try { logHook(input.session_id, 'memory-awareness'); } catch { /* never break */ }

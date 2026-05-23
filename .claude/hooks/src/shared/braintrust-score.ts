@@ -20,17 +20,7 @@
  * the cache lives for one hook execution. The Python hook caches via the
  * shared `braintrust_global.json`; we don't share that file here (different
  * runtime, different lifetime).
- *
- * Environment loading:
- *   The Claude Code hook subprocess does NOT inherit `~/.claude/.env` — the
- *   Python sibling explicitly reads that file at startup. `loadEnv()` is the
- *   TS parity for that, called lazily on first `isTraceEnabled()` check so
- *   `BRAINTRUST_API_KEY` and friends are present when the hook runs.
  */
-
-import { readFileSync, existsSync } from 'node:fs';
-import { join } from 'node:path';
-import { homedir } from 'node:os';
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -83,101 +73,6 @@ export function resetProjectIdCacheForTests(): void {
 }
 
 // ---------------------------------------------------------------------------
-// .env loader (parity with Python braintrust_hooks.py)
-// ---------------------------------------------------------------------------
-
-/**
- * Tracks which .env file paths have already been loaded this process, so
- * subsequent calls are no-ops. Keyed by absolute path so callers can target
- * different files in tests.
- */
-const loadedEnvPaths = new Set<string>();
-
-/**
- * Default path to the user-level .env file: `~/.claude/.env`. Resolved at
- * call time (not module-load time) so tests can spy on `os.homedir` if they
- * need to, and so the value reflects the runtime user.
- */
-function defaultEnvPath(): string {
-  return join(homedir(), '.claude', '.env');
-}
-
-/**
- * Load environment variables from a `KEY=VALUE` file into `process.env`.
- *
- * Parity contract with the Python sibling (`braintrust_hooks.py:854-868`):
- *   - Splits each line on the FIRST `=` (so values may contain `=`).
- *   - Skips blank lines and lines starting with `#`.
- *   - Trims surrounding whitespace from key and value.
- *   - Strips matching surrounding quotes (`"..."` or `'...'`) from value.
- *
- * Difference from Python: shell env wins. We only set keys that are NOT
- * already present in `process.env`. This is safer than the Python helper's
- * unconditional overwrite — the shell env is the authoritative source when
- * an operator deliberately exports something.
- *
- * Never throws — missing file is a silent no-op. The whole point of this
- * helper is to make the fail-open contract above actually fail open.
- *
- * Module-scope caches the result: calling `loadEnv(path)` twice with the
- * same path will only read the file once.
- *
- * @param envPath - Path to .env file. Defaults to `~/.claude/.env`.
- */
-export function loadEnv(envPath?: string): void {
-  const path = envPath ?? defaultEnvPath();
-  if (loadedEnvPaths.has(path)) return;
-
-  // Mark as loaded BEFORE the I/O so a transient read error doesn't
-  // cause an infinite retry loop on repeated calls.
-  loadedEnvPaths.add(path);
-
-  try {
-    if (!existsSync(path)) return;
-    const text = readFileSync(path, 'utf8');
-
-    for (const raw of text.split(/\r?\n/)) {
-      const line = raw.trim();
-      if (line.length === 0) continue;
-      if (line.startsWith('#')) continue;
-
-      const eq = line.indexOf('=');
-      if (eq <= 0) continue; // no `=` or starts with `=`
-
-      const key = line.slice(0, eq).trim();
-      if (key.length === 0) continue;
-
-      let value = line.slice(eq + 1).trim();
-
-      // Strip matching surrounding quotes (both ends only).
-      if (
-        value.length >= 2 &&
-        ((value.startsWith('"') && value.endsWith('"')) ||
-          (value.startsWith("'") && value.endsWith("'")))
-      ) {
-        value = value.slice(1, -1);
-      }
-
-      // Shell env wins — only set if not already present.
-      if (process.env[key] === undefined) {
-        process.env[key] = value;
-      }
-    }
-  } catch {
-    // Silent no-op on any read/parse failure; the fail-open contract is
-    // more important than surfacing the error.
-  }
-}
-
-/**
- * Test-only escape hatch to clear the loaded-paths cache between unit tests.
- * NOT for production use.
- */
-export function resetLoadEnvCacheForTests(): void {
-  loadedEnvPaths.clear();
-}
-
-// ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
 
@@ -191,10 +86,6 @@ function getApiKey(): string | null {
 }
 
 function isTraceEnabled(): boolean {
-  // Lazily load ~/.claude/.env so hooks running as Claude Code subprocesses
-  // (which do NOT inherit that file) still see BRAINTRUST_API_KEY etc.
-  // First call reads the file; subsequent calls hit the cache.
-  loadEnv();
   return (process.env.TRACE_TO_BRAINTRUST || '').toLowerCase() === 'true';
 }
 

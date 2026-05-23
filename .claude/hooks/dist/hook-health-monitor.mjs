@@ -4,43 +4,10 @@ import * as path from "path";
 import * as os from "os";
 
 // src/shared/braintrust-score.ts
-import { readFileSync, existsSync } from "node:fs";
-import { join } from "node:path";
-import { homedir } from "node:os";
 var BRAINTRUST_FEEDBACK_TIMEOUT_MS = 2e3;
 var DEFAULT_API_URL = "https://api.braintrust.dev";
 var DEFAULT_PROJECT_NAME = "claude-code";
 var projectIdCache = {};
-var loadedEnvPaths = /* @__PURE__ */ new Set();
-function defaultEnvPath() {
-  return join(homedir(), ".claude", ".env");
-}
-function loadEnv(envPath) {
-  const path2 = envPath ?? defaultEnvPath();
-  if (loadedEnvPaths.has(path2)) return;
-  loadedEnvPaths.add(path2);
-  try {
-    if (!existsSync(path2)) return;
-    const text = readFileSync(path2, "utf8");
-    for (const raw of text.split(/\r?\n/)) {
-      const line = raw.trim();
-      if (line.length === 0) continue;
-      if (line.startsWith("#")) continue;
-      const eq = line.indexOf("=");
-      if (eq <= 0) continue;
-      const key = line.slice(0, eq).trim();
-      if (key.length === 0) continue;
-      let value = line.slice(eq + 1).trim();
-      if (value.length >= 2 && (value.startsWith('"') && value.endsWith('"') || value.startsWith("'") && value.endsWith("'"))) {
-        value = value.slice(1, -1);
-      }
-      if (process.env[key] === void 0) {
-        process.env[key] = value;
-      }
-    }
-  } catch {
-  }
-}
 function getApiUrl() {
   return process.env.BRAINTRUST_API_URL || DEFAULT_API_URL;
 }
@@ -49,7 +16,6 @@ function getApiKey() {
   return key && key.length > 0 ? key : null;
 }
 function isTraceEnabled() {
-  loadEnv();
   return (process.env.TRACE_TO_BRAINTRUST || "").toLowerCase() === "true";
 }
 function logErr(msg) {
@@ -287,7 +253,7 @@ async function main() {
       const spanId = (process.env.BRAINTRUST_SESSION_ID || "").trim() || (input.session_id || "");
       const payload = buildHookHealthRatioPayload({ results, spanId });
       if (payload) {
-        void emitBraintrustScore(payload);
+        await emitBraintrustScore(payload);
       }
     } catch {
     }

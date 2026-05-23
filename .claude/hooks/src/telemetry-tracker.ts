@@ -129,11 +129,11 @@ async function main() {
             logEvent(event);
             try { logSkill(data.session_id, skillName); } catch { /* never break */ }
 
-            // Phase 3a: emit skill_trigger_accuracy score. Await is required
-            // because main() calls process.exit(0) after the Skill branch
-            // returns -- without await, the in-flight POST is killed by the
-            // process exit. The helper has a 2s timeout (BRAINTRUST_FEEDBACK_TIMEOUT_MS)
-            // so worst-case latency is bounded.
+            // Phase 3a: emit skill_trigger_accuracy score. Must await —
+            // hook subprocesses exit immediately after returning output, and a
+            // void/fire-and-forget call would kill the in-flight HTTPS POST
+            // before it completes. BRAINTRUST_FEEDBACK_TIMEOUT_MS (2 s) bounds
+            // the latency.
             try {
                 const payload = buildSkillTriggerScorePayload({
                     sessionId: data.session_id,

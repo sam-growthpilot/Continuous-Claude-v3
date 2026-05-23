@@ -18,15 +18,10 @@
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { mkdtempSync, writeFileSync, rmSync } from 'node:fs';
-import { join } from 'node:path';
-import { tmpdir } from 'node:os';
 
 import {
   emitBraintrustScore,
   resetProjectIdCacheForTests,
-  loadEnv,
-  resetLoadEnvCacheForTests,
   BRAINTRUST_FEEDBACK_TIMEOUT_MS,
 } from '../shared/braintrust-score.js';
 
@@ -522,140 +517,5 @@ describe('emitBraintrustScore: fail-open behavior', () => {
     await expect(
       emitBraintrustScore({ spanId: 'span-1', scores: { foo: 0.5 } }),
     ).resolves.not.toThrow();
-  });
-});
-
-// ---------------------------------------------------------------------------
-// Group E — loadEnv() helper (parity with Python braintrust_hooks.py)
-// ---------------------------------------------------------------------------
-
-describe('loadEnv', () => {
-  let tmpDir: string;
-  let envPath: string;
-  let envSnap: Record<string, string | undefined>;
-
-  // Track which env keys our tests touch so we can restore precisely.
-  const TOUCHED_KEYS = [
-    'BRAINTRUST_API_KEY',
-    'TRACE_TO_BRAINTRUST',
-    'BRAINTRUST_API_URL',
-    'BRAINTRUST_CC_PROJECT',
-    'BRAINTRUST_CC_PROJECT_ID',
-    'LOAD_ENV_TEST_KEY_A',
-    'LOAD_ENV_TEST_KEY_B',
-    'LOAD_ENV_TEST_KEY_C',
-    'LOAD_ENV_TEST_QUOTED',
-    'LOAD_ENV_TEST_QUOTED_SINGLE',
-    'LOAD_ENV_TEST_CACHE',
-    'LOAD_ENV_TEST_PRECEDENCE',
-  ];
-
-  beforeEach(() => {
-    envSnap = {};
-    for (const k of TOUCHED_KEYS) envSnap[k] = process.env[k];
-    for (const k of TOUCHED_KEYS) delete process.env[k];
-    tmpDir = mkdtempSync(join(tmpdir(), 'braintrust-loadenv-'));
-    envPath = join(tmpDir, '.env');
-    resetLoadEnvCacheForTests();
-  });
-
-  afterEach(() => {
-    try {
-      rmSync(tmpDir, { recursive: true, force: true });
-    } catch {
-      /* ignore */
-    }
-    for (const k of TOUCHED_KEYS) {
-      const v = envSnap[k];
-      if (v === undefined) delete process.env[k];
-      else process.env[k] = v;
-    }
-    resetLoadEnvCacheForTests();
-  });
-
-  it('populates process.env from .env file when shell env is empty', () => {
-    writeFileSync(
-      envPath,
-      'BRAINTRUST_API_KEY=sk-from-file\nLOAD_ENV_TEST_KEY_A=value-a\n',
-      'utf8',
-    );
-
-    expect(process.env.BRAINTRUST_API_KEY).toBeUndefined();
-    expect(process.env.LOAD_ENV_TEST_KEY_A).toBeUndefined();
-
-    loadEnv(envPath);
-
-    expect(process.env.BRAINTRUST_API_KEY).toBe('sk-from-file');
-    expect(process.env.LOAD_ENV_TEST_KEY_A).toBe('value-a');
-  });
-
-  it('shell env wins over file env (precedence)', () => {
-    process.env.LOAD_ENV_TEST_PRECEDENCE = 'shell-wins';
-    writeFileSync(envPath, 'LOAD_ENV_TEST_PRECEDENCE=file-loses\n', 'utf8');
-
-    loadEnv(envPath);
-
-    expect(process.env.LOAD_ENV_TEST_PRECEDENCE).toBe('shell-wins');
-  });
-
-  it('skips blank lines and # comments', () => {
-    writeFileSync(
-      envPath,
-      [
-        '# top comment',
-        '',
-        'LOAD_ENV_TEST_KEY_A=alpha',
-        '',
-        '# another comment with = sign in it',
-        '   ',
-        'LOAD_ENV_TEST_KEY_B=beta',
-        '#LOAD_ENV_TEST_KEY_C=should-not-load',
-        '',
-      ].join('\n'),
-      'utf8',
-    );
-
-    loadEnv(envPath);
-
-    expect(process.env.LOAD_ENV_TEST_KEY_A).toBe('alpha');
-    expect(process.env.LOAD_ENV_TEST_KEY_B).toBe('beta');
-    expect(process.env.LOAD_ENV_TEST_KEY_C).toBeUndefined();
-  });
-
-  it('strips matching surrounding quotes (double and single)', () => {
-    writeFileSync(
-      envPath,
-      [
-        'LOAD_ENV_TEST_QUOTED="quoted-double"',
-        "LOAD_ENV_TEST_QUOTED_SINGLE='quoted-single'",
-      ].join('\n'),
-      'utf8',
-    );
-
-    loadEnv(envPath);
-
-    expect(process.env.LOAD_ENV_TEST_QUOTED).toBe('quoted-double');
-    expect(process.env.LOAD_ENV_TEST_QUOTED_SINGLE).toBe('quoted-single');
-  });
-
-  it('silent no-op when .env file does not exist (no throw)', () => {
-    const missing = join(tmpDir, 'does-not-exist.env');
-    expect(() => loadEnv(missing)).not.toThrow();
-    expect(process.env.BRAINTRUST_API_KEY).toBeUndefined();
-  });
-
-  it('caches result — second call does not re-read the file', () => {
-    writeFileSync(envPath, 'LOAD_ENV_TEST_CACHE=first-read\n', 'utf8');
-
-    loadEnv(envPath);
-    expect(process.env.LOAD_ENV_TEST_CACHE).toBe('first-read');
-
-    // Rewrite the file with new content, and unset the env var.
-    writeFileSync(envPath, 'LOAD_ENV_TEST_CACHE=second-read\n', 'utf8');
-    delete process.env.LOAD_ENV_TEST_CACHE;
-
-    loadEnv(envPath);
-    // Cache prevented re-read → env stays unset (no second-read value).
-    expect(process.env.LOAD_ENV_TEST_CACHE).toBeUndefined();
   });
 });

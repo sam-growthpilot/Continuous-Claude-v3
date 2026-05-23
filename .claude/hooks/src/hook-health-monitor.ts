@@ -311,15 +311,18 @@ async function main() {
     // Check health of each hook
     const results = hookFiles.map(hf => checkHookHealth(hf));
 
-    // Phase 3a: emit hook_health_ratio score (once per session-start). The
-    // helper is fail-open; we additionally wrap in try/catch so any unexpected
-    // failure can't block the health-report context injection below.
+    // Phase 3a: emit hook_health_ratio score (once per session-start). Must
+    // await — SessionStart subprocesses exit immediately after returning output,
+    // and a void/fire-and-forget call would kill the in-flight HTTPS POST before
+    // it completes. BRAINTRUST_FEEDBACK_TIMEOUT_MS (2 s) bounds the latency.
+    // The helper is fail-open; we additionally wrap in try/catch so any
+    // unexpected failure can't block the health-report context injection below.
     try {
       const spanId = (process.env.BRAINTRUST_SESSION_ID || '').trim()
         || (input.session_id || '');
       const payload = buildHookHealthRatioPayload({ results, spanId });
       if (payload) {
-        void emitBraintrustScore(payload);
+        await emitBraintrustScore(payload);
       }
     } catch {
       /* fail-open: never let score emission break the hook */

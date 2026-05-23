@@ -1,8 +1,8 @@
 #!/usr/bin/env node
 
 // src/telemetry-tracker.ts
-import { readFileSync as readFileSync3, appendFileSync, existsSync as existsSync3, mkdirSync as mkdirSync2 } from "fs";
-import { join as join3 } from "path";
+import { readFileSync as readFileSync2, appendFileSync, existsSync as existsSync2, mkdirSync as mkdirSync2 } from "fs";
+import { join as join2 } from "path";
 
 // src/shared/session-activity.ts
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "fs";
@@ -75,43 +75,10 @@ function logAgent(sessionId, agentType) {
 }
 
 // src/shared/braintrust-score.ts
-import { readFileSync as readFileSync2, existsSync as existsSync2 } from "node:fs";
-import { join as join2 } from "node:path";
-import { homedir } from "node:os";
 var BRAINTRUST_FEEDBACK_TIMEOUT_MS = 2e3;
 var DEFAULT_API_URL = "https://api.braintrust.dev";
 var DEFAULT_PROJECT_NAME = "claude-code";
 var projectIdCache = {};
-var loadedEnvPaths = /* @__PURE__ */ new Set();
-function defaultEnvPath() {
-  return join2(homedir(), ".claude", ".env");
-}
-function loadEnv(envPath) {
-  const path = envPath ?? defaultEnvPath();
-  if (loadedEnvPaths.has(path)) return;
-  loadedEnvPaths.add(path);
-  try {
-    if (!existsSync2(path)) return;
-    const text = readFileSync2(path, "utf8");
-    for (const raw of text.split(/\r?\n/)) {
-      const line = raw.trim();
-      if (line.length === 0) continue;
-      if (line.startsWith("#")) continue;
-      const eq = line.indexOf("=");
-      if (eq <= 0) continue;
-      const key = line.slice(0, eq).trim();
-      if (key.length === 0) continue;
-      let value = line.slice(eq + 1).trim();
-      if (value.length >= 2 && (value.startsWith('"') && value.endsWith('"') || value.startsWith("'") && value.endsWith("'"))) {
-        value = value.slice(1, -1);
-      }
-      if (process.env[key] === void 0) {
-        process.env[key] = value;
-      }
-    }
-  } catch {
-  }
-}
 function getApiUrl() {
   return process.env.BRAINTRUST_API_URL || DEFAULT_API_URL;
 }
@@ -120,7 +87,6 @@ function getApiKey() {
   return key && key.length > 0 ? key : null;
 }
 function isTraceEnabled() {
-  loadEnv();
   return (process.env.TRACE_TO_BRAINTRUST || "").toLowerCase() === "true";
 }
 function logErr(msg) {
@@ -214,11 +180,11 @@ async function emitBraintrustScore(opts) {
 // src/telemetry-tracker.ts
 function getTelemetryPath() {
   const homeDir = process.env.HOME || process.env.USERPROFILE || "";
-  const telemetryDir = join3(homeDir, ".claude", "cache");
-  if (!existsSync3(telemetryDir)) {
+  const telemetryDir = join2(homeDir, ".claude", "cache");
+  if (!existsSync2(telemetryDir)) {
     mkdirSync2(telemetryDir, { recursive: true });
   }
-  return join3(telemetryDir, "skill-telemetry.jsonl");
+  return join2(telemetryDir, "skill-telemetry.jsonl");
 }
 function logEvent(event) {
   const telemetryPath = getTelemetryPath();
@@ -254,7 +220,7 @@ function buildSkillTriggerScorePayload(input) {
 }
 async function main() {
   try {
-    const input = readFileSync3(0, "utf-8");
+    const input = readFileSync2(0, "utf-8");
     const data = JSON.parse(input);
     if (data.tool_name === "Skill") {
       const skillName = data.tool_input?.skill || "unknown";

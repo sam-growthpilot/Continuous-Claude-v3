@@ -5,9 +5,10 @@
 # Run after any TypeScript hook edit. Exits 1 on regression (count < baseline).
 
 # BASELINE: bump this when a legitimate new score dimension is added
-# Counts both void and await emitBraintrustScore() call sites (telemetry-tracker
-# uses await because process.exit(0) would kill a fire-and-forget POST).
-BASELINE=4
+# Counts both void and await emitBraintrustScore() call sites.
+# Gate 0.6 + Gate 0.7 fixes: all 3 emitting hooks now use await.
+# (memory-awareness.ts imports but does not yet call emitBraintrustScore.)
+BASELINE=3
 
 cd "$(dirname "$0")/.."
 
