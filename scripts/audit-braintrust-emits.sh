@@ -5,20 +5,23 @@
 # Run after any TypeScript hook edit. Exits 1 on regression (count < baseline).
 
 # BASELINE: bump this when a legitimate new score dimension is added
+# Counts both void and await emitBraintrustScore() call sites (telemetry-tracker
+# uses await because process.exit(0) would kill a fire-and-forget POST).
 BASELINE=4
 
 cd "$(dirname "$0")/.."
 
-echo "Scanning .claude/hooks/src/ for void emitBraintrustScore( call sites..."
+echo "Scanning .claude/hooks/src/ for emitBraintrustScore( call sites (void + await)..."
 echo ""
 
-matches=$(grep -rn "void emitBraintrustScore(" .claude/hooks/src/ --include="*.ts" \
-  | grep -v "__tests__/")
+matches=$(grep -rn "emitBraintrustScore(" .claude/hooks/src/ --include="*.ts" \
+  | grep -v "__tests__/" \
+  | grep -E "(void|await) emitBraintrustScore\(")
 
 echo "$matches"
 echo ""
 
-count=$(echo "$matches" | grep -c "void emitBraintrustScore(" 2>/dev/null || echo 0)
+count=$(echo "$matches" | grep -c "emitBraintrustScore(" 2>/dev/null || echo 0)
 # Handle empty string case
 if [ -z "$(echo "$matches" | tr -d '[:space:]')" ]; then
   count=0

@@ -129,9 +129,11 @@ async function main() {
             logEvent(event);
             try { logSkill(data.session_id, skillName); } catch { /* never break */ }
 
-            // Phase 3a: emit skill_trigger_accuracy score. Fire-and-forget --
-            // the helper has a 2s timeout and swallows errors. Awaiting would
-            // add up to 2s of latency to every Skill PostToolUse.
+            // Phase 3a: emit skill_trigger_accuracy score. Await is required
+            // because main() calls process.exit(0) after the Skill branch
+            // returns -- without await, the in-flight POST is killed by the
+            // process exit. The helper has a 2s timeout (BRAINTRUST_FEEDBACK_TIMEOUT_MS)
+            // so worst-case latency is bounded.
             try {
                 const payload = buildSkillTriggerScorePayload({
                     sessionId: data.session_id,
@@ -140,7 +142,7 @@ async function main() {
                     success,
                 });
                 if (payload) {
-                    void emitBraintrustScore(payload);
+                    await emitBraintrustScore(payload);
                 }
             } catch {
                 /* fail-open: never let score emission break the hook */

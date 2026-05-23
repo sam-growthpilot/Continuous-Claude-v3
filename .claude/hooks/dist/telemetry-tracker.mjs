@@ -280,7 +280,7 @@ async function main() {
           success
         });
         if (payload) {
-          void emitBraintrustScore(payload);
+          await emitBraintrustScore(payload);
         }
       } catch {
       }
