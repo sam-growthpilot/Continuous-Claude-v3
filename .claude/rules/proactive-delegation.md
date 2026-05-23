@@ -13,6 +13,7 @@ When user message arrives, detect:
 | Implementation | "add", "implement", "create" | Route to /build workflow |
 | Bug/issue | "fix", "broken", "failing", "debug" | Route to /fix workflow |
 | Exploration | "understand", "explore", "how does X work" | Route to /explore |
+| Mechanical multi-file fix | Same edit pattern across N files | Spawn N parallel sparks (1 file each), NOT one spark for N files |
 
 ## Workflow Suggestions
 
@@ -85,3 +86,36 @@ Keep in main context when:
 - Quick file lookup (1-2 files)
 - User explicitly wants direct response
 - Latency matters more than context preservation
+
+## Spark Scope Limits
+
+**Spark works well for:**
+- Single-file mechanical edits with known `old_string` / `new_string`
+- Doc/script files (no TS, no LSP, no surrounding regenerable context)
+- Isolated tasks with no session-thread collision risk
+
+**Spark struggles with:**
+- Multi-file iteration loops on TypeScript hook files (whole-file rewrite tempting → drops sibling emits)
+- Session-thread carryover (a prior spark's edits become part of the next spark's "context" via re-read)
+- Tasks where the same one-line change needs to be applied to N>1 files
+
+**Rule:** If N files need identical mechanical change, spawn N sparks IN PARALLEL (one file each), not one spark for N files. The parallel pattern uses isolated context windows per spark, which is the whole point.
+
+## Post-Spark Verification (Hook Edits)
+
+When spark completes work touching `.claude/hooks/src/*.ts`, the orchestrator MUST independently re-run the emit-invariant guard before trusting completion:
+
+```bash
+bash scripts/audit-braintrust-emits.sh
+```
+
+Do not rely on spark's self-reported `Audit: PASS` alone — spark may have run the audit before its last edit. A second run from the orchestrator after spark exits catches late regressions.
+
+**If the orchestrator's re-run FAILS after spark reported complete:**
+
+1. `git diff HEAD -- <spark's edited files>` — confirm the regression is a pure deletion (spark dropped sibling content) and not an intentional restructure.
+2. `git checkout HEAD -- <spark's edited files>` — restore the file to HEAD. Do this BEFORE attempting any new edit; otherwise the regression will appear in the next spark's context window.
+3. Do NOT re-spawn the same spark for the same task. Spark's context window has the regression baked in; the next attempt will likely reintroduce it. Escalate to kraken (or do the fix directly in the orchestrator if it's a one-line patch).
+4. Append the incident to `docs/spark-agent-issues-2026-05-23.md` (or a follow-up `spark-agent-issues-YYYY-MM-DD.md`) with: the failing edit diff, the spark's task ID, what regression slipped, and what recovery path was taken.
+
+This is the missing exit ramp — without it, the orchestrator can loop on the same regression by re-prompting the same spark.
