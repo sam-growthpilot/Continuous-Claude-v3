@@ -209,7 +209,7 @@ async function emitRalphTaskScore(
       transition,
     });
     if (payload) {
-      await emitBraintrustScore(payload);
+      await emitBraintrustScore(payload); // eslint-disable-line @typescript-eslint/no-floating-promises
     }
   } catch {
     /* fail-open: never let score emission break the hook */
