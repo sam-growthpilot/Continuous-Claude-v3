@@ -185,14 +185,11 @@ function readRalphTaskById(
 }
 
 /**
- * Braintrust emit for a Ralph task transition. Must be awaited — hook
- * subprocesses exit immediately after returning output, and a void/fire-and-
- * forget call would kill the in-flight HTTPS POST before it completes.
- * BRAINTRUST_FEEDBACK_TIMEOUT_MS (2 s) bounds the latency. Wraps all state
- * reads and helper calls in try/catch so a score-emit failure can never break
- * the primary task-monitor flow.
+ * Fire-and-forget Braintrust emit for a Ralph task transition. Wraps all
+ * state reads and helper calls in try/catch so a score-emit failure can
+ * never break the primary task-monitor flow.
  */
-async function emitRalphTaskScore(
+async function await emitRalphTaskScore(
   projectDir: string,
   taskId: string,
   transition: RalphTaskTransition,
