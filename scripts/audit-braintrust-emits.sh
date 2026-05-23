@@ -6,9 +6,13 @@
 
 # BASELINE: bump this when a legitimate new score dimension is added
 # Counts both void and await emitBraintrustScore() call sites.
-# Gate 0.6 + Gate 0.7 fixes: all 3 emitting hooks now use await.
-# (memory-awareness.ts imports but does not yet call emitBraintrustScore.)
-BASELINE=3
+# Gate 0.6/0.7/0.8/0.9 fixes: all 4 emitting hooks now use await.
+# Expected emit sites (do NOT lower this baseline to silence regressions):
+#   memory-awareness.ts     (memory_recall_relevance)
+#   telemetry-tracker.ts    (skill_trigger_accuracy)
+#   ralph-task-monitor.ts   (agent_task_success)
+#   hook-health-monitor.ts  (hook_health_ratio)
+BASELINE=4
 
 cd "$(dirname "$0")/.."
 

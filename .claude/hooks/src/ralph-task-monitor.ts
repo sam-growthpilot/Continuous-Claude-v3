@@ -189,7 +189,7 @@ function readRalphTaskById(
  * state reads and helper calls in try/catch so a score-emit failure can
  * never break the primary task-monitor flow.
  */
-async function await emitRalphTaskScore(
+async function emitRalphTaskScore(
   projectDir: string,
   taskId: string,
   transition: RalphTaskTransition,

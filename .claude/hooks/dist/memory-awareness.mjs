@@ -1,6 +1,7 @@
 // src/memory-awareness.ts
 import { readFileSync as readFileSync3, existsSync as existsSync4, mkdirSync as mkdirSync2, appendFileSync } from "fs";
 import * as path from "path";
+import * as os from "os";
 import { spawnSync } from "child_process";
 
 // src/shared/opc-path.ts
@@ -511,6 +512,109 @@ function ensureDaemonRunning() {
   }
 }
 
+// src/shared/braintrust-score.ts
+var BRAINTRUST_FEEDBACK_TIMEOUT_MS = 2e3;
+var DEFAULT_API_URL = "https://api.braintrust.dev";
+var DEFAULT_PROJECT_NAME = "claude-code";
+var projectIdCache = {};
+function getApiUrl() {
+  return process.env.BRAINTRUST_API_URL || DEFAULT_API_URL;
+}
+function getApiKey() {
+  const key = process.env.BRAINTRUST_API_KEY;
+  return key && key.length > 0 ? key : null;
+}
+function isTraceEnabled() {
+  return (process.env.TRACE_TO_BRAINTRUST || "").toLowerCase() === "true";
+}
+function logErr(msg) {
+  try {
+    process.stderr.write(`[braintrust-score] ${msg}
+`);
+  } catch {
+  }
+}
+async function resolveProjectId(apiKey) {
+  const directId = process.env.BRAINTRUST_CC_PROJECT_ID;
+  if (directId && directId.length > 0) {
+    return directId;
+  }
+  const projectName = process.env.BRAINTRUST_CC_PROJECT || DEFAULT_PROJECT_NAME;
+  const cached = projectIdCache[projectName];
+  if (cached) return cached;
+  try {
+    const url = getApiUrl() + "/v1/project?project_name=" + encodeURIComponent(projectName);
+    const resp = await fetch(url, {
+      method: "GET",
+      headers: {
+        Authorization: `Bearer ${apiKey}`,
+        "Content-Type": "application/json"
+      },
+      signal: AbortSignal.timeout(BRAINTRUST_FEEDBACK_TIMEOUT_MS)
+    });
+    if (!resp.ok) {
+      logErr(`project lookup ${projectName}: HTTP ${resp.status}`);
+      return null;
+    }
+    const data = await resp.json();
+    const objects = data?.objects;
+    if (!objects || objects.length === 0) {
+      logErr(`project lookup ${projectName}: no objects`);
+      return null;
+    }
+    const id = objects[0]?.id;
+    if (!id) {
+      logErr(`project lookup ${projectName}: object missing id`);
+      return null;
+    }
+    projectIdCache[projectName] = id;
+    return id;
+  } catch (e) {
+    logErr(`project lookup ${projectName} failed: ${e.message}`);
+    return null;
+  }
+}
+async function emitBraintrustScore(opts) {
+  try {
+    if (!isTraceEnabled()) return;
+    const apiKey = getApiKey();
+    if (!apiKey) return;
+    if (!opts.spanId || opts.spanId.length === 0) return;
+    if (!opts.scores || Object.keys(opts.scores).length === 0) return;
+    const projectId = await resolveProjectId(apiKey);
+    if (!projectId) return;
+    const entry = {
+      id: opts.spanId,
+      scores: opts.scores
+    };
+    if (opts.metadata !== void 0) {
+      entry.metadata = opts.metadata;
+    }
+    if (opts.comment !== void 0) {
+      entry.comment = opts.comment;
+    }
+    const url = `${getApiUrl()}/v1/project_logs/${projectId}/feedback`;
+    try {
+      const resp = await fetch(url, {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${apiKey}`,
+          "Content-Type": "application/json"
+        },
+        body: JSON.stringify({ feedback: [entry] }),
+        signal: AbortSignal.timeout(BRAINTRUST_FEEDBACK_TIMEOUT_MS)
+      });
+      if (!resp.ok) {
+        logErr(`feedback POST ${opts.spanId}: HTTP ${resp.status}`);
+      }
+    } catch (e) {
+      logErr(`feedback POST ${opts.spanId} failed: ${e.message}`);
+    }
+  } catch (e) {
+    logErr(`unexpected error: ${e.message}`);
+  }
+}
+
 // src/memory-awareness.ts
 var TEXT_ONLY_FLOOR = 0.05;
 var HYBRID_FLOOR = 0.01;
@@ -700,6 +804,37 @@ function logRecallFire(entry, projectDir) {
   } catch {
   }
 }
+function readBraintrustSessionState(sessionId) {
+  if (!sessionId) return null;
+  try {
+    const homeDir = process.env.HOME || process.env.USERPROFILE || os.homedir();
+    if (!homeDir) return null;
+    const statePath = path.join(
+      homeDir,
+      ".claude",
+      "state",
+      "braintrust_sessions",
+      `${sessionId}.json`
+    );
+    if (!existsSync4(statePath)) return null;
+    const raw = readFileSync3(statePath, "utf-8");
+    return JSON.parse(raw);
+  } catch {
+    return null;
+  }
+}
+function resolveBraintrustSpan(sessionId) {
+  const state = readBraintrustSessionState(sessionId);
+  if (!state) return null;
+  if (state.sampled_out) return null;
+  if (state.current_turn_span_id && state.current_turn_span_id.length > 0) {
+    return { spanId: state.current_turn_span_id, attachedTo: "turn" };
+  }
+  if (state.root_span_id && state.root_span_id.length > 0) {
+    return { spanId: state.root_span_id, attachedTo: "root" };
+  }
+  return null;
+}
 async function main() {
   const t0 = Date.now();
   const input = JSON.parse(readStdin());
@@ -759,6 +894,30 @@ async function main() {
     db_subprocess_timed_out: dbTimedOut
   };
   logRecallFire(logEntry, projectDir);
+  try {
+    const span = resolveBraintrustSpan(input.session_id || "");
+    if (span) {
+      await emitBraintrustScore({
+        // eslint-disable-line @typescript-eslint/no-floating-promises
+        spanId: span.spanId,
+        scores: {
+          memory_recall_relevance: topScoreRaw,
+          memory_recall_hit: match && match.results.length > 0 ? 1 : 0
+        },
+        metadata: {
+          attached_to: span.attachedTo,
+          results_count: logEntry.results_count,
+          kept_after_floor: logEntry.kept_after_floor,
+          mode: logEntry.mode,
+          daemon_ready: logEntry.daemon_ready,
+          total_elapsed_ms: logEntry.total_elapsed_ms,
+          intent: logEntry.intent,
+          floor_applied: logEntry.floor_applied
+        }
+      });
+    }
+  } catch {
+  }
   if (match) {
     try {
       logHook(input.session_id, "memory-awareness");
