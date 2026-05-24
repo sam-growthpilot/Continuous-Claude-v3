@@ -39,8 +39,27 @@ fi
 
 $VERBOSE && echo "Syncing: $SRC -> $DST"
 
+# Pre-flight: refuse reverse-sync if repo audit invariant violated.
+# Reverse-sync used to propagate fossilized ~/.claude/hooks/src/ back to repo,
+# silently undoing every emit-site fix. Audit gate stops that propagation.
+if [[ "$DIRECTION" == "to-repo" ]]; then
+    AUDIT_SCRIPT="$REPO_ROOT/scripts/audit-braintrust-emits.sh"
+    if [ -f "$AUDIT_SCRIPT" ]; then
+        if ! bash "$AUDIT_SCRIPT" > /tmp/sync-claude-audit.log 2>&1; then
+            echo "ABORT: reverse-sync refused -- repo audit invariant violated." >&2
+            echo "       Reverse-sync would propagate corruption to ~/.claude/." >&2
+            cat /tmp/sync-claude-audit.log >&2
+            exit 1
+        fi
+    fi
+fi
+
 # Directories to sync
-SYNC_DIRS="hooks/src rules agents skills scripts docs"
+# Note: hooks/src removed from SYNC_DIRS (was the propagation vector for
+# regressions #1-#7). Forward sync-to-active.sh also excludes hooks/src --
+# both scripts are now symmetric. hooks/dist/*.mjs is what runs at hook time
+# and is synced by sync-to-active.sh's dedicated dist branch.
+SYNC_DIRS="rules agents skills scripts docs"
 
 # Files/patterns to never sync
 NEVER_SYNC="CLAUDE.md RULES.md .env .credentials.json settings.json history.jsonl knowledge-tree.json"
