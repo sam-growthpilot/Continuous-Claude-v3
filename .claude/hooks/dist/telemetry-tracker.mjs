@@ -177,6 +177,31 @@ async function emitBraintrustScore(opts) {
   }
 }
 
+// src/shared/tool-error.ts
+function detectToolError(toolResponse) {
+  if (toolResponse === null || typeof toolResponse !== "object") {
+    return false;
+  }
+  const resp = toolResponse;
+  if (resp.is_error === true) {
+    return true;
+  }
+  const err = resp.error;
+  if (typeof err === "string" && err.trim().length > 0) {
+    return true;
+  }
+  if (err === true) {
+    return true;
+  }
+  if (resp.success === false) {
+    return true;
+  }
+  if (resp.status === "error") {
+    return true;
+  }
+  return false;
+}
+
 // src/telemetry-tracker.ts
 function getTelemetryPath() {
   const homeDir = process.env.HOME || process.env.USERPROFILE || "";
@@ -203,6 +228,11 @@ function resolveScoreSpanId(payloadSessionId) {
   if (envSpan.length > 0) return envSpan;
   return payloadSessionId || "";
 }
+function buildToolResponseKeys(toolResponse) {
+  if (toolResponse === null || toolResponse === void 0) return [];
+  if (typeof toolResponse !== "object") return [];
+  return Object.keys(toolResponse);
+}
 function buildSkillTriggerScorePayload(input) {
   const spanId = resolveScoreSpanId(input.sessionId);
   if (!spanId) return null;
@@ -224,14 +254,16 @@ async function main() {
     const data = JSON.parse(input);
     if (data.tool_name === "Skill") {
       const skillName = data.tool_input?.skill || "unknown";
-      const success = data.tool_response?.status !== "error";
+      const success = !detectToolError(data.tool_response);
+      const toolResponseKeys = buildToolResponseKeys(data.tool_response);
       const event = {
         timestamp: (/* @__PURE__ */ new Date()).toISOString(),
         session_id: data.session_id,
         type: "skill_used",
         name: skillName,
         trigger_source: determineSource(data.tool_input),
-        success
+        success,
+        tool_response_keys: toolResponseKeys
       };
       logEvent(event);
       try {
@@ -252,14 +284,16 @@ async function main() {
       }
     } else if (data.tool_name === "Task") {
       const agentType = data.tool_input?.subagent_type || "unknown";
-      const success = data.tool_response?.status !== "error";
+      const success = !detectToolError(data.tool_response);
+      const toolResponseKeys = buildToolResponseKeys(data.tool_response);
       const event = {
         timestamp: (/* @__PURE__ */ new Date()).toISOString(),
         session_id: data.session_id,
         type: "agent_spawned",
         name: agentType,
         trigger_source: "llm",
-        success
+        success,
+        tool_response_keys: toolResponseKeys
       };
       logEvent(event);
       try {
@@ -277,5 +311,6 @@ if (!process.env.VITEST) {
 }
 export {
   buildSkillTriggerScorePayload,
+  buildToolResponseKeys,
   resolveScoreSpanId
 };
