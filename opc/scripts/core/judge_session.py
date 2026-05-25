@@ -1,11 +1,31 @@
 #!/usr/bin/env python3
-"""Gate C: Phase 3b autoevals judge runner.
+"""Gate C: Phase 3b judge runner (subscription-OAuth backends, NO API keys).
 
-Stack 3 LLM judges (Factuality, ClosedQA, and a Battle/LLMClassifier plan
-rubric) against a sampled subset of Claude Code sessions captured in
-Braintrust. This is an offline / async runner: it is NOT in the live hook
-path. It reads completed-session traces from the local cache or BTQL, runs
-the judges, and emits one feedback POST per judge per sampled session.
+Stack 3 LLM judges (factuality, closedqa, plan_rubric) against a sampled
+subset of Claude Code sessions captured in Braintrust. This is an offline /
+async runner: it is NOT in the live hook path. It reads completed-session
+traces from the local cache or BTQL, runs the judges, and emits one feedback
+POST per judge per sampled session.
+
+LLM backends (NO API keys -- both subscription-billed via OAuth)
+----------------------------------------------------------------
+The judges are NOT autoevals' OpenAI-client calls. Each judge prompt is a
+hand-written rubric + a structured-output demand, evaluated by one of two
+subscription-OAuth subprocess CLIs:
+
+- ``codex exec --sandbox read-only "<prompt>"`` -- the ChatGPT subscription
+  (this is a SAFE codex command: read-only sandbox, no file mutation). Used
+  for ``plan_rubric`` so GPT cross-grades Claude-authored plans (highest
+  cross-model lift).
+
+- ``claude -p "<prompt>" --output-format json --model sonnet`` -- the Claude
+  Code subscription (Sonnet bucket). Used for ``factuality`` and
+  ``closedqa``. NOTE: the child env strips ``ANTHROPIC_API_KEY`` /
+  ``ANTHROPIC_AUTH_TOKEN`` so the subprocess uses subscription OAuth rather
+  than an inherited external API key.
+
+Judge -> backend map (see ``JUDGE_BACKENDS``):
+    plan_rubric -> codex      factuality -> claude      closedqa -> claude
 
 Sampling
 --------
@@ -16,21 +36,29 @@ audit.
 
 Judges
 ------
-- ``Factuality(input=user_prompt, output=top_recall_chunk, expected=None)``
-  — was recalled context actually about what the user asked? Top recall
-  chunk is read from ``.claude/logs/memory-recall.jsonl`` (intent text) or
-  reconstructed from the trace.
+- ``factuality`` (claude) -- does ``output`` (the top recall chunk) factually
+  align with ``input`` (the user prompt)? autoevals Factuality semantics,
+  hand-written as a rubric. Top recall chunk is read from
+  ``.claude/logs/memory-recall.jsonl`` (intent text) or reconstructed from
+  the trace.
 
-- ``ClosedQA(input=orchestrator_task_request, output=sub_agent_final_output,
-  criteria="Did the sub-agent answer the question it was given?")`` —
-  TOP-LEVEL Task spans only. If a Task span has parent_span_id pointing to
-  another Task (nested case), ClosedQA is skipped with reason
-  ``nested_subagent_no_correlation``. Sub-agent correlation is Phase 4 work.
+- ``closedqa`` (claude) -- did the sub-agent (``output``) answer the question
+  it was given (``input`` = orchestrator task request)? Criteria: "Did the
+  sub-agent answer the question it was given?" TOP-LEVEL Task spans only. If
+  a Task span has parent_span_id pointing to another Task (nested case),
+  ClosedQA is skipped with reason ``nested_subagent_no_correlation``.
+  Sub-agent correlation is Phase 4 work.
 
-- Battle / LLMClassifier plan rubric — was the plan complete, ordered,
-  verifiable? Battle requires an ``expected`` reference solution; per the
-  plan we have ``expected=None``, so we use ``LLMClassifier`` with a custom
-  rubric instead. Read from ``PostToolUse:ExitPlanMode`` span tool_input.
+- ``plan_rubric`` (codex) -- is the plan (``output``) complete, ordered, and
+  verifiable given the request (``input``)? Read from the
+  ``PostToolUse:ExitPlanMode`` span tool_input.
+
+Per-judge skip (don't crash the whole run)
+-------------------------------------------
+A subprocess non-zero exit / timeout / unparseable output skips THAT judge
+with a reason (``codex_unavailable``, ``claude_timeout``,
+``unparseable_score``, etc.), records it, and continues the others. A session
+emits 0-3 scores depending on backend success + artifact presence.
 
 Idempotency
 -----------
@@ -45,9 +73,16 @@ CLI
     uv run python -m scripts.core.judge_session --scan-since 2026-05-20 \\
         --max-sessions 10 --dry-run
 
-Environment
------------
-- ``OPENAI_API_KEY`` (required) — autoevals' default LLM backend.
+Environment / preflight
+-----------------------
+NO API keys are required for the judges. Preflight verifies the CLIs are
+authenticated (subscription OAuth):
+- If any judge uses the codex backend: ``codex login status`` must exit 0
+  (fix: ``codex login``).
+- If any judge uses the claude backend: ``claude --version`` must exit 0
+  (fix: ``claude login``).
+
+For the feedback POST:
 - ``BRAINTRUST_API_KEY`` (required to actually POST feedback; the dry-run
   path tolerates absence).
 - ``BRAINTRUST_CC_PROJECT_ID`` (required for the POST URL).
@@ -69,6 +104,9 @@ import argparse
 import hashlib
 import json
 import os
+import re
+import shutil
+import subprocess
 import sys
 from datetime import datetime
 from pathlib import Path
@@ -98,27 +136,102 @@ LOCAL_SESSION_CACHE = Path.home() / ".claude" / "state" / "braintrust_sessions"
 MEMORY_RECALL_LOG = Path.cwd() / ".claude" / "logs" / "memory-recall.jsonl"
 FEEDBACK_TIMEOUT_SECONDS = 5.0
 
+# Each judge is graded by ONE subscription-OAuth backend (no API keys).
+#   codex  -> `codex exec --sandbox read-only "<prompt>"`  (ChatGPT subscription)
+#   claude -> `claude -p "<prompt>" --output-format json --model sonnet`
+# plan_rubric goes to codex for cross-model lift (GPT grades Claude plans).
+JUDGE_BACKENDS = {
+    "plan_rubric": "codex",
+    "factuality": "claude",
+    "closedqa": "claude",
+}
 
-# ---------------------------------------------------------------------------
-# T1: Env preflight
-# ---------------------------------------------------------------------------
+# Subprocess judge calls are slow LLM turns; allow up to 3 minutes each.
+JUDGE_SUBPROCESS_TIMEOUT_SECONDS = 180
 
 
-def check_env_preflight() -> None:
-    """Fail fast if OPENAI_API_KEY is missing.
+class JudgeBackendError(Exception):
+    """A judge backend failed in a way that should skip ONLY that judge.
 
-    Per T1 (premortem HIGH risk): autoevals defaults to the OpenAI client.
-    Without an API key, every judge call will explode at runtime in a
-    confusing way. We surface the failure here with an actionable hint.
+    The string value is the skip reason recorded in the result (e.g.
+    ``codex_unavailable``, ``claude_timeout``, ``unparseable_score``). The
+    orchestrator catches this, records the reason, and continues the other
+    judges -- one backend failure never crashes the whole run.
     """
-    if not os.environ.get("OPENAI_API_KEY", "").strip():
-        print(
-            "ERROR: OPENAI_API_KEY not set in opc/.env. Run:\n"
-            "  cd opc && uv run python -c 'import os; print(bool(os.getenv(\"OPENAI_API_KEY\")))'\n"
-            "to verify. Required for Gate C autoevals.",
-            file=sys.stderr,
+
+
+# ---------------------------------------------------------------------------
+# Preflight: verify the subscription-OAuth CLIs are authenticated
+# ---------------------------------------------------------------------------
+
+
+def check_cli_preflight() -> None:
+    """Fail fast if a REQUIRED judge CLI isn't ready.
+
+    Replaces the old OPENAI_API_KEY check. No API keys are used now; instead
+    we verify the subscription-OAuth CLIs are authenticated:
+
+    - If any judge uses the codex backend: ``codex login status`` must exit 0.
+    - If any judge uses the claude backend: ``claude --version`` must exit 0.
+
+    Names WHICH CLI isn't ready and the fix command, then exits non-zero.
+    """
+    backends = set(JUDGE_BACKENDS.values())
+
+    if "codex" in backends:
+        if _probe_cli(["codex", "login", "status"]) != 0:
+            print(
+                "ERROR: the `codex` CLI is not authenticated (required for the "
+                "plan_rubric judge). `codex login status` did not exit 0.\n"
+                "Fix: run `codex login` (ChatGPT subscription OAuth), then retry.",
+                file=sys.stderr,
+            )
+            sys.exit(2)
+
+    if "claude" in backends:
+        if _probe_cli(["claude", "--version"]) != 0:
+            print(
+                "ERROR: the `claude` CLI is not available (required for the "
+                "factuality and closedqa judges). `claude --version` did not "
+                "exit 0.\n"
+                "Fix: install/authenticate Claude Code (`claude login`), then retry.",
+                file=sys.stderr,
+            )
+            sys.exit(2)
+
+
+def _resolve_cli(name: str) -> str:
+    """Resolve a CLI name to its full executable path (cross-platform).
+
+    On Windows, ``codex`` is an npm shim installed as ``codex.cmd`` (plus a
+    bash script with no extension). ``subprocess.run(["codex", ...])`` without
+    ``shell=True`` only finds ``codex.exe`` and otherwise raises
+    ``FileNotFoundError``. ``shutil.which`` honors PATHEXT, so it finds the
+    ``.cmd``/``.exe`` shim. Falls back to the bare name if nothing resolves
+    (lets the subprocess raise, which the callers convert to a skip reason).
+    """
+    return shutil.which(name) or name
+
+
+def _probe_cli(cmd: list[str]) -> int:
+    """Run a quick CLI probe and return its exit code (127 on any failure).
+
+    The first element is resolved via ``shutil.which`` so Windows npm shims
+    (e.g. ``codex.cmd``) are found.
+    """
+    if not cmd:
+        return 127
+    resolved = [_resolve_cli(cmd[0]), *cmd[1:]]
+    try:
+        proc = subprocess.run(
+            resolved,
+            capture_output=True,
+            text=True,
+            timeout=30,
         )
-        sys.exit(2)
+        return proc.returncode
+    except Exception:
+        return 127
 
 
 # ---------------------------------------------------------------------------
@@ -338,67 +451,253 @@ def _coerce_str(value: Any) -> str:
 
 
 # ---------------------------------------------------------------------------
-# Judges (real autoevals invocation in production, mocked in tests)
+# Judge prompts (hand-written rubrics + structured-output demand)
 # ---------------------------------------------------------------------------
 
-
-def _run_factuality(*, input: str, output: str, expected: Any = None) -> Any:
-    """Run autoevals.Factuality. Returns the Score object."""
-    from autoevals import Factuality  # local import keeps test mocks light
-
-    judge = Factuality()
-    return judge.eval(input=input, output=output, expected=expected)
+# Every judge prompt ends with this so the backend returns ONLY parseable JSON.
+_STRUCTURED_OUTPUT_DEMAND = (
+    'Respond with ONLY this JSON and nothing else: '
+    '{"score": <float 0.0-1.0>, "rationale": "<one sentence>"}'
+)
 
 
-def _run_closedqa(*, input: str, output: str, criteria: str) -> Any:
-    """Run autoevals.ClosedQA. Returns the Score object.
+def _factuality_prompt(*, input: str, output: str) -> str:
+    """Factuality rubric (autoevals Factuality semantics).
 
-    NOTE (T2): callers must already have filtered to top-level Task spans.
-    Nested sub-agent Task spans are skipped at the orchestrator level with
-    reason 'nested_subagent_no_correlation' until Phase 4 sub-agent
-    correlation lands.
+    Does ``output`` (the top recall chunk) factually align with ``input``
+    (the user's prompt)? We grade whether the recalled context is actually
+    about what the user asked.
     """
-    from autoevals import ClosedQA
+    return (
+        "You are a strict grader judging FACTUALITY: does the OUTPUT factually "
+        "align with, and stay on-topic for, the INPUT? The INPUT is a user's "
+        "request to an AI coding assistant. The OUTPUT is a chunk of context "
+        "that was recalled from memory and surfaced for that request.\n\n"
+        "Grade whether the recalled OUTPUT is factually consistent with and "
+        "relevant to what the user asked in the INPUT:\n"
+        "  - 1.0 = fully on-topic and factually consistent with the request\n"
+        "  - 0.5 = partially relevant, or mixes relevant and off-topic content\n"
+        "  - 0.0 = off-topic, contradictory, or unrelated to the request\n\n"
+        f"<input>\n{input}\n</input>\n\n"
+        f"<output>\n{output}\n</output>\n\n"
+        f"{_STRUCTURED_OUTPUT_DEMAND}"
+    )
 
-    judge = ClosedQA()
-    # ClosedQA: top-level Task spans only until Phase 4 (sub-agent correlation) lands.
-    return judge.eval(input=input, output=output, criteria=criteria)
 
+def _closedqa_prompt(*, input: str, output: str) -> str:
+    """ClosedQA rubric: did the sub-agent answer the question it was given?
 
-def _run_battle_or_classifier(*, input: str, output: str) -> Any:
-    """Plan rubric judge.
-
-    The plan calls for ``Battle(input=user_prompt, output=plan_body,
-    expected=None)`` but ``Battle`` requires an ``expected`` reference
-    solution to compare against. With ``expected=None`` Battle cannot run.
-
-    Fallback (per the task spec): use ``LLMClassifier`` with a custom
-    rubric covering completeness, ordering, and verifiability.
+    ``input`` is the orchestrator's task request to a sub-agent; ``output``
+    is the sub-agent's final answer. Criteria: "Did the sub-agent answer the
+    question it was given?"
     """
-    from autoevals import LLMClassifier
+    return (
+        "You are a strict grader. CRITERIA: \"Did the sub-agent answer the "
+        "question it was given?\" The INPUT is the task request an orchestrator "
+        "handed to a sub-agent. The OUTPUT is the sub-agent's final answer.\n\n"
+        "Grade ONLY whether the OUTPUT actually addresses and answers the task "
+        "described in the INPUT:\n"
+        "  - 1.0 = directly and completely answers the task it was given\n"
+        "  - 0.5 = partially answers, or answers a related but different question\n"
+        "  - 0.0 = does not answer the task, or is off-topic\n\n"
+        f"<input>\n{input}\n</input>\n\n"
+        f"<output>\n{output}\n</output>\n\n"
+        f"{_STRUCTURED_OUTPUT_DEMAND}"
+    )
 
-    rubric_template = (
-        "You are grading a development plan written in response to a user's "
-        "request. The user asked:\n\n"
-        "<user_prompt>\n{{input}}\n</user_prompt>\n\n"
-        "The plan to grade is:\n\n"
-        "<plan>\n{{output}}\n</plan>\n\n"
-        "Score the plan on three criteria:\n"
+
+def _plan_rubric_prompt(*, input: str, output: str) -> str:
+    """Plan-quality rubric: is the plan complete, ordered, and verifiable?
+
+    ``input`` is the user's request; ``output`` is the plan authored in
+    response (from ExitPlanMode). Graded by codex (cross-model lift).
+    """
+    return (
+        "You are a strict grader judging the QUALITY of a development plan. "
+        "The INPUT is a user's request. The OUTPUT is a plan authored in "
+        "response to that request.\n\n"
+        "Grade the plan on three criteria, all relative to the INPUT:\n"
         "  1. Complete: covers the user's request without obvious gaps.\n"
         "  2. Ordered: steps are in a sensible execution order.\n"
         "  3. Verifiable: includes how to confirm each step actually worked.\n\n"
-        "Choose one:\n"
-        "  good  - all three criteria are clearly met\n"
-        "  okay  - two of three criteria are clearly met\n"
-        "  weak  - one or zero criteria are clearly met\n"
+        "Map your judgement to a score:\n"
+        "  - 1.0 = all three criteria are clearly met\n"
+        "  - 0.5 = two of three criteria are clearly met\n"
+        "  - 0.0 = one or zero criteria are clearly met\n\n"
+        f"<input>\n{input}\n</input>\n\n"
+        f"<output>\n{output}\n</output>\n\n"
+        f"{_STRUCTURED_OUTPUT_DEMAND}"
     )
-    classifier = LLMClassifier(
-        name="plan_rubric",
-        prompt_template=rubric_template,
-        choice_scores={"good": 1.0, "okay": 0.5, "weak": 0.0},
-        use_cot=True,
-    )
-    return classifier.eval(input=input, output=output)
+
+
+# ---------------------------------------------------------------------------
+# Score parsing (tolerate markdown fences / preamble / trailing noise)
+# ---------------------------------------------------------------------------
+
+
+def _parse_judge_json(text: str) -> dict[str, Any]:
+    """Find the first ``{...}`` block in ``text`` and normalize it.
+
+    Backends wrap the judge JSON in preamble, markdown fences, or trailing
+    noise (codex echoes token counts; the model may add prose). We scan for
+    the first balanced ``{...}`` that parses as JSON and contains a numeric
+    ``score``. Returns ``{"score": float, "rationale": str}``.
+
+    Raises ``ValueError`` if no parseable score block is found.
+    """
+    if not text:
+        raise ValueError("empty backend output")
+
+    # Scan every '{' and try to parse the smallest balanced object from there.
+    for match in re.finditer(r"\{", text):
+        start = match.start()
+        depth = 0
+        for i in range(start, len(text)):
+            ch = text[i]
+            if ch == "{":
+                depth += 1
+            elif ch == "}":
+                depth -= 1
+                if depth == 0:
+                    candidate = text[start : i + 1]
+                    try:
+                        obj = json.loads(candidate)
+                    except Exception:
+                        break  # not valid JSON from this '{' -> try next '{'
+                    if isinstance(obj, dict) and "score" in obj:
+                        return _normalize_score_obj(obj)
+                    break  # parsed but no score -> try next '{'
+    raise ValueError("no parseable {score, rationale} block in backend output")
+
+
+def _normalize_score_obj(obj: dict[str, Any]) -> dict[str, Any]:
+    """Coerce a parsed object to ``{"score": float[0..1], "rationale": str}``."""
+    try:
+        score = float(obj.get("score"))
+    except (TypeError, ValueError):
+        raise ValueError("score is not a number")
+    # Clamp to [0.0, 1.0] -- judges occasionally emit out-of-range values.
+    score = max(0.0, min(1.0, score))
+    rationale = obj.get("rationale")
+    if not isinstance(rationale, str):
+        rationale = "" if rationale is None else str(rationale)
+    return {"score": score, "rationale": rationale}
+
+
+# ---------------------------------------------------------------------------
+# Judge backends (subscription-OAuth subprocess CLIs, mocked in tests)
+# ---------------------------------------------------------------------------
+
+
+def _judge_via_codex(prompt: str) -> dict[str, Any]:
+    """Grade ``prompt`` via ``codex exec --sandbox read-only`` (ChatGPT sub).
+
+    SAFE codex invocation: ``--sandbox read-only`` cannot mutate files. Parses
+    the judge JSON out of stdout (tolerating codex's hook/token-count noise).
+
+    Raises ``JudgeBackendError`` with a skip reason on non-zero exit, timeout,
+    or unparseable output -- the caller skips only this judge.
+    """
+    cmd = [_resolve_cli("codex"), "exec", "--sandbox", "read-only", prompt]
+    try:
+        proc = subprocess.run(
+            cmd,
+            capture_output=True,
+            text=True,
+            timeout=JUDGE_SUBPROCESS_TIMEOUT_SECONDS,
+        )
+    except subprocess.TimeoutExpired:
+        raise JudgeBackendError("codex_timeout")
+    except Exception:
+        raise JudgeBackendError("codex_unavailable")
+
+    if proc.returncode != 0:
+        raise JudgeBackendError("codex_unavailable")
+
+    try:
+        return _parse_judge_json(proc.stdout or "")
+    except ValueError:
+        raise JudgeBackendError("unparseable_score")
+
+
+def _judge_via_claude_headless(prompt: str) -> dict[str, Any]:
+    """Grade ``prompt`` via ``claude -p ... --output-format json --model sonnet``.
+
+    DOUBLE-LAYER parse: ``claude -p --output-format json`` returns a Claude
+    Code *envelope* JSON whose ``.result`` field is a STRING containing the
+    model's text output -- and that text is itself the judge JSON. So we parse
+    the envelope, take ``.result``, then parse the judge JSON from within it.
+
+    The child env strips ``ANTHROPIC_API_KEY`` / ``ANTHROPIC_AUTH_TOKEN`` so
+    the subprocess authenticates via subscription OAuth (the Sonnet bucket)
+    instead of an inherited external API key (which would 401).
+
+    Raises ``JudgeBackendError`` with a skip reason on non-zero exit, timeout,
+    envelope error, or unparseable output.
+    """
+    cmd = [_resolve_cli("claude"), "-p", prompt, "--output-format", "json", "--model", "sonnet"]
+    env = _claude_child_env()
+    try:
+        proc = subprocess.run(
+            cmd,
+            capture_output=True,
+            text=True,
+            timeout=JUDGE_SUBPROCESS_TIMEOUT_SECONDS,
+            env=env,
+        )
+    except subprocess.TimeoutExpired:
+        raise JudgeBackendError("claude_timeout")
+    except Exception:
+        raise JudgeBackendError("claude_unavailable")
+
+    if proc.returncode != 0:
+        raise JudgeBackendError("claude_unavailable")
+
+    # Layer 1: parse the Claude Code envelope.
+    try:
+        envelope = json.loads((proc.stdout or "").strip())
+    except Exception:
+        raise JudgeBackendError("unparseable_score")
+    if not isinstance(envelope, dict):
+        raise JudgeBackendError("unparseable_score")
+    # An auth/runtime failure surfaces as is_error=true with the error text in
+    # .result (e.g. "Invalid API key"). Treat that as unavailable.
+    if envelope.get("is_error"):
+        raise JudgeBackendError("claude_unavailable")
+
+    inner = envelope.get("result")
+    if not isinstance(inner, str):
+        raise JudgeBackendError("unparseable_score")
+
+    # Layer 2: the .result string is itself the judge JSON.
+    try:
+        return _parse_judge_json(inner)
+    except ValueError:
+        raise JudgeBackendError("unparseable_score")
+
+
+def _claude_child_env() -> dict[str, str]:
+    """Copy the current env but strip external Anthropic API credentials.
+
+    ``opc/.env`` sets ``ANTHROPIC_API_KEY`` (for PageIndex). If the ``claude``
+    subprocess inherits it, Claude Code uses it as an external API key and
+    401s instead of using subscription OAuth. Stripping both Anthropic
+    credential vars forces the subscription path.
+    """
+    env = dict(os.environ)
+    env.pop("ANTHROPIC_API_KEY", None)
+    env.pop("ANTHROPIC_AUTH_TOKEN", None)
+    return env
+
+
+def _run_judge(judge_name: str, prompt: str) -> dict[str, Any]:
+    """Dispatch a judge prompt to its configured subscription backend."""
+    backend = JUDGE_BACKENDS.get(judge_name)
+    if backend == "codex":
+        return _judge_via_codex(prompt)
+    if backend == "claude":
+        return _judge_via_claude_headless(prompt)
+    raise JudgeBackendError("no_backend_configured")
 
 
 # ---------------------------------------------------------------------------
@@ -484,41 +783,25 @@ def judge_session(trace: dict[str, Any], dry_run: bool = False) -> dict[str, Any
     plan_body = str(trace.get("plan_body") or "").strip()
     task_spans = trace.get("task_spans") or []
 
-    # --- Judge 1: Factuality (recall) -----------------------------------
+    # --- Judge 1: factuality (recall) -- claude backend -----------------
     if not user_prompt or not top_recall_chunk:
         result["skipped"]["factuality"] = "missing_input_or_output"
     else:
-        if dry_run:
-            result["would_post"] += 1
-        else:
-            try:
-                score_obj = _run_factuality(
-                    input=user_prompt,
-                    output=top_recall_chunk,
-                    expected=None,
-                )
-                fid = make_feedback_id(session_id, "factuality")
-                ok = _post_feedback(
-                    feedback_id=fid,
-                    judge_name="factuality",
-                    score=float(getattr(score_obj, "score", 0.0) or 0.0),
-                    metadata={
-                        "judge": "factuality",
-                        "session_id": session_id,
-                        "source": "judge_session.py",
-                    },
-                )
-                if ok:
-                    result["posts"] += 1
-                else:
-                    result["skipped"]["factuality"] = "post_failed_or_disabled"
-                # Even if POST is gated off (TRACE_TO_BRAINTRUST != true), we
-                # still count the attempt for tests that stub out requests.post.
-                # That count is incremented inside _post_feedback's mocked path.
-            except Exception as e:
-                result["skipped"]["factuality"] = f"judge_error: {type(e).__name__}"
+        _score_and_post(
+            result,
+            session_id=session_id,
+            judge_name="factuality",
+            prompt=_factuality_prompt(input=user_prompt, output=top_recall_chunk),
+            metadata={
+                "judge": "factuality",
+                "session_id": session_id,
+                "backend": JUDGE_BACKENDS["factuality"],
+                "source": "judge_session.py",
+            },
+            dry_run=dry_run,
+        )
 
-    # --- Judge 2: ClosedQA (sub-agent answered the question) -----------
+    # --- Judge 2: closedqa (sub-agent answered the question) -- claude ---
     top_level_task = _find_top_level_task(task_spans)
     if top_level_task is None:
         # No usable Task span at all (could be all nested, or none).
@@ -532,66 +815,85 @@ def judge_session(trace: dict[str, Any], dry_run: bool = False) -> dict[str, Any
         if not req or not out_text:
             result["skipped"]["closedqa"] = "missing_input_or_output"
         else:
-            if dry_run:
-                result["would_post"] += 1
-            else:
-                try:
-                    score_obj = _run_closedqa(
-                        input=req,
-                        output=out_text,
-                        criteria="Did the sub-agent answer the question it was given?",
-                    )
-                    fid = make_feedback_id(session_id, "closedqa")
-                    ok = _post_feedback(
-                        feedback_id=fid,
-                        judge_name="closedqa",
-                        score=float(getattr(score_obj, "score", 0.0) or 0.0),
-                        metadata={
-                            "judge": "closedqa",
-                            "session_id": session_id,
-                            "task_span_id": top_level_task.get("span_id"),
-                            "source": "judge_session.py",
-                        },
-                    )
-                    if ok:
-                        result["posts"] += 1
-                    else:
-                        result["skipped"]["closedqa"] = "post_failed_or_disabled"
-                except Exception as e:
-                    result["skipped"]["closedqa"] = f"judge_error: {type(e).__name__}"
+            _score_and_post(
+                result,
+                session_id=session_id,
+                judge_name="closedqa",
+                prompt=_closedqa_prompt(input=req, output=out_text),
+                metadata={
+                    "judge": "closedqa",
+                    "session_id": session_id,
+                    "task_span_id": top_level_task.get("span_id"),
+                    "backend": JUDGE_BACKENDS["closedqa"],
+                    "source": "judge_session.py",
+                },
+                dry_run=dry_run,
+            )
 
-    # --- Judge 3: Plan rubric (Battle -> LLMClassifier fallback) -------
+    # --- Judge 3: plan_rubric (plan quality) -- codex backend -----------
     if not user_prompt or not plan_body:
         result["skipped"]["plan_rubric"] = "missing_input_or_output"
     else:
-        if dry_run:
-            result["would_post"] += 1
-        else:
-            try:
-                score_obj = _run_battle_or_classifier(
-                    input=user_prompt,
-                    output=plan_body,
-                )
-                fid = make_feedback_id(session_id, "plan_rubric")
-                ok = _post_feedback(
-                    feedback_id=fid,
-                    judge_name="plan_rubric",
-                    score=float(getattr(score_obj, "score", 0.0) or 0.0),
-                    metadata={
-                        "judge": "plan_rubric",
-                        "session_id": session_id,
-                        "fallback": "LLMClassifier",
-                        "source": "judge_session.py",
-                    },
-                )
-                if ok:
-                    result["posts"] += 1
-                else:
-                    result["skipped"]["plan_rubric"] = "post_failed_or_disabled"
-            except Exception as e:
-                result["skipped"]["plan_rubric"] = f"judge_error: {type(e).__name__}"
+        _score_and_post(
+            result,
+            session_id=session_id,
+            judge_name="plan_rubric",
+            prompt=_plan_rubric_prompt(input=user_prompt, output=plan_body),
+            metadata={
+                "judge": "plan_rubric",
+                "session_id": session_id,
+                "backend": JUDGE_BACKENDS["plan_rubric"],
+                "source": "judge_session.py",
+            },
+            dry_run=dry_run,
+        )
 
     return result
+
+
+def _score_and_post(
+    result: dict[str, Any],
+    *,
+    session_id: str,
+    judge_name: str,
+    prompt: str,
+    metadata: dict[str, Any],
+    dry_run: bool,
+) -> None:
+    """Run one judge through its backend and POST the score (or record skip).
+
+    Mutates ``result`` in place:
+    - dry_run: increments ``would_post`` (no backend call, no POST).
+    - success: runs the backend, POSTs feedback, increments ``posts``.
+    - JudgeBackendError: records the skip reason (e.g. ``codex_unavailable``,
+      ``claude_timeout``, ``unparseable_score``) and continues -- one judge's
+      failure never crashes the run.
+    """
+    if dry_run:
+        result["would_post"] += 1
+        return
+
+    try:
+        parsed = _run_judge(judge_name, prompt)
+    except JudgeBackendError as e:
+        result["skipped"][judge_name] = str(e)
+        return
+    except Exception as e:  # defensive: unexpected backend failure
+        result["skipped"][judge_name] = f"judge_error: {type(e).__name__}"
+        return
+
+    fid = make_feedback_id(session_id, judge_name)
+    enriched = {**metadata, "rationale": parsed.get("rationale", "")}
+    ok = _post_feedback(
+        feedback_id=fid,
+        judge_name=judge_name,
+        score=float(parsed.get("score", 0.0) or 0.0),
+        metadata=enriched,
+    )
+    if ok:
+        result["posts"] += 1
+    else:
+        result["skipped"][judge_name] = "post_failed_or_disabled"
 
 
 def _find_top_level_task(task_spans: list[dict[str, Any]]) -> dict[str, Any] | None:
@@ -699,7 +1001,10 @@ def run_batch(
 def _build_arg_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(
         prog="judge_session",
-        description="Gate C: Phase 3b autoevals judge runner.",
+        description=(
+            "Gate C: Phase 3b judge runner (subscription-OAuth backends, "
+            "no API keys)."
+        ),
     )
     p.add_argument("--session-id", default=None, help="Single-session mode.")
     p.add_argument(
@@ -722,8 +1027,13 @@ def _build_arg_parser() -> argparse.ArgumentParser:
 
 
 def main(argv: list[str] | None = None) -> int:
-    check_env_preflight()
     args = _build_arg_parser().parse_args(argv)
+    # Preflight verifies the subscription CLIs are authenticated. A dry-run
+    # makes no backend calls (it only reports sampling + routing), so we skip
+    # the auth check in that mode -- useful for quota audits on a box where the
+    # CLIs aren't logged in.
+    if not args.dry_run:
+        check_cli_preflight()
 
     if args.scan_since:
         results = run_batch(
@@ -738,6 +1048,7 @@ def main(argv: list[str] | None = None) -> int:
                     "scan_since": args.scan_since,
                     "max_sessions": args.max_sessions,
                     "dry_run": args.dry_run,
+                    "backends": JUDGE_BACKENDS,
                     "count": len(results),
                     "results": results,
                 },
@@ -765,7 +1076,17 @@ def main(argv: list[str] | None = None) -> int:
         )
         return 1
     result = judge_session(trace, dry_run=args.dry_run)
-    print(json.dumps({"mode": "single", "dry_run": args.dry_run, "result": result}, indent=2))
+    print(
+        json.dumps(
+            {
+                "mode": "single",
+                "dry_run": args.dry_run,
+                "backends": JUDGE_BACKENDS,
+                "result": result,
+            },
+            indent=2,
+        )
+    )
     return 0
 
 

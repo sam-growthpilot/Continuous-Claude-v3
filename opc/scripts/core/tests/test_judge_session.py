@@ -1,25 +1,39 @@
-"""Tests for Gate C: Phase 3b autoevals judge runner.
+"""Tests for Gate C: Phase 3b judge runner (subscription-OAuth REWORK).
 
-These tests stub out the autoevals clients and the feedback HTTP POST,
-so no real LLM calls and no real Braintrust traffic occurs.
+These tests stub out ``subprocess.run`` (the two judge backends) and the
+feedback HTTP POST, so no real LLM calls and no real Braintrust traffic
+occurs.
 
-Coverage (from spec):
-- Env preflight fails fast when OPENAI_API_KEY is missing
+Backend map under test:
+    plan_rubric -> codex   (codex exec --sandbox read-only "<prompt>")
+    factuality  -> claude  (claude -p "<prompt>" --output-format json --model sonnet)
+    closedqa    -> claude  (claude -p ... --model sonnet)
+
+Coverage (from rework spec):
+- Preflight fails fast when a REQUIRED CLI is unavailable (codex login status != 0)
+- Preflight passes when both CLIs are ready
 - Deterministic sampling (same session_id -> same in/out)
 - ~35% sample rate across random IDs (statistical tolerance)
-- Exactly 3 feedback POSTs per sampled session
+- Exactly 3 feedback POSTs per fully-equipped sampled session
 - 0 POSTs when session is out of sample
 - --max-sessions caps batch size
-- --dry-run produces 0 LLM calls and 0 feedback POSTs
+- --dry-run produces 0 subprocess calls and 0 feedback POSTs
 - Idempotency: re-run produces same deterministic feedback IDs
+- Backend routing: plan_rubric -> codex args; factuality/closedqa -> claude
+  args (incl. --model sonnet)
+- Claude envelope -> .result -> judge-JSON DOUBLE parse
+- Codex stdout with preamble/noise -> first {...} judge JSON parsed
+- Per-judge skip: codex non-zero exit -> plan_rubric skipped (codex_unavailable), other 2 still POST
 - ClosedQA skip with reason 'nested_subagent_no_correlation' for nested Task spans
+- Orphan exit: no session_id and no BRAINTRUST_SESSION_ID
 """
 
 from __future__ import annotations
 
 import hashlib
-import os
+import json
 import random
+import subprocess
 import sys
 from pathlib import Path
 from unittest import mock
@@ -32,7 +46,52 @@ sys.path.insert(0, str(_CORE_DIR))
 
 
 # ---------------------------------------------------------------------------
-# Fixture: minimal session trace with all three artifacts
+# Canned subprocess outputs
+# ---------------------------------------------------------------------------
+
+
+def _codex_stdout(score: float = 0.8, rationale: str = "codex says") -> str:
+    """Codex stdout has preamble/noise lines then the judge JSON."""
+    judge_json = json.dumps({"score": score, "rationale": rationale})
+    return (
+        "hook: UserPromptSubmit\n"
+        "hook: UserPromptSubmit Completed\n"
+        "codex\n"
+        f"{judge_json}\n"
+        "tokens used\n"
+        "23604\n"
+        f"{judge_json}\n"  # codex tends to echo it twice; parser takes the first
+    )
+
+
+def _claude_envelope_stdout(
+    score: float = 0.9, rationale: str = "claude says", is_error: bool = False
+) -> str:
+    """Claude Code headless envelope wraps the judge JSON string in .result.
+
+    DOUBLE layer: the envelope is JSON, and envelope['result'] is itself a
+    string containing the judge JSON.
+    """
+    inner_judge_json = json.dumps({"score": score, "rationale": rationale})
+    envelope = {
+        "type": "result",
+        "subtype": "success",
+        "is_error": is_error,
+        "result": inner_judge_json,  # <- the model's text output, itself judge JSON
+        "session_id": "fake-claude-session",
+        "total_cost_usd": 0.0,
+    }
+    return json.dumps(envelope)
+
+
+def _make_completed(stdout: str, returncode: int = 0) -> subprocess.CompletedProcess:
+    return subprocess.CompletedProcess(
+        args=["fake"], returncode=returncode, stdout=stdout, stderr=""
+    )
+
+
+# ---------------------------------------------------------------------------
+# Fixtures: minimal session traces
 # ---------------------------------------------------------------------------
 
 
@@ -98,7 +157,7 @@ def nested_task_session_trace():
 
 
 # ---------------------------------------------------------------------------
-# Helper to import the module fresh and provide all common mocks
+# Helper to import the module fresh
 # ---------------------------------------------------------------------------
 
 
@@ -107,39 +166,89 @@ def _import_judge_session():
     if "judge_session" in sys.modules:
         del sys.modules["judge_session"]
     import judge_session  # noqa: E402
+
     return judge_session
 
 
-# ---------------------------------------------------------------------------
-# T1: env preflight
-# ---------------------------------------------------------------------------
-
-
-def test_env_preflight_fails_fast_when_openai_api_key_missing(monkeypatch):
-    """Missing OPENAI_API_KEY -> sys.exit with explicit message (T1 mitigation)."""
+def _set_post_env(monkeypatch) -> None:
+    """Env needed for the POST path (no OPENAI_API_KEY anymore)."""
     monkeypatch.delenv("OPENAI_API_KEY", raising=False)
-    js = _import_judge_session()
-    with pytest.raises(SystemExit) as excinfo:
-        js.check_env_preflight()
-    assert excinfo.value.code != 0
-    # Check that some explanatory text was printed to stderr
-    # (the exact wording is verified by the spec; we just confirm non-zero exit)
-
-
-def test_env_preflight_passes_when_openai_api_key_set(monkeypatch):
-    """OPENAI_API_KEY present -> preflight returns without raising."""
-    monkeypatch.setenv("OPENAI_API_KEY", "sk-test-fixture")
-    js = _import_judge_session()
-    js.check_env_preflight()  # should not raise
+    monkeypatch.setenv("BRAINTRUST_API_KEY", "bt-test-fixture")
+    monkeypatch.setenv("BRAINTRUST_CC_PROJECT_ID", "test-project-id")
+    monkeypatch.setenv("TRACE_TO_BRAINTRUST", "true")
 
 
 # ---------------------------------------------------------------------------
-# Deterministic sampling
+# Preflight (REPLACES old OPENAI_API_KEY check)
+# ---------------------------------------------------------------------------
+
+
+def test_preflight_fails_fast_when_codex_cli_unavailable(monkeypatch):
+    """`codex login status` != 0 -> SystemExit (non-zero)."""
+    js = _import_judge_session()
+
+    def fake_run(cmd, **kwargs):
+        # codex login status fails; claude --version succeeds
+        if "login" in cmd:
+            return _make_completed("not logged in", returncode=1)
+        return _make_completed("2.1.150 (Claude Code)", returncode=0)
+
+    monkeypatch.setattr(js.subprocess, "run", fake_run)
+
+    with pytest.raises(SystemExit) as excinfo:
+        js.check_cli_preflight()
+    assert excinfo.value.code != 0
+
+
+def test_preflight_names_codex_and_fix_command(monkeypatch, capsys):
+    js = _import_judge_session()
+
+    def fake_run(cmd, **kwargs):
+        if "login" in cmd:
+            return _make_completed("not logged in", returncode=1)
+        return _make_completed("2.1.150", returncode=0)
+
+    monkeypatch.setattr(js.subprocess, "run", fake_run)
+    with pytest.raises(SystemExit):
+        js.check_cli_preflight()
+    err = capsys.readouterr().err
+    assert "codex" in err.lower()
+    assert "codex login" in err.lower()
+
+
+def test_preflight_fails_fast_when_claude_cli_unavailable(monkeypatch, capsys):
+    """`claude --version` != 0 -> SystemExit naming claude + fix command."""
+    js = _import_judge_session()
+
+    def fake_run(cmd, **kwargs):
+        if "login" in cmd:  # codex login status
+            return _make_completed("Logged in using ChatGPT", returncode=0)
+        return _make_completed("command not found", returncode=127)
+
+    monkeypatch.setattr(js.subprocess, "run", fake_run)
+    with pytest.raises(SystemExit):
+        js.check_cli_preflight()
+    err = capsys.readouterr().err
+    assert "claude" in err.lower()
+    assert "claude login" in err.lower()
+
+
+def test_preflight_passes_when_both_clis_ready(monkeypatch):
+    js = _import_judge_session()
+
+    def fake_run(cmd, **kwargs):
+        return _make_completed("ok", returncode=0)
+
+    monkeypatch.setattr(js.subprocess, "run", fake_run)
+    js.check_cli_preflight()  # should not raise
+
+
+# ---------------------------------------------------------------------------
+# Deterministic sampling (UNCHANGED from 708912b)
 # ---------------------------------------------------------------------------
 
 
 def test_sampling_is_deterministic_per_session_id():
-    """Same session_id always yields the same in/out decision."""
     js = _import_judge_session()
     sid = "deterministic-test-session-abc"
     decisions = {js.is_sampled(sid) for _ in range(50)}
@@ -161,12 +270,11 @@ def test_sampling_rate_approximates_35_percent():
 
 
 # ---------------------------------------------------------------------------
-# Feedback ID determinism (T5 idempotency)
+# Feedback ID determinism (UNCHANGED idempotency)
 # ---------------------------------------------------------------------------
 
 
 def test_feedback_id_is_deterministic_sha256():
-    """make_feedback_id(session_id, judge_name) is sha256 first 16 hex chars."""
     js = _import_judge_session()
     sid = "fixed-session-x"
     judge = "factuality"
@@ -175,35 +283,152 @@ def test_feedback_id_is_deterministic_sha256():
     assert fid1 == fid2
     expected = hashlib.sha256(f"{sid}:{judge}".encode()).hexdigest()[:16]
     assert fid1 == expected
-    # Different judge -> different id
     assert js.make_feedback_id(sid, "closedqa") != fid1
 
 
 # ---------------------------------------------------------------------------
-# Exactly 3 POSTs for sampled session, 0 for out-of-sample
+# Score parsing: codex stdout + claude envelope double-parse
+# ---------------------------------------------------------------------------
+
+
+def test_parse_score_finds_first_json_block_with_preamble():
+    js = _import_judge_session()
+    parsed = js._parse_judge_json(_codex_stdout(score=0.8, rationale="ok"))
+    assert parsed["score"] == 0.8
+    assert parsed["rationale"] == "ok"
+
+
+def test_parse_score_tolerates_markdown_fences():
+    js = _import_judge_session()
+    fenced = 'Sure, here you go:\n```json\n{"score": 0.5, "rationale": "mid"}\n```\n'
+    parsed = js._parse_judge_json(fenced)
+    assert parsed["score"] == 0.5
+    assert parsed["rationale"] == "mid"
+
+
+def test_parse_score_normalizes_missing_rationale():
+    js = _import_judge_session()
+    parsed = js._parse_judge_json('{"score": 1.0}')
+    assert parsed["score"] == 1.0
+    assert isinstance(parsed["rationale"], str)
+
+
+def test_parse_score_raises_on_unparseable():
+    js = _import_judge_session()
+    with pytest.raises(ValueError):
+        js._parse_judge_json("there is no json here at all")
+
+
+def test_judge_via_codex_invokes_read_only_sandbox(monkeypatch):
+    js = _import_judge_session()
+    captured = {}
+
+    def fake_run(cmd, **kwargs):
+        captured["cmd"] = cmd
+        captured["timeout"] = kwargs.get("timeout")
+        return _make_completed(_codex_stdout(score=0.7, rationale="codex"))
+
+    monkeypatch.setattr(js.subprocess, "run", fake_run)
+    parsed = js._judge_via_codex("grade this plan")
+    assert parsed["score"] == 0.7
+    # Assert it called: codex exec --sandbox read-only "<prompt>"
+    # cmd[0] is the resolved executable path (e.g. codex.cmd on Windows).
+    cmd = captured["cmd"]
+    assert "codex" in cmd[0].lower()
+    assert "exec" in cmd
+    assert "--sandbox" in cmd
+    assert "read-only" in cmd
+    assert "grade this plan" in cmd
+    assert captured["timeout"] == 180
+
+
+def test_judge_via_claude_headless_double_parses_envelope(monkeypatch):
+    js = _import_judge_session()
+    captured = {}
+
+    def fake_run(cmd, **kwargs):
+        captured["cmd"] = cmd
+        captured["env"] = kwargs.get("env")
+        captured["timeout"] = kwargs.get("timeout")
+        return _make_completed(_claude_envelope_stdout(score=0.9, rationale="claude"))
+
+    monkeypatch.setattr(js.subprocess, "run", fake_run)
+    parsed = js._judge_via_claude_headless("answer the question?")
+    # DOUBLE parse: envelope.result string -> judge JSON
+    assert parsed["score"] == 0.9
+    assert parsed["rationale"] == "claude"
+    # Assert claude command shape incl. --model sonnet
+    # cmd[0] is the resolved executable path (e.g. claude.exe on Windows).
+    cmd = captured["cmd"]
+    assert "claude" in cmd[0].lower()
+    assert "-p" in cmd
+    assert "answer the question?" in cmd
+    assert "--output-format" in cmd
+    assert "json" in cmd
+    assert "--model" in cmd
+    assert "sonnet" in cmd
+    assert captured["timeout"] == 180
+
+
+def test_judge_via_claude_strips_anthropic_api_key_from_child_env(monkeypatch):
+    """The claude subprocess must NOT inherit ANTHROPIC_API_KEY (forces OAuth)."""
+    js = _import_judge_session()
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-ant-should-be-stripped")
+    monkeypatch.setenv("ANTHROPIC_AUTH_TOKEN", "should-be-stripped-too")
+    captured = {}
+
+    def fake_run(cmd, **kwargs):
+        captured["env"] = kwargs.get("env")
+        return _make_completed(_claude_envelope_stdout())
+
+    monkeypatch.setattr(js.subprocess, "run", fake_run)
+    js._judge_via_claude_headless("x")
+    env = captured["env"]
+    assert env is not None, "claude subprocess must pass an explicit env"
+    assert "ANTHROPIC_API_KEY" not in env
+    assert "ANTHROPIC_AUTH_TOKEN" not in env
+
+
+def test_judge_via_claude_skips_on_envelope_is_error(monkeypatch):
+    """When the claude envelope reports is_error=true (e.g. auth failure), the
+    judge backend raises JudgeBackendError('claude_unavailable') so only that
+    judge is skipped."""
+    js = _import_judge_session()
+
+    def fake_run(cmd, **kwargs):
+        return _make_completed(
+            _claude_envelope_stdout(is_error=True, rationale="Invalid API key")
+        )
+
+    monkeypatch.setattr(js.subprocess, "run", fake_run)
+    with pytest.raises(js.JudgeBackendError) as excinfo:
+        js._judge_via_claude_headless("x")
+    assert str(excinfo.value) == "claude_unavailable"
+
+
+# ---------------------------------------------------------------------------
+# Backend routing through judge_session
 # ---------------------------------------------------------------------------
 
 
 def _setup_run_mocks(monkeypatch, js, force_in_sample: bool = True):
-    """Common mock setup: env, autoevals judges, and the HTTP POST."""
-    monkeypatch.setenv("OPENAI_API_KEY", "sk-test-fixture")
-    monkeypatch.setenv("BRAINTRUST_API_KEY", "bt-test-fixture")
-    monkeypatch.setenv("BRAINTRUST_CC_PROJECT_ID", "test-project-id")
-    monkeypatch.setenv("TRACE_TO_BRAINTRUST", "true")
-
-    # Force sampling decision
+    """Common mock setup: env, both backends, and the HTTP POST."""
+    _set_post_env(monkeypatch)
     monkeypatch.setattr(js, "is_sampled", lambda _sid: force_in_sample)
 
-    # Mock the three judge invocations
-    fake_score = mock.MagicMock()
-    fake_score.score = 1.0
-    fake_score.metadata = {"rationale": "test"}
+    calls = {"codex": [], "claude": []}
 
-    monkeypatch.setattr(js, "_run_factuality", lambda **kw: fake_score)
-    monkeypatch.setattr(js, "_run_closedqa", lambda **kw: fake_score)
-    monkeypatch.setattr(js, "_run_battle_or_classifier", lambda **kw: fake_score)
+    def fake_codex(prompt):
+        calls["codex"].append(prompt)
+        return {"score": 0.8, "rationale": "codex"}
 
-    # Capture POSTs
+    def fake_claude(prompt):
+        calls["claude"].append(prompt)
+        return {"score": 0.9, "rationale": "claude"}
+
+    monkeypatch.setattr(js, "_judge_via_codex", fake_codex)
+    monkeypatch.setattr(js, "_judge_via_claude_headless", fake_claude)
+
     posts: list = []
 
     def fake_post(url, json=None, headers=None, timeout=None):
@@ -213,61 +438,76 @@ def _setup_run_mocks(monkeypatch, js, force_in_sample: bool = True):
         return resp
 
     monkeypatch.setattr(js.requests, "post", fake_post)
-    return posts
+    return posts, calls
 
 
 def test_sampled_session_produces_exactly_three_posts(monkeypatch, sample_session_trace):
     js = _import_judge_session()
-    posts = _setup_run_mocks(monkeypatch, js, force_in_sample=True)
+    posts, calls = _setup_run_mocks(monkeypatch, js, force_in_sample=True)
 
     result = js.judge_session(sample_session_trace, dry_run=False)
 
     assert len(posts) == 3, f"Expected 3 feedback POSTs, got {len(posts)}"
-    # All three POSTs should target /v1/project_logs/<project>/feedback
     for p in posts:
         assert "/v1/project_logs/" in p["url"]
         assert p["url"].endswith("/feedback")
-    # Distinct feedback IDs
     fids = [p["json"]["feedback"][0]["id"] for p in posts]
     assert len(set(fids)) == 3, "Each judge gets its own feedback id"
-    # judge_session returns counts for caller / dry-run reporting
     assert result["sampled"] is True
     assert result["posts"] == 3
 
 
+def test_backend_routing_plan_rubric_codex_others_claude(monkeypatch, sample_session_trace):
+    """plan_rubric -> codex backend; factuality + closedqa -> claude backend."""
+    js = _import_judge_session()
+    posts, calls = _setup_run_mocks(monkeypatch, js, force_in_sample=True)
+
+    js.judge_session(sample_session_trace, dry_run=False)
+
+    # codex called exactly once (plan_rubric)
+    assert len(calls["codex"]) == 1
+    # claude called exactly twice (factuality + closedqa)
+    assert len(calls["claude"]) == 2
+
+    # The judge_name -> backend mapping is also exposed as a constant.
+    assert js.JUDGE_BACKENDS["plan_rubric"] == "codex"
+    assert js.JUDGE_BACKENDS["factuality"] == "claude"
+    assert js.JUDGE_BACKENDS["closedqa"] == "claude"
+
+
 def test_out_of_sample_session_produces_zero_posts(monkeypatch, sample_session_trace):
     js = _import_judge_session()
-    posts = _setup_run_mocks(monkeypatch, js, force_in_sample=False)
+    posts, calls = _setup_run_mocks(monkeypatch, js, force_in_sample=False)
 
     result = js.judge_session(sample_session_trace, dry_run=False)
 
     assert len(posts) == 0
     assert result["sampled"] is False
     assert result["posts"] == 0
+    assert calls["codex"] == [] and calls["claude"] == []
 
 
 # ---------------------------------------------------------------------------
-# Dry run: 0 LLM calls and 0 POSTs
+# Dry run: 0 subprocess calls and 0 POSTs
 # ---------------------------------------------------------------------------
 
 
-def test_dry_run_makes_no_llm_calls_and_no_posts(monkeypatch, sample_session_trace):
+def test_dry_run_makes_no_subprocess_calls_and_no_posts(monkeypatch, sample_session_trace):
     js = _import_judge_session()
-    monkeypatch.setenv("OPENAI_API_KEY", "sk-test-fixture")
-    monkeypatch.setenv("BRAINTRUST_API_KEY", "bt-test-fixture")
-    monkeypatch.setenv("BRAINTRUST_CC_PROJECT_ID", "test-project-id")
-    monkeypatch.setenv("TRACE_TO_BRAINTRUST", "true")
+    _set_post_env(monkeypatch)
     monkeypatch.setattr(js, "is_sampled", lambda _sid: True)
 
-    llm_calls: list = []
+    def boom(*a, **k):
+        raise AssertionError("Dry run must not invoke a judge backend")
 
-    def boom_judge(**kw):
-        llm_calls.append(kw)
-        raise AssertionError("Dry run must not call judges")
+    monkeypatch.setattr(js, "_judge_via_codex", boom)
+    monkeypatch.setattr(js, "_judge_via_claude_headless", boom)
 
-    monkeypatch.setattr(js, "_run_factuality", boom_judge)
-    monkeypatch.setattr(js, "_run_closedqa", boom_judge)
-    monkeypatch.setattr(js, "_run_battle_or_classifier", boom_judge)
+    # Also assert no raw subprocess.run leaks through
+    def boom_run(*a, **k):
+        raise AssertionError("Dry run must not call subprocess.run")
+
+    monkeypatch.setattr(js.subprocess, "run", boom_run)
 
     posts: list = []
 
@@ -278,10 +518,8 @@ def test_dry_run_makes_no_llm_calls_and_no_posts(monkeypatch, sample_session_tra
     monkeypatch.setattr(js.requests, "post", boom_post)
 
     result = js.judge_session(sample_session_trace, dry_run=True)
-    assert llm_calls == []
     assert posts == []
     assert result["sampled"] is True
-    # Dry run reports how many POSTs WOULD have happened
     assert result["would_post"] == 3
 
 
@@ -291,15 +529,12 @@ def test_dry_run_makes_no_llm_calls_and_no_posts(monkeypatch, sample_session_tra
 
 
 def test_idempotent_rerun_produces_same_feedback_ids(monkeypatch, sample_session_trace):
-    """Running twice produces 2 POST attempts each with the SAME deterministic
-    feedback id, so Braintrust dedups server-side."""
     js = _import_judge_session()
-    posts1 = _setup_run_mocks(monkeypatch, js, force_in_sample=True)
+    posts1, _ = _setup_run_mocks(monkeypatch, js, force_in_sample=True)
     js.judge_session(sample_session_trace, dry_run=False)
     ids_run1 = sorted(p["json"]["feedback"][0]["id"] for p in posts1)
 
-    # Reset and rerun
-    posts2 = _setup_run_mocks(monkeypatch, js, force_in_sample=True)
+    posts2, _ = _setup_run_mocks(monkeypatch, js, force_in_sample=True)
     js.judge_session(sample_session_trace, dry_run=False)
     ids_run2 = sorted(p["json"]["feedback"][0]["id"] for p in posts2)
 
@@ -307,28 +542,23 @@ def test_idempotent_rerun_produces_same_feedback_ids(monkeypatch, sample_session
 
 
 # ---------------------------------------------------------------------------
-# T2: nested sub-agent ClosedQA skip
+# Per-judge skip: codex non-zero exit -> plan_rubric skipped, others still POST
 # ---------------------------------------------------------------------------
 
 
-def test_nested_subagent_task_skips_closedqa_with_reason(
-    monkeypatch, nested_task_session_trace
-):
-    """When a Task span has parent_span_id pointing to another Task, ClosedQA
-    is skipped with the documented reason. Factuality + Battle still run."""
+def test_codex_failure_skips_only_plan_rubric(monkeypatch, sample_session_trace):
     js = _import_judge_session()
-    monkeypatch.setenv("OPENAI_API_KEY", "sk-test-fixture")
-    monkeypatch.setenv("BRAINTRUST_API_KEY", "bt-test-fixture")
-    monkeypatch.setenv("BRAINTRUST_CC_PROJECT_ID", "test-project-id")
-    monkeypatch.setenv("TRACE_TO_BRAINTRUST", "true")
+    _set_post_env(monkeypatch)
     monkeypatch.setattr(js, "is_sampled", lambda _sid: True)
 
-    fake_score = mock.MagicMock()
-    fake_score.score = 1.0
-    fake_score.metadata = {"rationale": "test"}
-    monkeypatch.setattr(js, "_run_factuality", lambda **kw: fake_score)
-    monkeypatch.setattr(js, "_run_closedqa", lambda **kw: fake_score)
-    monkeypatch.setattr(js, "_run_battle_or_classifier", lambda **kw: fake_score)
+    def codex_fails(prompt):
+        raise js.JudgeBackendError("codex_unavailable")
+
+    def claude_ok(prompt):
+        return {"score": 0.9, "rationale": "claude"}
+
+    monkeypatch.setattr(js, "_judge_via_codex", codex_fails)
+    monkeypatch.setattr(js, "_judge_via_claude_headless", claude_ok)
 
     posts: list = []
 
@@ -340,34 +570,86 @@ def test_nested_subagent_task_skips_closedqa_with_reason(
 
     monkeypatch.setattr(js.requests, "post", fake_post)
 
-    # Set up nested span structure: the only Task is nested -> ClosedQA must skip
-    nested = nested_task_session_trace
-    # Drop the outer-only span, keep only the inner nested one to force skip
-    nested = {**nested, "task_spans": [s for s in nested["task_spans"] if s["span_id"] == "task-inner"]}
-    result = js.judge_session(nested, dry_run=False)
+    result = js.judge_session(sample_session_trace, dry_run=False)
 
-    # Factuality + Battle/Classifier should still POST; ClosedQA should be skipped
-    skipped = result.get("skipped", {})
-    assert "closedqa" in skipped
-    assert skipped["closedqa"] == "nested_subagent_no_correlation"
-    assert result["posts"] == 2  # factuality + battle/classifier only
+    assert "plan_rubric" in result["skipped"]
+    assert result["skipped"]["plan_rubric"] == "codex_unavailable"
+    # factuality + closedqa still posted
+    assert result["posts"] == 2
+    posted_judges = {list(p["json"]["feedback"][0]["scores"].keys())[0] for p in posts}
+    assert posted_judges == {"factuality", "closedqa"}
+
+
+def test_claude_timeout_skips_those_judges_codex_still_posts(monkeypatch, sample_session_trace):
+    js = _import_judge_session()
+    _set_post_env(monkeypatch)
+    monkeypatch.setattr(js, "is_sampled", lambda _sid: True)
+
+    def claude_times_out(prompt):
+        raise js.JudgeBackendError("claude_timeout")
+
+    def codex_ok(prompt):
+        return {"score": 0.8, "rationale": "codex"}
+
+    monkeypatch.setattr(js, "_judge_via_codex", codex_ok)
+    monkeypatch.setattr(js, "_judge_via_claude_headless", claude_times_out)
+
+    posts: list = []
+
+    def fake_post(url, json=None, headers=None, timeout=None):
+        posts.append({"url": url, "json": json})
+        resp = mock.MagicMock()
+        resp.status_code = 200
+        return resp
+
+    monkeypatch.setattr(js.requests, "post", fake_post)
+
+    result = js.judge_session(sample_session_trace, dry_run=False)
+    assert result["skipped"]["factuality"] == "claude_timeout"
+    assert result["skipped"]["closedqa"] == "claude_timeout"
+    assert result["posts"] == 1  # plan_rubric (codex) only
 
 
 # ---------------------------------------------------------------------------
-# Batch + max-sessions cap
+# Nested sub-agent ClosedQA skip (UNCHANGED behavior)
+# ---------------------------------------------------------------------------
+
+
+def test_nested_subagent_task_skips_closedqa_with_reason(
+    monkeypatch, nested_task_session_trace
+):
+    """When a Task span has parent_span_id pointing to another Task, ClosedQA
+    is skipped with the documented reason. Factuality + plan_rubric still run."""
+    js = _import_judge_session()
+    posts, calls = _setup_run_mocks(monkeypatch, js, force_in_sample=True)
+
+    nested = nested_task_session_trace
+    # Keep only the inner nested span to force the skip
+    nested = {
+        **nested,
+        "task_spans": [s for s in nested["task_spans"] if s["span_id"] == "task-inner"],
+    }
+    result = js.judge_session(nested, dry_run=False)
+
+    skipped = result.get("skipped", {})
+    assert "closedqa" in skipped
+    assert skipped["closedqa"] == "nested_subagent_no_correlation"
+    assert result["posts"] == 2  # factuality + plan_rubric only
+    # closedqa never reached the claude backend; factuality did (1 claude call)
+    assert len(calls["claude"]) == 1
+    assert len(calls["codex"]) == 1
+
+
+# ---------------------------------------------------------------------------
+# Batch + max-sessions cap (UNCHANGED)
 # ---------------------------------------------------------------------------
 
 
 def test_max_sessions_caps_batch_size(monkeypatch):
-    """run_batch( ... max_sessions=5 ) processes at most 5 sessions even when
-    100 are available."""
     js = _import_judge_session()
-    monkeypatch.setenv("OPENAI_API_KEY", "sk-test-fixture")
 
-    # 100 fake sessions
     fake_sessions = [{"session_id": f"sess-{i:03d}"} for i in range(100)]
     monkeypatch.setattr(js, "list_sessions_since", lambda since: fake_sessions)
-    # Force a trivial load_trace that returns the bare dict
     monkeypatch.setattr(js, "load_trace", lambda sid: {"session_id": sid})
 
     processed: list = []
@@ -389,8 +671,9 @@ def test_max_sessions_caps_batch_size(monkeypatch):
 
 def test_no_session_id_and_no_env_var_exits_with_explicit_error(monkeypatch, capsys):
     js = _import_judge_session()
-    monkeypatch.setenv("OPENAI_API_KEY", "sk-test-fixture")
     monkeypatch.delenv("BRAINTRUST_SESSION_ID", raising=False)
+    # Preflight must pass so we reach the orphan check, not exit on CLI preflight.
+    monkeypatch.setattr(js, "check_cli_preflight", lambda: None)
 
     with pytest.raises(SystemExit):
         js.main(["--session-id", ""])  # explicitly empty
