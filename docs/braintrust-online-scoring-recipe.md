@@ -114,56 +114,72 @@ If we grade nested Task spans now, we get wrong attribution. The runner
 skips nested spans with reason `nested_subagent_no_correlation` and the
 ClosedQA judge gets one shot per session at the top-level Task only.
 
-## UI configuration — step by step
+## How to run the judges — local scheduled runner (NOT a UI rule)
 
-1. **Open** the Claude Code project's logs view in Braintrust.
-2. **Click** "Online scoring" (or "Automated scoring", depending on
-   Braintrust UI version) in the sidebar.
-3. **Create rule** with these fields:
+**Important:** With subscription-OAuth judges there is **no Braintrust UI
+online-scoring-rule path.** A UI scoring rule runs on Braintrust's servers,
+which can only call API-key-based scorers (autoevals / OpenAI / Anthropic) —
+they **cannot invoke your local `codex` / `claude` CLIs** or their OAuth
+tokens. The `factuality` / `closedqa` / `plan_rubric` judges live in
+`opc/scripts/core/judge_session.py` and only work where those CLIs are
+authenticated: your local machine.
 
-   | Field | Value |
-   |-------|-------|
-   | Name | `cc-trace-scope-judges` |
-   | Scope | `trace` *(not span)* |
-   | Sample rate | `35%` |
-   | Trigger | On trace completion |
-   | Scorers | `factuality`, `closedqa`, `plan_rubric` (the three the runner emits) |
+So the judges run via the **local CLI runner**, which posts scores to
+Braintrust via `/v1/project_logs/<project_id>/feedback` (same pattern as
+Phases 1-2 — `emitBraintrustScore`, `_emit_store_quality_score`). The
+Braintrust UI is the *viewing* destination (Feedback panel), not a trigger.
 
-4. **Eligibility filter** (optional but recommended) — restrict to
-   sessions that actually have:
-   - a recall event (`memory-recall.jsonl` row), AND
-   - a Task span OR an ExitPlanMode span.
+### Manual / ad-hoc
 
-   Without this filter, sampled sessions with no artifacts produce
-   harmless skip-reason POSTs but waste rule-execution overhead.
+```bash
+cd opc && uv run python -m scripts.core.judge_session --session-id <id>                          # one session
+cd opc && uv run python -m scripts.core.judge_session --scan-since <iso-date> --max-sessions N   # batch
+cd opc && uv run python -m scripts.core.judge_session --scan-since <iso-date> --dry-run          # preview, no calls
+```
 
-5. **Save the rule.**
+### Automated (scheduled) — must be a LOCAL scheduler
 
-## How the runner attaches to the rule
+Schedule the `--scan-since` batch on the **local machine only**. Claude Code
+`/schedule` routines run *remotely* (Anthropic cloud) and — like a Braintrust
+UI rule — cannot reach the local `codex` / `claude` CLIs or their OAuth tokens.
+So the runner is scheduled via **Windows Task Scheduler** (this machine), not
+`/schedule`.
 
-The runner (`opc/scripts/core/judge_session.py`) does **not** itself
-trigger the rule. It posts feedback directly via
-`/v1/project_logs/<project_id>/feedback` using the same pattern as
-Phases 1 and 2 (`emitBraintrustScore`, `_emit_store_quality_score`).
-The online rule in the UI is the *alternative* path — it's the
-"run the same judges automatically as traces complete" pipeline.
+A wrapper script `scripts/run-judge-batch.ps1` runs the daily batch
+(`--scan-since` = previous day), and a Task Scheduler job `CCv3-Judge-Batch`
+invokes it daily. To inspect or change it:
 
-In practice we run BOTH:
-- The UI rule covers automated, sampled, continuous scoring on every
-  completed trace (35% per session, trace-scope).
-- The CLI runner covers ad-hoc backfill and one-off audit:
-  `python -m scripts.core.judge_session --session-id <id>` for a
-  specific session, or `--scan-since <date>` for a batch.
+```powershell
+schtasks /query /tn "CCv3-Judge-Batch" /v /fo list     # view
+schtasks /run   /tn "CCv3-Judge-Batch"                 # run now (manual trigger)
+schtasks /delete /tn "CCv3-Judge-Batch" /f             # remove
+```
 
-The feedback id derivation (`sha256(f"{session_id}:{judge_name}")[:16]`)
-is the same in both paths, so Braintrust's id-based dedup makes them
-safe to overlap.
+Pick a cadence that keeps daily judge volume within subscription headroom
+(see Cost / quota below). The wrapper defaults to `--max-sessions 10`.
 
-## Verifying the rule fires
+### Eligibility (built into the runner, no UI filter needed)
 
-After enabling the rule, kick off a normal Claude Code session that
-contains a recall, a Task call, and an `ExitPlanMode`. Wait for the
-trace to complete. Then in the Braintrust UI:
+The runner already short-circuits sessions lacking the required artifacts
+(a recall event, plus a Task span or `ExitPlanMode` span) before any backend
+call — verified in the dry-run. No external eligibility filter to configure.
+
+### If you ever DO want a Braintrust UI rule
+
+You'd have to abandon the subscription-CLI judges and re-implement the three
+scorers as Braintrust **server-side autoevals** with an `OPENAI_API_KEY` (or
+`ANTHROPIC_API_KEY`) configured in the Braintrust project — i.e. accept API
+billing. That's the exact trade-off we rejected. Don't do this unless the
+local-runner cadence proves insufficient AND you accept per-token cost.
+
+The feedback id derivation (`sha256(f"{session_id}:{judge_name}")[:16]`) makes
+re-runs idempotent — Braintrust dedups on id, so overlapping batches are safe.
+
+## Verifying the judges fire
+
+Kick off a normal Claude Code session that contains a recall, a Task call, and
+an `ExitPlanMode`. Wait for the trace to complete, then run the local runner
+against that session (`--session-id <id>`). Then in the Braintrust UI:
 
 1. Open the trace's root span.
 2. Look at the **Feedback** panel.

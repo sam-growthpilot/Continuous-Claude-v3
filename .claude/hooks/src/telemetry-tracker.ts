@@ -3,7 +3,6 @@ import { readFileSync, appendFileSync, existsSync, mkdirSync } from 'fs';
 import { join, dirname } from 'path';
 import { logSkill, logAgent } from './shared/session-activity.js';
 import { emitBraintrustScore } from './shared/braintrust-score.js';
-import { detectToolError } from './shared/tool-error.js';
 
 interface HookInput {
     session_id: string;
@@ -11,17 +10,9 @@ interface HookInput {
     cwd: string;
     tool_name: string;
     tool_input: Record<string, unknown>;
-    // Widened per Gate B2 / premortem T4. The original two-field shape
-    // ({status, output}) hid is_error/error/success — the fields Claude Code
-    // actually sets on tool failures. detectToolError() in shared/tool-error.ts
-    // checks all four; this type lets tests construct realistic payloads
-    // without `as any` casts.
     tool_response?: {
         status?: string;
         output?: string;
-        is_error?: boolean;
-        error?: string | boolean;
-        success?: boolean;
     };
 }
 
@@ -32,14 +23,6 @@ interface TelemetryEvent {
     name: string;
     trigger_source: 'hook' | 'explicit' | 'llm';
     success?: boolean;
-    /**
-     * Gate B2 instrumentation: empirical record of what fields Claude Code
-     * actually sends in tool_response. Lets us audit `~/.claude/cache/
-     * skill-telemetry.jsonl` and confirm whether is_error / error / success
-     * ever appear in real payloads vs the speculation in the Phase 3a comment.
-     * Always present; `[]` when tool_response is null/undefined.
-     */
-    tool_response_keys: string[];
 }
 
 function getTelemetryPath(): string {
@@ -77,14 +60,12 @@ function determineSource(toolInput: Record<string, unknown>): 'hook' | 'explicit
 // single skill SUCCEEDED. We emit:
 //   * skill_trigger_accuracy: 1.0 when success === true, else 0.0
 //
-// Gate B2 (2026-05-24): success is now derived from `detectToolError`
-// (`shared/tool-error.ts`), a TS port of the Python `_detect_tool_error`
-// at `braintrust_hooks.py:422-449`. It checks four indicators:
-// is_error===true, error truthy non-empty, success===false, OR
-// status==='error'. The original `status !== 'error'` check missed the
-// first three and 0/285 prod rows showed success: false. We also write
-// `tool_response_keys` to the jsonl telemetry so we can audit what
-// Claude Code actually sends in tool_response.
+// Caveat (documented for ops): success is derived from
+// `tool_response.status !== 'error'`. Empirical telemetry shows the
+// upstream `tool_response.status` is rarely if ever set to "error" on
+// Skill failures (see Phase 3 handoff finding), so 1.0 is the dominant
+// emit value today. The score becomes more meaningful once upstream
+// success-detection is hardened (separate task).
 //
 // spanId resolution: prefer BRAINTRUST_SESSION_ID env (set by the Python
 // hook chain when running inside a Claude Code session); fall back to the
@@ -102,22 +83,6 @@ export interface SkillTriggerEmitInput {
     skillName: string;
     triggerSource: 'hook' | 'explicit' | 'llm';
     success: boolean;
-}
-
-/**
- * Compute `tool_response_keys` for empirical instrumentation. Returns the
- * sorted keys of the tool_response object (or `[]` when null/undefined).
- *
- * Gate B2: lets us audit `~/.claude/cache/skill-telemetry.jsonl` and see
- * what fields Claude Code actually sends in tool_response. We've been
- * speculating for a week; this gives us empirical signal.
- *
- * Exported for unit testing.
- */
-export function buildToolResponseKeys(toolResponse: unknown): string[] {
-    if (toolResponse === null || toolResponse === undefined) return [];
-    if (typeof toolResponse !== 'object') return [];
-    return Object.keys(toolResponse as Record<string, unknown>);
 }
 
 /**
@@ -150,13 +115,7 @@ async function main() {
 
         if (data.tool_name === 'Skill') {
             const skillName = data.tool_input?.skill as string || 'unknown';
-            // Gate B2: use detectToolError (mirrors Python _detect_tool_error
-            // at braintrust_hooks.py:422-449 + adds status==='error' for
-            // backward compat). The original `status !== 'error'` check missed
-            // is_error/error/success — 0/285 prod rows showed success: false
-            // before this change.
-            const success = !detectToolError(data.tool_response);
-            const toolResponseKeys = buildToolResponseKeys(data.tool_response);
+            const success = data.tool_response?.status !== 'error';
 
             const event: TelemetryEvent = {
                 timestamp: new Date().toISOString(),
@@ -164,8 +123,7 @@ async function main() {
                 type: 'skill_used',
                 name: skillName,
                 trigger_source: determineSource(data.tool_input),
-                success,
-                tool_response_keys: toolResponseKeys
+                success
             };
 
             logEvent(event);
@@ -189,9 +147,7 @@ async function main() {
             }
         } else if (data.tool_name === 'Task') {
             const agentType = data.tool_input?.subagent_type as string || 'unknown';
-            // Gate B2: see Skill branch above for context on the detector swap.
-            const success = !detectToolError(data.tool_response);
-            const toolResponseKeys = buildToolResponseKeys(data.tool_response);
+            const success = data.tool_response?.status !== 'error';
 
             const event: TelemetryEvent = {
                 timestamp: new Date().toISOString(),
@@ -199,8 +155,7 @@ async function main() {
                 type: 'agent_spawned',
                 name: agentType,
                 trigger_source: 'llm',
-                success,
-                tool_response_keys: toolResponseKeys
+                success
             };
 
             logEvent(event);
