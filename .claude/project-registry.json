@@ -102,6 +102,114 @@
       "status": "inactive",
       "sentryProject": "",
       "linearTeam": ""
+    },
+    {
+      "name": "ebr-presentations-plugin",
+      "path": "C:/Users/david.hayes/Projects/ebr-presentations-plugin",
+      "stack": [],
+      "description": "EBR/QBR presentations plugin",
+      "port": null,
+      "url": null,
+      "devCommand": null,
+      "status": "active",
+      "sentryProject": "",
+      "linearTeam": ""
+    },
+    {
+      "name": "gong-mcp",
+      "path": "C:/Users/david.hayes/Projects/gong-mcp",
+      "stack": [],
+      "description": "Gong MCP server",
+      "port": null,
+      "url": null,
+      "devCommand": null,
+      "status": "active",
+      "sentryProject": "",
+      "linearTeam": ""
+    },
+    {
+      "name": "vibe-trading",
+      "path": "C:/Users/david.hayes/Projects/vibe-trading",
+      "stack": [],
+      "description": "Vibe trading project",
+      "port": null,
+      "url": null,
+      "devCommand": null,
+      "status": "active",
+      "sentryProject": "",
+      "linearTeam": ""
+    },
+    {
+      "name": "fourth-salesforce-mcp",
+      "path": "C:/Users/david.hayes/Projects/fourth-salesforce-mcp",
+      "stack": [],
+      "description": "Fourth Salesforce MCP server",
+      "port": null,
+      "url": null,
+      "devCommand": null,
+      "status": "active",
+      "sentryProject": "",
+      "linearTeam": ""
+    },
+    {
+      "name": "fourth-playwright-mcp",
+      "path": "C:/Users/david.hayes/Projects/fourth-playwright-mcp",
+      "stack": [],
+      "description": "Fourth Playwright MCP server",
+      "port": null,
+      "url": null,
+      "devCommand": null,
+      "status": "active",
+      "sentryProject": "",
+      "linearTeam": ""
+    },
+    {
+      "name": "agent-arch",
+      "path": "C:/agent-arch",
+      "stack": [],
+      "description": "Agent architecture workspace",
+      "port": null,
+      "url": null,
+      "devCommand": null,
+      "status": "active",
+      "sentryProject": "",
+      "linearTeam": ""
+    },
+    {
+      "name": "fourth-marketing-brain",
+      "path": "C:/Users/david.hayes/fourth-marketing-brain",
+      "stack": [],
+      "description": "Fourth marketing brain",
+      "port": null,
+      "url": null,
+      "devCommand": null,
+      "status": "active",
+      "sentryProject": "",
+      "linearTeam": ""
+    },
+    {
+      "name": "Fourth Canvas",
+      "path": "C:/Users/david.hayes/Projects/Fourth Canvas",
+      "port": 3004,
+      "url": "https://fourth-canvas.localhost/",
+      "stack": "Next.js + TypeScript + Drizzle + Neon",
+      "status": "active",
+      "devCommand": "npm run dev",
+      "github": "Rev4nchist/fourth-canvas",
+      "deploy": "Vercel"
+    },
+    {
+      "name": "ebr-presentations",
+      "path": "C:/Users/david.hayes/Projects/ebr-presentations",
+      "port": null,
+      "url": null,
+      "stack": "Python (uv) + pandas/polars + pydantic",
+      "status": "active",
+      "devCommand": "uv run python -m ebr_presentations",
+      "github": null,
+      "deploy": null,
+      "kind": "data-pipeline",
+      "notes": "SQL -> JSON ETL feeding the EBR presentation builder. Not a web app."
     }
   ]
 }
