@@ -14,21 +14,40 @@ ROADMAP.md is the **single authoritative view** of project status for Continuous
 │  └──────┬──────┘ └────┬─────┘ └────┬─────┘ └────────┬────────┘  │
 └─────────┼─────────────┼────────────┼────────────────┼───────────┘
           │             │            │                │
-          ▼             ▼            ▼                ▼
-┌─────────────────┐ ┌──────────────┐ ┌─────────────┐ ┌────────────┐
-│post-plan-roadmap│ │prd-roadmap-  │ │git-commit-  │ │post-plan-  │
-│                 │ │sync          │ │roadmap      │ │roadmap     │
-│ ExitPlanMode    │ │ PRD Write/   │ │ Bash git    │ │ExitPlanMode│
-│ trigger         │ │ Edit trigger │ │ commit      │ │trigger     │
-└─────────────────┘ └──────────────┘ └─────────────┘ └────────────┘
-                                           │
-                                           ▼
-                                    ┌─────────────┐
-                                    │roadmap-     │
-                                    │completion   │
-                                    │ TaskUpdate  │
-                                    └─────────────┘
+          │             ▼            ▼                │
+          │      ┌──────────────┐ ┌─────────────┐     │
+          │      │prd-roadmap-  │ │git-commit-  │     │
+          │      │sync          │ │roadmap      │     │
+          │      │ PRD Write/   │ │ Bash git    │     │
+          │      │ Edit trigger │ │ commit      │     │
+          │      └──────────────┘ └─────────────┘     │
+          │                            ▲              │
+          ▼                            │              ▼
+┌─────────────────┐            ┌─────────────┐  (same hook also
+│post-plan-roadmap│            │roadmap-     │   writes Recent
+│                 │            │completion   │   Planning)
+│ ExitPlanMode    │            │ TaskUpdate  │
+│ trigger         │            │ completed   │
+└─────────────────┘            └─────────────┘
+  post-plan-roadmap writes BOTH Current Focus and Recent Planning.
+  Completed is fed by git-commit-roadmap AND roadmap-completion.
 ```
+
+**The 4 ROADMAP hooks** (each distinct — `post-plan-roadmap` owns two sections):
+
+| Hook | Trigger | ROADMAP Section(s) |
+|------|---------|--------------------|
+| `post-plan-roadmap` | ExitPlanMode | Current Focus + Recent Planning |
+| `prd-roadmap-sync` | Write/Edit PRD files | Planned |
+| `git-commit-roadmap` | Bash `git commit` | Completed |
+| `roadmap-completion` | TaskUpdate completed | Current Focus → Completed |
+
+> **Cross-project contamination guard:** The ROADMAP hooks check plan content
+> against the project registry (`.claude/project-registry.json`) before writing.
+> When multiple terminals run planning sessions for different projects
+> concurrently, this prevents one project's plan from polluting another's
+> ROADMAP — a write is skipped if the plan's project doesn't match the target
+> ROADMAP's project.
 
 ## Section Ownership Model
 

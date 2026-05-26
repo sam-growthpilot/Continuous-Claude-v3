@@ -73,14 +73,17 @@ PageIndex Layer:
 │                                                              │
 │  SessionStart ─────→ session-start-docker                    │
 │                      session-start-parallel                  │
+│                      hook-health-monitor [BT: hook_health]   │
 │                                                              │
 │  UserPromptSubmit ─→ heartbeat                               │
-│                      memory-awareness                        │
+│                      memory-awareness [BT: memory_recall]    │
 │                      skill-activation-prompt                 │
 │                                                              │
 │  PreToolUse ───────→ file-claims (can BLOCK)                 │
 │                      ralph-delegation-enforcer (can BLOCK)   │
 │                      git-memory-check (can BLOCK)            │
+│                      plan-to-ralph-enforcer (can BLOCK)      │
+│                      package-install-guard:Bash (can BLOCK)  │
 │                      task-router                             │
 │                      explore-to-scout                        │
 │                                                              │
@@ -89,9 +92,57 @@ PageIndex Layer:
 │                      pageindex-watch                         │
 │                      smarter-everyday                        │
 │                      git-commit-roadmap                      │
+│                      telemetry-tracker:Skill|Task            │
+│                          [BT: tool_call_success,             │
+│                               skill_trigger_accuracy]        │
+│                      ralph-task-monitor:Task                 │
+│                          [BT: agent_task_success]            │
+│                      plan-exit-tracker:ExitPlanMode          │
+│                      plan-exit-premortem-prompt:ExitPlanMode │
 │                                                              │
 └──────────────────────────────────────────────────────────────┘
+
+[BT: …] marks a Braintrust deterministic emit site. See the
+Braintrust Observability section below.
 ```
+
+## Braintrust Observability
+
+```
+┌──────────────────────────────────────────────────────────────┐
+│                  BRAINTRUST (two layers)                     │
+├──────────────────────────────────────────────────────────────┤
+│                                                              │
+│  LAYER 1 — DETERMINISTIC (live, in hook path)                │
+│    4 TS hooks → await emitBraintrustScore()                  │
+│    helper: hooks/src/shared/braintrust-score.ts             │
+│                                                              │
+│    memory-awareness ───→ memory_recall_relevance / _hit      │
+│    store_learning.py ──→ memory_store_quality  (Python)      │
+│    telemetry-tracker ──→ tool_call_success                   │
+│                          skill_trigger_accuracy              │
+│    ralph-task-monitor ─→ agent_task_success                  │
+│    hook-health-monitor → hook_health_ratio                   │
+│                                                              │
+│    GUARD: scripts/audit-braintrust-emits.sh (INVARIANT_4=4)  │
+│           run after ANY TS hook edit; await-only grep        │
+│                                                              │
+│  LAYER 2 — LLM JUDGES (offline, sampled, scheduled)          │
+│    opc/scripts/core/judge_session.py                        │
+│      factuality + closedqa → claude -p --model sonnet        │
+│      plan_rubric           → codex exec --sandbox read-only  │
+│    NO API keys — subscription OAuth · 35% sampler · --force  │
+│    cross-project recall via ~/.claude/project-registry.json  │
+│    scheduled: Task Scheduler "CCv3-Judge-Batch" (06:15 local)│
+│                                                              │
+└──────────────────────────────────────────────────────────────┘
+            │                                  │
+            ▼                                  ▼
+   /v1/project_logs/{project_id}/feedback   Braintrust UI
+```
+
+Full detail: [Braintrust Subsystem](subsystems/braintrust.md). Ops runbook:
+`docs/braintrust-online-scoring-recipe.md`.
 
 ## Agent Orchestration
 
@@ -101,31 +152,43 @@ PageIndex Layer:
 │         subagent_type: "<agent-name>"                       │
 └─────────────────────────────────────────────────────────────┘
                           │
-        ┌─────────────────┼─────────────────┐
-        ▼                 ▼                 ▼
-   ┌─────────┐       ┌─────────┐       ┌─────────┐
-   │RESEARCH │       │IMPLEMENT│       │ REVIEW  │
-   │ scout   │       │ kraken  │       │ critic  │
-   │ oracle  │       │ spark   │       │ judge   │
-   └─────────┘       └─────────┘       └─────────┘
+   ┌──────────┬───────────┼───────────┬──────────┬──────────┐
+   ▼          ▼           ▼           ▼          ▼          ▼
+┌────────┐┌────────┐ ┌─────────┐ ┌─────────┐┌────────┐┌────────┐
+│RESEARCH││ DESIGN │ │IMPLEMENT│ │  DEBUG  ││ REVIEW ││ DEPLOY │
+│ scout  ││architect│ │ kraken  │ │debug-   ││ critic ││deployer│
+│ oracle ││ phoenix │ │ spark   │ │ agent   ││principal│└────────┘
+└────────┘└────────┘ └─────────┘ │ sleuth  ││-reviewer│
+                                 └─────────┘│ codex- │
+                          ┌────────┐        │adversary│
+                          │  TEST  │        └────────┘
+                          │arbiter │
+                          │ atlas  │
+                          └────────┘
 
 Agent Selection Rule:
   Research → scout (internal) / oracle (external)
+  Design   → architect / phoenix (refactor strategy)
   Implement → kraken (TDD) / spark (quick fix)
   Debug → debug-agent / sleuth
-  Review → critic / judge / liaison
+  Test  → arbiter / atlas (test execution)
+  Review → critic / principal-reviewer / codex-adversary (cross-model)
+  Deploy → deployer (Vercel / Railway / Sentry / Linear)
 ```
 
 ## Workflow Composition
 
 ```
-/ralph Workflow:
-  brainstorm → validate → refine → prd → design → architecture
-       │          │         │       │       │          │
-       ▼          ▼         ▼       ▼       ▼          ▼
-    MCP:       MCP:       Loop   Generate Create    Build
-    idearalph  idearalph  until  PRD doc  design   plan
-    brainstorm validate   9.5+           spec
+/ralph Workflow (GSD autonomous-dev lifecycle):
+  Phase 0       Phase 0.5    Phase 1   Phase 2   Phase 2.5  Phase 3       Phase 4   Phase 4.1.5
+  (context)  →  (research) → (PRD)  → (tasks) → (premortem) → (delegate) → (review) → (goal verify)
+       │              │          │        │           │              │           │           │
+       ▼              ▼          ▼        ▼           ▼              ▼           ▼           ▼
+  Load prior     oracle/     Generate  Break     codex-        Agents     principal-  Verify goals
+  context +      scout       PRD doc   into      adversary     implement  reviewer    met against
+  handoffs       research              tasks     premortem     (ralph     synthesize  original
+                                                 review        never      findings    objective
+                                                               edits)
 
 /maestro Workflow:
   Analyze task → Spawn specialists → Coordinate → Synthesize

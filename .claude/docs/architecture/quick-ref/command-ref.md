@@ -9,7 +9,8 @@
 | `/fix` | Bug resolution | Debug → Fix → Test |
 | `/build` | Feature development | Plan → Implement → Review |
 | `/explore` | Codebase research | Understanding code |
-| `/review` | Code review | Before merge |
+| `/review` | Code review | Before merge (critic + plan-reviewer + codex-adversary) |
+| `/premortem` | Failure-mode analysis | Before implementing a plan (inline imagining + codex-adversary cross-model pass) |
 | `/release` | Release prep | Audit → Test → Changelog |
 
 ## Research Commands
@@ -80,6 +81,13 @@ Skills auto-activate on keywords:
 | `--ultrathink` | Maximum extended thinking |
 | `--uc` | Ultra-compressed output |
 
+## Shell Note (Windows)
+
+The default shell on this machine is **PowerShell** (use PowerShell syntax —
+`$null`, `$env:VAR`, backtick line-continuation). Bash-style commands shown in
+these docs run via the **Bash tool** (Git Bash), which is also available. Git
+Bash paths must include the drive letter (`C:/Users/...`, not `/Users/...`).
+
 ## Quick Reference
 
 ```
@@ -99,3 +107,4 @@ Orchestrate:  /ralph, /maestro
 | kraken | TDD implementation |
 | spark | Quick fixes |
 | arbiter | Test runner |
+| codex-adversary | Cross-model adversarial review (OpenAI Codex via `codex exec`) |

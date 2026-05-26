@@ -7,11 +7,12 @@
 │                    WORKFLOWS                                │
 ├─────────────────────────────────────────────────────────────┤
 │                                                             │
-│  /ralph    - Full product: PRD → Design → Architecture     │
+│  /ralph    - Autonomous dev: PRD → Tasks → Delegate → Verify│
 │  /maestro  - Coordinate multiple specialists               │
 │  /fix      - Debug → Implement → Test                      │
 │  /build    - Plan → Implement → Review                     │
 │  /explore  - Codebase research at varying depths           │
+│  /premortem- Adversarial failure-mode analysis of a plan   │
 │  /review   - Parallel specialized reviews                  │
 │  /release  - Audit → Test → Changelog                      │
 │                                                             │
@@ -20,26 +21,59 @@
 
 ## /ralph Workflow
 
-Full autonomous development from idea to implementation.
+Maestro's **autonomous development mode** (GSD lifecycle). Ralph orchestrates
+specialized agents to take a defined requirement from PRD through verified
+implementation. **Ralph NEVER edits code directly** — it delegates ALL
+implementation to agents (kraken, spark, arbiter, debug-agent, etc.) via the
+Task tool. It is not an idea-generation or brainstorm pipeline.
 
 ```
-brainstorm → validate → refine → prd → design → architecture
-     │          │         │       │       │          │
-     ▼          ▼         ▼       ▼       ▼          ▼
-  Generate   Score     Loop    Create  Create    Build
-  ideas      PMF       until   PRD     design    plan
-             dims      9.5+    doc     spec
+Phase 0   → 0.5   → 1    → 2     → 2.5      → 3        → 4      → 4.1.5
+Context     Deep    PRD    Task    Premortem  Delegation Review   Goal
+loading     research        breakdown (adversarial loop      & merge  verify
+(memory +  (optional)              gate)      (spawn
+ tree)                                          agents)
 ```
 
-**Stages:**
-1. `idearalph_brainstorm` - Generate startup ideas
-2. `idearalph_validate` - Score on 10 PMF dimensions
-3. `idearalph_refine` - Iterate until score ≥9.5
-4. `idearalph_prd` - Generate Product Requirements
-5. `idearalph_design` - UI/UX specifications
-6. `idearalph_architecture` - Implementation plan
+**Phases:**
+1. **Phase 0** - Context loading (memory recall + knowledge tree)
+2. **Phase 0.5** - Deep research (optional, for complex features)
+3. **Phase 1** - PRD generation (ai-dev-tasks templates)
+4. **Phase 2** - Task breakdown (`generate-tasks.md`)
+5. **Phase 2.5** - Adversarial plan gate (`/premortem`, includes a codex-adversary cross-model pass)
+6. **Phase 3** - Delegation loop (spawn agents; each must emit a `ralph_status` JSON)
+7. **Phase 4** - Review & merge
+8. **Phase 4.1.5** - Goal verification
+
+**Enforcement:** After plan approval, the `plan-to-ralph-enforcer` hook blocks
+direct code edits (Edit/Write on `.ts`/`.py`/etc.) — implementation must flow
+through delegated agents. The `ralph-delegation-enforcer` hook blocks
+Edit/Write/Bash for implementation while Ralph mode is active.
+
+**Bounded iterations:** 10 (small) / 30 (medium) / 50 (large) — Ralph escalates
+to the user after hitting the limit rather than looping silently.
 
 **Usage:** `/ralph "build a task management app"`
+
+## /premortem Workflow
+
+First-class adversarial failure-mode analysis of an approved plan. Auto-offered
+by the `plan-exit-premortem-prompt` hook after every `ExitPlanMode`, and run as
+Phase 2.5 inside `/ralph`.
+
+```
+Plan ──→ Imagine failure modes ──→ codex-adversary ──→ Folded mitigations
+ │            (inline)              (cross-model pass)        │
+ ▼                                                            ▼
+ExitPlanMode                                          Hardened plan
+```
+
+- Identifies "tigers" (likely failures) and "elephants" (unspoken risks).
+- The codex-adversary pass (OpenAI `codex exec`) adds cross-model triangulation —
+  findings only one model catches are the cross-model lift.
+- Skip the Codex pass with `--no-codex` for doc-only or trivial diffs.
+
+**Usage:** `/premortem` (or auto-offered after a plan is approved)
 
 ## /maestro Workflow
 
@@ -111,15 +145,20 @@ Comprehensive code review via parallel specialists.
 ┌─────────────┐
 │   /review   │
 └──────┬──────┘
-       │
-       ├── critic (feature review)
-       ├── judge (refactor review)
-       ├── liaison (API review)
-       └── surveyor (migration review)
+       │   Phase 1 (parallel reviewers)
+       ├── critic (code review)
+       ├── plan-reviewer (plan / change review)
+       └── codex-adversary (cross-model pass, OpenAI codex exec)
        │
        ▼
-   Synthesize findings
+   review-agent synthesizes findings
 ```
+
+**Cross-model lift:** `codex-adversary` runs in parallel with critic and
+plan-reviewer. Because Codex is a different model family, it catches blind spots
+the Claude-family reviewers share. Findings flagged by BOTH are high-confidence;
+`[Codex]`-only findings are the cross-model lift. Skip with `--no-codex` for
+doc-only or trivial diffs. See `.claude/rules/codex-adversarial.md`.
 
 ## /release Workflow
 
@@ -151,4 +190,5 @@ Skills in `~/.claude/skills/` can compose workflows:
 | Single focused task | Direct agent |
 | Multi-step with dependencies | Workflow |
 | Need coordination | /maestro |
-| Full product build | /ralph |
+| Autonomous feature build (PRD → verified impl) | /ralph |
+| Stress-test a plan before building | /premortem |

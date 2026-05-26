@@ -1,24 +1,28 @@
 # Braintrust Online Scoring Recipe — Gate C / Phase 3b Judges
 
-This is the manual UI configuration recipe for the trace-scope online
-scoring rule that Phase 3b expects. The runner code lives in
-`opc/scripts/core/judge_session.py`. This doc covers the Braintrust UI
-side: scope, sample rate, scorers, eligibility, and the CLI-auth preflight.
+This is the operations recipe for the **local scheduled runner** that
+Phase 3b's trace-level judges run through. The runner code lives in
+`opc/scripts/core/judge_session.py`. There is **no Braintrust UI scoring
+rule** — the judges shell out to local subscription CLIs, which a
+server-side UI rule cannot reach (see "How to run the judges" below). This
+doc covers the runner side: trace-level sampling, the three scorers,
+eligibility, and the CLI-auth preflight.
 
 **No API keys.** Both judge backends are subscription-billed via OAuth — the
 runner shells out to `codex exec` (ChatGPT subscription) and `claude -p`
 (Claude Code subscription, Sonnet bucket). There is no `OPENAI_API_KEY` and
 no pay-per-token billing in the judge path.
 
-## Why trace scope, not span scope
+## Why trace level, not span level
 
-Each judge counts **1 against quota per session** when the rule runs at
-**trace scope**. If the same rule ran at **span scope**, each judge would
+The runner judges **once per session (trace)**, so each judge counts **1
+against quota per session**. If it judged per span instead, each judge would
 fire once per matching span — for sessions with many Task spans or many
 Bash calls, that's a 10-50x quota multiplier with no improvement in
 signal. The deterministic 35% sampler in `judge_session.py` is computed
-on the trace's `session_id`, which is also the trace's `root_span_id`.
-Sample rate decisions are stable per session, not per span.
+on the trace's `session_id`, which is also the trace's `root_span_id`, and
+each judge POSTs to that `root_span_id` so the scores attach at trace level.
+Sample decisions are stable per session, not per span.
 
 ## Required setup — CLI auth (no API keys)
 
@@ -192,7 +196,10 @@ re-runs idempotent — Braintrust dedups on id, so overlapping batches are safe.
 
 Kick off a normal Claude Code session that contains a recall, a Task call, and
 an `ExitPlanMode`. Wait for the trace to complete, then run the local runner
-against that session (`--session-id <id>`). Then in the Braintrust UI:
+against that session. Use `--session-id <id> --force` for the test —
+`--session-id` *alone* still respects the 35% sampler, so the session may hash
+out of sample and emit nothing; `--force` guarantees the judges fire. Then in
+the Braintrust UI:
 
 1. Open the trace's root span.
 2. Look at the **Feedback** panel.
@@ -212,21 +219,24 @@ why.
 
 ## Trigger conditions / when to run
 
-| Scenario | UI rule | CLI runner |
-|----------|---------|-----------|
-| Steady-state automated scoring | Yes (35% sample) | No |
-| Backfill historical sessions | No | `--scan-since <iso-date> --max-sessions N` |
-| Re-grade a specific session | No | `--session-id <id>` |
-| Pre-flight a candidate change to the rubric | No | `--session-id <id> --dry-run` then enable POSTs |
-| Quota audit | No | `--dry-run` reports `would_post` counts without firing judges |
+All scoring goes through the local CLI runner — there is no UI-rule path
+for the subscription-CLI judges.
+
+| Scenario | CLI runner |
+|----------|-----------|
+| Steady-state automated scoring | `CCv3-Judge-Batch` scheduled task (daily, `--scan-since` previous day, 35% sample) |
+| Backfill historical sessions | `--scan-since <iso-date> --max-sessions N` |
+| Re-grade a specific session | `--session-id <id>` (still sampled) or `--session-id <id> --force` (bypass sampler) |
+| Pre-flight a candidate change to the rubric | `--session-id <id> --dry-run` then enable POSTs |
+| Quota audit | `--dry-run` reports `would_post` counts without firing judges |
 
 ## Idempotency and re-runs
 
 Re-running the CLI for the same session yields the same feedback IDs
 (`sha256(f"{session_id}:{judge_name}")[:16]`). Braintrust dedups on the
-id, so re-running is safe. The UI rule writes IDs the same way when
-configured to use deterministic scorers, so the rule and the CLI won't
-fight each other.
+id, so re-running is safe — overlapping batches (e.g. a manual re-grade
+landing on a session the scheduled batch already scored) won't create
+duplicate scores.
 
 ## Cost / quota notes
 

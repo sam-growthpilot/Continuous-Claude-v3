@@ -178,11 +178,13 @@ Before ANY task:
 
 **Commands:**
 ```bash
-# Recall before starting
-recall_learnings.py --query "relevant keywords"
+# Recall before starting (scripts live under $CLAUDE_OPC_DIR, not ~/.claude)
+cd $CLAUDE_OPC_DIR && PYTHONPATH=. uv run python scripts/core/recall_learnings.py \
+  --query "relevant keywords" --k 5 --text-only
 
 # Store after learning something
-store_learning.py --type WORKING_SOLUTION --content "what worked"
+cd $CLAUDE_OPC_DIR && PYTHONPATH=. uv run python scripts/core/store_learning.py \
+  --session-id "<short-id>" --type WORKING_SOLUTION --content "what worked"
 ```
 
 ---

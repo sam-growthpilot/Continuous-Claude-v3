@@ -11,6 +11,7 @@
 | Manage goals | [ROADMAP Subsystem](subsystems/roadmap.md) |
 | Use agents | [Agent Picker](quick-ref/agent-picker.md) |
 | Find a hook | [Hook Catalog](quick-ref/hook-catalog.md) |
+| Score/observe the system | [Braintrust Subsystem](subsystems/braintrust.md) |
 
 ## System at a Glance
 
@@ -21,21 +22,22 @@
 | Agents | Specialized task delegation | Task tool |
 | PageIndex | Document navigation & search | `pageindex_cli.py` |
 | Workflows | Multi-step orchestration | `/ralph`, `/maestro` |
+| Braintrust | Observability — score system performance | `emitBraintrustScore()`, `judge_session.py` |
 
-## Five Pillars
+## Six Pillars
 
 ```
 ┌─────────────────────────────────────────────────────────────────────────────┐
 │                           CLAUDE SESSION                                     │
 │     User Prompt → Hooks → Tools/Agents → Output → Hooks                      │
 └─────────────────────────────────────────────────────────────────────────────┘
-        │           │           │           │           │
-        ▼           ▼           ▼           ▼           ▼
-┌──────────┐ ┌──────────┐ ┌──────────┐ ┌──────────┐ ┌──────────┐
-│  MEMORY  │ │  HOOKS   │ │  AGENTS  │ │ PAGEINDEX│ │ WORKFLOWS│
-│PostgreSQL│ │TS source │ │ Task tool│ │Doc search│ │Ralph/    │
-│+pgvector │ │ → dist   │ │ delegate │ │LLM reason│ │Maestro   │
-└──────────┘ └──────────┘ └──────────┘ └──────────┘ └──────────┘
+        │           │           │           │           │           │
+        ▼           ▼           ▼           ▼           ▼           ▼
+┌──────────┐ ┌──────────┐ ┌──────────┐ ┌──────────┐ ┌──────────┐ ┌──────────┐
+│  MEMORY  │ │  HOOKS   │ │  AGENTS  │ │ PAGEINDEX│ │ WORKFLOWS│ │BRAINTRUST│
+│PostgreSQL│ │TS source │ │ Task tool│ │Doc search│ │Ralph/    │ │7 scores +│
+│+pgvector │ │ → dist   │ │ delegate │ │LLM reason│ │Maestro   │ │3 judges  │
+└──────────┘ └──────────┘ └──────────┘ └──────────┘ └──────────┘ └──────────┘
 ```
 
 For current inventory: see [agent-skill-map.md](../agent-skill-map.md), [hook-catalog.md](quick-ref/hook-catalog.md), [hook-audit-2026-04.md](../hook-audit-2026-04.md).
@@ -56,6 +58,7 @@ For current inventory: see [agent-skill-map.md](../agent-skill-map.md), [hook-ca
 - [Hook System](subsystems/hooks.md) - Lifecycle, blocking, patterns
 - [Agent Orchestration](subsystems/agents.md) - When to use which agent
 - [Workflows](subsystems/workflows.md) - Ralph, Maestro, compound workflows
+- [Braintrust Observability](subsystems/braintrust.md) - 7 deterministic scores + 3 LLM judges, audit invariant, judge runner
 
 **Phase 5 design docs (../):**
 - [Agent x Skill Map](../agent-skill-map.md) - Cross-reference of agents and skills with routing coverage gaps

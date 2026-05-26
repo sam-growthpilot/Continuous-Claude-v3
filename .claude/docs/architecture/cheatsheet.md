@@ -49,7 +49,12 @@ Get-ScheduledTask -TaskName 'ClaudeMemoryDaemon' -ErrorAction SilentlyContinue
 Unregister-ScheduledTask -TaskName 'ClaudeMemoryDaemon' -Confirm:$false -ErrorAction SilentlyContinue
 ```
 
-The only currently-scheduled task in this system is `CCv3-Blocklist-Update` (daily 9am, see `package-install-safety.md`).
+Two scheduled tasks currently run in this system:
+
+| Task | Schedule | Runs | Reference |
+|------|----------|------|-----------|
+| `CCv3-Blocklist-Update` | daily 9:00am | Package-install blocklist refresh | `package-install-safety.md` |
+| `CCv3-Judge-Batch` | daily 6:15am | Braintrust judge pipeline (`opc/scripts/core/judge_session.py` via `scripts/run-judge-batch.ps1`) | `docs/braintrust-online-scoring-recipe.md` |
 
 ## Hooks
 
@@ -221,18 +226,18 @@ Get-Content C:\Users\<username>\.claude\settings.json | ConvertFrom-Json
 ### Recall Learnings
 ```powershell
 # Hybrid search (text + vector) - RECOMMENDED
-cd ~/.claude && PYTHONPATH=. uv run python scripts/core/recall_learnings.py --query "your topic"
+cd $env:CLAUDE_OPC_DIR; $env:PYTHONPATH = "."; uv run python scripts/core/recall_learnings.py --query "your topic"
 
 # Pure vector search (similarity scores 0.4-0.9)
-cd ~/.claude && PYTHONPATH=. uv run python scripts/core/recall_learnings.py --query "topic" --vector-only
+cd $env:CLAUDE_OPC_DIR; $env:PYTHONPATH = "."; uv run python scripts/core/recall_learnings.py --query "topic" --vector-only
 
 # Text-only (fast, no embedding)
-cd ~/.claude && PYTHONPATH=. uv run python scripts/core/recall_learnings.py --query "topic" --text-only
+cd $env:CLAUDE_OPC_DIR; $env:PYTHONPATH = "."; uv run python scripts/core/recall_learnings.py --query "topic" --text-only
 ```
 
 ### Store Learning
 ```powershell
-cd ~/.claude && PYTHONPATH=. uv run python scripts/core/store_learning.py `
+cd $env:CLAUDE_OPC_DIR; $env:PYTHONPATH = "."; uv run python scripts/core/store_learning.py `
   --session-id "name" --type WORKING_SOLUTION `
   --content "What you learned" --context "topic" `
   --tags "tag1,tag2" --confidence high
@@ -256,7 +261,7 @@ cd ~/.claude && PYTHONPATH=. uv run python scripts/core/store_learning.py `
 
 ### Backfill Embeddings
 ```powershell
-cd ~/.claude/scripts/core; uv run python core/backfill_embeddings.py
+cd $env:CLAUDE_OPC_DIR; $env:PYTHONPATH = "."; uv run python scripts/core/backfill_embeddings.py
 ```
 
 ### Quick DB Queries
@@ -307,4 +312,4 @@ cd $CLAUDE_OPC_DIR && uv run python scripts/pageindex/cli/pageindex_cli.py list
 **When to use:** Large structured docs (ROADMAP, ARCHITECTURE). 98.7% accuracy vs ~50% vector similarity.
 
 ---
-*Updated: 2026-02-03 | + PageIndex System, Five Pillars*
+*Updated: 2026-02-03 | + PageIndex System, Five Pillars | 2026-05-26: + Braintrust observability (Six Pillars), CCv3-Judge-Batch*

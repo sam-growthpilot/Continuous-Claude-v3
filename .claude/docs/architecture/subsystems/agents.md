@@ -12,8 +12,21 @@ TESTING                  REVIEW                   DEBUG
 ├── arbiter (unit)       ├── critic (features)    ├── debug-agent
 ├── atlas (E2E)          ├── judge (refactors)    └── sleuth
 └── profiler             ├── liaison (APIs)
-                         └── surveyor (migrations)
+                         ├── surveyor (migrations)
+                         ├── plan-reviewer (plans)
+                         └── codex-adversary (cross-model)
+
+ORCHESTRATE              DOCS                     DEPLOY
+├── maestro              └── scribe               └── deployer
 ```
+
+**codex-adversary** is a cross-model reviewer: it shells out to OpenAI Codex
+(`codex exec`, default `gpt-5.5 @ xhigh`) so a *different* training family
+challenges Claude's work. It runs in parallel during `/review` Phase 1
+(alongside `critic` and `plan-reviewer`), is the adversarial step in
+`/premortem`, and is auto-offered by the `plan-exit-premortem-prompt` hook
+after `ExitPlanMode`. Its findings are prefixed `[Codex]` in synthesis so
+cross-model agreement is visible at a glance.
 
 ## Agent Selection Guide
 
@@ -32,7 +45,11 @@ TESTING                  REVIEW                   DEBUG
 | Debug issue | debug-agent | opus | All tools |
 | Root cause | sleuth | opus | Grep, Glob, Bash |
 | Code review | critic | opus | Read, Grep |
+| Cross-model review | codex-adversary | sonnet | Read, Grep, Glob, Bash (invokes `codex` CLI) |
+| Validate a plan | plan-reviewer | sonnet | Read, Grep, Glob |
 | Security audit | aegis | opus | Read, Bash, Grep |
+| Multi-step orchestration | maestro | opus | Read, Bash, Task, Skill |
+| Docs/handoffs | scribe | sonnet | Read, Write, Glob, Grep |
 
 ## Spawning Agents
 
@@ -49,6 +66,27 @@ TESTING                  REVIEW                   DEBUG
 - Never use `model: haiku` - always omit or use sonnet/opus
 - Agents inherit parent model by default
 - Use parallel spawning for independent tasks
+
+## Spark Hardening (Hook-Source Edits)
+
+`spark` carries extra guardrails for edits to TypeScript hook source
+(`.claude/hooks/src/*.ts`), captured in `spark.md`:
+
+- **File Editing Constraints** — use minimal-diff `Edit` (exact
+  `old_string`→`new_string`); never regenerate a whole hook file from
+  context (that is how prior-phase emits got silently dropped). No linter
+  exists on hook source, so a rewrite is not auto-reformatted back.
+- **Step 5: Pre-Completion Verification** — spark runs
+  `scripts/audit-braintrust-emits.sh` and reports `Audit: PASS/FAIL`.
+- **Rules 7/8** — never modify the guard/audit scripts; never edit files
+  outside the explicit Files list.
+
+**Orchestrator post-spark audit re-run:** Per
+`.claude/rules/proactive-delegation.md`, after spark touches
+`.claude/hooks/src/*.ts` the orchestrator MUST independently re-run
+`bash scripts/audit-braintrust-emits.sh` — do not trust spark's self-report
+alone, since spark may have run the audit before its last edit. If the
+re-run FAILs, restore from HEAD and escalate (do not re-spawn the same spark).
 
 ## Agent Communication
 
@@ -103,7 +141,9 @@ Agents add latency. Use directly when task is simple.
 | /fix | debug-agent → spark → arbiter |
 | /build | architect → kraken → critic |
 | /explore | scout (with depth control) |
-| /ralph | MCP tools + kraken + arbiter |
+| /review | critic + plan-reviewer + codex-adversary (parallel Phase 1) |
+| /premortem | inline failure-mode analysis + codex-adversary cross-model pass |
+| /ralph | GSD autonomous lifecycle (Phase 0→0.5→1→2→2.5→3→4→4.1.5) — delegates all code work to agents; never edits directly (plan-to-ralph-enforcer blocks it). Bounded iterations (10/30/50). |
 | /maestro | Coordinates any specialists |
 
 ## Deep Dive

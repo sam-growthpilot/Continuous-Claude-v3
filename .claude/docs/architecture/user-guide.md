@@ -12,7 +12,7 @@
 |---------|--------------|--------------|
 | **PostgreSQL Auto-Start** | Starts memory database if not running | `session-start-docker` hook |
 | **Session Registration** | Tracks your active Claude sessions | `session-register` hook on startup |
-| **Knowledge Tree** | Maps project structure for navigation | `tree-daemon` watches files (2s debounce) |
+| **Knowledge Tree** | Maps project structure for navigation | Lazy regen: `tree-invalidate` marks stale, `session-start-init-check` regenerates on read (no daemon) |
 | **Heartbeat** | Keeps session alive, detects when you leave | Updates every tool call |
 | **Cross-Terminal Awareness** | Warns if another session is editing same files | PostgreSQL tracks file claims |
 | **ROADMAP Updates** | Syncs goals with planning/tasks | `post-plan-roadmap`, `prd-roadmap-sync` hooks |
@@ -36,7 +36,7 @@
 When starting a new Claude session, these happen automatically:
 1. Session registered in PostgreSQL
 2. Handoff ledger loaded (if exists at `~/.claude/thoughts/shared/handoffs/*/current.md`)
-3. Memory daemon verified running
+3. Knowledge tree regenerated if missing/stale (`session-start-init-check` — no daemon)
 4. Peer sessions checked (you'll see notification if others active)
 
 **You should see** in your session start:
@@ -224,20 +224,20 @@ To manually resume: `/skill:resume_handoff`
 │    │ Start PostgreSQL     │   │ Register in coord DB │                      │
 │    └──────────────────────┘   └──────────┬───────────┘                      │
 │                                          │                                   │
-│    ┌──────────────────────┐   ┌──────────▼───────────┐                      │
-│    │ session-continuity   │──►│  tree-daemon.ps1     │                      │
-│    │ Load handoff ledger  │   │ Knowledge tree watch │                      │
-│    └──────────────────────┘   └──────────┬───────────┘                      │
-│                                          │                                   │
-│                               ┌──────────▼───────────┐                      │
-│                               │ memory-daemon.ps1    │ ◄── NEW              │
-│                               │ Auto-start extractor │                      │
-│                               └──────────────────────┘                      │
+│    ┌──────────────────────┐   ┌──────────▼────────────┐                     │
+│    │ session-continuity   │──►│ session-start-init-   │                     │
+│    │ Load handoff ledger  │   │ check (lazy tree regen)│                     │
+│    └──────────────────────┘   └───────────────────────┘                     │
+│                                                                              │
+│  (No persistent memory daemon and no tree daemon — knowledge trees are      │
+│   regenerated lazily: tree-invalidate marks stale, session-start-init-check │
+│   regenerates on read. L2 memory extraction runs once at SessionEnd.)       │
 │                                                                              │
 │  PostToolUse hooks:                                                          │
 │    post-plan-roadmap ─────► Update ROADMAP on plan exit                     │
 │    roadmap-completion ────► Mark goals complete                             │
 │    prd-roadmap-sync ──────► Sync PRD/Tasks with ROADMAP                     │
+│    tree-invalidate ───────► Mark knowledge-tree.json stale on edits         │
 │    sync-to-repo ──────────► Auto-sync to team repo                          │
 │                                                                              │
 └─────────────────────────────────────────────────────────────────────────────┘
@@ -253,14 +253,15 @@ To manually resume: `/skill:resume_handoff`
 │ pgvector        │ tree.json       │ doc search      │                 │ auto-loaded │
 │                 │                 │                 │                 │             │
 │ Vector search   │ File navigate   │ 98.7% accuracy  │ Goal tracking   │ Session     │
-│ for learnings   │ 2s debounce     │ LLM reasoning   │ Auto-update     │ continuity  │
+│ for learnings   │ lazy regen      │ LLM reasoning   │ Auto-update     │ continuity  │
 ├─────────────────┼─────────────────┼─────────────────┼─────────────────┼─────────────┤
-│ Auto: daemon    │ Auto: daemon    │ Auto: watch     │ Auto: plan      │ Auto: hook  │
-│ hook ✅         │ hook ✅         │ hook ✅         │ hooks ✅        │ ✅          │
+│ Auto: hooks     │ Auto: lazy      │ Auto: watch     │ Auto: plan      │ Auto: hook  │
+│ (recall/extract)│ regen hooks ✅  │ hook ✅         │ hooks ✅        │ ✅          │
+│ ✅              │                 │                 │                 │             │
 └─────────────────┴─────────────────┴─────────────────┴─────────────────┴─────────────┘
 ```
 
-> **Note:** This diagram shows the **user-facing capabilities** that auto-start each session — not the architectural pillars. For the canonical system-architecture slicing (Memory / Hooks / Agents / PageIndex / Workflows), see [INDEX.md → Five Pillars](INDEX.md#five-pillars).
+> **Note:** This diagram shows the **user-facing capabilities** that auto-start each session — not the architectural pillars. For the canonical system-architecture slicing (Memory / Hooks / Agents / PageIndex / Workflows / Braintrust Observability), see [INDEX.md → Six Pillars](INDEX.md#six-pillars).
 
 ---
 

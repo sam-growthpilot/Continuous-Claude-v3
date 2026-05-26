@@ -91,6 +91,60 @@ cd $CLAUDE_OPC_DIR && PYTHONPATH=. uv run python scripts/core/recall_learnings.p
 | smarter-everyday | Detects problem resolution patterns |
 | user-confirmation-detector | Captures "it's fixed" signals |
 
+## Hook-Time Recall (memory-awareness)
+
+On every `UserPromptSubmit`, `memory-awareness.ts` injects relevant memories
+into context. It does NOT shell out to `recall_learnings.py` cold each time —
+it probes a **persistent BGE embedding daemon** at `$TEMP/ccv3-embedding.json`
+(200ms budget):
+
+- **Daemon hot** → hybrid recall (vector + FTS / RRF), `HYBRID_FLOOR` applied.
+- **Daemon down** → falls back to `--text-only` (`TEXT_ONLY_FLOOR=0.05`,
+  preserves prior behavior) and best-effort spawns the daemon detached so the
+  NEXT prompt benefits. The hook never burns its 2s budget waiting on a hung
+  daemon.
+
+Subagents skip recall injection (saves tokens).
+
+### Recall-injection logging
+
+Every fire is logged (newline-delimited JSON) to
+`<projectDir>/.claude/logs/memory-recall.jsonl`. The log is per-project, so
+recall data is fragmented across project directories.
+
+| Field | Meaning |
+|-------|---------|
+| `timestamp` | When the recall fired |
+| `session_id` | Session that triggered it |
+| `subagent` | `CLAUDE_AGENT_ID` or `null` (main thread) |
+| `intent` | The recall query (user prompt intent) |
+| `results_count` | Raw matches returned |
+| `top_score` | Highest match score |
+| `kept_after_floor` | Matches surviving the relevance floor |
+| `source` | Which memory source produced the matches |
+
+Diagnostics fields (`mode`, `daemon_ready`, `total_elapsed_ms`,
+`floor_applied`) are also written so `/memory-stats` can verify daemon
+routing and which floor was applied. This log is read by the `/memory-stats`
+skill and is the cross-project join source for the Braintrust `factuality`
+judge (see below).
+
+### Braintrust scoring tie-in
+
+`memory-awareness.ts` is a **Braintrust deterministic emit site**. After
+injecting, it calls `await emitBraintrustScore(...)` (helper
+`hooks/src/shared/braintrust-score.ts`) to emit:
+
+- `memory_recall_relevance` — how relevant the injected memories were.
+- `memory_recall_hit` (companion) — whether anything survived the floor.
+
+These are 2 of the 7 deterministic dimensions tracked by the
+[Braintrust subsystem](braintrust.md). The emit MUST stay `await` (not
+`void`) — a fire-and-forget call dies before the HTTPS POST lands — and is
+covered by the `scripts/audit-braintrust-emits.sh` invariant (4 awaited emit
+sites). Separately, `store_learning.py` emits `memory_store_quality` at
+store-time.
+
 ## DATABASE_URL Priority
 
 The system loads DATABASE_URL in this order:

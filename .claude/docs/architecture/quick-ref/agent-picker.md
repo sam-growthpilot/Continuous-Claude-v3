@@ -28,12 +28,17 @@
 | APIs/integration | liaison | opus | Interface review |
 | Migrations | surveyor | opus | Upgrade review |
 | Architecture | principal-reviewer | opus | High-level audit |
+| Cross-model adversarial review | codex-adversary | sonnet | Invokes OpenAI Codex (gpt-5.5 @ xhigh) — used in /review Phase 1 (parallel with critic) and /premortem |
+| Validate a plan | plan-reviewer | sonnet | Reviews architect/phoenix plans before implementation |
 | **Debug** |
 | Investigation | debug-agent | opus | Find root cause |
 | Complex bugs | sleuth | opus | Multi-file tracing |
 | Security issues | aegis | opus | Vulnerability analysis |
 | **Deployment** |
 | Vercel deploy/monitor | deployer | sonnet | Deploy, verify, debug deployments |
+| **Orchestration & Docs** |
+| Multi-step orchestration | maestro | opus | Coordinates specialists; interview-gated phases |
+| Docs/handoffs/summaries | scribe | sonnet | Handoffs, continuity ledgers, session summaries |
 
 ## Quick Decision
 

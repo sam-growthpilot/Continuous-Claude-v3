@@ -51,6 +51,7 @@ Current registrations live in `~/.claude/settings.json`. For totals and per-even
 | tldr-read-enforcer | Read | Suggest TLDR structure before reading large files |
 | ralph-delegation-enforcer | Edit\|Write\|Bash | Block direct code edits when Ralph is active |
 | navigator-safety | Bash | Safety checks for bash commands |
+| package-install-guard | Bash | 4-layer supply-chain check on package installs (typosquat, blocklist, OSV.dev, age); blocks malicious installs |
 | plan-to-ralph-enforcer | Edit\|Write | Block code edits after plan approval (use Ralph) |
 | file-claims | Edit\|Write | Distributed file locking across sessions |
 | test-before-done | TaskUpdate | Require test evidence before marking task complete |
@@ -66,6 +67,7 @@ Current registrations live in `~/.claude/settings.json`. For totals and per-even
 | epistemic-reminder | Grep\|Read | Warn about unverified grep/read claims |
 | post-plan-roadmap | ExitPlanMode | Sync plan to ROADMAP.md after approval |
 | plan-exit-tracker | ExitPlanMode | Track plan approval state for enforcement |
+| plan-exit-premortem-prompt | ExitPlanMode | Offer /premortem (codex-adversary cross-model pass) after plan approval |
 | roadmap-completion | TaskUpdate\|Bash | Track roadmap task completions |
 | git-commit-roadmap | Bash | Update ROADMAP.md after git commits |
 | ralph-monitor | Bash | Monitor Ralph bash command output |
@@ -113,6 +115,7 @@ Key blockers:
 - **maestro-enforcer** -- blocks phase-skipping in Maestro workflows
 - **no-haiku-enforcer** -- blocks haiku model selection for agents
 - **test-before-done** -- blocks task completion without test evidence
+- **package-install-guard** -- blocks malicious/typosquatted package installs
 
 ## File Locations
 
@@ -121,8 +124,31 @@ Key blockers:
   src/              # TypeScript source
   dist/             # Compiled JS (esbuild output, .mjs)
   package.json      # Dependencies and build script
-  braintrust_hooks.py  # Python hooks for Braintrust observability
+  braintrust_hooks.py  # Legacy session-level Braintrust tracing (session_start/end, stop, tool-use trace) — NOT the score emitters
 ```
+
+### Braintrust score emit hooks are TypeScript, not Python
+
+The **4 deterministic Braintrust score emitters are TypeScript hooks** in
+`src/` (compiled to `dist/*.mjs`), each calling `await emitBraintrustScore()`:
+
+| Hook (`.ts` → `.mjs`) | Dimensions emitted |
+|-----------------------|--------------------|
+| `memory-awareness` | `memory_recall_relevance`, `memory_recall_hit` |
+| `telemetry-tracker` | `tool_call_success`, `skill_trigger_accuracy` |
+| `ralph-task-monitor` | `agent_task_success` |
+| `hook-health-monitor` | `hook_health_ratio` |
+
+(`memory_store_quality` is emitted from the Python `store_learning.py`, not a hook.)
+
+`braintrust_hooks.py` (the `braintrust_hooks <event>` rows above) only does
+session/trace-level Braintrust *tracing* (init, tool-use spans, finalize) — it
+does **not** emit the score dimensions.
+
+`opc/scripts/core/judge_session.py` is the Python **JUDGE pipeline**
+(factuality / closedqa / plan_rubric via subscription CLIs, run offline by the
+`CCv3-Judge-Batch` scheduled task) — it is **not a hook** and is not registered
+in `settings.json`.
 
 ## Registration
 
