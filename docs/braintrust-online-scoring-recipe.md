@@ -132,10 +132,23 @@ Braintrust UI is the *viewing* destination (Feedback panel), not a trigger.
 ### Manual / ad-hoc
 
 ```bash
-cd opc && uv run python -m scripts.core.judge_session --session-id <id>                          # one session
+cd opc && uv run python -m scripts.core.judge_session --session-id <id>                          # one session (still sampled)
+cd opc && uv run python -m scripts.core.judge_session --session-id <id> --force                  # one session, BYPASS the 35% sampler
 cd opc && uv run python -m scripts.core.judge_session --scan-since <iso-date> --max-sessions N   # batch
 cd opc && uv run python -m scripts.core.judge_session --scan-since <iso-date> --dry-run          # preview, no calls
 ```
+
+`--session-id` alone still respects the 35% sampler (it judges nothing if the
+session hashes out of sample). Use `--force` to judge a specific session
+regardless of its hash — for on-demand/debug scoring. `--force` applies to
+single-session mode only; it's ignored in batch (`--scan-since`).
+
+**Cross-project recall:** the runner reads `memory-recall.jsonl` from the
+global log, the cwd, AND every project path in `~/.claude/project-registry.json`.
+So a session that ran in any registered project (NorthStar, Fourth Connect, etc.)
+has its factuality recall found, not just sessions from the runner's own cwd.
+(`closedqa`/`plan_rubric` read the Braintrust trace, so they were already
+cross-project.)
 
 ### Automated (scheduled) — must be a LOCAL scheduler
 

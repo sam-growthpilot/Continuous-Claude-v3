@@ -133,7 +133,7 @@ load_dotenv()
 SAMPLE_RATE_PERCENT = 35
 BRAINTRUST_DEFAULT_URL = "https://api.braintrust.dev"
 LOCAL_SESSION_CACHE = Path.home() / ".claude" / "state" / "braintrust_sessions"
-MEMORY_RECALL_LOG = Path.cwd() / ".claude" / "logs" / "memory-recall.jsonl"
+PROJECT_REGISTRY = Path.home() / ".claude" / "project-registry.json"
 FEEDBACK_TIMEOUT_SECONDS = 5.0
 
 # Each judge is graded by ONE subscription-OAuth backend (no API keys).
@@ -312,28 +312,67 @@ def load_trace(session_id: str) -> dict[str, Any] | None:
     }
 
 
+def _candidate_recall_logs() -> list[Path]:
+    """All memory-recall.jsonl locations to search, cross-project.
+
+    The memory-awareness hook writes this log per-project
+    (``<projectDir>/.claude/logs/memory-recall.jsonl``), so recall data is
+    fragmented across project directories. To score factuality for a session
+    from ANY project, search: the global log, the current working dir, and
+    every project path in the registry. Deduped, order-preserving.
+    """
+    candidates: list[Path] = [
+        Path.home() / ".claude" / "logs" / "memory-recall.jsonl",
+        Path.cwd() / ".claude" / "logs" / "memory-recall.jsonl",
+    ]
+    try:
+        reg = json.loads(PROJECT_REGISTRY.read_text(encoding="utf-8"))
+        for proj in reg.get("projects", []):
+            proj_path = proj.get("path")
+            if proj_path:
+                candidates.append(
+                    Path(proj_path) / ".claude" / "logs" / "memory-recall.jsonl"
+                )
+    except Exception:
+        pass  # registry missing/unreadable -> fall back to global + cwd
+    seen: set[str] = set()
+    deduped: list[Path] = []
+    for c in candidates:
+        key = str(c)
+        if key not in seen:
+            seen.add(key)
+            deduped.append(c)
+    return deduped
+
+
 def _read_top_recall_from_log(session_id: str) -> str:
-    """Return the highest-scoring recall intent for this session, or ''."""
-    if not MEMORY_RECALL_LOG.exists():
-        return ""
+    """Return the highest-scoring recall intent for this session, or ''.
+
+    Searches every candidate recall log (global + cwd + each registry
+    project), so a session from any project is scorable -- not just the one
+    whose .claude/logs the runner happens to be sitting in.
+    """
     best_score = -1.0
     best_intent = ""
-    try:
-        for line in MEMORY_RECALL_LOG.read_text(encoding="utf-8").splitlines():
-            if not line.strip():
-                continue
-            try:
-                row = json.loads(line)
-            except Exception:
-                continue
-            if row.get("session_id") != session_id:
-                continue
-            score = float(row.get("top_score") or 0.0)
-            if score > best_score:
-                best_score = score
-                best_intent = str(row.get("intent") or "")
-    except Exception:
-        return ""
+    for log_path in _candidate_recall_logs():
+        if not log_path.exists():
+            continue
+        try:
+            for line in log_path.read_text(encoding="utf-8").splitlines():
+                if not line.strip():
+                    continue
+                try:
+                    row = json.loads(line)
+                except Exception:
+                    continue
+                if row.get("session_id") != session_id:
+                    continue
+                score = float(row.get("top_score") or 0.0)
+                if score > best_score:
+                    best_score = score
+                    best_intent = str(row.get("intent") or "")
+        except Exception:
+            continue
     return best_intent
 
 
@@ -753,8 +792,14 @@ def _post_feedback(
 # ---------------------------------------------------------------------------
 
 
-def judge_session(trace: dict[str, Any], dry_run: bool = False) -> dict[str, Any]:
+def judge_session(
+    trace: dict[str, Any], dry_run: bool = False, force: bool = False
+) -> dict[str, Any]:
     """Score a single session's trace.
+
+    ``force`` bypasses the 35% sampler (single-session/on-demand use). When a
+    session is judged only because of ``force``, the result carries
+    ``"forced": True`` and ``"sampled"`` reflects the true (un-forced) hash.
 
     Returns a result dict:
         {
@@ -774,9 +819,12 @@ def judge_session(trace: dict[str, Any], dry_run: bool = False) -> dict[str, Any
         "skipped": {},
     }
 
-    if not is_sampled(session_id):
+    in_sample = is_sampled(session_id)
+    if not in_sample and not force:
         return result
-    result["sampled"] = True
+    result["sampled"] = in_sample
+    if force and not in_sample:
+        result["forced"] = True
 
     user_prompt = str(trace.get("user_prompt") or "").strip()
     top_recall_chunk = str(trace.get("top_recall_chunk") or "").strip()
@@ -1023,6 +1071,14 @@ def _build_arg_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Print sampling decisions only. Zero LLM calls, zero POSTs.",
     )
+    p.add_argument(
+        "--force",
+        action="store_true",
+        help=(
+            "Single-session mode only: bypass the 35%% sampler and judge the "
+            "session regardless of its hash (on-demand/debug scoring)."
+        ),
+    )
     return p
 
 
@@ -1034,6 +1090,13 @@ def main(argv: list[str] | None = None) -> int:
     # CLIs aren't logged in.
     if not args.dry_run:
         check_cli_preflight()
+
+    if args.force and args.scan_since:
+        print(
+            "NOTE: --force is ignored in batch mode (--scan-since); it only "
+            "applies to single-session --session-id.",
+            file=sys.stderr,
+        )
 
     if args.scan_since:
         results = run_batch(
@@ -1075,7 +1138,7 @@ def main(argv: list[str] | None = None) -> int:
             json.dumps({"mode": "single", "session_id": session_id, "error": "trace_not_found"}),
         )
         return 1
-    result = judge_session(trace, dry_run=args.dry_run)
+    result = judge_session(trace, dry_run=args.dry_run, force=args.force)
     print(
         json.dumps(
             {

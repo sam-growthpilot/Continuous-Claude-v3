@@ -681,3 +681,122 @@ def test_no_session_id_and_no_env_var_exits_with_explicit_error(monkeypatch, cap
     captured = capsys.readouterr()
     combined = captured.out + captured.err
     assert "No session_id" in combined or "BRAINTRUST_SESSION_ID" in combined
+
+
+# ---------------------------------------------------------------------------
+# --force: bypass the sampler for single-session / on-demand judging
+# ---------------------------------------------------------------------------
+
+
+def test_force_judges_out_of_sample_session(monkeypatch, sample_session_trace):
+    """force=True judges a session even when it hashes out of the 35% sample."""
+    js = _import_judge_session()
+    posts, _calls = _setup_run_mocks(monkeypatch, js, force_in_sample=False)
+
+    result = js.judge_session(sample_session_trace, dry_run=False, force=True)
+
+    assert result["forced"] is True
+    assert result["sampled"] is False  # true hash status preserved for transparency
+    assert result["posts"] == 3
+    assert len(posts) == 3
+
+
+def test_force_false_leaves_out_of_sample_session_unjudged(monkeypatch, sample_session_trace):
+    """Without force, an out-of-sample session is untouched (no 'forced' key)."""
+    js = _import_judge_session()
+    posts, _calls = _setup_run_mocks(monkeypatch, js, force_in_sample=False)
+
+    result = js.judge_session(sample_session_trace, dry_run=False, force=False)
+
+    assert result["sampled"] is False
+    assert "forced" not in result
+    assert result["posts"] == 0
+    assert len(posts) == 0
+
+
+def test_force_in_sample_session_not_marked_forced(monkeypatch, sample_session_trace):
+    """force=True on an in-sample session judges it but does NOT set forced."""
+    js = _import_judge_session()
+    _posts, _calls = _setup_run_mocks(monkeypatch, js, force_in_sample=True)
+
+    result = js.judge_session(sample_session_trace, dry_run=False, force=True)
+
+    assert result["sampled"] is True
+    assert "forced" not in result  # only set when force bypassed an out-of-sample hash
+
+
+# ---------------------------------------------------------------------------
+# Cross-project recall aggregation (read-side, via project registry)
+# ---------------------------------------------------------------------------
+
+
+def test_candidate_recall_logs_includes_registry_projects(monkeypatch, tmp_path):
+    """_candidate_recall_logs spans global + cwd + every registry project path."""
+    js = _import_judge_session()
+    reg = {
+        "version": 1,
+        "projects": [
+            {"path": str(tmp_path / "projA"), "status": "active"},
+            {"path": str(tmp_path / "projB"), "status": "active"},
+        ],
+    }
+    reg_file = tmp_path / "project-registry.json"
+    reg_file.write_text(json.dumps(reg), encoding="utf-8")
+    monkeypatch.setattr(js, "PROJECT_REGISTRY", reg_file)
+
+    candidates = [str(p) for p in js._candidate_recall_logs()]
+
+    assert all(c.endswith("memory-recall.jsonl") for c in candidates)
+    assert any("projA" in c for c in candidates)
+    assert any("projB" in c for c in candidates)
+    assert len(candidates) == len(set(candidates))  # de-duplicated
+
+
+def test_candidate_recall_logs_falls_back_when_registry_missing(monkeypatch, tmp_path):
+    """A missing/unreadable registry degrades to global + cwd (no crash)."""
+    js = _import_judge_session()
+    monkeypatch.setattr(js, "PROJECT_REGISTRY", tmp_path / "does-not-exist.json")
+
+    candidates = js._candidate_recall_logs()
+
+    assert len(candidates) >= 2  # global + cwd at minimum
+    assert all(str(p).endswith("memory-recall.jsonl") for p in candidates)
+
+
+def test_read_top_recall_finds_cross_project_log(monkeypatch, tmp_path):
+    """A session's recall is found in a registry project's log, not just cwd."""
+    js = _import_judge_session()
+    logdir = tmp_path / "otherproj" / ".claude" / "logs"
+    logdir.mkdir(parents=True)
+    (logdir / "memory-recall.jsonl").write_text(
+        json.dumps(
+            {"session_id": "sess-xproj-find", "intent": "cross project hit", "top_score": 0.9}
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    reg = {"projects": [{"path": str(tmp_path / "otherproj"), "status": "active"}]}
+    reg_file = tmp_path / "reg.json"
+    reg_file.write_text(json.dumps(reg), encoding="utf-8")
+    monkeypatch.setattr(js, "PROJECT_REGISTRY", reg_file)
+
+    assert js._read_top_recall_from_log("sess-xproj-find") == "cross project hit"
+
+
+def test_read_top_recall_picks_highest_score_across_logs(monkeypatch, tmp_path):
+    """When a session appears in multiple project logs, the highest score wins."""
+    js = _import_judge_session()
+    for sub, intent, score in (("p1", "low", 0.2), ("p2", "high", 0.95)):
+        d = tmp_path / sub / ".claude" / "logs"
+        d.mkdir(parents=True)
+        (d / "memory-recall.jsonl").write_text(
+            json.dumps({"session_id": "sess-xproj-multi", "intent": intent, "top_score": score})
+            + "\n",
+            encoding="utf-8",
+        )
+    reg = {"projects": [{"path": str(tmp_path / "p1")}, {"path": str(tmp_path / "p2")}]}
+    reg_file = tmp_path / "reg.json"
+    reg_file.write_text(json.dumps(reg), encoding="utf-8")
+    monkeypatch.setattr(js, "PROJECT_REGISTRY", reg_file)
+
+    assert js._read_top_recall_from_log("sess-xproj-multi") == "high"
