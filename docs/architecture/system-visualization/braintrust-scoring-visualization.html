@@ -1,0 +1,1393 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Braintrust Scoring — Continuous Claude</title>
+<style>
+  :root {
+    --bg-deep: #0a0e1a;
+    --bg-card: #131829;
+    --bg-elev: #1c2236;
+    --bg-code: #0e1322;
+    --border: #2a3147;
+    --border-strong: #3a4360;
+    --text: #e5e7eb;
+    --text-dim: #94a3b8;
+    --text-mute: #64748b;
+    --y: #fbbf24;
+    --y-soft: #fbbf2422;
+    --blue: #60a5fa;
+    --green: #34d399;
+    --red: #f87171;
+    --purple: #a78bfa;
+    --orange: #fb923c;
+    --teal: #2dd4bf;
+    --shadow: 0 8px 28px rgba(0,0,0,0.5), 0 2px 6px rgba(0,0,0,0.4);
+  }
+  * { box-sizing: border-box; }
+  html, body {
+    margin: 0; padding: 0;
+    background: var(--bg-deep);
+    color: var(--text);
+    font-family: -apple-system, 'Segoe UI', system-ui, sans-serif;
+    font-size: 14px;
+    line-height: 1.55;
+    min-height: 100vh;
+  }
+  body {
+    background:
+      radial-gradient(ellipse 1200px 600px at 80% -10%, #1a1f3a55 0%, transparent 60%),
+      radial-gradient(ellipse 800px 500px at 10% 100%, #0c1530aa 0%, transparent 60%),
+      var(--bg-deep);
+  }
+  code, .mono { font-family: 'JetBrains Mono', 'Fira Code', 'Cascadia Code', Consolas, monospace; font-size: 0.92em; }
+  ::selection { background: var(--y); color: #000; }
+
+  /* ----- Layout shell ----- */
+  .shell {
+    display: grid;
+    grid-template-columns: 300px 1fr;
+    min-height: 100vh;
+  }
+  .sidebar {
+    background: linear-gradient(180deg, #0c1124 0%, #0a0e1a 100%);
+    border-right: 1px solid var(--border);
+    padding: 28px 0;
+    position: sticky;
+    top: 0;
+    height: 100vh;
+    overflow-y: auto;
+  }
+  .sidebar-header {
+    padding: 0 26px 22px;
+    border-bottom: 1px solid var(--border);
+    margin-bottom: 14px;
+  }
+  .sidebar-title {
+    font-size: 11px;
+    font-weight: 600;
+    letter-spacing: 0.18em;
+    text-transform: uppercase;
+    color: var(--text-mute);
+    margin: 0 0 4px;
+  }
+  .sidebar-brand {
+    font-size: 19px;
+    font-weight: 600;
+    color: var(--text);
+    margin: 0;
+    letter-spacing: -0.01em;
+  }
+  .sidebar-meta {
+    font-size: 11px;
+    color: var(--text-mute);
+    margin-top: 8px;
+  }
+  .nav { list-style: none; padding: 0; margin: 0; }
+  .nav-item {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 11px 26px;
+    cursor: pointer;
+    border-left: 2px solid transparent;
+    transition: all 0.15s ease;
+    color: var(--text-dim);
+    font-size: 13.5px;
+    user-select: none;
+  }
+  .nav-item:hover {
+    background: #ffffff05;
+    color: var(--text);
+  }
+  .nav-item.active {
+    background: var(--y-soft);
+    border-left-color: var(--y);
+    color: var(--y);
+  }
+  .nav-item .icon {
+    font-size: 16px;
+    width: 22px;
+    text-align: center;
+    flex-shrink: 0;
+  }
+  .nav-section-label {
+    padding: 16px 26px 6px;
+    font-size: 10px;
+    font-weight: 600;
+    letter-spacing: 0.18em;
+    text-transform: uppercase;
+    color: var(--text-mute);
+  }
+  .sidebar-footer {
+    margin-top: 24px;
+    padding: 18px 26px;
+    border-top: 1px solid var(--border);
+    font-size: 11px;
+    color: var(--text-mute);
+  }
+  .verdict-badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 4px 9px;
+    background: #34d39922;
+    color: var(--green);
+    border-radius: 4px;
+    font-weight: 600;
+    font-size: 10.5px;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+  }
+  .verdict-badge::before {
+    content: '';
+    width: 6px; height: 6px; border-radius: 50%;
+    background: var(--green);
+    box-shadow: 0 0 8px var(--green);
+    animation: pulse 2s ease-in-out infinite;
+  }
+  @keyframes pulse {
+    0%, 100% { opacity: 1; transform: scale(1); }
+    50% { opacity: 0.55; transform: scale(1.4); }
+  }
+
+  /* ----- Main content ----- */
+  .main {
+    padding: 36px 56px 80px;
+    max-width: 1200px;
+  }
+  section.experience { display: none; animation: fadeIn 0.35s ease-out; }
+  section.experience.active { display: block; }
+  @keyframes fadeIn {
+    from { opacity: 0; transform: translateY(8px); }
+    to { opacity: 1; transform: translateY(0); }
+  }
+
+  .section-eyebrow {
+    font-size: 11px;
+    font-weight: 600;
+    color: var(--y);
+    letter-spacing: 0.18em;
+    text-transform: uppercase;
+    margin: 0;
+  }
+  .section-title {
+    font-size: 36px;
+    font-weight: 600;
+    letter-spacing: -0.02em;
+    margin: 4px 0 8px;
+    line-height: 1.15;
+  }
+  .section-lede {
+    font-size: 16px;
+    color: var(--text-dim);
+    max-width: 800px;
+    margin: 0 0 28px;
+  }
+
+  /* ----- Cards / panels ----- */
+  .card {
+    background: var(--bg-card);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 24px;
+    margin-bottom: 18px;
+    box-shadow: var(--shadow);
+  }
+  .card.flush { padding: 0; overflow: hidden; }
+  .card-title {
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--text);
+    margin: 0 0 14px;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+  }
+  .card-title .dot { width: 8px; height: 8px; border-radius: 50%; display: inline-block; }
+
+  /* Two-col grid */
+  .grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 18px; }
+  .grid-3 { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 14px; }
+  .grid-4 { display: grid; grid-template-columns: repeat(4, 1fr); gap: 14px; }
+
+  /* Stat tiles */
+  .stat {
+    background: var(--bg-elev);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 18px 20px;
+  }
+  .stat-label {
+    font-size: 11px;
+    color: var(--text-mute);
+    text-transform: uppercase;
+    letter-spacing: 0.1em;
+    margin: 0 0 8px;
+  }
+  .stat-value {
+    font-size: 26px;
+    font-weight: 600;
+    color: var(--text);
+    line-height: 1.1;
+    margin: 0;
+  }
+  .stat-value.y { color: var(--y); }
+  .stat-value.b { color: var(--blue); }
+  .stat-value.g { color: var(--green); }
+  .stat-value.p { color: var(--purple); }
+  .stat-value.o { color: var(--orange); }
+  .stat-foot {
+    font-size: 11.5px;
+    color: var(--text-dim);
+    margin-top: 6px;
+  }
+
+  /* Step cards */
+  .steps { display: grid; gap: 12px; }
+  .step {
+    display: grid;
+    grid-template-columns: 38px 1fr;
+    gap: 16px;
+    background: var(--bg-card);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 16px 18px;
+    align-items: start;
+    transition: all 0.18s ease;
+  }
+  .step:hover, .step.active {
+    border-color: var(--y);
+    background: linear-gradient(180deg, #1d1d0a08, var(--bg-card) 90%);
+  }
+  .step.active::before {
+    content: '';
+    position: absolute;
+    left: -1px; top: -1px; bottom: -1px;
+    width: 3px;
+    background: var(--y);
+    border-radius: 3px 0 0 3px;
+  }
+  .step { position: relative; }
+  .step-num {
+    background: var(--bg-elev);
+    color: var(--y);
+    width: 34px; height: 34px;
+    border-radius: 8px;
+    border: 1px solid var(--border-strong);
+    display: flex; align-items: center; justify-content: center;
+    font-weight: 600;
+    font-size: 13.5px;
+  }
+  .step-body h4 { margin: 0 0 4px; font-size: 14.5px; color: var(--text); }
+  .step-body p { margin: 0; color: var(--text-dim); font-size: 13px; }
+  .step-body .file-ref {
+    display: inline-block;
+    margin-top: 8px;
+    padding: 2px 8px;
+    background: var(--bg-code);
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    font-family: 'JetBrains Mono', Consolas, monospace;
+    font-size: 11.5px;
+    color: var(--teal);
+  }
+
+  /* Diagram container */
+  .diagram-wrap {
+    background: var(--bg-card);
+    border: 1px solid var(--border);
+    border-radius: 14px;
+    padding: 18px 18px 8px;
+    margin-bottom: 22px;
+    box-shadow: var(--shadow);
+  }
+  .diagram-toolbar {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 10px;
+    padding: 0 6px;
+  }
+  .diagram-title {
+    font-size: 12px;
+    color: var(--text-mute);
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    font-weight: 600;
+  }
+  .play-btn {
+    background: var(--y);
+    color: #000;
+    border: none;
+    border-radius: 6px;
+    padding: 6px 14px;
+    font-weight: 600;
+    font-size: 12px;
+    letter-spacing: 0.04em;
+    cursor: pointer;
+    display: inline-flex; align-items: center; gap: 6px;
+    transition: all 0.15s ease;
+  }
+  .play-btn:hover { background: #ffd75a; box-shadow: 0 0 16px var(--y-soft); }
+  .play-btn:disabled { opacity: 0.4; cursor: default; }
+  .play-btn .play-icon { font-size: 10px; }
+
+  /* SVG default styles */
+  .diag svg { width: 100%; height: auto; display: block; }
+  .diag .node-rect, .diag .node-circle { transition: filter 0.4s; }
+  .diag .node-rect.active, .diag .node-circle.active {
+    filter: drop-shadow(0 0 8px var(--y));
+  }
+  .diag .edge { stroke: var(--border-strong); stroke-width: 2; fill: none; transition: stroke 0.3s, stroke-width 0.3s; }
+  .diag .edge.active { stroke: var(--y); stroke-width: 3; }
+  .diag text { font-family: -apple-system, system-ui, sans-serif; }
+  .diag .label-bg { fill: var(--bg-card); }
+  .diag .label-main { fill: var(--text); font-weight: 600; font-size: 14px; }
+  .diag .label-sub { fill: var(--text-mute); font-size: 11.5px; }
+  .diag .packet { fill: var(--y); filter: drop-shadow(0 0 6px var(--y)); }
+  .diag .packet-blue { fill: var(--blue); filter: drop-shadow(0 0 6px var(--blue)); }
+  .diag .packet-green { fill: var(--green); filter: drop-shadow(0 0 6px var(--green)); }
+  .diag .packet-red { fill: var(--red); filter: drop-shadow(0 0 6px var(--red)); }
+  .diag .heartbeat { animation: heartbeat 2.4s ease-in-out infinite; transform-origin: center; transform-box: fill-box; }
+  @keyframes heartbeat {
+    0%, 100% { transform: scale(1); }
+    18% { transform: scale(1.08); }
+    36% { transform: scale(1); }
+  }
+
+  /* Code blocks */
+  .codeblock {
+    background: var(--bg-code);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 14px 16px;
+    overflow-x: auto;
+    font-family: 'JetBrains Mono', Consolas, monospace;
+    font-size: 12.5px;
+    line-height: 1.55;
+    color: #cbd5e1;
+    margin: 14px 0 4px;
+    white-space: pre;
+  }
+  .codeblock .kw { color: var(--purple); }
+  .codeblock .str { color: var(--green); }
+  .codeblock .com { color: var(--text-mute); font-style: italic; }
+  .codeblock .num { color: var(--orange); }
+  .codeblock .fn { color: var(--blue); }
+  .codeblock .y { color: var(--y); }
+  .codeblock .em { color: var(--y); }
+  .codeblock .red { color: var(--red); }
+
+  /* Side-by-side dimension cards */
+  .dim-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 14px; }
+  .dim-card {
+    background: var(--bg-elev);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 18px;
+    position: relative;
+    overflow: hidden;
+  }
+  .dim-card::before {
+    content: '';
+    position: absolute; left: 0; top: 0; bottom: 0; width: 3px;
+    background: var(--c, var(--blue));
+  }
+  .dim-card[data-dim="memory"]    { --c: var(--green); }
+  .dim-card[data-dim="hook"]      { --c: var(--y); }
+  .dim-card[data-dim="agent"]     { --c: var(--purple); }
+  .dim-card[data-dim="skill"]     { --c: var(--blue); }
+  .dim-name {
+    font-size: 14px; font-weight: 600;
+    color: var(--c);
+    letter-spacing: 0.02em;
+    font-family: 'JetBrains Mono', monospace;
+    margin: 0 0 4px;
+  }
+  .dim-src {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 11.5px;
+    color: var(--teal);
+    margin: 0 0 12px;
+  }
+  .dim-detail { font-size: 12.5px; color: var(--text-dim); margin: 6px 0; }
+  .dim-detail b { color: var(--text); font-weight: 500; }
+
+  /* Telemetry sample */
+  .jsonl-sample {
+    background: var(--bg-code);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 16px;
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 11.5px;
+    color: #cbd5e1;
+    line-height: 1.7;
+    overflow-x: auto;
+    white-space: pre;
+  }
+  .field-tag {
+    display: inline-block;
+    padding: 1px 6px;
+    border-radius: 3px;
+    font-size: 11px;
+    font-family: 'JetBrains Mono', monospace;
+    margin-right: 4px;
+  }
+  .field-tag.green { background: #34d39926; color: var(--green); }
+  .field-tag.red   { background: #f8717126; color: var(--red); }
+  .field-tag.blue  { background: #60a5fa26; color: var(--blue); }
+  .field-tag.gray  { background: #94a3b826; color: var(--text-dim); }
+  .field-tag.amber { background: #fbbf2426; color: var(--y); }
+
+  /* Tables */
+  .data-table {
+    width: 100%;
+    border-collapse: separate;
+    border-spacing: 0;
+    margin: 12px 0;
+    font-size: 12.5px;
+  }
+  .data-table th, .data-table td {
+    text-align: left;
+    padding: 9px 14px;
+    border-bottom: 1px solid var(--border);
+    vertical-align: top;
+  }
+  .data-table th {
+    background: var(--bg-elev);
+    color: var(--text-dim);
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    font-size: 10.5px;
+  }
+  .data-table tr:last-child td { border-bottom: none; }
+  .data-table tr:hover td { background: #ffffff04; }
+  .pill {
+    display: inline-block;
+    padding: 2px 8px;
+    border-radius: 3px;
+    font-size: 11px;
+    font-weight: 600;
+    letter-spacing: 0.04em;
+  }
+  .pill.g { background: #34d39922; color: var(--green); }
+  .pill.y { background: var(--y-soft); color: var(--y); }
+  .pill.r { background: #f8717122; color: var(--red); }
+  .pill.b { background: #60a5fa22; color: var(--blue); }
+  .pill.p { background: #a78bfa22; color: var(--purple); }
+
+  /* Callout box */
+  .callout {
+    border-left: 3px solid var(--y);
+    background: var(--y-soft);
+    padding: 14px 18px;
+    border-radius: 0 8px 8px 0;
+    margin: 14px 0;
+    font-size: 13px;
+  }
+  .callout strong { color: var(--y); }
+  .callout.warn { border-color: var(--orange); background: #fb923c1a; }
+  .callout.warn strong { color: var(--orange); }
+  .callout.fail { border-color: var(--red); background: #f871711a; }
+  .callout.fail strong { color: var(--red); }
+  .callout.ok { border-color: var(--green); background: #34d3991a; }
+  .callout.ok strong { color: var(--green); }
+
+  /* Timeline (regression history) */
+  .timeline { position: relative; margin: 18px 0 4px; padding-left: 28px; }
+  .timeline::before {
+    content: '';
+    position: absolute; left: 8px; top: 4px; bottom: 4px;
+    width: 2px; background: var(--border-strong);
+  }
+  .tl-item { position: relative; margin-bottom: 18px; }
+  .tl-item::before {
+    content: '';
+    position: absolute; left: -24px; top: 4px;
+    width: 12px; height: 12px; border-radius: 50%;
+    background: var(--bg-deep);
+    border: 2px solid var(--c, var(--y));
+  }
+  .tl-item[data-kind="fix"]::before  { --c: var(--green); }
+  .tl-item[data-kind="regress"]::before { --c: var(--red); }
+  .tl-item[data-kind="harden"]::before  { --c: var(--blue); }
+  .tl-head { font-size: 13.5px; font-weight: 600; color: var(--text); margin: 0 0 2px; }
+  .tl-head .tl-commit {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 11px;
+    color: var(--teal);
+    margin-left: 8px;
+  }
+  .tl-body { font-size: 12.5px; color: var(--text-dim); margin: 0; }
+
+  /* Misc */
+  hr { border: none; border-top: 1px solid var(--border); margin: 22px 0; }
+  a { color: var(--y); text-decoration: none; }
+  a:hover { text-decoration: underline; }
+  .muted { color: var(--text-mute); }
+  .small { font-size: 12px; }
+  .tag-row { display: flex; flex-wrap: wrap; gap: 6px; margin: 8px 0; }
+  .tag {
+    background: var(--bg-elev);
+    border: 1px solid var(--border);
+    color: var(--text-dim);
+    padding: 3px 9px;
+    border-radius: 5px;
+    font-size: 11.5px;
+    font-family: 'JetBrains Mono', monospace;
+  }
+  .tag.y { color: var(--y); border-color: var(--y); }
+  .tag.b { color: var(--blue); border-color: var(--blue); }
+  .tag.g { color: var(--green); border-color: var(--green); }
+  .tag.p { color: var(--purple); border-color: var(--purple); }
+  .tag.r { color: var(--red); border-color: var(--red); }
+</style>
+</head>
+<body>
+<div class="shell">
+  <!-- ============ SIDEBAR ============ -->
+  <aside class="sidebar">
+    <div class="sidebar-header">
+      <a href="./hub.html" class="hub-link" style="color: #fbbf24; text-decoration: none; font-size: 13px; margin-right: 16px;">← Hub</a>
+      <p class="sidebar-title">Continuous Claude</p>
+      <h1 class="sidebar-brand">Braintrust Scoring</h1>
+      <div class="sidebar-meta">
+        v1.0 · 2026-05-27 · <span class="verdict-badge">Hardened</span>
+      </div>
+    </div>
+    <ul class="nav" id="nav">
+      <li class="nav-section-label">Foundations</li>
+      <li class="nav-item active" data-target="overview"><span class="icon">⌂</span><span>Overview</span></li>
+      <li class="nav-item" data-target="dimensions"><span class="icon">⊞</span><span>The 4 dimensions</span></li>
+      <li class="nav-item" data-target="emit"><span class="icon">⇪</span><span>The emit helper</span></li>
+
+      <li class="nav-section-label">The Guard</li>
+      <li class="nav-item" data-target="invariant"><span class="icon">⛨</span><span>The invariant guard</span></li>
+      <li class="nav-item" data-target="regression"><span class="icon">↻</span><span>Regression history</span></li>
+      <li class="nav-item" data-target="hardening"><span class="icon">✓</span><span>The hardening</span></li>
+
+      <li class="nav-section-label">Operations</li>
+      <li class="nav-item" data-target="recovery"><span class="icon">⎌</span><span>Recovery procedure</span></li>
+      <li class="nav-item" data-target="environment"><span class="icon">⚠</span><span>Env &amp; failure modes</span></li>
+    </ul>
+    <div class="sidebar-footer">
+      <div>Emit invariant: <span class="tag y mono">INVARIANT_4 = 4</span></div>
+      <div style="margin-top:6px">Audit guard: <b style="color:var(--green)">OK 4/4</b></div>
+      <div style="margin-top:8px">Hardened: <span class="tag b mono">154b23d</span></div>
+      <div>Regressions caught: <b style="color:var(--y)">6</b></div>
+    </div>
+  </aside>
+
+  <!-- ============ MAIN ============ -->
+  <main class="main">
+
+    <!-- ========== 1. OVERVIEW ========== -->
+    <section class="experience active" id="overview">
+      <p class="section-eyebrow">01 · Foundations</p>
+      <h2 class="section-title">The system that<br/>scores itself.</h2>
+      <p class="section-lede">
+        Four TypeScript hooks emit a 0–1 score to Braintrust on the events they already fire on: a memory recall, a session-start health sweep, a Ralph task transition, a skill invocation. The scores are quality telemetry — "is the memory system actually relevant? are the hooks healthy? did the agent succeed? did the right skill trigger?" A single shell guard, <code>INVARIANT_4</code>, keeps all four emit sites alive against the one failure mode that kept silently deleting them: agent rewrites.
+      </p>
+
+      <div class="grid-3">
+        <div class="stat"><p class="stat-label">Score dimensions</p><p class="stat-value y">4</p><p class="stat-foot">one per emit hook</p></div>
+        <div class="stat"><p class="stat-label">Emit invariant</p><p class="stat-value g">4 / 4</p><p class="stat-foot">INVARIANT_4 · await-only</p></div>
+        <div class="stat"><p class="stat-label">Emit timeout</p><p class="stat-value b">2000 ms</p><p class="stat-foot">fail-open AbortController</p></div>
+      </div>
+
+      <div class="diagram-wrap">
+        <div class="diagram-toolbar">
+          <div class="diagram-title">A hook scores itself</div>
+          <button class="play-btn" data-play="overview">▶ Play emit</button>
+        </div>
+        <div class="diag" id="diag-overview">
+          <svg viewBox="0 0 900 380" preserveAspectRatio="xMidYMid meet">
+            <!-- Claude session -->
+            <rect x="40" y="40" width="170" height="70" rx="10" class="node-rect" fill="#1c2236" stroke="var(--border-strong)" stroke-width="1.5"/>
+            <text x="125" y="68" text-anchor="middle" class="label-main">Claude session</text>
+            <text x="125" y="88" text-anchor="middle" class="label-sub">prompts · tools · agents</text>
+
+            <!-- Hook fires -->
+            <rect x="40" y="155" width="170" height="70" rx="10" class="node-rect" fill="#1c2236" stroke="var(--y)" stroke-width="1.5"/>
+            <text x="125" y="183" text-anchor="middle" class="label-main" style="fill:var(--y)">Hook fires</text>
+            <text x="125" y="203" text-anchor="middle" class="label-sub">4 TS hooks, on their events</text>
+
+            <!-- builds payload -->
+            <rect x="290" y="155" width="190" height="70" rx="10" class="node-rect" fill="#1c2236" stroke="var(--blue)" stroke-width="1.5"/>
+            <text x="385" y="178" text-anchor="middle" class="label-main" style="fill:var(--blue)">build*Payload()</text>
+            <text x="385" y="198" text-anchor="middle" class="label-sub">{ spanId, scores: 0–1 }</text>
+
+            <!-- emit helper -->
+            <rect x="290" y="40" width="190" height="70" rx="10" class="node-rect" fill="#1c2236" stroke="var(--green)" stroke-width="1.5"/>
+            <text x="385" y="63" text-anchor="middle" class="label-main" style="fill:var(--green)">await emitBraintrustScore</text>
+            <text x="385" y="83" text-anchor="middle" class="label-sub">fail-open · 2s timeout</text>
+
+            <!-- gates -->
+            <rect x="560" y="155" width="180" height="70" rx="10" class="node-rect" fill="#1c2236" stroke="var(--orange)" stroke-width="1.5"/>
+            <text x="650" y="178" text-anchor="middle" class="label-main" style="fill:var(--orange)">Trace gate</text>
+            <text x="650" y="198" text-anchor="middle" class="label-sub">TRACE_TO_BRAINTRUST + key</text>
+
+            <!-- POST feedback -->
+            <rect x="560" y="40" width="180" height="70" rx="10" class="node-rect" fill="#1c2236" stroke="var(--purple)" stroke-width="1.5"/>
+            <text x="650" y="63" text-anchor="middle" class="label-main" style="fill:var(--purple)">POST /feedback</text>
+            <text x="650" y="83" text-anchor="middle" class="label-sub">project_logs/{id}</text>
+
+            <!-- Braintrust -->
+            <ellipse cx="790" cy="307" rx="98" ry="42" class="node-circle heartbeat" fill="#1c2236" stroke="var(--y)" stroke-width="2"/>
+            <text x="790" y="305" text-anchor="middle" class="label-main" style="fill:var(--y)">Braintrust</text>
+            <text x="790" y="324" text-anchor="middle" class="label-sub">scores dashboard</text>
+
+            <!-- edges -->
+            <path d="M125 110 V 155" class="edge"/>
+            <path d="M210 190 H 290" class="edge"/>
+            <path d="M385 155 V 110" class="edge"/>
+            <path d="M480 75 H 560" class="edge"/>
+            <path d="M480 190 H 560" class="edge"/>
+            <path d="M650 155 V 110" class="edge" stroke-dasharray="5,4"/>
+            <path d="M650 110 C 700 160, 760 250, 780 265" class="edge"/>
+
+            <!-- packets -->
+            <circle r="5" class="packet" id="ovp1" style="opacity:0"/>
+            <circle r="5" class="packet-green" id="ovp2" style="opacity:0"/>
+          </svg>
+        </div>
+      </div>
+
+      <div class="callout">
+        <strong>The observability pillar.</strong> Braintrust is the 6th pillar of CCv3 (alongside Memory, Hooks, Agents, PageIndex, Workflows). The Python side (<code>braintrust_hooks.py</code>) owns span/event creation; this TS helper owns <em>score</em> emission. Everything fails open — if Braintrust is unreachable or tracing is off, the hooks behave exactly as if scoring didn't exist.
+      </div>
+
+      <div class="grid-2">
+        <div class="card">
+          <h3 class="card-title"><span class="dot" style="background:var(--y)"></span>What gets scored, automatically</h3>
+          <ul class="small" style="margin:0; padding-left:18px; color:var(--text-dim);">
+            <li><code>memory_recall_relevance</code> — every <code>UserPromptSubmit</code> recall</li>
+            <li><code>hook_health_ratio</code> — once per <code>SessionStart</code> sweep</li>
+            <li><code>agent_task_success</code> — every Ralph task transition</li>
+            <li><code>skill_trigger_accuracy</code> — every <code>Skill</code> PostToolUse</li>
+          </ul>
+        </div>
+        <div class="card">
+          <h3 class="card-title"><span class="dot" style="background:var(--green)"></span>What keeps the four alive</h3>
+          <ul class="small" style="margin:0; padding-left:18px; color:var(--text-dim);">
+            <li><code>scripts/audit-braintrust-emits.sh</code> — the <code>INVARIANT_4</code> guard</li>
+            <li>An <b>await-only</b> grep — a <code>void</code> revert trips it</li>
+            <li>Spark Rule 7 + multi-file delegation policy (<code>154b23d</code>)</li>
+            <li>A 4-step recovery procedure for when a regression slips</li>
+          </ul>
+        </div>
+      </div>
+    </section>
+
+    <!-- ========== 2. THE 4 DIMENSIONS ========== -->
+    <section class="experience" id="dimensions">
+      <p class="section-eyebrow">02 · Foundations</p>
+      <h2 class="section-title">Four dimensions, four hooks,<br/>one emit helper.</h2>
+      <p class="section-lede">
+        Each dimension is a <code>0.0–1.0</code> float keyed by name in the <code>scores</code> object. A score near 1.0 is "good" (relevant, healthy, succeeded, correctly triggered); near 0.0 is "bad." The hook builds the payload from data it already has in hand, then awaits the emit. These four names are the exact strings the invariant guard expects to find.
+      </p>
+
+      <div class="dim-grid">
+        <div class="dim-card" data-dim="memory">
+          <p class="dim-name">memory_recall_relevance</p>
+          <p class="dim-src">memory-awareness.ts:595</p>
+          <p class="dim-detail">Top recall score (raw RRF / ts_rank) for the prompt. Co-emits <code>memory_recall_hit</code> (1.0 if any result survived the floor, else 0.0).</p>
+          <p class="dim-detail">Metadata: <b>mode, daemon_ready, results_count, kept_after_floor</b></p>
+          <p class="dim-detail">Fires on: <b>every UserPromptSubmit recall</b></p>
+        </div>
+        <div class="dim-card" data-dim="hook">
+          <p class="dim-name">hook_health_ratio</p>
+          <p class="dim-src">hook-health-monitor.ts:322</p>
+          <p class="dim-detail">Fraction of registered hooks that resolve to a present, healthy <code>dist/*.mjs</code> file. Built by <code>buildHookHealthRatioPayload()</code>.</p>
+          <p class="dim-detail">Span: <b>BRAINTRUST_SESSION_ID or session_id</b></p>
+          <p class="dim-detail">Fires on: <b>once per SessionStart sweep</b></p>
+        </div>
+        <div class="dim-card" data-dim="agent">
+          <p class="dim-name">agent_task_success</p>
+          <p class="dim-src">ralph-task-monitor.ts:209</p>
+          <p class="dim-detail">1.0 on a successful Ralph task transition, 0.0 on failure. Built by <code>buildAgentTaskScorePayload()</code> from the task's id / name / agent / retries / duration.</p>
+          <p class="dim-detail">Source: <b>structured ralph_status JSON</b></p>
+          <p class="dim-detail">Fires on: <b>every Ralph task transition</b></p>
+        </div>
+        <div class="dim-card" data-dim="skill">
+          <p class="dim-name">skill_trigger_accuracy</p>
+          <p class="dim-src">telemetry-tracker.ts:185</p>
+          <p class="dim-detail">Whether the invoked skill ran without a tool error (<code>!detectToolError</code>). Built by <code>buildSkillTriggerScorePayload()</code>.</p>
+          <p class="dim-detail">Metadata: <b>trigger_source (auto / explicit), skill name</b></p>
+          <p class="dim-detail">Fires on: <b>every Skill PostToolUse</b></p>
+        </div>
+      </div>
+
+      <div class="card">
+        <h3 class="card-title"><span class="dot" style="background:var(--green)"></span>What a real emit looks like — memory-awareness.ts</h3>
+        <div class="codeblock"><span class="com">// .claude/hooks/src/memory-awareness.ts:595</span>
+<span class="kw">await</span> <span class="fn">emitBraintrustScore</span>({ <span class="com">// eslint-disable-line @typescript-eslint/no-floating-promises</span>
+  spanId: span.spanId,
+  scores: {
+    <span class="y">memory_recall_relevance</span>: topScoreRaw,
+    <span class="y">memory_recall_hit</span>:
+      match &amp;&amp; match.results.length &gt; <span class="num">0</span> ? <span class="num">1.0</span> : <span class="num">0.0</span>,
+  },
+  metadata: {
+    attached_to: span.attachedTo,
+    results_count: logEntry.results_count,
+    kept_after_floor: logEntry.kept_after_floor,
+    mode: logEntry.mode,
+    daemon_ready: logEntry.daemon_ready,
+  },
+});</div>
+        <p class="small muted">
+          The other three hooks follow the same shape but delegate payload construction to a named <code>build*Payload()</code> helper and pass the result: <code>if (payload) await emitBraintrustScore(payload);</code>. The <code>eslint-disable-line</code> comment is a no-op (there is no ESLint configured) — it survives as a visual marker of the await-revert hazard.
+        </p>
+      </div>
+
+      <div class="card">
+        <h3 class="card-title"><span class="dot" style="background:var(--blue)"></span>The four sites, at a glance</h3>
+        <table class="data-table">
+          <thead><tr><th>Dimension</th><th>Hook · line</th><th>Event</th><th>Good = 1.0 means</th></tr></thead>
+          <tbody>
+            <tr><td><span class="tag g">memory_recall_relevance</span></td><td><code>memory-awareness.ts:595</code></td><td>UserPromptSubmit</td><td>relevant memory injected</td></tr>
+            <tr><td><span class="tag y">hook_health_ratio</span></td><td><code>hook-health-monitor.ts:322</code></td><td>SessionStart</td><td>all hooks present + healthy</td></tr>
+            <tr><td><span class="tag p">agent_task_success</span></td><td><code>ralph-task-monitor.ts:209</code></td><td>Ralph transition</td><td>task succeeded</td></tr>
+            <tr><td><span class="tag b">skill_trigger_accuracy</span></td><td><code>telemetry-tracker.ts:185</code></td><td>Skill PostToolUse</td><td>skill ran without error</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <!-- ========== 3. THE EMIT HELPER ========== -->
+    <section class="experience" id="emit">
+      <p class="section-eyebrow">03 · Foundations</p>
+      <h2 class="section-title">One fail-open helper,<br/>shared by all four.</h2>
+      <p class="section-lede">
+        <code>shared/braintrust-score.ts</code> exports a single function: <code>emitBraintrustScore(opts)</code>. Its design contract is non-negotiable — it <b>never throws</b>. Every skip condition returns silently. It resolves the project id, builds the feedback entry, and POSTs to Braintrust under a 2-second timeout. If anything goes wrong, the worst case is a breadcrumb on stderr.
+      </p>
+
+      <div class="diagram-wrap">
+        <div class="diagram-toolbar">
+          <div class="diagram-title">emitBraintrustScore() decision flow</div>
+          <button class="play-btn" data-play="emit">▶ Play flow</button>
+        </div>
+        <div class="diag" id="diag-emit">
+          <svg viewBox="0 0 900 230" preserveAspectRatio="xMidYMid meet">
+            <rect x="20"  y="85" width="120" height="60" rx="8" class="node-rect" data-step="1" fill="#1c2236" stroke="var(--border-strong)" stroke-width="1.5"/>
+            <text x="80" y="111" text-anchor="middle" class="label-main">call</text>
+            <text x="80" y="130" text-anchor="middle" class="label-sub">opts in</text>
+
+            <rect x="160" y="85" width="140" height="60" rx="8" class="node-rect" data-step="2" fill="#1c2236" stroke="var(--orange)" stroke-width="1.5"/>
+            <text x="230" y="108" text-anchor="middle" class="label-main" style="fill:var(--orange)">trace gate</text>
+            <text x="230" y="127" text-anchor="middle" class="label-sub">trace? key? span? scores?</text>
+
+            <rect x="320" y="85" width="140" height="60" rx="8" class="node-rect" data-step="3" fill="#1c2236" stroke="var(--blue)" stroke-width="1.5"/>
+            <text x="390" y="108" text-anchor="middle" class="label-main" style="fill:var(--blue)">resolve id</text>
+            <text x="390" y="127" text-anchor="middle" class="label-sub">env or /v1/project</text>
+
+            <rect x="480" y="85" width="140" height="60" rx="8" class="node-rect" data-step="4" fill="#1c2236" stroke="var(--purple)" stroke-width="1.5"/>
+            <text x="550" y="108" text-anchor="middle" class="label-main" style="fill:var(--purple)">build entry</text>
+            <text x="550" y="127" text-anchor="middle" class="label-sub">{id, scores, meta?}</text>
+
+            <rect x="640" y="85" width="140" height="60" rx="8" class="node-rect" data-step="5" fill="#1c2236" stroke="var(--green)" stroke-width="1.5"/>
+            <text x="710" y="108" text-anchor="middle" class="label-main" style="fill:var(--green)">POST</text>
+            <text x="710" y="127" text-anchor="middle" class="label-sub">2s AbortSignal</text>
+
+            <rect x="800" y="65" width="90" height="100" rx="45" class="node-rect heartbeat" data-step="6" fill="#1c2236" stroke="var(--y)" stroke-width="2"/>
+            <text x="845" y="111" text-anchor="middle" class="label-main" style="fill:var(--y)">200</text>
+            <text x="845" y="130" text-anchor="middle" class="label-sub">scored</text>
+
+            <!-- skip exit -->
+            <rect x="160" y="10" width="460" height="34" rx="6" fill="#1c2236" stroke="var(--text-mute)" stroke-width="1.2" stroke-dasharray="5,4"/>
+            <text x="390" y="32" text-anchor="middle" class="label-sub" style="fill:var(--text-dim)">any gate false / fetch fails → return silently (fail-open, never throws)</text>
+
+            <!-- edges -->
+            <path d="M140 115 H 160" class="edge" data-edge="1"/>
+            <path d="M300 115 H 320" class="edge" data-edge="2"/>
+            <path d="M460 115 H 480" class="edge" data-edge="3"/>
+            <path d="M620 115 H 640" class="edge" data-edge="4"/>
+            <path d="M780 115 H 800" class="edge" data-edge="5"/>
+            <path d="M230 85 V 44" class="edge" stroke-dasharray="5,4"/>
+
+            <circle r="6" class="packet-green" id="emit-packet" style="opacity:0"/>
+          </svg>
+        </div>
+      </div>
+
+      <div class="card">
+        <h3 class="card-title"><span class="dot" style="background:var(--y)"></span>Why <code style="color:var(--y)">await</code> — not <code style="color:var(--red)">void</code></h3>
+        <p class="small" style="color:var(--text-dim)">
+          The earlier code marked the call <code class="mono red">void emitBraintrustScore(...)</code> — fire-and-forget. The problem: a hook process can <code>process.exit()</code> the moment its synchronous work is done. A floating promise mid-flight (the project lookup, the feedback POST) gets killed before the request lands. <b>The score silently never arrives.</b> Switching to <code class="mono y">await</code> holds the process open until the POST resolves (or the 2s timeout fires). Same fail-open guarantee, but the request actually completes.
+        </p>
+        <div class="callout">
+          <strong>The process.exit race is exactly what INVARIANT_4 protects.</strong> The audit grep requires <code>await emitBraintrustScore(</code> on one line. A revert to <code>void</code>, or splitting the call across lines, makes the grep miss it — the count drops below 4 — and the guard FAILs.
+        </div>
+      </div>
+
+      <div class="grid-2">
+        <div class="card">
+          <h3 class="card-title"><span class="dot" style="background:var(--blue)"></span>Project-id resolution</h3>
+          <ol class="small" style="color:var(--text-dim); padding-left:18px; margin:0;">
+            <li><code>BRAINTRUST_CC_PROJECT_ID</code> — direct, cheapest path, no lookup</li>
+            <li>else <code>BRAINTRUST_CC_PROJECT</code> (default <code>claude-code</code>) → <code>GET /v1/project?project_name=…</code></li>
+            <li>Result cached in-process (one hook invocation = one Node process)</li>
+            <li>Lookup failure / no objects / missing id → <b>return null → skip</b></li>
+          </ol>
+        </div>
+        <div class="card">
+          <h3 class="card-title"><span class="dot" style="background:var(--green)"></span>Skip conditions (all silent)</h3>
+          <ul class="small" style="color:var(--text-dim); padding-left:18px; margin:0;">
+            <li><code>TRACE_TO_BRAINTRUST</code> != <code>"true"</code></li>
+            <li><code>BRAINTRUST_API_KEY</code> missing / empty</li>
+            <li><code>spanId</code> empty</li>
+            <li><code>scores</code> object empty</li>
+            <li>project id unresolvable</li>
+            <li>fetch fails (network / timeout / non-2xx)</li>
+          </ul>
+        </div>
+      </div>
+
+      <div class="card">
+        <h3 class="card-title"><span class="dot" style="background:var(--purple)"></span>The feedback payload — what travels to Braintrust</h3>
+        <div class="codeblock"><span class="com">// shared/braintrust-score.ts:211 — endpoint</span>
+POST {API_URL}<span class="y">/v1/project_logs/{project_id}/feedback</span>
+Authorization: Bearer {BRAINTRUST_API_KEY}
+
+<span class="com">// body shape (optional fields omitted when undefined)</span>
+{
+  <span class="str">"feedback"</span>: [{
+    <span class="str">"id"</span>: <span class="str">"&lt;spanId&gt;"</span>,
+    <span class="str">"scores"</span>: { <span class="str">"&lt;dimension&gt;"</span>: <span class="num">0.0</span>–<span class="num">1.0</span> },
+    <span class="str">"metadata"</span>: { ... },   <span class="com">// only if provided</span>
+    <span class="str">"comment"</span>: <span class="str">"..."</span>        <span class="com">// only if provided</span>
+  }]
+}</div>
+        <p class="small muted">
+          The 2-second budget — <code>BRAINTRUST_FEEDBACK_TIMEOUT_MS = 2000</code> — is enforced by <code>AbortSignal.timeout()</code> on <em>both</em> the project lookup and the feedback POST. It mirrors the dashboard-reporter pattern and is unit-tested to stay within 1000–5000 ms.
+        </p>
+      </div>
+    </section>
+
+    <!-- ========== 4. THE INVARIANT GUARD ========== -->
+    <section class="experience" id="invariant">
+      <p class="section-eyebrow">04 · The Guard</p>
+      <h2 class="section-title">INVARIANT_4 — the count<br/>that must never drop.</h2>
+      <p class="section-lede">
+        <code>scripts/audit-braintrust-emits.sh</code> does exactly one thing: it greps <code>.claude/hooks/src/</code> for <b>awaited</b> emit call sites and FAILs if it finds fewer than four. It is not a linter and not a test runner. It is a tripwire for the one failure mode that kept silently dropping emits — a sub-agent rewriting a whole hook file from its context window.
+      </p>
+
+      <div class="diagram-wrap">
+        <div class="diagram-toolbar">
+          <div class="diagram-title">edit → audit → pass / fail</div>
+          <button class="play-btn" data-play="invariant">▶ Play audit</button>
+        </div>
+        <div class="diag" id="diag-invariant">
+          <svg viewBox="0 0 900 240" preserveAspectRatio="xMidYMid meet">
+            <rect x="20"  y="95" width="150" height="60" rx="8" class="node-rect" data-step="1" fill="#1c2236" stroke="var(--border-strong)" stroke-width="1.5"/>
+            <text x="95" y="121" text-anchor="middle" class="label-main">TS hook edit</text>
+            <text x="95" y="140" text-anchor="middle" class="label-sub">any *.ts under src/</text>
+
+            <rect x="200" y="95" width="170" height="60" rx="8" class="node-rect" data-step="2" fill="#1c2236" stroke="var(--y)" stroke-width="1.5"/>
+            <text x="285" y="118" text-anchor="middle" class="label-main" style="fill:var(--y)">audit script</text>
+            <text x="285" y="137" text-anchor="middle" class="label-sub">await-only grep</text>
+
+            <rect x="400" y="95" width="150" height="60" rx="8" class="node-rect" data-step="3" fill="#1c2236" stroke="var(--blue)" stroke-width="1.5"/>
+            <text x="475" y="118" text-anchor="middle" class="label-main" style="fill:var(--blue)">count vs 4</text>
+            <text x="475" y="137" text-anchor="middle" class="label-sub">grep -c</text>
+
+            <!-- pass -->
+            <rect x="590" y="20" width="290" height="48" rx="8" class="node-rect" data-step="4" fill="#1c2236" stroke="var(--green)" stroke-width="2"/>
+            <text x="735" y="40" text-anchor="middle" class="label-main" style="fill:var(--green)">count == 4 → OK · exit 0</text>
+            <text x="735" y="58" text-anchor="middle" class="label-sub">emit count matches invariant</text>
+
+            <!-- warn -->
+            <rect x="590" y="100" width="290" height="48" rx="8" class="node-rect" data-step="5" fill="#1c2236" stroke="var(--orange)" stroke-width="1.5"/>
+            <text x="735" y="120" text-anchor="middle" class="label-main" style="fill:var(--orange)">count &gt; 4 → WARN · exit 0</text>
+            <text x="735" y="138" text-anchor="middle" class="label-sub">added a dimension? bump invariant</text>
+
+            <!-- fail -->
+            <rect x="590" y="180" width="290" height="48" rx="8" class="node-rect" data-step="6" fill="#1c2236" stroke="var(--red)" stroke-width="2"/>
+            <text x="735" y="200" text-anchor="middle" class="label-main" style="fill:var(--red)">count &lt; 4 → FAIL · exit 1</text>
+            <text x="735" y="218" text-anchor="middle" class="label-sub">regression — fix the code</text>
+
+            <!-- edges -->
+            <path d="M170 125 H 200" class="edge" data-edge="1"/>
+            <path d="M370 125 H 400" class="edge" data-edge="2"/>
+            <path d="M550 125 C 575 125, 580 44, 590 44" class="edge" data-edge="3"/>
+            <path d="M550 125 H 590" class="edge" data-edge="4"/>
+            <path d="M550 125 C 575 125, 580 204, 590 204" class="edge" data-edge="5"/>
+
+            <circle r="6" class="packet" id="invariant-packet" style="opacity:0"/>
+          </svg>
+        </div>
+      </div>
+
+      <div class="card">
+        <h3 class="card-title"><span class="dot" style="background:var(--y)"></span>The grep, verbatim</h3>
+        <div class="codeblock"><span class="com"># scripts/audit-braintrust-emits.sh</span>
+<span class="y">INVARIANT_4</span>=<span class="num">4</span>
+
+matches=$(<span class="fn">grep</span> -rn <span class="str">"emitBraintrustScore("</span> .claude/hooks/src/ --include=<span class="str">"*.ts"</span> \
+  | <span class="fn">grep</span> -v <span class="str">"__tests__/"</span> \
+  | <span class="fn">grep</span> -E <span class="str">"await emitBraintrustScore\("</span>)
+
+count=$(<span class="fn">echo</span> <span class="str">"$matches"</span> | <span class="fn">grep</span> -c <span class="str">"emitBraintrustScore("</span>)
+
+<span class="kw">if</span> [ <span class="str">"$count"</span> -lt <span class="str">"$INVARIANT_4"</span> ]; <span class="kw">then</span>
+  <span class="fn">echo</span> <span class="str">"FAIL: Regression detected"</span>; <span class="fn">exit</span> <span class="num">1</span>
+<span class="kw">elif</span> [ <span class="str">"$count"</span> -gt <span class="str">"$INVARIANT_4"</span> ]; <span class="kw">then</span>
+  <span class="fn">echo</span> <span class="str">"WARN: update INVARIANT_4"</span>; <span class="fn">exit</span> <span class="num">0</span>
+<span class="kw">else</span>
+  <span class="fn">echo</span> <span class="str">"OK: Emit count matches invariant (4)."</span>; <span class="fn">exit</span> <span class="num">0</span>
+<span class="kw">fi</span></div>
+        <p class="small muted">
+          Three filters: (1) all <code>emitBraintrustScore(</code> calls, (2) drop <code>__tests__/</code> (the test file has its own calls), (3) keep only lines with the <code>await</code> prefix. The third filter is the load-bearing one — the old grep matched both <code>void</code> and <code>await</code> and would have reported green on a pure <code>await→void</code> revert.
+        </p>
+      </div>
+
+      <div class="grid-2">
+        <div class="card">
+          <h3 class="card-title"><span class="dot" style="background:var(--red)"></span>The two-line banner — DO NOT MODIFY</h3>
+          <p class="small" style="color:var(--text-dim)">
+            The script header carries an explicit instruction: <em>"DO NOT MODIFY THE INVARIANT_4 LINE… If it FAILS, fix the code it points at — NEVER lower the invariant to silence it."</em> This exists because the baseline was lowered exactly once (Gate 0.7+0.8) to silence a regression, and immediately restored. The rename from <code>BASELINE</code> to <code>INVARIANT_4</code> is itself a defense — "invariant" signals "do not edit" where "baseline" sounded adjustable.
+          </p>
+        </div>
+        <div class="card">
+          <h3 class="card-title"><span class="dot" style="background:var(--green)"></span>When you actually add a 5th dimension</h3>
+          <p class="small" style="color:var(--text-dim)">
+            Adding a legitimate new score dimension means a 5th awaited emit site. The audit then prints <code>WARN: 5 emits found, invariant is 4</code> and <b>exits 0</b> (not a failure). At that point you intentionally bump <code>INVARIANT_4=5</code>. The WARN path is the only sanctioned reason to touch that line.
+          </p>
+        </div>
+      </div>
+
+      <div class="callout warn">
+        <strong>Run it after any TS hook edit.</strong> The audit is invoked manually (and the orchestrator re-runs it after any spark touches hook code). It is also referenced by Spark Rule 7 — that agent-side rule is the <em>real</em> guard; the script header is for human readers reviewing the diff. <span class="mono">bash scripts/audit-braintrust-emits.sh</span>
+      </div>
+    </section>
+
+    <!-- ========== 5. REGRESSION HISTORY ========== -->
+    <section class="experience" id="regression">
+      <p class="section-eyebrow">05 · The Guard</p>
+      <h2 class="section-title">Six times the emit<br/>silently vanished.</h2>
+      <p class="section-lede">
+        The <code>memory-awareness.ts</code> emit block is a recurring victim. Six documented times, an agent editing the file regenerated it from its own context window and dropped the emit — silently, no error, no failing test. The pattern has a name: the <b>agent-rewrite collision</b>. The guard exists because the failure is invisible without it.
+      </p>
+
+      <div class="grid-3">
+        <div class="stat"><p class="stat-label">Documented drops</p><p class="stat-value y">6</p><p class="stat-foot">memory-awareness.ts emit</p></div>
+        <div class="stat"><p class="stat-label">Gate 0.7+0.8 cost</p><p class="stat-value o">93 min</p><p class="stat-foot">+ 3 commits for a 2-file fix</p></div>
+        <div class="stat"><p class="stat-label">5th-regression fix</p><p class="stat-value g">3fa2c7f</p><p class="stat-foot">restore + audit back to 4</p></div>
+      </div>
+
+      <div class="card">
+        <h3 class="card-title"><span class="dot" style="background:var(--y)"></span>Timeline</h3>
+        <div class="timeline">
+          <div class="tl-item" data-kind="harden">
+            <p class="tl-head">Gate 0.6 — single-file await fix <span class="tl-commit">7edea3c</span></p>
+            <p class="tl-body"><code>void → await</code> on <code>telemetry-tracker.ts:143</code>. Clean, one commit. The single-file mechanical pattern works.</p>
+          </div>
+          <div class="tl-item" data-kind="regress">
+            <p class="tl-head">Gate 0.7+0.8 — same fix, two files <span class="tl-commit">faa99da · 4845eb3 · b23b18a</span></p>
+            <p class="tl-body">A spark asked to apply the identical one-line fix to two more hooks took 93 min and 3 commits. Four kinds of collateral damage: (1) <b>memory-awareness emit deleted</b> (5th occurrence), (2) audit baseline lowered 4→3 to silence the regression, (3) <code>async function await emitRalphTaskScore(</code> — broken syntax, (4) hallucinated a "linter that auto-reverts" and added inert <code>eslint-disable-line</code> comments.</p>
+          </div>
+          <div class="tl-item" data-kind="fix">
+            <p class="tl-head">Gate 0.9 — orchestrator cleanup <span class="tl-commit">3fa2c7f</span></p>
+            <p class="tl-body">Direct edits restored the memory-awareness emit, fixed the ralph syntax, and put the audit baseline back to 4. ~15 min of foreground work. No agent delegation.</p>
+          </div>
+          <div class="tl-item" data-kind="regress">
+            <p class="tl-head">2026-05-23 — regressions #6 and #7</p>
+            <p class="tl-body">All emits except memory-awareness reverted from <code>await</code> to <code>void</code>, AND memory-awareness was deleted again — in one agent rewrite. The old grep (matching both <code>void</code> and <code>await</code>) would have reported green on the pure revert. This is the incident that motivated the await-only grep.</p>
+          </div>
+        </div>
+      </div>
+
+      <div class="card">
+        <h3 class="card-title"><span class="dot" style="background:var(--red)"></span>Why it kept happening</h3>
+        <table class="data-table">
+          <thead><tr><th>Failure mode</th><th>Frequency</th><th>Severity</th><th>Root cause</th></tr></thead>
+          <tbody>
+            <tr><td>Whole-file rewrite drops prior-phase additions</td><td><span class="pill r">5× in 2 months</span></td><td><span class="pill r">HIGH — silent</span></td><td>Agent uses Edit/Serena to regenerate the file from its context window</td></tr>
+            <tr><td>Audit baseline inverted (lowered to match the regression)</td><td><span class="pill y">1×</span></td><td><span class="pill y">MEDIUM</span></td><td>Agent treats "fix the error message" as the goal, not "preserve the invariant"</td></tr>
+            <tr><td>Self-introduced syntax error mid-iteration</td><td><span class="pill y">1×</span></td><td><span class="pill r">HIGH — breaks build</span></td><td>LLM token confusion between the <code>async</code> modifier and the <code>await</code> operator</td></tr>
+            <tr><td>Phantom-linter hallucination</td><td><span class="pill b">1×</span></td><td><span class="pill b">LOW — inert</span></td><td>Agent blames an external cause for reverts it caused itself</td></tr>
+          </tbody>
+        </table>
+        <div class="callout fail">
+          <strong>The core mechanism:</strong> sub-agents work in an isolated context window. They don't read the main orchestrator's auto-memory (where the agent-rewrite-collision warning lived) and they don't see <code>hook-dev-lifecycle.md</code>. When a spark decides to "regenerate" a hook file, the previously-restored emit block — which lives in the file but not in the spark's fresh mental model — disappears.
+        </div>
+      </div>
+    </section>
+
+    <!-- ========== 6. THE HARDENING ========== -->
+    <section class="experience" id="hardening">
+      <p class="section-eyebrow">06 · The Guard</p>
+      <h2 class="section-title">The 2026-05-23 hardening:<br/>R1 + R2 + R3 + R5 + R6 + R9.</h2>
+      <p class="section-lede">
+        After regressions #6 and #7, six recommendations from the spark-agent-issues post-mortem shipped across four commits. They attack the failure from both ends: tighten the guard so a revert can't hide (R2), and constrain the agent so it doesn't rewrite whole files (R1, R3, R5, R6, R9).
+      </p>
+
+      <div class="card">
+        <h3 class="card-title"><span class="dot" style="background:var(--blue)"></span>What shipped, and where</h3>
+        <table class="data-table">
+          <thead><tr><th>Rec</th><th>What it does</th><th>Commit</th></tr></thead>
+          <tbody>
+            <tr><td><span class="pill b">R2</span></td><td><b>INVARIANT_4 rename + await-only grep + pattern banner.</b> Renamed <code>BASELINE</code> → <code>INVARIANT_4</code>; tightened grep to require the <code>await</code> prefix so a <code>void</code> revert trips it; added the DO-NOT-MODIFY banner.</td><td><code>0b208d6</code></td></tr>
+            <tr><td><span class="pill p">R1</span></td><td><b>Spark editing constraints.</b> Never whole-file regenerate a TS hook; use minimal-diff Edit with exact <code>old_string</code>; stop and ask the orchestrator before rewriting a hook file.</td><td><code>154b23d</code></td></tr>
+            <tr><td><span class="pill p">R3</span></td><td><b>Multi-file delegation policy.</b> If the same one-line fix needs N files, spawn N sparks in parallel (one file each) — never one spark for N files.</td><td><code>154b23d</code></td></tr>
+            <tr><td><span class="pill p">R5</span></td><td><b>Forbid touching the guard.</b> A spark fixing the underlying code must NOT modify the audit script to silence its warning. STOP and escalate.</td><td><code>154b23d</code></td></tr>
+            <tr><td><span class="pill p">R6</span></td><td><b>No-phantom-linter rule.</b> Explicitly: there is NO linter (scout-verified — no <code>.eslintrc</code>, no prettier, no lint-staged, no husky). Do not add <code>eslint-disable-line</code> comments to explain reverts. The cause is agent rewrites.</td><td><code>154b23d</code></td></tr>
+            <tr><td><span class="pill p">R9</span></td><td><b>Post-spark verification + recovery procedure.</b> The orchestrator re-runs the audit after any spark touches hook code; if it fails, follow the 4-step recovery instead of re-spawning the spark.</td><td><code>154b23d</code></td></tr>
+          </tbody>
+        </table>
+        <p class="small muted">
+          Two follow-on commits regenerated the spark sidecar from the updated agent frontmatter: <code>303cc36</code> (sync-agent-json helper) and <code>38752aa</code> (regen <code>spark.json</code>). The <code>R1+R3+R5+R6+R9</code> bundle lives in <code>.claude/agents/spark.md</code> Rule 7.
+        </p>
+      </div>
+
+      <div class="grid-2">
+        <div class="card">
+          <h3 class="card-title"><span class="dot" style="background:var(--y)"></span>Tighten the guard (R2)</h3>
+          <p class="small" style="color:var(--text-dim)">
+            Before: grep matched <code>void</code> OR <code>await</code>. A pure <code>await→void</code> revert kept the count at 4 — green, undetected. After: the grep requires <code>await emitBraintrustScore(</code> on one line. The revert that caused regression #6 now drops the count and FAILs. The variable name change (<code>INVARIANT_4</code>) is a behavioral nudge against the "lower the baseline" instinct.
+          </p>
+        </div>
+        <div class="card">
+          <h3 class="card-title"><span class="dot" style="background:var(--purple)"></span>Constrain the agent (R1/R3/R5/R6/R9)</h3>
+          <p class="small" style="color:var(--text-dim)">
+            The guard catches the regression; the spark constraints prevent it. R1 forbids whole-file rewrites. R3 says one spark per file for mechanical fans. R5 forbids touching the guard. R6 kills the phantom-linter misdiagnosis loop. R9 makes the orchestrator independently verify — because a spark can report "10/10 tests passed" (true) while silently dropping a sibling emit.
+          </p>
+        </div>
+      </div>
+
+      <div class="callout ok">
+        <strong>The cross-model telemetry parallel.</strong> Braintrust scores are to the memory/hook/agent/skill subsystems what <code>codex-lift.jsonl</code> is to cross-model review: a quantitative "is this earning its keep?" signal. Just as a consistently-zero <code>codex_only</code> count means the Codex pass isn't worth its quota, a consistently-low score dimension means that subsystem isn't delivering. Both are observability layers that score the thing they instrument.
+      </div>
+    </section>
+
+    <!-- ========== 7. RECOVERY PROCEDURE ========== -->
+    <section class="experience" id="recovery">
+      <p class="section-eyebrow">07 · Operations</p>
+      <h2 class="section-title">When a regression slips:<br/>the exit ramp.</h2>
+      <p class="section-lede">
+        The orchestrator re-runs the audit after any spark touches hook code. If that re-run FAILs <em>after</em> the spark reported success, there is a 4-step recovery. The critical rule: <b>do not re-spawn the same spark.</b> Its context window has the regression baked in — the next attempt will reintroduce it.
+      </p>
+
+      <div class="diagram-wrap">
+        <div class="diagram-toolbar">
+          <div class="diagram-title">regression detected → recovery flow</div>
+          <button class="play-btn" data-play="recovery">▶ Play recovery</button>
+        </div>
+        <div class="diag" id="diag-recovery">
+          <svg viewBox="0 0 900 250" preserveAspectRatio="xMidYMid meet">
+            <rect x="20"  y="100" width="160" height="55" rx="8" class="node-rect" data-step="1" fill="#1c2236" stroke="var(--red)" stroke-width="1.5"/>
+            <text x="100" y="124" text-anchor="middle" class="label-main" style="fill:var(--red)">audit FAILs</text>
+            <text x="100" y="142" text-anchor="middle" class="label-sub">after spark "done"</text>
+
+            <rect x="210" y="100" width="150" height="55" rx="8" class="node-rect" data-step="2" fill="#1c2236" stroke="var(--y)" stroke-width="1.5"/>
+            <text x="285" y="124" text-anchor="middle" class="label-main" style="fill:var(--y)">1 · git diff</text>
+            <text x="285" y="142" text-anchor="middle" class="label-sub">pure deletion?</text>
+
+            <rect x="390" y="100" width="160" height="55" rx="8" class="node-rect" data-step="3" fill="#1c2236" stroke="var(--blue)" stroke-width="1.5"/>
+            <text x="470" y="124" text-anchor="middle" class="label-main" style="fill:var(--blue)">2 · checkout HEAD</text>
+            <text x="470" y="142" text-anchor="middle" class="label-sub">restore the file</text>
+
+            <rect x="580" y="100" width="150" height="55" rx="8" class="node-rect" data-step="4" fill="#1c2236" stroke="var(--purple)" stroke-width="1.5"/>
+            <text x="655" y="124" text-anchor="middle" class="label-main" style="fill:var(--purple)">3 · escalate</text>
+            <text x="655" y="142" text-anchor="middle" class="label-sub">kraken, not spark</text>
+
+            <rect x="760" y="100" width="120" height="55" rx="8" class="node-rect heartbeat" data-step="5" fill="#1c2236" stroke="var(--green)" stroke-width="2"/>
+            <text x="820" y="124" text-anchor="middle" class="label-main" style="fill:var(--green)">4 · file</text>
+            <text x="820" y="142" text-anchor="middle" class="label-sub">incident doc</text>
+
+            <!-- anti-loop arrow -->
+            <rect x="390" y="20" width="340" height="36" rx="6" fill="#1c2236" stroke="var(--red)" stroke-width="1.2" stroke-dasharray="5,4"/>
+            <text x="560" y="42" text-anchor="middle" class="label-sub" style="fill:var(--red)">✗ never re-spawn the same spark — regression is baked into its context</text>
+
+            <!-- edges -->
+            <path d="M180 127 H 210" class="edge" data-edge="1"/>
+            <path d="M360 127 H 390" class="edge" data-edge="2"/>
+            <path d="M550 127 H 580" class="edge" data-edge="3"/>
+            <path d="M730 127 H 760" class="edge" data-edge="4"/>
+            <path d="M655 100 V 56" class="edge" stroke-dasharray="5,4"/>
+
+            <circle r="6" class="packet-red" id="recovery-packet" style="opacity:0"/>
+          </svg>
+        </div>
+      </div>
+
+      <div class="steps">
+        <div class="step" data-step="1"><div class="step-num">1</div><div class="step-body">
+          <h4>Diff — confirm it's a pure deletion</h4>
+          <p>Run <code>git diff HEAD -- &lt;spark's edited files&gt;</code>. Confirm the regression is a pure deletion (the spark dropped sibling content) and not an intentional restructure. The signature: <code>await emitBraintrustScore</code> lines disappearing.</p>
+          <span class="file-ref">git diff HEAD -- .claude/hooks/src/*.ts</span>
+        </div></div>
+        <div class="step" data-step="2"><div class="step-num">2</div><div class="step-body">
+          <h4>Restore — git checkout HEAD on the file</h4>
+          <p>Run <code>git checkout HEAD -- &lt;file&gt;</code> to restore it to the last good state. Do this BEFORE attempting any new edit — otherwise the regression appears in the next spark's context window and propagates.</p>
+          <span class="file-ref">git checkout HEAD -- &lt;file&gt;</span>
+        </div></div>
+        <div class="step" data-step="3"><div class="step-num">3</div><div class="step-body">
+          <h4>Escalate — kraken, not a re-spawned spark</h4>
+          <p>Do NOT re-spawn the same spark for the same task. Its context window has the regression baked in; the next attempt will likely reintroduce it. Escalate to kraken — or do the fix directly in the orchestrator if it's a one-line patch.</p>
+        </div></div>
+        <div class="step" data-step="4"><div class="step-num">4</div><div class="step-body">
+          <h4>File — append the incident</h4>
+          <p>Record the failing edit diff, the spark's task ID, what regression slipped, and the recovery path taken — to <code>docs/spark-agent-issues-2026-05-23.md</code> (or a follow-up dated doc). This is the missing exit ramp; without it the orchestrator can loop on the same regression by re-prompting the same spark.</p>
+          <span class="file-ref">docs/spark-agent-issues-2026-05-23.md</span>
+        </div></div>
+      </div>
+
+      <div class="callout warn">
+        <strong>Why the orchestrator re-runs the audit itself.</strong> Spark may run the audit before its last edit, then report <code>Audit: PASS</code>. A second run from the orchestrator <em>after</em> the spark exits catches late regressions. Never trust the spark's self-reported PASS alone — that's the gap R9 closes.
+      </div>
+    </section>
+
+    <!-- ========== 8. ENVIRONMENT & FAILURE MODES ========== -->
+    <section class="experience" id="environment">
+      <p class="section-eyebrow">08 · Operations</p>
+      <h2 class="section-title">Environment switches<br/>and failure modes.</h2>
+      <p class="section-lede">
+        The whole emit path is gated by two environment variables and degrades gracefully on every error. Below: the switches that turn scoring on, and the failure modes the system is built to survive — including the ones that defeat the <em>guard</em> rather than the emit.
+      </p>
+
+      <div class="card">
+        <h3 class="card-title"><span class="dot" style="background:var(--y)"></span>Environment variables</h3>
+        <table class="data-table">
+          <thead><tr><th>Variable</th><th>Role</th><th>Default / effect when unset</th></tr></thead>
+          <tbody>
+            <tr><td><code>TRACE_TO_BRAINTRUST</code></td><td>Master on-switch — must be the string <code>"true"</code></td><td>unset → emit returns silently (no-op)</td></tr>
+            <tr><td><code>BRAINTRUST_API_KEY</code></td><td>Bearer token for the feedback POST</td><td>unset / empty → emit returns silently</td></tr>
+            <tr><td><code>BRAINTRUST_CC_PROJECT_ID</code></td><td>Direct project id — cheapest path, no lookup</td><td>unset → fall back to name lookup</td></tr>
+            <tr><td><code>BRAINTRUST_CC_PROJECT</code></td><td>Project name for <code>/v1/project</code> lookup</td><td>unset → <code>claude-code</code></td></tr>
+            <tr><td><code>BRAINTRUST_API_URL</code></td><td>Override the API host (staging / self-host)</td><td>unset → <code>https://api.braintrust.dev</code></td></tr>
+            <tr><td><code>BRAINTRUST_SESSION_ID</code></td><td>Span id for the hook-health emit</td><td>unset → falls back to <code>input.session_id</code></td></tr>
+          </tbody>
+        </table>
+        <p class="small muted">
+          Two ways to be off: tracing disabled, or no key. Both are silent. This is why the hooks behave identically on a dev machine with no Braintrust account — the scoring layer simply doesn't run.
+        </p>
+      </div>
+
+      <div class="card">
+        <h3 class="card-title"><span class="dot" style="background:var(--blue)"></span>A real feedback payload, annotated</h3>
+        <div class="jsonl-sample">{
+  <span class="field-tag gray">endpoint</span>     <span class="str">"POST /v1/project_logs/{id}/feedback"</span>,
+  <span class="field-tag gray">id</span>           <span class="str">"&lt;braintrust span_id&gt;"</span>,
+  <span class="field-tag amber">scores</span>: {
+    <span class="field-tag green">memory_recall_relevance</span> <span class="num">0.016</span>,
+    <span class="field-tag green">memory_recall_hit</span>       <span class="num">1.0</span>
+  },
+  <span class="field-tag blue">metadata</span>: {
+    <span class="field-tag gray">mode</span>            <span class="str">"hybrid"</span>,
+    <span class="field-tag green">daemon_ready</span>    true,
+    <span class="field-tag gray">results_count</span>   <span class="num">3</span>,
+    <span class="field-tag gray">kept_after_floor</span> <span class="num">3</span>
+  }
+}</div>
+        <p class="small muted">A score of 0.016 is a healthy hybrid-RRF top score (the RRF sum maxes near 0.016 — see the memory deep-dive). Low absolute number, high relevance. <code>memory_recall_hit: 1.0</code> confirms a result survived the floor.</p>
+      </div>
+
+      <div class="card">
+        <h3 class="card-title"><span class="dot" style="background:var(--red)"></span>Failure modes — emit path vs guard path</h3>
+        <table class="data-table">
+          <thead><tr><th>Failure</th><th>Layer</th><th>Behavior</th><th>Defense / recovery</th></tr></thead>
+          <tbody>
+            <tr>
+              <td><b>Tracing off / no key</b></td>
+              <td><span class="pill b">emit</span></td>
+              <td><span class="pill g">✓ silent skip</span> Returns before any network call.</td>
+              <td>By design. Set <code>TRACE_TO_BRAINTRUST=true</code> + key to enable.</td>
+            </tr>
+            <tr>
+              <td><b>Braintrust unreachable / 5xx / timeout</b></td>
+              <td><span class="pill b">emit</span></td>
+              <td><span class="pill y">⚠ WARN, exit 0</span> Breadcrumb to stderr; the hook continues normally.</td>
+              <td>Fail-open contract. Score is lost, the hook is unaffected. 2s AbortSignal caps the wait.</td>
+            </tr>
+            <tr>
+              <td><b><code>await</code> reverted to <code>void</code></b></td>
+              <td><span class="pill p">guard</span></td>
+              <td><span class="pill r">✗ count drops</span> Scores silently never land (process.exit race).</td>
+              <td>Audit FAILs (await-only grep). Restore <code>await</code>; never lower <code>INVARIANT_4</code>.</td>
+            </tr>
+            <tr>
+              <td><b>Count tampering</b> (lower the invariant)</td>
+              <td><span class="pill p">guard</span></td>
+              <td><span class="pill r">✗ guard defeated</span> A lowered <code>INVARIANT_4</code> hides a real regression.</td>
+              <td>DO-NOT-MODIFY banner + the "fix the code, never lower" rule. Caught in diff review.</td>
+            </tr>
+            <tr>
+              <td><b>File deletion</b> (whole emit block dropped)</td>
+              <td><span class="pill p">guard</span></td>
+              <td><span class="pill r">✗ silent loss</span> The 6× recurring agent-rewrite collision.</td>
+              <td>Audit FAILs; 4-step recovery (diff → checkout HEAD → kraken → file incident).</td>
+            </tr>
+            <tr>
+              <td><b>Self-introduced syntax error</b></td>
+              <td><span class="pill p">guard</span></td>
+              <td><span class="pill r">✗ build breaks</span> e.g. <code>async function await emitX(</code>.</td>
+              <td>Build/tsc fails loudly; restore from HEAD, escalate (don't re-spawn).</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+
+      <div class="grid-2">
+        <div class="card">
+          <h3 class="card-title"><span class="dot" style="background:var(--green)"></span>Healthy signatures</h3>
+          <ul class="small" style="color:var(--text-dim); padding-left:18px;">
+            <li><code>bash scripts/audit-braintrust-emits.sh</code> → <code>OK: Emit count matches invariant (4).</code> exit 0</li>
+            <li>All four emit sites are <code>await emitBraintrustScore(</code> on one line</li>
+            <li><code>INVARIANT_4 = 4</code> unchanged in the script</li>
+            <li>Scores appearing in the Braintrust dashboard when <code>TRACE_TO_BRAINTRUST=true</code></li>
+          </ul>
+        </div>
+        <div class="card">
+          <h3 class="card-title"><span class="dot" style="background:var(--red)"></span>Degradation signatures</h3>
+          <ul class="small" style="color:var(--text-dim); padding-left:18px;">
+            <li>Audit prints <code>FAIL: Regression detected</code> exit 1</li>
+            <li>A <code>void emitBraintrustScore</code> reappears in a diff</li>
+            <li><code>INVARIANT_4</code> changed to a lower number</li>
+            <li>memory-awareness.ts emit block missing (line ~595)</li>
+            <li>Scores stop appearing despite tracing enabled → grep the hook log for <code>[braintrust-score]</code> stderr breadcrumbs</li>
+          </ul>
+        </div>
+      </div>
+
+      <div class="callout ok">
+        <strong>The irony, stated plainly.</strong> This page documents the audit guard. Authoring it must not break the audit guard. The four emit sites stay at <code>4/4</code>; the only files this deep-dive touches are HTML. The guard that protects the scoring layer is itself protected by the rule that you read hook source — you never edit it to write docs about it.
+      </div>
+    </section>
+
+  </main>
+</div>
+
+<script>
+// =============== Sidebar nav + section switching ===============
+const navItems = document.querySelectorAll('.nav-item');
+const sections = document.querySelectorAll('section.experience');
+navItems.forEach(item => {
+  item.addEventListener('click', () => {
+    const target = item.getAttribute('data-target');
+    navItems.forEach(n => n.classList.remove('active'));
+    item.classList.add('active');
+    sections.forEach(s => s.classList.remove('active'));
+    const sec = document.getElementById(target);
+    if (sec) sec.classList.add('active');
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+  });
+});
+
+// =============== Animated packet helper ===============
+// Animate a "packet" circle along an SVG path made of waypoints.
+function animatePacketWaypoints(packetId, waypoints, durationMs, onStep) {
+  const pkt = document.getElementById(packetId);
+  if (!pkt) return Promise.resolve();
+  pkt.style.opacity = '1';
+  const t0 = performance.now();
+  return new Promise(resolve => {
+    function frame(now) {
+      const t = Math.min(1, (now - t0) / durationMs);
+      const segs = waypoints.length - 1;
+      const segT = t * segs;
+      const i = Math.min(segs - 1, Math.floor(segT));
+      const localT = segT - i;
+      const a = waypoints[i], b = waypoints[i + 1];
+      const x = a.x + (b.x - a.x) * localT;
+      const y = a.y + (b.y - a.y) * localT;
+      pkt.setAttribute('cx', x);
+      pkt.setAttribute('cy', y);
+      if (onStep) onStep(i, localT);
+      if (t < 1) requestAnimationFrame(frame);
+      else {
+        pkt.style.opacity = '0';
+        resolve();
+      }
+    }
+    requestAnimationFrame(frame);
+  });
+}
+
+// =============== Per-section animations ===============
+const animations = {
+  overview: async function () {
+    // hook fires → build payload → emit → POST → Braintrust
+    const wp1 = [{x:125,y:75}, {x:125,y:190}, {x:290,y:190}, {x:385,y:130}, {x:385,y:75}, {x:560,y:75}, {x:650,y:130}, {x:780,y:265}];
+    const wp2 = [{x:125,y:190}, {x:650,y:190}, {x:780,y:280}];
+    await animatePacketWaypoints('ovp1', wp1, 2800);
+    await animatePacketWaypoints('ovp2', wp2, 1600);
+  },
+  emit: async function () {
+    const scope = document.getElementById('emit');
+    const waypoints = [
+      {x:80, y:115}, {x:230,y:115}, {x:390,y:115},
+      {x:550,y:115}, {x:710,y:115}, {x:845,y:115}
+    ];
+    const edges = scope.querySelectorAll('.edge');
+    const nodes = scope.querySelectorAll('.node-rect');
+    await animatePacketWaypoints('emit-packet', waypoints, 4200, (i) => {
+      nodes.forEach((n, idx) => n.classList.toggle('active', idx === i || idx === i+1));
+      edges.forEach((e, idx) => e.classList.toggle('active', idx === i));
+    });
+    nodes.forEach(n => n.classList.remove('active'));
+    edges.forEach(e => e.classList.remove('active'));
+  },
+  invariant: async function () {
+    const scope = document.getElementById('invariant');
+    // edit → audit → count → (the pass branch lights up green)
+    const waypoints = [
+      {x:95, y:125}, {x:285,y:125}, {x:475,y:125}, {x:735,y:44}
+    ];
+    const edges = scope.querySelectorAll('.edge');
+    const nodes = scope.querySelectorAll('.node-rect');
+    await animatePacketWaypoints('invariant-packet', waypoints, 3400, (i) => {
+      nodes.forEach((n, idx) => n.classList.toggle('active', idx === i));
+      edges.forEach((e, idx) => e.classList.toggle('active', idx === Math.min(i, edges.length - 1)));
+    });
+    nodes.forEach(n => n.classList.remove('active'));
+    edges.forEach(e => e.classList.remove('active'));
+  },
+  recovery: async function () {
+    const scope = document.getElementById('recovery');
+    const waypoints = [
+      {x:100, y:127}, {x:285,y:127}, {x:470,y:127}, {x:655,y:127}, {x:820,y:127}
+    ];
+    const steps = scope.querySelectorAll('.step');
+    const edges = scope.querySelectorAll('.edge');
+    const nodes = scope.querySelectorAll('.node-rect');
+    await animatePacketWaypoints('recovery-packet', waypoints, 4000, (i) => {
+      nodes.forEach((n, idx) => n.classList.toggle('active', idx === i));
+      edges.forEach((e, idx) => e.classList.toggle('active', idx === Math.min(i, edges.length - 1)));
+      // light up the matching numbered step (steps 0..3 map to nodes 1..4)
+      steps.forEach((s, idx) => s.classList.toggle('active', idx === Math.max(0, i - 1)));
+    });
+    nodes.forEach(n => n.classList.remove('active'));
+    edges.forEach(e => e.classList.remove('active'));
+    steps.forEach(s => s.classList.remove('active'));
+  },
+};
+
+document.querySelectorAll('.play-btn').forEach(btn => {
+  btn.addEventListener('click', async () => {
+    const key = btn.getAttribute('data-play');
+    const fn = animations[key];
+    if (!fn) return;
+    btn.disabled = true;
+    const originalText = btn.textContent;
+    btn.textContent = '⏵ Playing...';
+    try { await fn(); } catch (e) { console.error(e); }
+    btn.disabled = false;
+    btn.textContent = originalText;
+  });
+});
+
+// Auto-play overview emit once on load
+window.addEventListener('load', () => {
+  setTimeout(() => animations.overview(), 600);
+});
+</script>
+</body>
+</html>

@@ -1,0 +1,1534 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Agents Subsystem — Continuous Claude</title>
+<style>
+  :root {
+    --bg-deep: #0a0e1a;
+    --bg-card: #131829;
+    --bg-elev: #1c2236;
+    --bg-code: #0e1322;
+    --border: #2a3147;
+    --border-strong: #3a4360;
+    --text: #e5e7eb;
+    --text-dim: #94a3b8;
+    --text-mute: #64748b;
+    --y: #fbbf24;
+    --y-soft: #fbbf2422;
+    --blue: #60a5fa;
+    --green: #34d399;
+    --red: #f87171;
+    --purple: #a78bfa;
+    --orange: #fb923c;
+    --teal: #2dd4bf;
+    --shadow: 0 8px 28px rgba(0,0,0,0.5), 0 2px 6px rgba(0,0,0,0.4);
+  }
+  * { box-sizing: border-box; }
+  html, body {
+    margin: 0; padding: 0;
+    background: var(--bg-deep);
+    color: var(--text);
+    font-family: -apple-system, 'Segoe UI', system-ui, sans-serif;
+    font-size: 14px;
+    line-height: 1.55;
+    min-height: 100vh;
+  }
+  body {
+    background:
+      radial-gradient(ellipse 1200px 600px at 80% -10%, #1a1f3a55 0%, transparent 60%),
+      radial-gradient(ellipse 800px 500px at 10% 100%, #0c1530aa 0%, transparent 60%),
+      var(--bg-deep);
+  }
+  code, .mono { font-family: 'JetBrains Mono', 'Fira Code', 'Cascadia Code', Consolas, monospace; font-size: 0.92em; }
+  ::selection { background: var(--y); color: #000; }
+
+  /* ----- Layout shell ----- */
+  .shell {
+    display: grid;
+    grid-template-columns: 300px 1fr;
+    min-height: 100vh;
+  }
+  .sidebar {
+    background: linear-gradient(180deg, #0c1124 0%, #0a0e1a 100%);
+    border-right: 1px solid var(--border);
+    padding: 28px 0;
+    position: sticky;
+    top: 0;
+    height: 100vh;
+    overflow-y: auto;
+  }
+  .sidebar-header {
+    padding: 0 26px 22px;
+    border-bottom: 1px solid var(--border);
+    margin-bottom: 14px;
+  }
+  .sidebar-title {
+    font-size: 11px;
+    font-weight: 600;
+    letter-spacing: 0.18em;
+    text-transform: uppercase;
+    color: var(--text-mute);
+    margin: 0 0 4px;
+  }
+  .sidebar-brand {
+    font-size: 19px;
+    font-weight: 600;
+    color: var(--text);
+    margin: 0;
+    letter-spacing: -0.01em;
+  }
+  .sidebar-meta {
+    font-size: 11px;
+    color: var(--text-mute);
+    margin-top: 8px;
+  }
+  .nav { list-style: none; padding: 0; margin: 0; }
+  .nav-item {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 11px 26px;
+    cursor: pointer;
+    border-left: 2px solid transparent;
+    transition: all 0.15s ease;
+    color: var(--text-dim);
+    font-size: 13.5px;
+    user-select: none;
+  }
+  .nav-item:hover {
+    background: #ffffff05;
+    color: var(--text);
+  }
+  .nav-item.active {
+    background: var(--y-soft);
+    border-left-color: var(--y);
+    color: var(--y);
+  }
+  .nav-item .icon {
+    font-size: 16px;
+    width: 22px;
+    text-align: center;
+    flex-shrink: 0;
+  }
+  .nav-section-label {
+    padding: 16px 26px 6px;
+    font-size: 10px;
+    font-weight: 600;
+    letter-spacing: 0.18em;
+    text-transform: uppercase;
+    color: var(--text-mute);
+  }
+  .sidebar-footer {
+    margin-top: 24px;
+    padding: 18px 26px;
+    border-top: 1px solid var(--border);
+    font-size: 11px;
+    color: var(--text-mute);
+  }
+  .verdict-badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 4px 9px;
+    background: #34d39922;
+    color: var(--green);
+    border-radius: 4px;
+    font-weight: 600;
+    font-size: 10.5px;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+  }
+  .verdict-badge::before {
+    content: '';
+    width: 6px; height: 6px; border-radius: 50%;
+    background: var(--green);
+    box-shadow: 0 0 8px var(--green);
+    animation: pulse 2s ease-in-out infinite;
+  }
+  @keyframes pulse {
+    0%, 100% { opacity: 1; transform: scale(1); }
+    50% { opacity: 0.55; transform: scale(1.4); }
+  }
+
+  /* ----- Main content ----- */
+  .main {
+    padding: 36px 56px 80px;
+    max-width: 1200px;
+  }
+  section.experience { display: none; animation: fadeIn 0.35s ease-out; }
+  section.experience.active { display: block; }
+  @keyframes fadeIn {
+    from { opacity: 0; transform: translateY(8px); }
+    to { opacity: 1; transform: translateY(0); }
+  }
+
+  .section-eyebrow {
+    font-size: 11px;
+    font-weight: 600;
+    color: var(--y);
+    letter-spacing: 0.18em;
+    text-transform: uppercase;
+    margin: 0;
+  }
+  .section-title {
+    font-size: 36px;
+    font-weight: 600;
+    letter-spacing: -0.02em;
+    margin: 4px 0 8px;
+    line-height: 1.15;
+  }
+  .section-lede {
+    font-size: 16px;
+    color: var(--text-dim);
+    max-width: 800px;
+    margin: 0 0 28px;
+  }
+
+  /* ----- Cards / panels ----- */
+  .card {
+    background: var(--bg-card);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 24px;
+    margin-bottom: 18px;
+    box-shadow: var(--shadow);
+  }
+  .card.flush { padding: 0; overflow: hidden; }
+  .card-title {
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--text);
+    margin: 0 0 14px;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+  }
+  .card-title .dot { width: 8px; height: 8px; border-radius: 50%; display: inline-block; }
+
+  /* Two-col grid */
+  .grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 18px; }
+  .grid-3 { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 14px; }
+
+  /* Stat tiles */
+  .stat {
+    background: var(--bg-elev);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 18px 20px;
+  }
+  .stat-label {
+    font-size: 11px;
+    color: var(--text-mute);
+    text-transform: uppercase;
+    letter-spacing: 0.1em;
+    margin: 0 0 8px;
+  }
+  .stat-value {
+    font-size: 26px;
+    font-weight: 600;
+    color: var(--text);
+    line-height: 1.1;
+    margin: 0;
+  }
+  .stat-value.y { color: var(--y); }
+  .stat-value.b { color: var(--blue); }
+  .stat-value.g { color: var(--green); }
+  .stat-value.p { color: var(--purple); }
+  .stat-foot {
+    font-size: 11.5px;
+    color: var(--text-dim);
+    margin-top: 6px;
+  }
+
+  /* Step cards */
+  .steps { display: grid; gap: 12px; }
+  .step {
+    display: grid;
+    grid-template-columns: 38px 1fr;
+    gap: 16px;
+    background: var(--bg-card);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 16px 18px;
+    align-items: start;
+    transition: all 0.18s ease;
+    position: relative;
+  }
+  .step:hover, .step.active {
+    border-color: var(--y);
+    background: linear-gradient(180deg, #1d1d0a08, var(--bg-card) 90%);
+  }
+  .step.active::before {
+    content: '';
+    position: absolute;
+    left: -1px; top: -1px; bottom: -1px;
+    width: 3px;
+    background: var(--y);
+    border-radius: 3px 0 0 3px;
+  }
+  .step-num {
+    background: var(--bg-elev);
+    color: var(--y);
+    width: 34px; height: 34px;
+    border-radius: 8px;
+    border: 1px solid var(--border-strong);
+    display: flex; align-items: center; justify-content: center;
+    font-weight: 600;
+    font-size: 13.5px;
+  }
+  .step-body h4 { margin: 0 0 4px; font-size: 14.5px; color: var(--text); }
+  .step-body p { margin: 0; color: var(--text-dim); font-size: 13px; }
+  .step-body .file-ref {
+    display: inline-block;
+    margin-top: 8px;
+    padding: 2px 8px;
+    background: var(--bg-code);
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    font-family: 'JetBrains Mono', Consolas, monospace;
+    font-size: 11.5px;
+    color: var(--teal);
+  }
+
+  /* Diagram container */
+  .diagram-wrap {
+    background: var(--bg-card);
+    border: 1px solid var(--border);
+    border-radius: 14px;
+    padding: 18px 18px 8px;
+    margin-bottom: 22px;
+    box-shadow: var(--shadow);
+  }
+  .diagram-toolbar {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 10px;
+    padding: 0 6px;
+  }
+  .diagram-title {
+    font-size: 12px;
+    color: var(--text-mute);
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    font-weight: 600;
+  }
+  .play-btn {
+    background: var(--y);
+    color: #000;
+    border: none;
+    border-radius: 6px;
+    padding: 6px 14px;
+    font-weight: 600;
+    font-size: 12px;
+    letter-spacing: 0.04em;
+    cursor: pointer;
+    display: inline-flex; align-items: center; gap: 6px;
+    transition: all 0.15s ease;
+  }
+  .play-btn:hover { background: #ffd75a; box-shadow: 0 0 16px var(--y-soft); }
+  .play-btn:disabled { opacity: 0.4; cursor: default; }
+  .play-btn .play-icon { font-size: 10px; }
+
+  /* SVG default styles */
+  .diag svg { width: 100%; height: auto; display: block; }
+  .diag .node-rect, .diag .node-circle { transition: filter 0.4s; }
+  .diag .node-rect.active, .diag .node-circle.active {
+    filter: drop-shadow(0 0 8px var(--y));
+  }
+  .diag .edge { stroke: var(--border-strong); stroke-width: 2; fill: none; transition: stroke 0.3s, stroke-width 0.3s; }
+  .diag .edge.active { stroke: var(--y); stroke-width: 3; }
+  .diag text { font-family: -apple-system, system-ui, sans-serif; }
+  .diag .label-bg { fill: var(--bg-card); }
+  .diag .label-main { fill: var(--text); font-weight: 600; font-size: 14px; }
+  .diag .label-sub { fill: var(--text-mute); font-size: 11.5px; }
+  .diag .packet { fill: var(--y); filter: drop-shadow(0 0 6px var(--y)); }
+  .diag .packet-blue { fill: var(--blue); filter: drop-shadow(0 0 6px var(--blue)); }
+  .diag .packet-green { fill: var(--green); filter: drop-shadow(0 0 6px var(--green)); }
+  .diag .heartbeat { animation: heartbeat 2.4s ease-in-out infinite; transform-origin: center; transform-box: fill-box; }
+  @keyframes heartbeat {
+    0%, 100% { transform: scale(1); }
+    18% { transform: scale(1.08); }
+    36% { transform: scale(1); }
+  }
+
+  /* Code blocks */
+  .codeblock {
+    background: var(--bg-code);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 14px 16px;
+    overflow-x: auto;
+    font-family: 'JetBrains Mono', Consolas, monospace;
+    font-size: 12.5px;
+    line-height: 1.55;
+    color: #cbd5e1;
+    margin: 14px 0 4px;
+    white-space: pre;
+  }
+  .codeblock .kw { color: var(--purple); }
+  .codeblock .str { color: var(--green); }
+  .codeblock .com { color: var(--text-mute); font-style: italic; }
+  .codeblock .num { color: var(--orange); }
+  .codeblock .fn { color: var(--blue); }
+  .codeblock .y { color: var(--y); }
+  .codeblock .em { color: var(--y); }
+
+  /* Agent cards grid */
+  .agent-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 14px; }
+  .agent-grid.three { grid-template-columns: repeat(3, 1fr); }
+  .agent-card {
+    background: var(--bg-elev);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 16px 18px;
+    position: relative;
+    overflow: hidden;
+    transition: all 0.18s ease;
+  }
+  .agent-card:hover { border-color: var(--border-strong); transform: translateY(-1px); }
+  .agent-card::before {
+    content: '';
+    position: absolute; left: 0; top: 0; bottom: 0; width: 3px;
+    background: var(--c, var(--blue));
+  }
+  .agent-card[data-model="opus"]   { --c: var(--purple); }
+  .agent-card[data-model="sonnet"] { --c: var(--blue); }
+  .agent-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 8px; gap: 8px; }
+  .agent-name {
+    font-size: 14px; font-weight: 600;
+    color: var(--text);
+    letter-spacing: 0.01em;
+    margin: 0;
+    font-family: 'JetBrains Mono', monospace;
+  }
+  .agent-desc { font-size: 12.5px; color: var(--text-dim); margin: 0 0 10px; }
+  .model-tag {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 10px;
+    font-weight: 600;
+    padding: 2px 7px;
+    border-radius: 4px;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    flex-shrink: 0;
+  }
+  .model-tag.opus   { background: #a78bfa22; color: var(--purple); }
+  .model-tag.sonnet { background: #60a5fa22; color: var(--blue); }
+  .tool-chips { display: flex; flex-wrap: wrap; gap: 4px; }
+  .tool-chip {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 10px;
+    color: var(--text-mute);
+    background: var(--bg-code);
+    border: 1px solid var(--border);
+    border-radius: 3px;
+    padding: 1px 6px;
+  }
+
+  /* Tables */
+  .data-table {
+    width: 100%;
+    border-collapse: separate;
+    border-spacing: 0;
+    margin: 12px 0;
+    font-size: 12.5px;
+  }
+  .data-table th, .data-table td {
+    text-align: left;
+    padding: 9px 14px;
+    border-bottom: 1px solid var(--border);
+  }
+  .data-table th {
+    background: var(--bg-elev);
+    color: var(--text-dim);
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    font-size: 10.5px;
+  }
+  .data-table tr:last-child td { border-bottom: none; }
+  .data-table tr:hover td { background: #ffffff04; }
+  .pill {
+    display: inline-block;
+    padding: 2px 8px;
+    border-radius: 3px;
+    font-size: 11px;
+    font-weight: 600;
+    letter-spacing: 0.04em;
+  }
+  .pill.g { background: #34d39922; color: var(--green); }
+  .pill.y { background: var(--y-soft); color: var(--y); }
+  .pill.r { background: #f8717122; color: var(--red); }
+  .pill.b { background: #60a5fa22; color: var(--blue); }
+  .pill.p { background: #a78bfa22; color: var(--purple); }
+
+  /* Callout box */
+  .callout {
+    border-left: 3px solid var(--y);
+    background: var(--y-soft);
+    padding: 14px 18px;
+    border-radius: 0 8px 8px 0;
+    margin: 14px 0;
+    font-size: 13px;
+  }
+  .callout strong { color: var(--y); }
+  .callout.warn { border-color: var(--orange); background: #fb923c1a; }
+  .callout.warn strong { color: var(--orange); }
+  .callout.fail { border-color: var(--red); background: #f871711a; }
+  .callout.fail strong { color: var(--red); }
+  .callout.ok { border-color: var(--green); background: #34d3991a; }
+  .callout.ok strong { color: var(--green); }
+
+  /* Misc */
+  hr { border: none; border-top: 1px solid var(--border); margin: 22px 0; }
+  a { color: var(--y); text-decoration: none; }
+  a:hover { text-decoration: underline; }
+  .muted { color: var(--text-mute); }
+  .small { font-size: 12px; }
+  .tag-row { display: flex; flex-wrap: wrap; gap: 6px; margin: 8px 0; }
+  .tag {
+    background: var(--bg-elev);
+    border: 1px solid var(--border);
+    color: var(--text-dim);
+    padding: 3px 9px;
+    border-radius: 5px;
+    font-size: 11.5px;
+    font-family: 'JetBrains Mono', monospace;
+  }
+  .tag.y { color: var(--y); border-color: var(--y); }
+  .tag.b { color: var(--blue); border-color: var(--blue); }
+  .tag.g { color: var(--green); border-color: var(--green); }
+  .tag.p { color: var(--purple); border-color: var(--purple); }
+</style>
+</head>
+<body>
+<div class="shell">
+  <!-- ============ SIDEBAR ============ -->
+  <aside class="sidebar">
+    <div class="sidebar-header">
+      <a href="./hub.html" class="hub-link" style="color: #fbbf24; text-decoration: none; font-size: 13px; margin-right: 16px;">← Hub</a>
+      <p class="sidebar-title">Continuous Claude</p>
+      <h1 class="sidebar-brand">Agents Subsystem</h1>
+      <div class="sidebar-meta">
+        v1.0 · 2026-05-27 · <span class="verdict-badge">39 agents</span>
+      </div>
+    </div>
+    <ul class="nav" id="nav">
+      <li class="nav-section-label">Foundations</li>
+      <li class="nav-item active" data-target="overview"><span class="icon">⌂</span><span>Overview</span></li>
+
+      <li class="nav-section-label">Do the work</li>
+      <li class="nav-item" data-target="implementation"><span class="icon">⚒</span><span>Implementation</span></li>
+      <li class="nav-item" data-target="investigation"><span class="icon">⌕</span><span>Investigation</span></li>
+      <li class="nav-item" data-target="testing"><span class="icon">✓</span><span>Testing</span></li>
+
+      <li class="nav-section-label">Judge & shape</li>
+      <li class="nav-item" data-target="review"><span class="icon">⚖</span><span>Review</span></li>
+      <li class="nav-item" data-target="planning"><span class="icon">◰</span><span>Planning</span></li>
+
+      <li class="nav-section-label">Ship & extend</li>
+      <li class="nav-item" data-target="operations"><span class="icon">⬆</span><span>Operations</span></li>
+      <li class="nav-item" data-target="specialty"><span class="icon">◈</span><span>Specialty</span></li>
+      <li class="nav-item" data-target="meta"><span class="icon">⚙</span><span>Meta</span></li>
+
+      <li class="nav-section-label">Mechanics</li>
+      <li class="nav-item" data-target="spawning"><span class="icon">⟳</span><span>Spawning flow</span></li>
+    </ul>
+    <div class="sidebar-footer">
+      <div>Agents on disk: <span class="tag y mono">39</span></div>
+      <div style="margin-top:8px">Models: <b style="color:var(--purple)">opus</b> + <b style="color:var(--blue)">sonnet</b></div>
+      <div style="margin-top:8px">Haiku: <b style="color:var(--red)">never</b></div>
+      <div style="margin-top:8px">Spawned via the <b style="color:var(--y)">Task</b> tool</div>
+    </div>
+  </aside>
+
+  <!-- ============ MAIN ============ -->
+  <main class="main">
+
+    <!-- ========== 1. OVERVIEW ========== -->
+    <section class="experience active" id="overview">
+      <p class="section-eyebrow">01 · Foundations</p>
+      <h2 class="section-title">39 specialized sub-agents,<br/>one clean coordinating context.</h2>
+      <p class="section-lede">
+        The main session is a <strong style="color:var(--y)">coordinator</strong>, not a worker. Reading 3+ files, running tests, external research, implementation — each spawns a sub-agent through the <code>Task</code> tool. The sub-agent runs in an <em>isolated context window</em>, burns its own tokens, and returns only a summary. The main thread stays lean, so it can orchestrate longer without drowning in detail.
+      </p>
+
+      <div class="grid-3">
+        <div class="stat"><p class="stat-label">Agents on disk</p><p class="stat-value y">39</p><p class="stat-foot">.claude/agents/*.md</p></div>
+        <div class="stat"><p class="stat-label">Reasoning tier</p><p class="stat-value p">opus</p><p class="stat-foot">deep judgment work</p></div>
+        <div class="stat"><p class="stat-label">Execution tier</p><p class="stat-value b">sonnet</p><p class="stat-foot">focused throughput</p></div>
+      </div>
+
+      <div class="diagram-wrap">
+        <div class="diagram-toolbar">
+          <div class="diagram-title">Delegate &amp; return — keep the main context clean</div>
+          <button class="play-btn" data-play="overview">▶ Play delegation</button>
+        </div>
+        <div class="diag" id="diag-overview">
+          <svg viewBox="0 0 900 300" preserveAspectRatio="xMidYMid meet">
+            <!-- Orchestrator -->
+            <rect x="40" y="115" width="170" height="70" rx="10" class="node-rect" fill="#1c2236" stroke="var(--y)" stroke-width="1.5"/>
+            <text x="125" y="143" text-anchor="middle" class="label-main" style="fill:var(--y)">Orchestrator</text>
+            <text x="125" y="163" text-anchor="middle" class="label-sub">main session · coordination</text>
+
+            <!-- Task tool -->
+            <rect x="290" y="115" width="150" height="70" rx="10" class="node-rect" fill="#1c2236" stroke="var(--blue)" stroke-width="1.5"/>
+            <text x="365" y="143" text-anchor="middle" class="label-main" style="fill:var(--blue)">Task tool</text>
+            <text x="365" y="163" text-anchor="middle" class="label-sub">spawn request</text>
+
+            <!-- Isolated agent -->
+            <rect x="520" y="40" width="180" height="70" rx="10" class="node-rect heartbeat" fill="#1c2236" stroke="var(--purple)" stroke-width="2"/>
+            <text x="610" y="68" text-anchor="middle" class="label-main" style="fill:var(--purple)">Sub-agent</text>
+            <text x="610" y="88" text-anchor="middle" class="label-sub">isolated context window</text>
+
+            <!-- Tools / files -->
+            <rect x="520" y="190" width="180" height="70" rx="10" class="node-rect" fill="#1c2236" stroke="var(--teal)" stroke-width="1.5"/>
+            <text x="610" y="218" text-anchor="middle" class="label-main" style="fill:var(--teal)">Read · Bash · Grep</text>
+            <text x="610" y="238" text-anchor="middle" class="label-sub">does the heavy lifting</text>
+
+            <!-- Summary back -->
+            <rect x="760" y="115" width="120" height="70" rx="10" class="node-rect" fill="#1c2236" stroke="var(--green)" stroke-width="1.5"/>
+            <text x="820" y="143" text-anchor="middle" class="label-main" style="fill:var(--green)">Summary</text>
+            <text x="820" y="163" text-anchor="middle" class="label-sub">→ orchestrator</text>
+
+            <!-- edges -->
+            <path d="M210 150 H 290" class="edge"/>
+            <path d="M440 140 C 480 120, 500 90, 520 80" class="edge"/>
+            <path d="M610 110 V 190" class="edge" stroke-dasharray="5,4"/>
+            <path d="M700 80 C 740 95, 760 120, 800 130" class="edge"/>
+            <path d="M820 185 C 700 250, 300 250, 125 185" class="edge"/>
+
+            <!-- packets -->
+            <circle r="5" class="packet" id="ovp1" style="opacity:0"/>
+            <circle r="5" class="packet-blue" id="ovp2" style="opacity:0"/>
+            <circle r="5" class="packet-green" id="ovp3" style="opacity:0"/>
+          </svg>
+        </div>
+        <div class="callout">
+          <strong>The principle.</strong> Main context = coordination only. Sub-agents do the reading, searching, testing, and writing — then hand back a digest. One task per agent. Independent tasks run in parallel.
+        </div>
+      </div>
+
+      <div class="card">
+        <h3 class="card-title"><span class="dot" style="background:var(--y)"></span>The 39 agents by task category</h3>
+        <table class="data-table">
+          <thead><tr><th>Category</th><th>Agents</th><th>Count</th></tr></thead>
+          <tbody>
+            <tr><td><b style="color:var(--y)">Implementation</b></td><td class="mono small">kraken · spark · phoenix · agentica-agent · onboard</td><td><span class="pill y">5</span></td></tr>
+            <tr><td><b style="color:var(--blue)">Investigation</b></td><td class="mono small">debug-agent · sleuth · scout</td><td><span class="pill b">3</span></td></tr>
+            <tr><td><b style="color:var(--green)">Testing</b></td><td class="mono small">arbiter · atlas · sentinel</td><td><span class="pill g">3</span></td></tr>
+            <tr><td><b style="color:var(--orange)">Review</b></td><td class="mono small">critic · principal-reviewer · judge · codex-adversary · review-agent · liaison · surveyor · ui-compliance-reviewer · react-perf-reviewer · aegis</td><td><span class="pill r">10</span></td></tr>
+            <tr><td><b style="color:var(--purple)">Planning</b></td><td class="mono small">architect · plan-agent · plan-reviewer · validate-agent</td><td><span class="pill p">4</span></td></tr>
+            <tr><td><b style="color:var(--teal)">Operations</b></td><td class="mono small">deployer · herald · scribe</td><td><span class="pill b">3</span></td></tr>
+            <tr><td><b style="color:var(--blue)">Specialty</b></td><td class="mono small">oracle · profiler · pathfinder · quant-analyst · paper-trader · risk-officer</td><td><span class="pill b">6</span></td></tr>
+            <tr><td><b style="color:var(--y)">Meta</b></td><td class="mono small">maestro · wizard · memory-extractor · agent-factory · braintrust-analyst</td><td><span class="pill y">5</span></td></tr>
+          </tbody>
+        </table>
+        <p class="small muted" style="margin:10px 0 0;">phoenix appears in both Planning and Implementation framing; validate-agent in both Planning and Meta. Counting each file once = <b style="color:var(--y)">39</b> distinct agents.</p>
+      </div>
+
+      <div class="grid-2">
+        <div class="card">
+          <h3 class="card-title"><span class="dot" style="background:var(--green)"></span>When to delegate</h3>
+          <ul class="small" style="margin:0; padding-left:18px; color:var(--text-dim);">
+            <li>Reading 3+ files → <span class="mono b">scout</span></li>
+            <li>External research → <span class="mono p">oracle</span></li>
+            <li>Implementation → <span class="mono p">kraken</span> / <span class="mono b">spark</span></li>
+            <li>Running tests → <span class="mono g">arbiter</span> / <span class="mono g">atlas</span></li>
+            <li>Debugging → <span class="mono p">debug-agent</span> / <span class="mono p">sleuth</span></li>
+            <li>Mechanical N-file edit → <b>N parallel sparks</b>, one file each</li>
+          </ul>
+        </div>
+        <div class="card">
+          <h3 class="card-title"><span class="dot" style="background:var(--red)"></span>The model rule</h3>
+          <p class="small" style="color:var(--text-dim); margin:0 0 10px;">Every agent declares <code>model:</code> in its frontmatter. Two tiers only:</p>
+          <div class="tag-row">
+            <span class="tag p">opus · deep judgment</span>
+            <span class="tag b">sonnet · throughput</span>
+          </div>
+          <div class="callout fail" style="margin-top:12px;">
+            <strong>Never haiku.</strong> Not even for quick tasks. Cheap models miss cross-file relationships and waste more time than they save. Omit <code>model</code> to inherit opus.
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ========== 2. IMPLEMENTATION ========== -->
+    <section class="experience" id="implementation">
+      <p class="section-eyebrow">02 · Do the work</p>
+      <h2 class="section-title">Writing code — <span style="color:var(--y)">size the agent</span> to the change.</h2>
+      <p class="section-lede">
+        Three implementers, chosen by blast radius. <code>kraken</code> for complex work that earns a full TDD loop. <code>spark</code> for tiny mechanical edits. <code>phoenix</code> plans the refactor that kraken then executes. Two specialists round out the category: <code>agentica-agent</code> for building Python agents, <code>onboard</code> for orienting in a brownfield repo.
+      </p>
+
+      <div class="diagram-wrap">
+        <div class="diagram-toolbar">
+          <div class="diagram-title">Scope boundaries — which implementer?</div>
+          <button class="play-btn" data-play="implementation">▶ Play routing</button>
+        </div>
+        <div class="diag" id="diag-implementation">
+          <svg viewBox="0 0 900 240" preserveAspectRatio="xMidYMid meet">
+            <!-- decision -->
+            <rect x="30" y="90" width="150" height="60" rx="8" class="node-rect" data-step="0" fill="#1c2236" stroke="var(--y)" stroke-width="1.5"/>
+            <text x="105" y="116" text-anchor="middle" class="label-main" style="fill:var(--y)">Change request</text>
+            <text x="105" y="135" text-anchor="middle" class="label-sub">how big?</text>
+
+            <!-- spark -->
+            <rect x="270" y="20" width="160" height="60" rx="8" class="node-rect" data-step="1" fill="#1c2236" stroke="var(--blue)" stroke-width="1.5"/>
+            <text x="350" y="46" text-anchor="middle" class="label-main" style="fill:var(--blue)">spark</text>
+            <text x="350" y="65" text-anchor="middle" class="label-sub">&lt;20 lines · 1 file</text>
+
+            <!-- kraken -->
+            <rect x="270" y="100" width="160" height="60" rx="8" class="node-rect" data-step="2" fill="#1c2236" stroke="var(--purple)" stroke-width="1.5"/>
+            <text x="350" y="126" text-anchor="middle" class="label-main" style="fill:var(--purple)">kraken</text>
+            <text x="350" y="145" text-anchor="middle" class="label-sub">complex · TDD</text>
+
+            <!-- phoenix -->
+            <rect x="270" y="180" width="160" height="50" rx="8" class="node-rect" data-step="3" fill="#1c2236" stroke="var(--orange)" stroke-width="1.5"/>
+            <text x="350" y="203" text-anchor="middle" class="label-main" style="fill:var(--orange)">phoenix</text>
+            <text x="350" y="221" text-anchor="middle" class="label-sub">refactor plan</text>
+
+            <!-- TDD loop -->
+            <rect x="540" y="100" width="160" height="60" rx="8" class="node-rect heartbeat" data-step="4" fill="#1c2236" stroke="var(--green)" stroke-width="2"/>
+            <text x="620" y="126" text-anchor="middle" class="label-main" style="fill:var(--green)">Red→Green→Refactor</text>
+            <text x="620" y="145" text-anchor="middle" class="label-sub">failing test first</text>
+
+            <!-- ship -->
+            <rect x="760" y="100" width="110" height="60" rx="8" class="node-rect" data-step="5" fill="#1c2236" stroke="var(--y)" stroke-width="1.5"/>
+            <text x="815" y="126" text-anchor="middle" class="label-main" style="fill:var(--y)">verified</text>
+            <text x="815" y="145" text-anchor="middle" class="label-sub">green suite</text>
+
+            <!-- edges -->
+            <path d="M180 105 C 220 70, 240 55, 270 50" class="edge" data-edge="0"/>
+            <path d="M180 120 H 270" class="edge" data-edge="1"/>
+            <path d="M180 135 C 220 175, 240 195, 270 205" class="edge" data-edge="2"/>
+            <path d="M430 130 H 540" class="edge" data-edge="3"/>
+            <path d="M430 205 C 480 180, 510 165, 540 150" class="edge" data-edge="4" stroke-dasharray="5,4"/>
+            <path d="M700 130 H 760" class="edge" data-edge="5"/>
+
+            <circle r="5" class="packet" id="impl-packet" style="opacity:0"/>
+          </svg>
+        </div>
+      </div>
+
+      <div class="agent-grid">
+        <div class="agent-card" data-model="opus">
+          <div class="agent-head"><h4 class="agent-name">kraken</h4><span class="model-tag opus">opus</span></div>
+          <p class="agent-desc">Implementation and refactoring agent using a strict TDD workflow. Resumable via checkpoints — reads ledger state and continues from the last validated phase.</p>
+          <div class="tool-chips"><span class="tool-chip">Read</span><span class="tool-chip">Edit</span><span class="tool-chip">Write</span><span class="tool-chip">Bash</span><span class="tool-chip">Grep</span><span class="tool-chip">Glob</span></div>
+        </div>
+        <div class="agent-card" data-model="sonnet">
+          <div class="agent-head"><h4 class="agent-name">spark</h4><span class="model-tag sonnet">sonnet</span></div>
+          <p class="agent-desc">Lightweight fixes and quick tweaks. Small, focused changes without TDD overhead. For larger implementations, use kraken instead.</p>
+          <div class="tool-chips"><span class="tool-chip">Read</span><span class="tool-chip">Edit</span><span class="tool-chip">Write</span><span class="tool-chip">Bash</span><span class="tool-chip">Grep</span><span class="tool-chip">Glob</span></div>
+        </div>
+        <div class="agent-card" data-model="opus">
+          <div class="agent-head"><h4 class="agent-name">phoenix</h4><span class="model-tag opus">opus</span></div>
+          <p class="agent-desc">Refactoring planning AND migration planning. Identifies technical debt, designs safe transformation strategies. Plans the work; kraken executes it.</p>
+          <div class="tool-chips"><span class="tool-chip">Read</span><span class="tool-chip">Bash</span><span class="tool-chip">Grep</span><span class="tool-chip">Glob</span></div>
+        </div>
+        <div class="agent-card" data-model="sonnet">
+          <div class="agent-head"><h4 class="agent-name">agentica-agent</h4><span class="model-tag sonnet">sonnet</span></div>
+          <p class="agent-desc">Build Python agents using the Agentica SDK — spawn agents, implement agentic functions, multi-agent orchestration.</p>
+          <div class="tool-chips"><span class="tool-chip">Bash</span><span class="tool-chip">Read</span><span class="tool-chip">Write</span><span class="tool-chip">Edit</span><span class="tool-chip">Glob</span><span class="tool-chip">Grep</span></div>
+        </div>
+        <div class="agent-card" data-model="sonnet">
+          <div class="agent-head"><h4 class="agent-name">onboard</h4><span class="model-tag sonnet">sonnet</span></div>
+          <p class="agent-desc">Analyze a brownfield codebase and create an initial continuity ledger. Helps a session get oriented before any code changes.</p>
+          <div class="tool-chips"><span class="tool-chip">Read</span><span class="tool-chip">Write</span><span class="tool-chip">Bash</span><span class="tool-chip">Grep</span><span class="tool-chip">Glob</span></div>
+        </div>
+      </div>
+
+      <div class="callout warn">
+        <strong>Spark scope limit.</strong> If the same one-line change needs to land in N&gt;1 files, spawn <b>N parallel sparks</b> (one file each) — never one spark for N files. Spark struggles with multi-file iteration loops on TypeScript hooks, where whole-file rewrites tend to drop sibling content.
+      </div>
+    </section>
+
+    <!-- ========== 3. INVESTIGATION ========== -->
+    <section class="experience" id="investigation">
+      <p class="section-eyebrow">03 · Do the work</p>
+      <h2 class="section-title">Finding things — <span style="color:var(--y)">explore</span>, then <span style="color:var(--y)">diagnose</span>.</h2>
+      <p class="section-lede">
+        Before fixing, understand. <code>scout</code> maps the codebase and finds patterns. When a bug surfaces, <code>debug-agent</code> is the default investigator for unclear or single-file failures; <code>sleuth</code> takes over for multi-file, intermittent, or evidence-grade forensics. Both pair with the systematic-debugging skill.
+      </p>
+
+      <div class="diagram-wrap">
+        <div class="diagram-toolbar">
+          <div class="diagram-title">Investigation flow — observe → localize → root cause</div>
+          <button class="play-btn" data-play="investigation">▶ Play investigation</button>
+        </div>
+        <div class="diag" id="diag-investigation">
+          <svg viewBox="0 0 900 220" preserveAspectRatio="xMidYMid meet">
+            <rect x="30" y="80" width="150" height="60" rx="8" class="node-rect" fill="#1c2236" stroke="var(--red)" stroke-width="1.5"/>
+            <text x="105" y="106" text-anchor="middle" class="label-main" style="fill:var(--red)">Symptom</text>
+            <text x="105" y="125" text-anchor="middle" class="label-sub">failing test / error</text>
+
+            <rect x="220" y="80" width="160" height="60" rx="8" class="node-rect" fill="#1c2236" stroke="var(--blue)" stroke-width="1.5"/>
+            <text x="300" y="106" text-anchor="middle" class="label-main" style="fill:var(--blue)">scout</text>
+            <text x="300" y="125" text-anchor="middle" class="label-sub">map the terrain</text>
+
+            <rect x="420" y="40" width="170" height="55" rx="8" class="node-rect" fill="#1c2236" stroke="var(--purple)" stroke-width="1.5"/>
+            <text x="505" y="63" text-anchor="middle" class="label-main" style="fill:var(--purple)">debug-agent</text>
+            <text x="505" y="81" text-anchor="middle" class="label-sub">single-file / unclear</text>
+
+            <rect x="420" y="125" width="170" height="55" rx="8" class="node-rect" fill="#1c2236" stroke="var(--orange)" stroke-width="1.5"/>
+            <text x="505" y="148" text-anchor="middle" class="label-main" style="fill:var(--orange)">sleuth</text>
+            <text x="505" y="166" text-anchor="middle" class="label-sub">multi-file forensics</text>
+
+            <ellipse cx="760" cy="110" rx="100" ry="48" class="node-circle heartbeat" fill="#1c2236" stroke="var(--y)" stroke-width="2"/>
+            <text x="760" y="106" text-anchor="middle" class="label-main" style="fill:var(--y)">Root cause</text>
+            <text x="760" y="125" text-anchor="middle" class="label-sub">+ traced path</text>
+
+            <path d="M180 110 H 220" class="edge"/>
+            <path d="M380 100 C 400 80, 410 70, 420 67" class="edge"/>
+            <path d="M380 120 C 400 140, 410 150, 420 152" class="edge"/>
+            <path d="M590 67 C 630 85, 650 95, 670 100" class="edge"/>
+            <path d="M590 152 C 630 135, 650 125, 670 118" class="edge"/>
+
+            <circle r="5" class="packet-blue" id="inv-packet" style="opacity:0"/>
+          </svg>
+        </div>
+      </div>
+
+      <div class="agent-grid three">
+        <div class="agent-card" data-model="sonnet">
+          <div class="agent-head"><h4 class="agent-name">scout</h4><span class="model-tag sonnet">sonnet</span></div>
+          <p class="agent-desc">Codebase exploration and pattern finding. Discovers conventions and maps architecture. Preferred over Explore — accuracy matters.</p>
+          <div class="tool-chips"><span class="tool-chip">Read</span><span class="tool-chip">Grep</span><span class="tool-chip">Glob</span><span class="tool-chip">Bash</span></div>
+        </div>
+        <div class="agent-card" data-model="opus">
+          <div class="agent-head"><h4 class="agent-name">debug-agent</h4><span class="model-tag opus">opus</span></div>
+          <p class="agent-desc">General root-cause analysis for unclear or single-file bugs. The default investigator when the failure mode is not yet localized.</p>
+          <div class="tool-chips"><span class="tool-chip">Read</span><span class="tool-chip">Bash</span><span class="tool-chip">Grep</span><span class="tool-chip">Glob</span><span class="tool-chip">Edit</span><span class="tool-chip">Skill</span></div>
+        </div>
+        <div class="agent-card" data-model="opus">
+          <div class="agent-head"><h4 class="agent-name">sleuth</h4><span class="model-tag opus">opus</span></div>
+          <p class="agent-desc">Deep bug forensics with file-level reproduction. For multi-file, intermittent, or evidence-grade root cause analysis with traced code paths.</p>
+          <div class="tool-chips"><span class="tool-chip">Read</span><span class="tool-chip">Bash</span><span class="tool-chip">Grep</span><span class="tool-chip">Glob</span></div>
+        </div>
+      </div>
+
+      <div class="callout">
+        <strong>debug-agent vs sleuth.</strong> Start with <span class="mono p">debug-agent</span>. Escalate to <span class="mono" style="color:var(--orange)">sleuth</span> when the bug spans files, reproduces intermittently, or needs evidence-grade tracing. Both gather findings; the main conversation acts on them.
+      </div>
+    </section>
+
+    <!-- ========== 4. TESTING ========== -->
+    <section class="experience" id="testing">
+      <p class="section-eyebrow">04 · Do the work</p>
+      <h2 class="section-title">Proving it works — <span style="color:var(--y)">green is the only evidence</span>.</h2>
+      <p class="section-lede">
+        Completion is never claimed without a passing suite. Three test runners cover the pyramid: <code>arbiter</code> runs unit and integration tests; <code>atlas</code> carries the weight of end-to-end and acceptance; <code>sentinel</code> drives a live browser for auth-aware QA. They run the tests, analyze failures, and report verdicts — they don't trust the implementer's word.
+      </p>
+
+      <div class="diagram-wrap">
+        <div class="diagram-toolbar">
+          <div class="diagram-title">The test pyramid — unit → integration → e2e → browser QA</div>
+          <button class="play-btn" data-play="testing">▶ Play test run</button>
+        </div>
+        <div class="diag" id="diag-testing">
+          <svg viewBox="0 0 900 210" preserveAspectRatio="xMidYMid meet">
+            <rect x="30" y="75" width="150" height="60" rx="8" class="node-rect" fill="#1c2236" stroke="var(--border-strong)" stroke-width="1.5"/>
+            <text x="105" y="101" text-anchor="middle" class="label-main">Change landed</text>
+            <text x="105" y="120" text-anchor="middle" class="label-sub">awaiting proof</text>
+
+            <rect x="220" y="75" width="150" height="60" rx="8" class="node-rect" fill="#1c2236" stroke="var(--green)" stroke-width="1.5"/>
+            <text x="295" y="101" text-anchor="middle" class="label-main" style="fill:var(--green)">arbiter</text>
+            <text x="295" y="120" text-anchor="middle" class="label-sub">unit + integration</text>
+
+            <rect x="410" y="75" width="150" height="60" rx="8" class="node-rect" fill="#1c2236" stroke="var(--blue)" stroke-width="1.5"/>
+            <text x="485" y="101" text-anchor="middle" class="label-main" style="fill:var(--blue)">atlas</text>
+            <text x="485" y="120" text-anchor="middle" class="label-sub">e2e + acceptance</text>
+
+            <rect x="600" y="75" width="150" height="60" rx="8" class="node-rect" fill="#1c2236" stroke="var(--purple)" stroke-width="1.5"/>
+            <text x="675" y="101" text-anchor="middle" class="label-main" style="fill:var(--purple)">sentinel</text>
+            <text x="675" y="120" text-anchor="middle" class="label-sub">browser QA · RBAC</text>
+
+            <ellipse cx="835" cy="105" rx="55" ry="48" class="node-circle heartbeat" fill="#1c2236" stroke="var(--y)" stroke-width="2"/>
+            <text x="835" y="101" text-anchor="middle" class="label-main" style="fill:var(--y)">PASS</text>
+            <text x="835" y="120" text-anchor="middle" class="label-sub">verdict</text>
+
+            <path d="M180 105 H 220" class="edge"/>
+            <path d="M370 105 H 410" class="edge"/>
+            <path d="M560 105 H 600" class="edge"/>
+            <path d="M750 105 H 780" class="edge"/>
+
+            <circle r="5" class="packet-green" id="test-packet" style="opacity:0"/>
+          </svg>
+        </div>
+      </div>
+
+      <div class="agent-grid three">
+        <div class="agent-card" data-model="opus">
+          <div class="agent-head"><h4 class="agent-name">arbiter</h4><span class="model-tag opus">opus</span></div>
+          <p class="agent-desc">Unit and integration test execution and validation. Runs the suite, analyzes failures, generates comprehensive reports — judges whether implementations meet spec.</p>
+          <div class="tool-chips"><span class="tool-chip">Bash</span><span class="tool-chip">Read</span><span class="tool-chip">Write</span><span class="tool-chip">Grep</span><span class="tool-chip">Glob</span></div>
+        </div>
+        <div class="agent-card" data-model="opus">
+          <div class="agent-head"><h4 class="agent-name">atlas</h4><span class="model-tag opus">opus</span></div>
+          <p class="agent-desc">End-to-end and acceptance test execution. Browser automation and full-stack validation — ensures the entire system works together.</p>
+          <div class="tool-chips"><span class="tool-chip">Bash</span><span class="tool-chip">Read</span><span class="tool-chip">Write</span><span class="tool-chip">Grep</span><span class="tool-chip">Glob</span></div>
+        </div>
+        <div class="agent-card" data-model="sonnet">
+          <div class="agent-head"><h4 class="agent-name">sentinel</h4><span class="model-tag sonnet">sonnet</span></div>
+          <p class="agent-desc">Browser-based QA and user acceptance testing. Multi-role auth scenarios (admin/editor/viewer), RBAC verification, console error capture, a11y audits, screenshot on failure.</p>
+          <div class="tool-chips"><span class="tool-chip">Bash</span><span class="tool-chip">Read</span><span class="tool-chip">Write</span><span class="tool-chip">Grep</span><span class="tool-chip">Glob</span></div>
+        </div>
+      </div>
+
+      <div class="callout ok">
+        <strong>External verification.</strong> Agent claims of success are not trusted. Run <code>pytest</code> / <code>vitest</code>, run <code>tsc --noEmit</code>, run the linter. A green suite is the only valid evidence — done without it is not done.
+      </div>
+    </section>
+
+    <!-- ========== 5. REVIEW ========== -->
+    <section class="experience" id="review">
+      <p class="section-eyebrow">05 · Judge &amp; shape</p>
+      <h2 class="section-title">Review — <span style="color:var(--y)">ten lenses</span>, including a rival model.</h2>
+      <p class="section-lede">
+        The biggest agent family. Each reviewer applies a distinct lens: <code>critic</code> on feature implementation, <code>principal-reviewer</code> on architecture and security, <code>judge</code> on refactors, <code>liaison</code> on integrations, <code>surveyor</code> on migrations, plus UI and React-perf specialists. <code>codex-adversary</code> challenges the work from a <em>different training family</em> (OpenAI Codex), and <code>review-agent</code> synthesizes everyone's findings.
+      </p>
+
+      <div class="diagram-wrap">
+        <div class="diagram-toolbar">
+          <div class="diagram-title">Parallel review + cross-model synthesis</div>
+          <button class="play-btn" data-play="review">▶ Play review</button>
+        </div>
+        <div class="diag" id="diag-review">
+          <svg viewBox="0 0 900 240" preserveAspectRatio="xMidYMid meet">
+            <rect x="30" y="90" width="140" height="60" rx="8" class="node-rect" fill="#1c2236" stroke="var(--y)" stroke-width="1.5"/>
+            <text x="100" y="116" text-anchor="middle" class="label-main" style="fill:var(--y)">git diff</text>
+            <text x="100" y="135" text-anchor="middle" class="label-sub">the change</text>
+
+            <rect x="240" y="20" width="160" height="50" rx="8" class="node-rect" fill="#1c2236" stroke="var(--blue)" stroke-width="1.5"/>
+            <text x="320" y="42" text-anchor="middle" class="label-main" style="fill:var(--blue)">critic</text>
+            <text x="320" y="60" text-anchor="middle" class="label-sub">Claude lens</text>
+
+            <rect x="240" y="95" width="160" height="50" rx="8" class="node-rect" fill="#1c2236" stroke="var(--purple)" stroke-width="1.5"/>
+            <text x="320" y="117" text-anchor="middle" class="label-main" style="fill:var(--purple)">principal-reviewer</text>
+            <text x="320" y="135" text-anchor="middle" class="label-sub">arch + security</text>
+
+            <rect x="240" y="170" width="160" height="50" rx="8" class="node-rect" fill="#1c2236" stroke="var(--orange)" stroke-width="1.5"/>
+            <text x="320" y="192" text-anchor="middle" class="label-main" style="fill:var(--orange)">codex-adversary</text>
+            <text x="320" y="210" text-anchor="middle" class="label-sub">cross-model</text>
+
+            <rect x="490" y="95" width="160" height="50" rx="8" class="node-rect heartbeat" fill="#1c2236" stroke="var(--green)" stroke-width="2"/>
+            <text x="570" y="117" text-anchor="middle" class="label-main" style="fill:var(--green)">review-agent</text>
+            <text x="570" y="135" text-anchor="middle" class="label-sub">synthesis</text>
+
+            <rect x="730" y="95" width="140" height="50" rx="8" class="node-rect" fill="#1c2236" stroke="var(--y)" stroke-width="1.5"/>
+            <text x="800" y="117" text-anchor="middle" class="label-main" style="fill:var(--y)">verdict</text>
+            <text x="800" y="135" text-anchor="middle" class="label-sub">[Codex] tagged</text>
+
+            <path d="M170 110 C 200 70, 215 55, 240 48" class="edge"/>
+            <path d="M170 120 H 240" class="edge"/>
+            <path d="M170 130 C 200 175, 215 188, 240 195" class="edge"/>
+            <path d="M400 48 C 440 80, 460 95, 490 105" class="edge"/>
+            <path d="M400 120 H 490" class="edge"/>
+            <path d="M400 195 C 440 160, 460 145, 490 135" class="edge"/>
+            <path d="M650 120 H 730" class="edge"/>
+
+            <circle r="5" class="packet" id="rev-packet" style="opacity:0"/>
+          </svg>
+        </div>
+      </div>
+
+      <div class="agent-grid">
+        <div class="agent-card" data-model="sonnet">
+          <div class="agent-head"><h4 class="agent-name">critic</h4><span class="model-tag sonnet">sonnet</span></div>
+          <p class="agent-desc">Feature and implementation code review. Analyzes quality, identifies issues, suggests improvements.</p>
+        </div>
+        <div class="agent-card" data-model="opus">
+          <div class="agent-head"><h4 class="agent-name">principal-reviewer</h4><span class="model-tag opus">opus</span></div>
+          <p class="agent-desc">Senior/staff-engineer pass on architectural integrity, security posture, performance. For high-stakes changes — public APIs, new module boundaries, security-critical paths.</p>
+        </div>
+        <div class="agent-card" data-model="sonnet">
+          <div class="agent-head"><h4 class="agent-name">codex-adversary</h4><span class="model-tag sonnet">sonnet</span></div>
+          <p class="agent-desc">Cross-model adversarial reviewer. Invokes OpenAI Codex via the Codex CLI to challenge Claude's work from a different training family. Modes: code (diff) and plan.</p>
+        </div>
+        <div class="agent-card" data-model="opus">
+          <div class="agent-head"><h4 class="agent-name">review-agent</h4><span class="model-tag opus">opus</span></div>
+          <p class="agent-desc">Compares plan (intent) vs Braintrust session (reality) vs git diff (changes). Synthesizes other reviewers' findings; tags cross-model input as [Codex].</p>
+        </div>
+        <div class="agent-card" data-model="sonnet">
+          <div class="agent-head"><h4 class="agent-name">judge</h4><span class="model-tag sonnet">sonnet</span></div>
+          <p class="agent-desc">Refactoring and code-transformation review. Verifies behavior is preserved and quality improved.</p>
+        </div>
+        <div class="agent-card" data-model="sonnet">
+          <div class="agent-head"><h4 class="agent-name">liaison</h4><span class="model-tag sonnet">sonnet</span></div>
+          <p class="agent-desc">Integration and API review. Verifies external communication is robust, secure, and follows best practices.</p>
+        </div>
+        <div class="agent-card" data-model="sonnet">
+          <div class="agent-head"><h4 class="agent-name">surveyor</h4><span class="model-tag sonnet">sonnet</span></div>
+          <p class="agent-desc">Migration and upgrade review. Verifies migrations are complete and safe, leaving no inconsistent state behind.</p>
+        </div>
+        <div class="agent-card" data-model="sonnet">
+          <div class="agent-head"><h4 class="agent-name">ui-compliance-reviewer</h4><span class="model-tag sonnet">sonnet</span></div>
+          <p class="agent-desc">Reviews UI code against 100+ Vercel Web Interface Guidelines for compliance and accessibility.</p>
+        </div>
+        <div class="agent-card" data-model="sonnet">
+          <div class="agent-head"><h4 class="agent-name">react-perf-reviewer</h4><span class="model-tag sonnet">sonnet</span></div>
+          <p class="agent-desc">React/Next.js performance code reviewer using Vercel's 45 performance rules.</p>
+        </div>
+        <div class="agent-card" data-model="opus">
+          <div class="agent-head"><h4 class="agent-name">aegis</h4><span class="model-tag opus">opus</span></div>
+          <p class="agent-desc">Security vulnerability analysis and testing. Identifies vulnerabilities, analyzes risk, recommends hardening — guards the codebase like a shield.</p>
+        </div>
+      </div>
+
+      <div class="callout">
+        <strong>Cross-model lift.</strong> Findings that <em>both</em> critic and codex-adversary flag are high-confidence. The real value is what only one side catches — the <code>codex_only</code> count in <code>codex-lift.jsonl</code> measures whether the rival-model pass earns its quota cost.
+      </div>
+    </section>
+
+    <!-- ========== 6. PLANNING ========== -->
+    <section class="experience" id="planning">
+      <p class="section-eyebrow">06 · Judge &amp; shape</p>
+      <h2 class="section-title">Planning — <span style="color:var(--y)">blueprints before building</span>.</h2>
+      <p class="section-lede">
+        Complex work earns a plan first. <code>architect</code> designs new features and integrations; <code>phoenix</code> plans refactors and migrations; <code>plan-agent</code> writes detailed implementation plans grounded in research and codebase analysis. Then a gate: <code>plan-reviewer</code> evaluates the plan, and <code>validate-agent</code> checks the tech choices against current best practices and past precedent.
+      </p>
+
+      <div class="diagram-wrap">
+        <div class="diagram-toolbar">
+          <div class="diagram-title">Plan → review gate → approved</div>
+          <button class="play-btn" data-play="planning">▶ Play planning</button>
+        </div>
+        <div class="diag" id="diag-planning">
+          <svg viewBox="0 0 900 210" preserveAspectRatio="xMidYMid meet">
+            <rect x="30" y="75" width="150" height="60" rx="8" class="node-rect" fill="#1c2236" stroke="var(--y)" stroke-width="1.5"/>
+            <text x="105" y="101" text-anchor="middle" class="label-main" style="fill:var(--y)">Goal</text>
+            <text x="105" y="120" text-anchor="middle" class="label-sub">what to build</text>
+
+            <rect x="220" y="35" width="160" height="55" rx="8" class="node-rect" fill="#1c2236" stroke="var(--purple)" stroke-width="1.5"/>
+            <text x="300" y="58" text-anchor="middle" class="label-main" style="fill:var(--purple)">architect</text>
+            <text x="300" y="76" text-anchor="middle" class="label-sub">feature design</text>
+
+            <rect x="220" y="120" width="160" height="55" rx="8" class="node-rect" fill="#1c2236" stroke="var(--orange)" stroke-width="1.5"/>
+            <text x="300" y="143" text-anchor="middle" class="label-main" style="fill:var(--orange)">phoenix</text>
+            <text x="300" y="161" text-anchor="middle" class="label-sub">refactor / migrate</text>
+
+            <rect x="430" y="75" width="160" height="60" rx="8" class="node-rect" fill="#1c2236" stroke="var(--blue)" stroke-width="1.5"/>
+            <text x="510" y="101" text-anchor="middle" class="label-main" style="fill:var(--blue)">plan-reviewer</text>
+            <text x="510" y="120" text-anchor="middle" class="label-sub">+ validate-agent</text>
+
+            <ellipse cx="760" cy="105" rx="95" ry="48" class="node-circle heartbeat" fill="#1c2236" stroke="var(--green)" stroke-width="2"/>
+            <text x="760" y="101" text-anchor="middle" class="label-main" style="fill:var(--green)">Approved plan</text>
+            <text x="760" y="120" text-anchor="middle" class="label-sub">→ implementation</text>
+
+            <path d="M180 100 C 200 75, 210 65, 220 62" class="edge"/>
+            <path d="M180 110 C 200 135, 210 145, 220 148" class="edge"/>
+            <path d="M380 62 C 410 85, 420 95, 430 100" class="edge"/>
+            <path d="M380 148 C 410 125, 420 115, 430 110" class="edge"/>
+            <path d="M590 105 H 665" class="edge"/>
+
+            <circle r="5" class="packet" id="plan-packet" style="opacity:0"/>
+          </svg>
+        </div>
+      </div>
+
+      <div class="agent-grid">
+        <div class="agent-card" data-model="opus">
+          <div class="agent-head"><h4 class="agent-name">architect</h4><span class="model-tag opus">opus</span></div>
+          <p class="agent-desc">Feature planning, design documentation, and integration planning. Draws the blueprints before building.</p>
+        </div>
+        <div class="agent-card" data-model="opus">
+          <div class="agent-head"><h4 class="agent-name">plan-agent</h4><span class="model-tag opus">opus</span></div>
+          <p class="agent-desc">Creates detailed implementation plans by researching best practices and analyzing the existing codebase. Has WebSearch + WebFetch + Skill.</p>
+        </div>
+        <div class="agent-card" data-model="opus">
+          <div class="agent-head"><h4 class="agent-name">phoenix</h4><span class="model-tag opus">opus</span></div>
+          <p class="agent-desc">Refactoring planning and migration planning. The same agent that owns Implementation's refactor strategy — it plans, kraken executes.</p>
+        </div>
+        <div class="agent-card" data-model="sonnet">
+          <div class="agent-head"><h4 class="agent-name">plan-reviewer</h4><span class="model-tag sonnet">sonnet</span></div>
+          <p class="agent-desc">Reviews feature plans (from architect) and change plans (from phoenix). Auto-detects plan type and applies the right criteria.</p>
+        </div>
+        <div class="agent-card" data-model="sonnet">
+          <div class="agent-head"><h4 class="agent-name">validate-agent</h4><span class="model-tag sonnet">sonnet</span></div>
+          <p class="agent-desc">Validates a plan's technology choices against current best practices and past precedent before implementation begins.</p>
+        </div>
+      </div>
+
+      <div class="callout">
+        <strong>Use the gate.</strong> Run <span class="mono b">plan-reviewer</span> to validate architect and phoenix plans before implementation. The plan-to-Ralph enforcer blocks direct code edits after a plan is approved — implementation flows through delegated agents.
+      </div>
+    </section>
+
+    <!-- ========== 7. OPERATIONS ========== -->
+    <section class="experience" id="operations">
+      <p class="section-eyebrow">07 · Ship &amp; extend</p>
+      <h2 class="section-title">Operations — <span style="color:var(--y)">getting it out the door</span>.</h2>
+      <p class="section-lede">
+        Past the code itself. <code>deployer</code> manages Vercel and Railway deployments with Sentry release tracking and Linear issue updates. <code>herald</code> preps releases — version bumps, changelogs. <code>scribe</code> keeps knowledge alive across sessions: handoffs, continuity ledgers, session summaries.
+      </p>
+
+      <div class="diagram-wrap">
+        <div class="diagram-toolbar">
+          <div class="diagram-title">Release pipeline — prep → deploy → document</div>
+          <button class="play-btn" data-play="operations">▶ Play release</button>
+        </div>
+        <div class="diag" id="diag-operations">
+          <svg viewBox="0 0 900 200" preserveAspectRatio="xMidYMid meet">
+            <rect x="30" y="70" width="150" height="60" rx="8" class="node-rect" fill="#1c2236" stroke="var(--green)" stroke-width="1.5"/>
+            <text x="105" y="96" text-anchor="middle" class="label-main" style="fill:var(--green)">green build</text>
+            <text x="105" y="115" text-anchor="middle" class="label-sub">tests pass</text>
+
+            <rect x="225" y="70" width="150" height="60" rx="8" class="node-rect" fill="#1c2236" stroke="var(--blue)" stroke-width="1.5"/>
+            <text x="300" y="96" text-anchor="middle" class="label-main" style="fill:var(--blue)">herald</text>
+            <text x="300" y="115" text-anchor="middle" class="label-sub">bump + changelog</text>
+
+            <rect x="420" y="70" width="150" height="60" rx="8" class="node-rect" fill="#1c2236" stroke="var(--orange)" stroke-width="1.5"/>
+            <text x="495" y="96" text-anchor="middle" class="label-main" style="fill:var(--orange)">deployer</text>
+            <text x="495" y="115" text-anchor="middle" class="label-sub">Vercel / Railway</text>
+
+            <rect x="615" y="70" width="150" height="60" rx="8" class="node-rect" fill="#1c2236" stroke="var(--purple)" stroke-width="1.5"/>
+            <text x="690" y="96" text-anchor="middle" class="label-main" style="fill:var(--purple)">scribe</text>
+            <text x="690" y="115" text-anchor="middle" class="label-sub">handoff + ledger</text>
+
+            <circle cx="835" cy="100" r="34" class="node-circle heartbeat" fill="#1c2236" stroke="var(--y)" stroke-width="2"/>
+            <text x="835" y="104" text-anchor="middle" class="label-main" style="fill:var(--y)">live</text>
+
+            <path d="M180 100 H 225" class="edge"/>
+            <path d="M375 100 H 420" class="edge"/>
+            <path d="M570 100 H 615" class="edge"/>
+            <path d="M765 100 H 800" class="edge"/>
+
+            <circle r="5" class="packet-blue" id="ops-packet" style="opacity:0"/>
+          </svg>
+        </div>
+      </div>
+
+      <div class="agent-grid three">
+        <div class="agent-card" data-model="sonnet">
+          <div class="agent-head"><h4 class="agent-name">deployer</h4><span class="model-tag sonnet">sonnet</span></div>
+          <p class="agent-desc">Deployment management for Vercel and Railway with Sentry release tracking and Linear issue updates — deploy, monitor, verify, debug via CLI + Cloud MCP.</p>
+          <div class="tool-chips"><span class="tool-chip">Bash</span><span class="tool-chip">Read</span><span class="tool-chip">Glob</span><span class="tool-chip">Grep</span><span class="tool-chip">WebFetch</span></div>
+        </div>
+        <div class="agent-card" data-model="sonnet">
+          <div class="agent-head"><h4 class="agent-name">herald</h4><span class="model-tag sonnet">sonnet</span></div>
+          <p class="agent-desc">Release prep, version bumps, changelog generation. Prepares releases and ensures they're properly documented — announces new versions to the world.</p>
+          <div class="tool-chips"><span class="tool-chip">Read</span><span class="tool-chip">Write</span><span class="tool-chip">Edit</span><span class="tool-chip">Bash</span><span class="tool-chip">Grep</span><span class="tool-chip">Glob</span></div>
+        </div>
+        <div class="agent-card" data-model="sonnet">
+          <div class="agent-head"><h4 class="agent-name">scribe</h4><span class="model-tag sonnet">sonnet</span></div>
+          <p class="agent-desc">Documentation, handoffs, session summaries, and ledger management. Ensures knowledge persists across sessions.</p>
+          <div class="tool-chips"><span class="tool-chip">Read</span><span class="tool-chip">Write</span><span class="tool-chip">Glob</span><span class="tool-chip">Grep</span></div>
+        </div>
+      </div>
+
+      <div class="callout warn">
+        <strong>Deploy is confirm-first.</strong> deployer reads logs and status freely, but <code>railway up</code>, <code>vercel deploy</code>, variable changes, and Sentry release writes always require explicit approval. Safety rules gate every destructive operation.
+      </div>
+    </section>
+
+    <!-- ========== 8. SPECIALTY ========== -->
+    <section class="experience" id="specialty">
+      <p class="section-eyebrow">08 · Ship &amp; extend</p>
+      <h2 class="section-title">Specialty — <span style="color:var(--y)">domain experts</span> on call.</h2>
+      <p class="section-lede">
+        Narrow agents for specific jobs. <code>oracle</code> brings knowledge from outside the codebase; <code>pathfinder</code> clones and analyzes unfamiliar repos; <code>profiler</code> hunts bottlenecks, races, and leaks. A self-contained vibe-trading trio — <code>quant-analyst</code>, <code>risk-officer</code>, <code>paper-trader</code> — runs a deterministic-first trading loop where the LLM narrates numbers it never invents.
+      </p>
+
+      <div class="grid-2">
+        <div class="card">
+          <h3 class="card-title"><span class="dot" style="background:var(--blue)"></span>Research &amp; performance</h3>
+          <div class="agent-grid" style="grid-template-columns:1fr;">
+            <div class="agent-card" data-model="opus">
+              <div class="agent-head"><h4 class="agent-name">oracle</h4><span class="model-tag opus">opus</span></div>
+              <p class="agent-desc">External research — web, docs, APIs via a 7-tool research stack. Brings knowledge from outside the codebase.</p>
+              <div class="tool-chips"><span class="tool-chip">Read</span><span class="tool-chip">Bash</span><span class="tool-chip">WebSearch</span></div>
+            </div>
+            <div class="agent-card" data-model="opus">
+              <div class="agent-head"><h4 class="agent-name">pathfinder</h4><span class="model-tag opus">opus</span></div>
+              <p class="agent-desc">External repository research and analysis. Clones, explores, and documents unfamiliar repos to understand structure and conventions.</p>
+              <div class="tool-chips"><span class="tool-chip">Read</span><span class="tool-chip">Bash</span><span class="tool-chip">Grep</span><span class="tool-chip">Glob</span></div>
+            </div>
+            <div class="agent-card" data-model="opus">
+              <div class="agent-head"><h4 class="agent-name">profiler</h4><span class="model-tag opus">opus</span></div>
+              <p class="agent-desc">Performance profiling, race conditions, memory issues. Identifies bottlenecks, detects leaks, recommends optimizations.</p>
+              <div class="tool-chips"><span class="tool-chip">Read</span><span class="tool-chip">Bash</span><span class="tool-chip">Grep</span><span class="tool-chip">Glob</span></div>
+            </div>
+          </div>
+        </div>
+        <div class="card">
+          <h3 class="card-title"><span class="dot" style="background:var(--green)"></span>vibe-trading loop</h3>
+          <div class="agent-grid" style="grid-template-columns:1fr;">
+            <div class="agent-card" data-model="sonnet">
+              <div class="agent-head"><h4 class="agent-name">quant-analyst</h4><span class="model-tag sonnet">sonnet</span></div>
+              <p class="agent-desc">Computes deterministic technical indicators (SMA, EMA, RSI, MACD, ATR, Bollinger) via numpy + yfinance. The LLM only narrates numbers — never invents them.</p>
+              <div class="tool-chips"><span class="tool-chip">Read</span><span class="tool-chip">Bash</span><span class="tool-chip">Grep</span><span class="tool-chip">Glob</span></div>
+            </div>
+            <div class="agent-card" data-model="opus">
+              <div class="agent-head"><h4 class="agent-name">risk-officer</h4><span class="model-tag opus">opus</span></div>
+              <p class="agent-desc">Wraps the deterministic risk module — explains the verdict for a proposed OrderIntent in human terms. Surfaces auto-shrink suggestions but cannot override BLOCK.</p>
+              <div class="tool-chips"><span class="tool-chip">Read</span><span class="tool-chip">Bash</span><span class="tool-chip">Grep</span><span class="tool-chip">Glob</span></div>
+            </div>
+            <div class="agent-card" data-model="sonnet">
+              <div class="agent-head"><h4 class="agent-name">paper-trader</h4><span class="model-tag sonnet">sonnet</span></div>
+              <p class="agent-desc">Translates an approved thesis into an OrderIntent and submits via the AlpacaPaperBroker API. Refuses to act without an ALLOWED risk verdict.</p>
+              <div class="tool-chips"><span class="tool-chip">Read</span><span class="tool-chip">Bash</span><span class="tool-chip">Grep</span><span class="tool-chip">Glob</span></div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="callout">
+        <strong>Deterministic-first.</strong> The trading agents share a discipline that generalizes: compute the hard numbers in real code, let the LLM <em>narrate</em> the result. quant-analyst never computes in prose; risk-officer explains a verdict it cannot change; paper-trader never invents qty or price.
+      </div>
+    </section>
+
+    <!-- ========== 9. META ========== -->
+    <section class="experience" id="meta">
+      <p class="section-eyebrow">09 · Ship &amp; extend</p>
+      <h2 class="section-title">Meta — <span style="color:var(--y)">agents that run the system</span>.</h2>
+      <p class="section-lede">
+        Agents pointed at the platform itself. <code>maestro</code> conducts complex multi-step work and is the only agent with the <code>Task</code> tool — it spawns other agents. <code>wizard</code> bootstraps CCv3 on a fresh machine. <code>agent-factory</code> scaffolds new agents. <code>memory-extractor</code> mines session transcripts for learnings, and <code>braintrust-analyst</code> interprets observability logs.
+      </p>
+
+      <div class="diagram-wrap">
+        <div class="diagram-toolbar">
+          <div class="diagram-title">maestro — the conductor that spawns others</div>
+          <button class="play-btn" data-play="meta">▶ Play orchestration</button>
+        </div>
+        <div class="diag" id="diag-meta">
+          <svg viewBox="0 0 900 230" preserveAspectRatio="xMidYMid meet">
+            <rect x="40" y="85" width="160" height="60" rx="10" class="node-rect heartbeat" fill="#1c2236" stroke="var(--y)" stroke-width="2"/>
+            <text x="120" y="111" text-anchor="middle" class="label-main" style="fill:var(--y)">maestro</text>
+            <text x="120" y="130" text-anchor="middle" class="label-sub">conductor · has Task</text>
+
+            <rect x="300" y="20" width="150" height="50" rx="8" class="node-rect" fill="#1c2236" stroke="var(--purple)" stroke-width="1.5"/>
+            <text x="375" y="42" text-anchor="middle" class="label-main" style="fill:var(--purple)">scout</text>
+            <text x="375" y="60" text-anchor="middle" class="label-sub">recon</text>
+
+            <rect x="300" y="90" width="150" height="50" rx="8" class="node-rect" fill="#1c2236" stroke="var(--blue)" stroke-width="1.5"/>
+            <text x="375" y="112" text-anchor="middle" class="label-main" style="fill:var(--blue)">kraken</text>
+            <text x="375" y="130" text-anchor="middle" class="label-sub">execute</text>
+
+            <rect x="300" y="160" width="150" height="50" rx="8" class="node-rect" fill="#1c2236" stroke="var(--green)" stroke-width="1.5"/>
+            <text x="375" y="182" text-anchor="middle" class="label-main" style="fill:var(--green)">arbiter</text>
+            <text x="375" y="200" text-anchor="middle" class="label-sub">verify</text>
+
+            <rect x="540" y="40" width="160" height="50" rx="8" class="node-rect" fill="#1c2236" stroke="var(--orange)" stroke-width="1.5"/>
+            <text x="620" y="62" text-anchor="middle" class="label-main" style="fill:var(--orange)">interview gate</text>
+            <text x="620" y="80" text-anchor="middle" class="label-sub">phase approval</text>
+
+            <ellipse cx="790" cy="115" rx="80" ry="46" class="node-circle" fill="#1c2236" stroke="var(--y)" stroke-width="2"/>
+            <text x="790" y="111" text-anchor="middle" class="label-main" style="fill:var(--y)">result</text>
+            <text x="790" y="130" text-anchor="middle" class="label-sub">synthesized</text>
+
+            <path d="M200 105 C 240 60, 270 50, 300 45" class="edge"/>
+            <path d="M200 115 H 300" class="edge"/>
+            <path d="M200 125 C 240 170, 270 180, 300 185" class="edge"/>
+            <path d="M450 45 C 490 55, 510 60, 540 65" class="edge"/>
+            <path d="M450 115 C 600 115, 650 115, 710 115" class="edge"/>
+            <path d="M450 185 C 600 175, 660 150, 715 135" class="edge"/>
+
+            <circle r="5" class="packet" id="meta-packet" style="opacity:0"/>
+          </svg>
+        </div>
+      </div>
+
+      <div class="agent-grid">
+        <div class="agent-card" data-model="opus">
+          <div class="agent-head"><h4 class="agent-name">maestro</h4><span class="model-tag opus">opus</span></div>
+          <p class="agent-desc">Versatile orchestrator for complex multi-step tasks — coding, research, planning. Understands intent, classifies the task, selects a pattern. The only agent with the Task tool.</p>
+          <div class="tool-chips"><span class="tool-chip">Read</span><span class="tool-chip">Bash</span><span class="tool-chip">Grep</span><span class="tool-chip">Glob</span><span class="tool-chip">Task</span><span class="tool-chip">Skill</span><span class="tool-chip">AskUserQuestion</span></div>
+        </div>
+        <div class="agent-card" data-model="opus">
+          <div class="agent-head"><h4 class="agent-name">wizard</h4><span class="model-tag opus">opus</span></div>
+          <p class="agent-desc">CCv3 setup wizard for new machines. Reads BOOTSTRAP.md, runs wizard.py, verifies the environment — Docker, PostgreSQL, env vars, git hooks, hook build, file sync.</p>
+          <div class="tool-chips"><span class="tool-chip">Bash</span><span class="tool-chip">Read</span><span class="tool-chip">Write</span><span class="tool-chip">Glob</span><span class="tool-chip">Grep</span></div>
+        </div>
+        <div class="agent-card" data-model="opus">
+          <div class="agent-head"><h4 class="agent-name">agent-factory</h4><span class="model-tag opus">opus</span></div>
+          <p class="agent-desc">Scaffolds new Claude Code agents from a description. Generates the .md with valid YAML frontmatter (name, description, model, tools) and a conventional body.</p>
+          <div class="tool-chips"><span class="tool-chip">Read</span><span class="tool-chip">Write</span><span class="tool-chip">Glob</span><span class="tool-chip">Grep</span><span class="tool-chip">Bash</span></div>
+        </div>
+        <div class="agent-card" data-model="sonnet">
+          <div class="agent-head"><h4 class="agent-name">memory-extractor</h4><span class="model-tag sonnet">sonnet</span></div>
+          <p class="agent-desc">Extracts perception changes from session thinking blocks — the aha moments where understanding shifts — and stores them as learnings.</p>
+          <div class="tool-chips"><span class="tool-chip">Bash</span><span class="tool-chip">Read</span></div>
+        </div>
+        <div class="agent-card" data-model="opus">
+          <div class="agent-head"><h4 class="agent-name">braintrust-analyst</h4><span class="model-tag opus">opus</span></div>
+          <p class="agent-desc">Analyzes Claude Code sessions using Braintrust logs. Runs analysis scripts, interprets results, writes findings for the main conversation to act on.</p>
+          <div class="tool-chips"><span class="tool-chip">Read</span><span class="tool-chip">Write</span><span class="tool-chip">Bash</span><span class="tool-chip">Grep</span><span class="tool-chip">Glob</span></div>
+        </div>
+        <div class="agent-card" data-model="sonnet">
+          <div class="agent-head"><h4 class="agent-name">validate-agent</h4><span class="model-tag sonnet">sonnet</span></div>
+          <p class="agent-desc">Also a Planning agent — validates plan tech choices against best practices and precedent. Listed here as a system-facing meta-validator.</p>
+          <div class="tool-chips"><span class="tool-chip">Read</span><span class="tool-chip">Write</span><span class="tool-chip">Bash</span><span class="tool-chip">WebSearch</span><span class="tool-chip">WebFetch</span></div>
+        </div>
+      </div>
+
+      <div class="callout warn">
+        <strong>Maestro mode is gated.</strong> When maestro is active, agents are blocked until the interview phase completes. Phases run recon → interview → approval → execute, each with an explicit gate — no phase skipping. State lives in <code>.claude/maestro-state.json</code>.
+      </div>
+    </section>
+
+    <!-- ========== 10. SPAWNING FLOW ========== -->
+    <section class="experience" id="spawning">
+      <p class="section-eyebrow">10 · Mechanics</p>
+      <h2 class="section-title">The spawn lifecycle — <span style="color:var(--y)">.md to summary</span>.</h2>
+      <p class="section-lede">
+        Every delegation runs the same path. The <code>Task</code> tool names an agent. Its definition comes from a <code>.json</code> sidecar — regenerated from the canonical <code>.md</code> frontmatter by <code>sync-agent-json.py</code>. The prompt loads into a fresh isolated context window. The agent works, emits a <code>ralph_status</code> JSON block, and the orchestrator verifies the claim before trusting it.
+      </p>
+
+      <div class="diagram-wrap">
+        <div class="diagram-toolbar">
+          <div class="diagram-title">Full spawn lifecycle</div>
+          <button class="play-btn" data-play="spawning">▶ Play lifecycle</button>
+        </div>
+        <div class="diag" id="diag-spawning">
+          <svg viewBox="0 0 900 290" preserveAspectRatio="xMidYMid meet">
+            <!-- Row 1 -->
+            <rect x="20" y="30" width="150" height="58" rx="8" class="node-rect" data-step="0" fill="#1c2236" stroke="var(--y)" stroke-width="1.5"/>
+            <text x="95" y="55" text-anchor="middle" class="label-main" style="fill:var(--y)">Task tool</text>
+            <text x="95" y="73" text-anchor="middle" class="label-sub">names an agent</text>
+
+            <rect x="200" y="30" width="160" height="58" rx="8" class="node-rect" data-step="1" fill="#1c2236" stroke="var(--blue)" stroke-width="1.5"/>
+            <text x="280" y="51" text-anchor="middle" class="label-main" style="fill:var(--blue)">&lt;name&gt;.json</text>
+            <text x="280" y="69" text-anchor="middle" class="label-sub">sidecar definition</text>
+
+            <rect x="390" y="30" width="160" height="58" rx="8" class="node-rect" data-step="2" fill="#1c2236" stroke="var(--teal)" stroke-width="1.5"/>
+            <text x="470" y="51" text-anchor="middle" class="label-main" style="fill:var(--teal)">prompt loaded</text>
+            <text x="470" y="69" text-anchor="middle" class="label-sub">model + tools set</text>
+
+            <rect x="580" y="30" width="180" height="58" rx="8" class="node-rect heartbeat" data-step="3" fill="#1c2236" stroke="var(--purple)" stroke-width="2"/>
+            <text x="670" y="51" text-anchor="middle" class="label-main" style="fill:var(--purple)">isolated context</text>
+            <text x="670" y="69" text-anchor="middle" class="label-sub">own token budget</text>
+
+            <!-- Row 2 -->
+            <rect x="580" y="160" width="180" height="58" rx="8" class="node-rect" data-step="4" fill="#1c2236" stroke="var(--orange)" stroke-width="1.5"/>
+            <text x="670" y="181" text-anchor="middle" class="label-main" style="fill:var(--orange)">ralph_status</text>
+            <text x="670" y="199" text-anchor="middle" class="label-sub">JSON block emitted</text>
+
+            <rect x="340" y="160" width="180" height="58" rx="8" class="node-rect" data-step="5" fill="#1c2236" stroke="var(--green)" stroke-width="1.5"/>
+            <text x="430" y="181" text-anchor="middle" class="label-main" style="fill:var(--green)">orchestrator</text>
+            <text x="430" y="199" text-anchor="middle" class="label-sub">verifies claim</text>
+
+            <ellipse cx="150" cy="189" rx="100" ry="46" class="node-circle" data-step="6" fill="#1c2236" stroke="var(--y)" stroke-width="2"/>
+            <text x="150" y="185" text-anchor="middle" class="label-main" style="fill:var(--y)">trusted result</text>
+            <text x="150" y="203" text-anchor="middle" class="label-sub">or re-run</text>
+
+            <!-- sidecar source note -->
+            <rect x="200" y="105" width="160" height="34" rx="6" fill="#0e1322" stroke="var(--border)" stroke-width="1"/>
+            <text x="280" y="126" text-anchor="middle" class="label-sub" style="font-size:10.5px">⟵ sync-agent-json.py ⟵ .md</text>
+
+            <!-- edges -->
+            <path d="M170 59 H 200" class="edge" data-edge="0"/>
+            <path d="M360 59 H 390" class="edge" data-edge="1"/>
+            <path d="M550 59 H 580" class="edge" data-edge="2"/>
+            <path d="M670 88 V 160" class="edge" data-edge="3"/>
+            <path d="M580 189 H 520" class="edge" data-edge="4"/>
+            <path d="M340 189 H 250" class="edge" data-edge="5"/>
+            <path d="M280 88 V 105" class="edge" stroke-dasharray="4,4"/>
+
+            <circle r="5" class="packet" id="spawn-packet" style="opacity:0"/>
+          </svg>
+        </div>
+      </div>
+
+      <div class="grid-2">
+        <div class="card">
+          <h3 class="card-title"><span class="dot" style="background:var(--blue)"></span>The .json sidecar</h3>
+          <p class="small" style="color:var(--text-dim); margin:0 0 8px;">Each <code>&lt;name&gt;.md</code> with a matching <code>&lt;name&gt;.json</code> gets its sidecar rebuilt so <code>description</code> / <code>tools</code> / <code>prompt</code> mirror the canonical markdown — while spawn-only fields are preserved.</p>
+          <div class="codeblock"><span class="kw">{</span>
+  <span class="str">"name"</span>: <span class="str">"kraken"</span>,
+  <span class="str">"description"</span>: <span class="str">"... TDD workflow"</span>,
+  <span class="str">"prompt"</span>: <span class="str">"# Kraken\n..."</span>,
+  <span class="str">"tools"</span>: [<span class="str">"Read"</span>, <span class="str">"Edit"</span>, <span class="str">"Bash"</span>, ...],
+  <span class="str">"model"</span>: <span class="str">"opus"</span>,        <span class="com">// spawn-only</span>
+  <span class="str">"permissions"</span>: <span class="str">"skip"</span>,   <span class="com">// spawn-only</span>
+  <span class="str">"blocked_patterns"</span>: [],   <span class="com">// spawn-only</span>
+  <span class="str">"inherit_blocks"</span>: <span class="num">true</span>
+<span class="kw">}</span></div>
+          <p class="small muted" style="margin:8px 0 0;">Regenerate: <code>python scripts/sync-agent-json.py --target .claude/agents --apply</code></p>
+        </div>
+        <div class="card">
+          <h3 class="card-title"><span class="dot" style="background:var(--orange)"></span>ralph_status — the completion contract</h3>
+          <p class="small" style="color:var(--text-dim); margin:0 0 8px;">Agents end with a machine-readable status block. In Ralph mode this is required — the orchestrator parses it to decide retry vs advance.</p>
+          <div class="codeblock"><span class="kw">{</span>
+  <span class="str">"ralph_status"</span>: <span class="kw">{</span>
+    <span class="str">"task_id"</span>: <span class="str">"6.2"</span>,
+    <span class="str">"status"</span>: <span class="str">"complete"</span>,
+    <span class="str">"commit"</span>: <span class="str">"none"</span>
+  <span class="kw">}</span>
+<span class="kw">}</span></div>
+          <div class="callout fail" style="margin-top:12px;">
+            <strong>Verify, don't trust.</strong> A <code>"complete"</code> claim is not proof. The orchestrator re-runs tests / the emit-invariant guard before accepting it — agents have regressed work and self-reported success.
+          </div>
+        </div>
+      </div>
+
+      <div class="card">
+        <h3 class="card-title"><span class="dot" style="background:var(--y)"></span>Retry escalation chain</h3>
+        <table class="data-table">
+          <thead><tr><th>Attempt</th><th>Action</th><th>Rationale</th></tr></thead>
+          <tbody>
+            <tr><td><span class="pill b">1</span></td><td>Same agent, original instruction</td><td>First honest pass</td></tr>
+            <tr><td><span class="pill b">2</span></td><td>Same agent + error context</td><td>Self-healing with feedback</td></tr>
+            <tr><td><span class="pill y">3</span></td><td>Escalate to <span class="mono">spark</span></td><td>Quick-fix specialist</td></tr>
+            <tr><td><span class="pill y">4</span></td><td>Escalate to <span class="mono">debug-agent</span></td><td>Root-cause analysis</td></tr>
+            <tr><td><span class="pill r">5</span></td><td>BLOCKED</td><td>User intervention required</td></tr>
+          </tbody>
+        </table>
+        <p class="small muted" style="margin:10px 0 0;">Ralph iteration limits bound the loop: 10 (small) · 30 (medium) · 50 (large). Never loop silently — escalate after the limit with what was tried, what failed, and a recommended next step.</p>
+      </div>
+
+      <div class="callout ok">
+        <strong>Why isolation matters.</strong> Each sub-agent's reads, searches, and dead-ends stay in <em>its</em> context, not the orchestrator's. That's the whole point — the main thread receives a digest, not a transcript, and can coordinate far longer before hitting its own limits.
+      </div>
+    </section>
+
+  </main>
+</div>
+
+<script>
+// =============== Sidebar nav + section switching ===============
+const navItems = document.querySelectorAll('.nav-item');
+const sections = document.querySelectorAll('section.experience');
+navItems.forEach(item => {
+  item.addEventListener('click', () => {
+    const target = item.getAttribute('data-target');
+    navItems.forEach(n => n.classList.remove('active'));
+    item.classList.add('active');
+    sections.forEach(s => s.classList.remove('active'));
+    const sec = document.getElementById(target);
+    if (sec) sec.classList.add('active');
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+  });
+});
+
+// =============== Animated packet helper ===============
+// Animate a "packet" circle along an SVG path made of waypoints.
+function animatePacketWaypoints(packetId, waypoints, durationMs, onStep) {
+  const pkt = document.getElementById(packetId);
+  if (!pkt) return Promise.resolve();
+  pkt.style.opacity = '1';
+  const t0 = performance.now();
+  return new Promise(resolve => {
+    function frame(now) {
+      const t = Math.min(1, (now - t0) / durationMs);
+      const segs = waypoints.length - 1;
+      const segT = t * segs;
+      const i = Math.min(segs - 1, Math.floor(segT));
+      const localT = segT - i;
+      const a = waypoints[i], b = waypoints[i + 1];
+      const x = a.x + (b.x - a.x) * localT;
+      const y = a.y + (b.y - a.y) * localT;
+      pkt.setAttribute('cx', x);
+      pkt.setAttribute('cy', y);
+      if (onStep) onStep(i, localT);
+      if (t < 1) requestAnimationFrame(frame);
+      else {
+        pkt.style.opacity = '0';
+        resolve();
+      }
+    }
+    requestAnimationFrame(frame);
+  });
+}
+
+// helper: light up nodes/edges/steps along the active waypoint index
+function driveDiagram(scope, packetId, waypoints, durationMs) {
+  const nodes = scope.querySelectorAll('.node-rect, .node-circle');
+  const edges = scope.querySelectorAll('.edge');
+  const steps = scope.querySelectorAll('.step');
+  nodes.forEach(n => n.classList.remove('active'));
+  edges.forEach(e => e.classList.remove('active'));
+  steps.forEach(s => s.classList.remove('active'));
+  return animatePacketWaypoints(packetId, waypoints, durationMs, (i) => {
+    nodes.forEach((n, idx) => n.classList.toggle('active', idx === i || idx === i + 1));
+    edges.forEach((e, idx) => e.classList.toggle('active', idx === Math.min(i, edges.length - 1)));
+    steps.forEach((s, idx) => s.classList.toggle('active', idx === i));
+  }).then(() => {
+    nodes.forEach(n => n.classList.remove('active'));
+    edges.forEach(e => e.classList.remove('active'));
+    steps.forEach(s => s.classList.remove('active'));
+  });
+}
+
+// =============== Per-section animations ===============
+const animations = {
+  overview: async function () {
+    // orchestrator -> task -> agent -> tools -> summary -> back
+    const wp1 = [{x:125,y:150}, {x:365,y:150}, {x:610,y:80}, {x:610,y:225}];
+    const wp2 = [{x:610,y:80}, {x:820,y:150}];
+    const wp3 = [{x:820,y:150}, {x:500,y:240}, {x:125,y:150}];
+    await animatePacketWaypoints('ovp1', wp1, 2600);
+    await animatePacketWaypoints('ovp2', wp2, 1400);
+    await animatePacketWaypoints('ovp3', wp3, 1800);
+  },
+  implementation: async function () {
+    const scope = document.getElementById('implementation');
+    const wp = [{x:105,y:120}, {x:350,y:130}, {x:620,y:130}, {x:815,y:130}];
+    await driveDiagram(scope, 'impl-packet', wp, 3200);
+  },
+  investigation: async function () {
+    const scope = document.getElementById('investigation');
+    const wp = [{x:105,y:110}, {x:300,y:110}, {x:505,y:67}, {x:760,y:110}];
+    await driveDiagram(scope, 'inv-packet', wp, 3200);
+  },
+  testing: async function () {
+    const scope = document.getElementById('testing');
+    const wp = [{x:105,y:105}, {x:295,y:105}, {x:485,y:105}, {x:675,y:105}, {x:835,y:105}];
+    await driveDiagram(scope, 'test-packet', wp, 3400);
+  },
+  review: async function () {
+    const scope = document.getElementById('review');
+    const wp = [{x:100,y:120}, {x:320,y:120}, {x:570,y:120}, {x:800,y:120}];
+    await driveDiagram(scope, 'rev-packet', wp, 3000);
+  },
+  planning: async function () {
+    const scope = document.getElementById('planning');
+    const wp = [{x:105,y:105}, {x:300,y:62}, {x:510,y:105}, {x:760,y:105}];
+    await driveDiagram(scope, 'plan-packet', wp, 3000);
+  },
+  operations: async function () {
+    const scope = document.getElementById('operations');
+    const wp = [{x:105,y:100}, {x:300,y:100}, {x:495,y:100}, {x:690,y:100}, {x:835,y:100}];
+    await driveDiagram(scope, 'ops-packet', wp, 3400);
+  },
+  meta: async function () {
+    const scope = document.getElementById('meta');
+    const wp = [{x:120,y:115}, {x:375,y:115}, {x:620,y:65}, {x:790,y:115}];
+    await driveDiagram(scope, 'meta-packet', wp, 3200);
+  },
+  spawning: async function () {
+    const scope = document.getElementById('spawning');
+    const wp = [
+      {x:95,y:59}, {x:280,y:59}, {x:470,y:59}, {x:670,y:59},
+      {x:670,y:189}, {x:430,y:189}, {x:150,y:189}
+    ];
+    await driveDiagram(scope, 'spawn-packet', wp, 4600);
+  },
+};
+
+document.querySelectorAll('.play-btn').forEach(btn => {
+  btn.addEventListener('click', async () => {
+    const key = btn.getAttribute('data-play');
+    const fn = animations[key];
+    if (!fn) return;
+    btn.disabled = true;
+    const originalText = btn.textContent;
+    btn.textContent = '⏵ Playing...';
+    try { await fn(); } catch (e) { console.error(e); }
+    btn.disabled = false;
+    btn.textContent = originalText;
+  });
+});
+
+// Auto-play overview delegation once on load
+window.addEventListener('load', () => {
+  setTimeout(() => animations.overview(), 600);
+});
+</script>
+</body>
+</html>

@@ -1,0 +1,391 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Continuous Claude v3 — System Map</title>
+<meta name="description" content="Landing hub for the Continuous Claude v3 (CCv3) interactive architecture visualizations. Links every view: overview, memory, hooks, agents, Braintrust scoring, Codex adversarial review, and the machine-readable architecture.json." />
+<style>
+  :root {
+    --bg: #0b1020;
+    --bg-panel: #111827;
+    --bg-panel-2: #0e1525;
+    --border: #1f2937;
+    --border-light: #2a3447;
+    --text: #e5e7eb;
+    --text-dim: #9ca3af;
+    --text-faint: #6b7280;
+    --accent: #fbbf24;
+    --accent-soft: rgba(251, 191, 36, 0.18);
+    --shadow: 0 8px 24px rgba(0, 0, 0, 0.5);
+  }
+  * { box-sizing: border-box; }
+  html, body {
+    margin: 0; padding: 0;
+    background: var(--bg); color: var(--text);
+    font: 14px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    min-height: 100%;
+  }
+  body {
+    display: flex; flex-direction: column;
+    background:
+      radial-gradient(circle at 25% 12%, rgba(99, 102, 241, 0.06), transparent 55%),
+      radial-gradient(circle at 78% 85%, rgba(251, 191, 36, 0.05), transparent 50%),
+      var(--bg);
+  }
+  a { color: var(--accent); text-decoration: none; }
+  a:hover { text-decoration: underline; }
+
+  /* Header */
+  header.app {
+    display: flex; align-items: baseline; gap: 16px; flex-wrap: wrap;
+    padding: 18px 28px; border-bottom: 1px solid var(--border);
+    background: var(--bg-panel-2);
+  }
+  header.app h1 {
+    font-size: 18px; font-weight: 700; margin: 0; letter-spacing: 0.2px;
+    color: var(--text);
+  }
+  header.app .sub { color: var(--text-dim); font-size: 13px; }
+  header.app .spacer { flex: 1; min-width: 12px; }
+  header.app .meta { color: var(--text-faint); font-size: 12px; white-space: nowrap; }
+  header.app .gh-link {
+    font-size: 12px; color: var(--text-dim);
+    border: 1px solid var(--border-light); border-radius: 6px;
+    padding: 5px 11px; white-space: nowrap;
+  }
+  header.app .gh-link:hover { border-color: var(--accent); color: var(--accent); text-decoration: none; }
+
+  /* Main content */
+  main {
+    flex: 1; width: 100%; max-width: 1180px; margin: 0 auto;
+    padding: 28px 28px 12px;
+  }
+  .intro { color: var(--text-dim); font-size: 13.5px; margin: 0 0 22px; max-width: 760px; }
+
+  /* Card grid */
+  .grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+    gap: 18px;
+  }
+  @media (max-width: 640px) {
+    .grid { grid-template-columns: 1fr; }
+    header.app { padding: 16px 18px; }
+    main { padding: 20px 18px 12px; }
+  }
+
+  /* Card */
+  .card {
+    position: relative;
+    display: flex; flex-direction: column;
+    background: var(--bg-panel);
+    border: 1px solid var(--border-light);
+    border-radius: 12px;
+    overflow: hidden;
+    color: var(--text);
+    transition: border-color 0.16s ease, transform 0.16s ease, box-shadow 0.16s ease;
+  }
+  .card:hover {
+    border-color: var(--accent);
+    transform: translateY(-2px);
+    box-shadow: var(--shadow);
+    text-decoration: none;
+  }
+  .card .stripe {
+    height: 4px; width: 100%;
+    background: var(--stripe, var(--accent));
+  }
+  .card .body {
+    padding: 16px 18px 18px;
+    display: flex; flex-direction: column; gap: 8px;
+    flex: 1;
+  }
+  .card .icon {
+    font-size: 24px; line-height: 1;
+    width: 24px; height: 28px;
+    display: flex; align-items: center;
+  }
+  .card .title {
+    font-size: 16px; font-weight: 700; color: var(--text);
+    letter-spacing: 0.1px; margin: 0;
+  }
+  .card:hover .title { color: var(--accent); }
+  .card .desc {
+    font-size: 13px; color: var(--text-dim); margin: 0;
+    flex: 1;
+  }
+  .card .stats {
+    font-size: 12px; color: var(--text-faint);
+    font-variant-numeric: tabular-nums;
+    margin-top: 4px;
+    border-top: 1px solid var(--border);
+    padding-top: 10px;
+  }
+  .card .stats .num { color: var(--accent); font-weight: 600; }
+  .card .arrow {
+    position: absolute; top: 14px; right: 16px;
+    color: var(--text-faint); font-size: 15px;
+    transition: color 0.16s ease, transform 0.16s ease;
+  }
+  .card:hover .arrow { color: var(--accent); transform: translateX(2px); }
+
+  /* Footer */
+  footer {
+    margin-top: auto;
+    padding: 20px 28px 26px;
+    border-top: 1px solid var(--border);
+    color: var(--text-faint); font-size: 12px;
+    display: flex; gap: 18px; flex-wrap: wrap; align-items: center;
+  }
+  footer .spacer { flex: 1; min-width: 8px; }
+  footer a { color: var(--text-dim); }
+  footer a:hover { color: var(--accent); }
+  @media (max-width: 640px) {
+    footer { padding: 18px; }
+  }
+</style>
+</head>
+<body>
+  <header class="app">
+    <h1>Continuous Claude v3 &mdash; System Map</h1>
+    <span class="sub">Pick a view. Every page is standalone and works offline.</span>
+    <span class="spacer"></span>
+    <a class="gh-link" id="gh-link" href="#" title="Source repository (placeholder)">Source on GitHub</a>
+    <span class="meta">Last verified <span id="last-verified">2026-05-12</span></span>
+  </header>
+
+  <main>
+    <p class="intro">
+      The full CCv3 architecture, broken into focused interactive views. Start with the
+      <strong>Overview</strong> for the whole system as a flow diagram, or jump straight to a
+      subsystem deep dive. Counts below are read live from <code>architecture.json</code> when
+      served, with an embedded fallback for <code>file://</code>.
+    </p>
+
+    <div class="grid" id="grid">
+      <!-- 1. Overview -->
+      <a class="card" href="./index.html" style="--stripe:#fbbf24;">
+        <div class="stripe"></div>
+        <div class="body">
+          <span class="arrow">&rarr;</span>
+          <span class="icon" aria-hidden="true">&#128302;</span>
+          <h2 class="title">Overview</h2>
+          <p class="desc">The full system as an interactive flow diagram. Click any flow to trace it end to end.</p>
+          <div class="stats" data-stat="overview"><span class="num" id="stat-subsystems">18</span> subsystems &middot; <span class="num" id="stat-flows">18</span> traceable flows</div>
+        </div>
+      </a>
+
+      <!-- 2. Memory Deep Dive -->
+      <a class="card" href="./memory-system-visualization.html" style="--stripe:#22c55e;">
+        <div class="stripe"></div>
+        <div class="body">
+          <span class="arrow">&rarr;</span>
+          <span class="icon" aria-hidden="true">&#129504;</span>
+          <h2 class="title">Memory Deep Dive</h2>
+          <p class="desc">PostgreSQL + pgvector + BGE embeddings. Store path, recall path, daemon, scoring.</p>
+          <div class="stats" data-stat="memory"><span class="num" id="stat-mem-tables">4</span> tables &middot; <span class="num" id="stat-mem-dims">1024</span>-dim vectors</div>
+        </div>
+      </a>
+
+      <!-- 3. Hooks Deep Dive -->
+      <a class="card" href="./hooks-visualization.html" style="--stripe:#facc15;">
+        <div class="stripe"></div>
+        <div class="body">
+          <span class="arrow">&rarr;</span>
+          <span class="icon" aria-hidden="true">&#129693;</span>
+          <h2 class="title">Hooks Deep Dive</h2>
+          <p class="desc">Lifecycle hooks across 7 events. Context injection, guards, scoring emits.</p>
+          <div class="stats" data-stat="hooks"><span class="num" id="stat-hooks">107</span> hooks &middot; <span class="num" id="stat-events">7</span> events</div>
+        </div>
+      </a>
+
+      <!-- 4. Agents Deep Dive -->
+      <a class="card" href="./agents-visualization.html" style="--stripe:#a855f7;">
+        <div class="stripe"></div>
+        <div class="body">
+          <span class="arrow">&rarr;</span>
+          <span class="icon" aria-hidden="true">&#129302;</span>
+          <h2 class="title">Agents Deep Dive</h2>
+          <p class="desc">Specialized sub-agents by task category. Spawning, isolation, routing.</p>
+          <div class="stats" data-stat="agents"><span class="num" id="stat-agents">39</span> agents &middot; <span class="num" id="stat-agent-cats">8</span> categories</div>
+        </div>
+      </a>
+
+      <!-- 5. Braintrust Scoring -->
+      <a class="card" href="./braintrust-scoring-visualization.html" style="--stripe:#10b981;">
+        <div class="stripe"></div>
+        <div class="body">
+          <span class="arrow">&rarr;</span>
+          <span class="icon" aria-hidden="true">&#128202;</span>
+          <h2 class="title">Braintrust Scoring</h2>
+          <p class="desc">Quality dimensions + invariant guard. How the system scores itself.</p>
+          <div class="stats" data-stat="braintrust"><span class="num" id="stat-bt-dims">4</span> dimensions &middot; INVARIANT_<span class="num" id="stat-bt-inv">4</span> guard</div>
+        </div>
+      </a>
+
+      <!-- 6. Codex Adversarial Review -->
+      <a class="card" href="./codex-adversarial-visualization.html" style="--stripe:#f97316;">
+        <div class="stripe"></div>
+        <div class="body">
+          <span class="arrow">&rarr;</span>
+          <span class="icon" aria-hidden="true">&#9876;&#65039;</span>
+          <h2 class="title">Codex Adversarial Review</h2>
+          <p class="desc">Cross-model review via OpenAI Codex. Different training family, different blind spots.</p>
+          <div class="stats" data-stat="codex"><span class="num" id="stat-codex-model">gpt-5.5</span> &middot; <span class="num" id="stat-codex-int">3</span> integration points</div>
+        </div>
+      </a>
+
+      <!-- 7. Architecture Data (JSON) -->
+      <a class="card" href="./architecture.json" style="--stripe:#6b7280;">
+        <div class="stripe"></div>
+        <div class="body">
+          <span class="arrow">&rarr;</span>
+          <span class="icon" aria-hidden="true">&#128196;</span>
+          <h2 class="title">Architecture Data (JSON)</h2>
+          <p class="desc">The machine-readable source of truth. For LLM ingestion and tooling.</p>
+        </div>
+      </a>
+
+      <!-- 8. Source Diagrams -->
+      <a class="card" href="../diagrams/01-system-overview.md" style="--stripe:#14b8a6;">
+        <div class="stripe"></div>
+        <div class="body">
+          <span class="arrow">&rarr;</span>
+          <span class="icon" aria-hidden="true">&#128221;</span>
+          <h2 class="title">Source Diagrams</h2>
+          <p class="desc">Markdown architecture diagrams (system, hooks, memory, agents, continuity, TLDR).</p>
+        </div>
+      </a>
+    </div>
+  </main>
+
+  <footer>
+    <span>Continuous Claude v3</span>
+    <a href="../../">&larr; Docs root</a>
+    <a href="./architecture.json">architecture.json (raw)</a>
+    <a href="../diagrams/01-system-overview.md">Source diagrams</a>
+    <span class="spacer"></span>
+    <span>Last verified <span id="footer-date">2026-05-12</span></span>
+  </footer>
+
+  <script>
+  /*
+   * Hub stats loader.
+   * Tries to fetch architecture.json (works when served over http://). Falls back
+   * to the embedded snapshot below when opened via file:// (browsers block fetch of
+   * local files for CORS reasons). Either way the cards get populated and the page
+   * is fully standalone.
+   */
+  (function () {
+    // Embedded fallback snapshot — kept small. Mirrors the meta + the few node stats
+    // the cards reference. Numbers reflect the 2026-05-12 verified state of the tree.
+    var FALLBACK = {
+      meta: { lastVerified: "2026-05-12", repoUrl: "" },
+      stats: {
+        totalSubsystems: 18,
+        totalFlows: 18,
+        totalHooks: 107,
+        totalEvents: 7,
+        totalAgents: 39,
+        agentCategories: 8,
+        totalSkills: 138,
+        memoryTables: 4,
+        embeddingDim: 1024,
+        braintrustDimensions: 4,
+        braintrustInvariant: 4,
+        codexModel: "gpt-5.5",
+        codexIntegrationPoints: 3
+      }
+    };
+
+    function num(id, value) {
+      var el = document.getElementById(id);
+      if (el && value !== undefined && value !== null && value !== "") el.textContent = value;
+    }
+
+    // Pull a count out of either a top-level meta.stats block (added by the sync
+    // script) or, failing that, the per-node stats objects in architecture.json.
+    function statsFrom(data) {
+      var s = (data.meta && data.meta.stats) ? data.meta.stats : {};
+      var nodes = Array.isArray(data.nodes) ? data.nodes : [];
+      function node(id) {
+        for (var i = 0; i < nodes.length; i++) { if (nodes[i].id === id) return nodes[i]; }
+        return null;
+      }
+      function nodeStat(id, key) {
+        var n = node(id);
+        return (n && n.stats && n.stats[key] !== undefined) ? n.stats[key] : undefined;
+      }
+      var hooks = node("hooks");
+      var agents = node("agents");
+      var memory = node("memory");
+      var bt = node("braintrust-scoring");
+      var codex = node("codex-adversary");
+      var flows = Array.isArray(data.flows) ? data.flows.length : undefined;
+      var subsystems = nodes.length || undefined;
+      return {
+        totalSubsystems: s.totalSubsystems || subsystems,
+        totalFlows: s.totalFlows || flows,
+        totalHooks: s.totalHooks || nodeStat("hooks", "totalHooks"),
+        totalEvents: s.totalEvents || nodeStat("hooks", "events"),
+        totalAgents: s.totalAgents || nodeStat("agents", "totalAgents"),
+        agentCategories: s.agentCategories || nodeStat("agents", "categories"),
+        memoryTables: s.memoryTables || nodeStat("memory", "tables"),
+        embeddingDim: s.embeddingDim || nodeStat("memory", "embeddingDim"),
+        braintrustDimensions: s.braintrustDimensions || nodeStat("braintrust-scoring", "dimensions"),
+        braintrustInvariant: s.braintrustInvariant || nodeStat("braintrust-scoring", "invariant"),
+        codexModel: s.codexModel || nodeStat("codex-adversary", "default_model"),
+        codexIntegrationPoints: s.codexIntegrationPoints || nodeStat("codex-adversary", "integration_points")
+      };
+    }
+
+    function paint(meta, s) {
+      var verified = (meta && meta.lastVerified) || FALLBACK.meta.lastVerified;
+      num("last-verified", verified);
+      num("footer-date", verified);
+
+      var repo = (meta && meta.repoUrl) || FALLBACK.meta.repoUrl;
+      if (repo) {
+        var gh = document.getElementById("gh-link");
+        if (gh) { gh.setAttribute("href", repo); gh.removeAttribute("title"); }
+      }
+
+      num("stat-subsystems", s.totalSubsystems);
+      num("stat-flows", s.totalFlows);
+      num("stat-hooks", s.totalHooks);
+      num("stat-events", s.totalEvents);
+      num("stat-agents", s.totalAgents);
+      num("stat-agent-cats", s.agentCategories);
+      num("stat-mem-tables", s.memoryTables);
+      num("stat-mem-dims", s.embeddingDim);
+      num("stat-bt-dims", s.braintrustDimensions);
+      num("stat-bt-inv", s.braintrustInvariant);
+      num("stat-codex-model", s.codexModel);
+      num("stat-codex-int", s.codexIntegrationPoints);
+    }
+
+    // Paint the fallback immediately so cards are never blank, then try to refresh
+    // from the live JSON.
+    paint(FALLBACK.meta, FALLBACK.stats);
+
+    try {
+      fetch("architecture.json", { cache: "no-store" })
+        .then(function (res) { return res.ok ? res.json() : null; })
+        .then(function (data) {
+          if (!data) return;
+          var s = statsFrom(data);
+          // Backfill any holes with the fallback so we never blank a card.
+          for (var k in FALLBACK.stats) {
+            if (s[k] === undefined || s[k] === null || s[k] === "") s[k] = FALLBACK.stats[k];
+          }
+          paint(data.meta || FALLBACK.meta, s);
+        })
+        .catch(function () { /* file:// or offline — fallback already painted */ });
+    } catch (err) {
+      /* fetch unavailable — fallback already painted */
+    }
+  })();
+  </script>
+</body>
+</html>
