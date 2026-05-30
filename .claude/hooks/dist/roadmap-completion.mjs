@@ -221,127 +221,22 @@ function findRoadmapPath(projectDir) {
   }
   return null;
 }
-function updateRoadmapContent(content, data) {
-  if (!data.current) {
-    return content;
-  }
-  const today = (/* @__PURE__ */ new Date()).toISOString().split("T")[0];
-  const completedItem = `- [x] ${data.current.title} (${today})`;
-  let lines = content.split("\n");
-  let inCurrent = false;
-  let inCompleted = false;
-  let currentStart = -1;
-  let currentEnd = -1;
-  let completedInsertIndex = -1;
-  for (let i = 0; i < lines.length; i++) {
-    const stripped = lines[i].trim().toLowerCase();
-    if (stripped.startsWith("## current")) {
-      inCurrent = true;
-      inCompleted = false;
-      currentStart = i + 1;
-      continue;
-    } else if (stripped.startsWith("## completed")) {
-      inCurrent = false;
-      inCompleted = true;
-      completedInsertIndex = i + 1;
-      if (currentEnd === -1) currentEnd = i;
-      continue;
-    } else if (stripped.startsWith("## ")) {
-      if (inCurrent && currentEnd === -1) currentEnd = i;
-      inCurrent = false;
-      inCompleted = false;
-      continue;
-    }
-  }
-  if (currentEnd === -1) currentEnd = lines.length;
-  const newLines = [];
-  for (let i = 0; i < lines.length; i++) {
-    if (i >= currentStart && i < currentEnd) {
-      continue;
-    }
-    newLines.push(lines[i]);
-    if (lines[i].trim().toLowerCase().startsWith("## current")) {
-      newLines.push("");
-      newLines.push("_No current goal. Next planned item will be promoted on next planning session._");
-      newLines.push("");
-    }
-    if (lines[i].trim().toLowerCase().startsWith("## completed")) {
-      newLines.push(completedItem);
-    }
-  }
-  return newLines.join("\n");
+function buildTaskCompletionAdvisory(roadmapContent) {
+  const data = parseRoadmap(roadmapContent);
+  if (!data.current) return null;
+  return `Task marked complete. ROADMAP Current Focus is unchanged: "${data.current.title}". roadmap-completion no longer auto-advances the ROADMAP on task completion \u2014 if the goal itself is finished, run /roadmap complete (and /roadmap focus <next>) to update it.`;
 }
-function promoteNextPlanned(content, data) {
-  if (data.planned.length === 0) {
-    return content;
-  }
-  const priorities = { high: 3, medium: 2, normal: 1, low: 0 };
-  const prioOf = (item) => {
-    const p = (item.priority || "normal").toLowerCase();
-    return priorities[p] ?? 1;
-  };
-  let best = data.planned[0];
-  for (const item of data.planned) {
-    if (prioOf(item) > prioOf(best)) {
-      best = item;
-    }
-  }
-  const today = (/* @__PURE__ */ new Date()).toISOString().split("T")[0];
-  let lines = content.split("\n");
-  let result = [];
-  let inCurrent = false;
-  let addedCurrent = false;
-  let removedPlanned = false;
-  for (let i = 0; i < lines.length; i++) {
-    const stripped = lines[i].trim();
-    const lower = stripped.toLowerCase();
-    if (lower.startsWith("## current")) {
-      inCurrent = true;
-      result.push(lines[i]);
-      result.push("");
-      result.push(`**${best.title}**`);
-      result.push(`- Started: ${today}`);
-      result.push("");
-      addedCurrent = true;
-      continue;
-    } else if (lower.startsWith("## ")) {
-      inCurrent = false;
-    }
-    if (inCurrent && stripped.includes("No current goal")) {
-      continue;
-    }
-    if (!removedPlanned && stripped.includes(best.title) && stripped.startsWith("- [ ]")) {
-      removedPlanned = true;
-      continue;
-    }
-    result.push(lines[i]);
-  }
-  return result.join("\n");
-}
-async function handleTaskUpdate(data) {
+async function handleTaskUpdate(data, projectDir = process.env.CLAUDE_PROJECT_DIR || process.cwd()) {
   const input = data.tool_input;
-  if (input.status !== "completed") {
-    return { result: "continue" };
-  }
-  const projectDir = process.env.CLAUDE_PROJECT_DIR || process.cwd();
+  if (input.status !== "completed") return { result: "continue" };
   const roadmapPath = findRoadmapPath(projectDir);
-  if (!roadmapPath) {
-    return { result: "continue" };
-  }
-  const content = fs.readFileSync(roadmapPath, "utf-8");
-  const roadmapData = parseRoadmap(content);
-  if (!roadmapData.current) {
-    return { result: "continue" };
-  }
-  let updated = updateRoadmapContent(content, roadmapData);
-  const updatedData = parseRoadmap(updated);
-  if (!updatedData.current && updatedData.planned.length > 0) {
-    updated = promoteNextPlanned(updated, updatedData);
-  }
-  fs.writeFileSync(roadmapPath, updated);
+  if (!roadmapPath) return { result: "continue" };
+  const advisory = buildTaskCompletionAdvisory(fs.readFileSync(roadmapPath, "utf-8"));
+  if (!advisory) return { result: "continue" };
   return {
     result: "continue",
-    message: `ROADMAP updated: "${roadmapData.current.title}" marked complete`
+    message: advisory,
+    hookSpecificOutput: { hookEventName: "PostToolUse", additionalContext: advisory }
   };
 }
 async function handleBashOutput(data) {
@@ -422,3 +317,7 @@ main().catch((err) => {
   console.error("[roadmap-completion] Error:", err.message);
   console.log(JSON.stringify({ result: "continue" }));
 });
+export {
+  buildTaskCompletionAdvisory,
+  handleTaskUpdate
+};

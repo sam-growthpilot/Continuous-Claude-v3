@@ -315,6 +315,12 @@ function generateRoadmap(sections) {
   }
   return lines.join("\n");
 }
+function demoteCurrentFocusToPlanned(sections, newTitle) {
+  if (!sections.current || sections.current.title === newTitle) return;
+  const old = sections.current;
+  if (sections.planned.some((p) => p.title === old.title)) return;
+  sections.planned.unshift({ title: old.title, priority: "high", priorityBucket: "high" });
+}
 var CAPTURE_KEYWORDS = [
   // Decisions
   "decision",
@@ -622,12 +628,7 @@ async function main() {
   }
   const today = (/* @__PURE__ */ new Date()).toISOString().split("T")[0];
   if (planInfo.title && planInfo.title !== "Planning Session") {
-    if (sections.current && sections.current.title !== planInfo.title) {
-      sections.completed.unshift({
-        title: sections.current.title,
-        completed: today
-      });
-    }
+    demoteCurrentFocusToPlanned(sections, planInfo.title);
     sections.current = {
       title: planInfo.title,
       description: planInfo.decisions.slice(0, 2).join("; ") || "",
@@ -679,9 +680,13 @@ async function readStdin() {
     process.stdin.setEncoding("utf-8");
     process.stdin.on("data", (chunk) => data += chunk);
     process.stdin.on("end", () => resolve2(data));
+    setTimeout(() => resolve2(data), 1e3);
   });
 }
 main().catch((err) => {
   console.error("[post-plan-roadmap] Error:", err.message);
   console.log(JSON.stringify({ result: "continue" }));
 });
+export {
+  demoteCurrentFocusToPlanned
+};

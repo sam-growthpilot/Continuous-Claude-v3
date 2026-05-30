@@ -119,6 +119,14 @@ function generateRoadmap(sections: RoadmapSection): string {
   return lines.join('\n');
 }
 
+export function demoteCurrentFocusToPlanned(sections: RoadmapDoc, newTitle: string): void {
+  if (!sections.current || sections.current.title === newTitle) return;
+  const old = sections.current;
+  if (sections.planned.some(p => p.title === old.title)) return; // dedup
+  // Switching focus ≠ finishing the prior goal — return it to the backlog.
+  sections.planned.unshift({ title: old.title, priority: 'high', priorityBucket: 'high' });
+}
+
 // Expanded keywords for content capture
 const CAPTURE_KEYWORDS = [
   // Decisions
@@ -494,17 +502,11 @@ async function main() {
   const today = new Date().toISOString().split('T')[0];
 
   if (planInfo.title && planInfo.title !== 'Planning Session') {
-    if (sections.current && sections.current.title !== planInfo.title) {
-      sections.completed.unshift({
-        title: sections.current.title,
-        completed: today
-      });
-    }
-
+    demoteCurrentFocusToPlanned(sections, planInfo.title);   // was: sections.completed.unshift(...)
     sections.current = {
       title: planInfo.title,
       description: planInfo.decisions.slice(0, 2).join('; ') || '',
-      started: today
+      started: today,
     };
   }
 
@@ -561,6 +563,7 @@ async function readStdin(): Promise<string> {
     process.stdin.setEncoding('utf-8');
     process.stdin.on('data', chunk => data += chunk);
     process.stdin.on('end', () => resolve(data));
+    setTimeout(() => resolve(data), 1000);
   });
 }
 

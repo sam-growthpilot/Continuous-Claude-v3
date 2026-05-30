@@ -12,7 +12,7 @@
 
 import * as fs from 'fs';
 import * as path from 'path';
-import { parseRoadmap, type RoadmapDoc } from './shared/roadmap-parser.js';
+import { parseRoadmap } from './shared/roadmap-parser.js';
 
 interface PostToolUseInput {
   tool_name: string;
@@ -28,6 +28,7 @@ interface UserPromptSubmitInput {
 interface HookOutput {
   result: 'continue' | 'block';
   message?: string;
+  hookSpecificOutput?: { hookEventName: string; additionalContext: string };
 }
 
 const COMPLETION_PATTERNS = [
@@ -123,169 +124,36 @@ function findRoadmapPath(projectDir: string): string | null {
 }
 
 // parseRoadmap + types now live in shared/roadmap-parser.ts (Phase 3A).
-// roadmap-completion uses RoadmapDoc as RoadmapData (drop-in superset).
-type RoadmapData = RoadmapDoc;
 
-function updateRoadmapContent(content: string, data: RoadmapData): string {
-  if (!data.current) {
-    return content; // Nothing to complete
-  }
-
-  const today = new Date().toISOString().split('T')[0];
-  const completedItem = `- [x] ${data.current.title} (${today})`;
-
-  let lines = content.split('\n');
-  let inCurrent = false;
-  let inCompleted = false;
-  let currentStart = -1;
-  let currentEnd = -1;
-  let completedInsertIndex = -1;
-
-  for (let i = 0; i < lines.length; i++) {
-    const stripped = lines[i].trim().toLowerCase();
-
-    if (stripped.startsWith('## current')) {
-      inCurrent = true;
-      inCompleted = false;
-      currentStart = i + 1;
-      continue;
-    } else if (stripped.startsWith('## completed')) {
-      inCurrent = false;
-      inCompleted = true;
-      completedInsertIndex = i + 1;
-      if (currentEnd === -1) currentEnd = i;
-      continue;
-    } else if (stripped.startsWith('## ')) {
-      if (inCurrent && currentEnd === -1) currentEnd = i;
-      inCurrent = false;
-      inCompleted = false;
-      continue;
-    }
-  }
-
-  if (currentEnd === -1) currentEnd = lines.length;
-
-  // Remove current section content (keep header)
-  const newLines: string[] = [];
-  for (let i = 0; i < lines.length; i++) {
-    if (i >= currentStart && i < currentEnd) {
-      // Skip current section content
-      continue;
-    }
-    newLines.push(lines[i]);
-
-    // Add placeholder after ## Current
-    if (lines[i].trim().toLowerCase().startsWith('## current')) {
-      newLines.push('');
-      newLines.push('_No current goal. Next planned item will be promoted on next planning session._');
-      newLines.push('');
-    }
-
-    // Insert completed item after ## Completed header
-    if (lines[i].trim().toLowerCase().startsWith('## completed')) {
-      newLines.push(completedItem);
-    }
-  }
-
-  return newLines.join('\n');
+export function buildTaskCompletionAdvisory(roadmapContent: string): string | null {
+  const data = parseRoadmap(roadmapContent);
+  if (!data.current) return null;
+  return `Task marked complete. ROADMAP Current Focus is unchanged: ` +
+    `"${data.current.title}". roadmap-completion no longer auto-advances the ` +
+    `ROADMAP on task completion — if the goal itself is finished, run /roadmap ` +
+    `complete (and /roadmap focus <next>) to update it.`;
 }
 
-function promoteNextPlanned(content: string, data: RoadmapData): string {
-  if (data.planned.length === 0) {
-    return content;
-  }
-
-  // Find highest priority planned item
-  const priorities: Record<string, number> = { high: 3, medium: 2, normal: 1, low: 0 };
-  const prioOf = (item: { priority?: string }): number => {
-    const p = (item.priority || 'normal').toLowerCase();
-    return priorities[p] ?? 1;
-  };
-  let best = data.planned[0];
-  for (const item of data.planned) {
-    if (prioOf(item) > prioOf(best)) {
-      best = item;
-    }
-  }
-
-  const today = new Date().toISOString().split('T')[0];
-
-  // Update content to move planned → current
-  let lines = content.split('\n');
-  let result: string[] = [];
-  let inCurrent = false;
-  let addedCurrent = false;
-  let removedPlanned = false;
-
-  for (let i = 0; i < lines.length; i++) {
-    const stripped = lines[i].trim();
-    const lower = stripped.toLowerCase();
-
-    if (lower.startsWith('## current')) {
-      inCurrent = true;
-      result.push(lines[i]);
-      result.push('');
-      result.push(`**${best.title}**`);
-      result.push(`- Started: ${today}`);
-      result.push('');
-      addedCurrent = true;
-      continue;
-    } else if (lower.startsWith('## ')) {
-      inCurrent = false;
-    }
-
-    // Skip old "no current goal" placeholder
-    if (inCurrent && stripped.includes('No current goal')) {
-      continue;
-    }
-
-    // Skip the planned item we're promoting
-    if (!removedPlanned && stripped.includes(best.title) && stripped.startsWith('- [ ]')) {
-      removedPlanned = true;
-      continue;
-    }
-
-    result.push(lines[i]);
-  }
-
-  return result.join('\n');
-}
-
-async function handleTaskUpdate(data: PostToolUseInput): Promise<HookOutput> {
+export async function handleTaskUpdate(
+  data: PostToolUseInput,
+  projectDir: string = process.env.CLAUDE_PROJECT_DIR || process.cwd(),
+): Promise<HookOutput> {
   const input = data.tool_input as { status?: string; taskId?: string };
+  if (input.status !== 'completed') return { result: 'continue' };
 
-  if (input.status !== 'completed') {
-    return { result: 'continue' };
-  }
-
-  const projectDir = process.env.CLAUDE_PROJECT_DIR || process.cwd();
   const roadmapPath = findRoadmapPath(projectDir);
+  if (!roadmapPath) return { result: 'continue' };
 
-  if (!roadmapPath) {
-    return { result: 'continue' };
-  }
+  const advisory = buildTaskCompletionAdvisory(fs.readFileSync(roadmapPath, 'utf-8'));
+  if (!advisory) return { result: 'continue' };
 
-  const content = fs.readFileSync(roadmapPath, 'utf-8');
-  const roadmapData = parseRoadmap(content);
-
-  if (!roadmapData.current) {
-    return { result: 'continue' };
-  }
-
-  // Update ROADMAP: move current to completed
-  let updated = updateRoadmapContent(content, roadmapData);
-
-  // Optionally promote next planned item
-  const updatedData = parseRoadmap(updated);
-  if (!updatedData.current && updatedData.planned.length > 0) {
-    updated = promoteNextPlanned(updated, updatedData);
-  }
-
-  fs.writeFileSync(roadmapPath, updated);
-
+  // ADVISORY ONLY — never writes. (Previously: unconditional updateRoadmapContent +
+  // promoteNextPlanned + fs.writeFileSync, which clobbered manual edits and falsely
+  // advanced Current Focus on every unrelated task completion.)
   return {
     result: 'continue',
-    message: `ROADMAP updated: "${roadmapData.current.title}" marked complete`,
+    message: advisory,
+    hookSpecificOutput: { hookEventName: 'PostToolUse', additionalContext: advisory },
   };
 }
 
