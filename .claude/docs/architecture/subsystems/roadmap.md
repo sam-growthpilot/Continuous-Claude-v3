@@ -30,7 +30,7 @@ ROADMAP.md is the **single authoritative view** of project status for Continuous
 │ trigger         │            │ completed   │
 └─────────────────┘            └─────────────┘
   post-plan-roadmap writes BOTH Current Focus and Recent Planning.
-  Completed is fed by git-commit-roadmap AND roadmap-completion.
+  Completed is fed by git-commit-roadmap. roadmap-completion is advisory-only (no write).
 ```
 
 **The 4 ROADMAP hooks** (each distinct — `post-plan-roadmap` owns two sections):
@@ -40,7 +40,7 @@ ROADMAP.md is the **single authoritative view** of project status for Continuous
 | `post-plan-roadmap` | ExitPlanMode | Current Focus + Recent Planning |
 | `prd-roadmap-sync` | Write/Edit PRD files | Planned |
 | `git-commit-roadmap` | Bash `git commit` | Completed |
-| `roadmap-completion` | TaskUpdate completed | Current Focus → Completed |
+| `roadmap-completion` | TaskUpdate completed / Bash | **Advisory only** — emits a reminder, never writes |
 
 > **Cross-project contamination guard:** The ROADMAP hooks check plan content
 > against the project registry (`.claude/project-registry.json`) before writing.
@@ -55,8 +55,26 @@ ROADMAP.md is the **single authoritative view** of project status for Continuous
 |---------|----------------|------------|----------------|
 | **Current Focus** | Planning sessions | `post-plan-roadmap` | `/roadmap focus` |
 | **Planned** | PRD files + manual | `prd-roadmap-sync` | `/roadmap add` |
-| **Completed** | Git commits + tasks | `git-commit-roadmap` + `roadmap-completion` | `/roadmap complete` |
+| **Completed** | Git commits | `git-commit-roadmap` | `/roadmap complete` |
 | **Recent Planning** | ExitPlanMode | `post-plan-roadmap` | Archive manually |
+
+## Hand-Written Notes (preserved across automation)
+
+The 4 **managed** sections above (Current Focus, Completed, Planned, Recent
+Planning Sessions) are auto-regenerated. **Everything else you hand-write in
+ROADMAP.md is preserved verbatim** across plan-approval regeneration — intro
+prose and any custom section you add.
+
+- Write durable / next-session notes under **`## Notes`** or **`## For Next
+  Session`** (also `## Scratch`). These are preserved AND injected into context
+  at session start by `session-start-continuity`, so the AI picks them up the
+  next session automatically.
+- **Avoid** custom headers that start with a managed word (`current`,
+  `completed`, `planned`, `recent planning`): the parser matches sections by
+  prefix, so e.g. `## Current ideas` is mistaken for Current Focus and
+  regenerated away.
+- Notes placed *inside* a managed section are not preserved (those blocks are
+  regenerated) — keep notes in their own section.
 
 ## Components
 
@@ -88,8 +106,9 @@ ROADMAP.md is the **single authoritative view** of project status for Continuous
 1. Reads latest plan from `.claude/plans/` directory
 2. Extracts title, decisions, steps, files
 3. Updates Current Focus with new goal
-4. Moves previous goal to Completed
+4. **Demotes the previous Current Focus to Planned** (not Completed — switching focus ≠ finishing the prior goal)
 5. Records planning session in Recent Planning
+6. **Regenerates only the 4 managed sections in place** (`applyRoadmapUpdate`); intro prose, `## Notes`, and any other content are preserved verbatim
 
 ### git-commit-roadmap
 
@@ -102,12 +121,12 @@ ROADMAP.md is the **single authoritative view** of project status for Continuous
 
 ### roadmap-completion
 
-**Trigger:** PostToolUse (TaskUpdate with status=completed) or UserPromptSubmit with completion signals
+**Trigger:** PostToolUse (TaskUpdate with status=completed | Bash) or UserPromptSubmit with completion signals
 
-**Behavior:**
-1. Detects completion signals (tests passed, git push, "done")
-2. Moves Current Focus to Completed
-3. Optionally promotes next Planned item
+**Behavior (advisory-only — never writes ROADMAP):**
+1. Detects completion signals (tests passed, git push, "done", TaskUpdate completed)
+2. Emits a reminder that the Current Focus goal may be complete (surfaced via `additionalContext`)
+3. Does NOT write the file. (Previously it moved Current Focus → Completed and promoted the next Planned item on EVERY task completion — removed because it corrupted ROADMAP ~10×/session and clobbered manual edits. Use `/roadmap complete` + `/roadmap focus` for intentional advancement.)
 
 ## /roadmap Skill
 

@@ -64,9 +64,11 @@ history.jsonl
 # Internal development docs (not for release)
 docs/_internal/
 
-# ROADMAP contains session-specific planning data (auto-updated by hooks)
-ROADMAP.md
-ROADMAP.archive.md
+# ROADMAP contains session-specific planning data (auto-updated by hooks).
+# Anchored to repo root: the unanchored pattern also matched nested docs like
+# .claude/docs/architecture/subsystems/roadmap.md (case-insensitive on Windows).
+/ROADMAP.md
+/ROADMAP.archive.md
 
 # Statsig telemetry
 statsig/

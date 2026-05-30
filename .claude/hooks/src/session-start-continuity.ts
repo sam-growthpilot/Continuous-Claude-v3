@@ -153,6 +153,31 @@ export function extractLedgerSection(handoffContent: string): string | null {
 }
 
 /**
+ * Extract hand-written notes blocks from ROADMAP.md content.
+ *
+ * For each of `## Notes`, `## For Next Session`, `## Scratch`, matches the
+ * header through its body up to the next `## ` header or EOF (mirroring the
+ * Current Focus regex in buildUnifiedContext). Returns a
+ * `"## <Header>\n<trimmed body>"` block for each header that exists with a
+ * non-empty body; `[]` if none.
+ */
+export function extractNotesSections(roadmapContent: string): string[] {
+  const HEADERS = ['Notes', 'For Next Session', 'Scratch'];
+  const blocks: string[] = [];
+  for (const header of HEADERS) {
+    const re = new RegExp(`## ${header}\\n([\\s\\S]*?)(?=\\n## |$)`);
+    const match = roadmapContent.match(re);
+    if (match) {
+      const body = match[1].trim();
+      if (body) {
+        blocks.push(`## ${header}\n${body}`);
+      }
+    }
+  }
+  return blocks;
+}
+
+/**
  * Find the most recent handoff file for a given session.
  * Looks in thoughts/shared/handoffs/{sessionName}/ directory.
  * Returns absolute path to the most recent handoff file (.md, .yaml, .yml) by mtime, or null if not found.
@@ -309,6 +334,14 @@ async function buildUnifiedContext(projectDir: string): Promise<string> {
       if (sessionMatch) {
         const sessionContent = sessionMatch[3].substring(0, 400);
         sections.push(`## Recent Planning: ${sessionMatch[2]}\n${sessionContent}`);
+      }
+
+      // Surface hand-written notes (## Notes / ## For Next Session / ## Scratch)
+      // preserved across plan-approval regeneration.
+      const roadmapNotes = extractNotesSections(roadmap);
+      for (const note of roadmapNotes) {
+        const [header, ...body] = note.split('\n');
+        sections.push(`## ROADMAP - ${header.replace(/^##\s*/, '')}\n${body.join('\n').substring(0, 800)}`);
       }
     } catch (error) {
       console.error(`Warning: Error reading ROADMAP.md for unified context: ${error}`);
@@ -879,6 +912,10 @@ async function readStdin(): Promise<string> {
     let data = '';
     process.stdin.on('data', chunk => data += chunk);
     process.stdin.on('end', () => resolve(data));
+    // Fallback so importing this module in a test (which runs top-level main())
+    // can't hang waiting on a stdin 'end' that never arrives. Mirrors
+    // git-commit-roadmap.ts:57.
+    setTimeout(() => resolve(data), 1000);
   });
 }
 

@@ -31,92 +31,177 @@ interface PostToolUseInput {
 type PlanningSession = SharedPlanningSession;
 type RoadmapSection = RoadmapDoc;
 
+/**
+ * Render one managed section's body lines VERBATIM — the `## Header` line plus
+ * its content, with NO trailing-blank normalization. This is the exact
+ * per-section emit the pre-refactor generateRoadmap produced (sessions
+ * sub-blocks keep their own trailing blanks). Used by both generateRoadmap
+ * (byte-for-byte fresh-file output) and renderManagedSection (splice form).
+ */
+function renderSectionBody(
+  key: 'current' | 'completed' | 'planned' | 'sessions',
+  sections: RoadmapSection,
+): string[] {
+  const lines: string[] = [];
+
+  if (key === 'current') {
+    lines.push('## Current Focus');
+    if (sections.current) {
+      lines.push(`**${sections.current.title}**`);
+      if (sections.current.description) {
+        lines.push(`- ${sections.current.description}`);
+      }
+      if (sections.current.started) {
+        lines.push(`- Started: ${sections.current.started}`);
+      }
+    } else {
+      lines.push('No current focus set.');
+    }
+  } else if (key === 'completed') {
+    lines.push('## Completed');
+    if (sections.completed.length > 0) {
+      for (const item of sections.completed) {
+        const dateStr = item.completed ? ` (${item.completed})` : '';
+        lines.push(`- [x] ${item.title}${dateStr}`);
+      }
+    } else {
+      lines.push('_No completed items yet._');
+    }
+  } else if (key === 'planned') {
+    lines.push('## Planned');
+    if (sections.planned.length > 0) {
+      for (const item of sections.planned) {
+        // priorityBucket is normalized 'high' | 'medium' | 'low' (Phase 3A shared parser).
+        const bucket = item.priorityBucket || 'medium';
+        lines.push(`- [ ] ${item.title} (${bucket} priority)`);
+      }
+    } else {
+      lines.push('_No planned items yet._');
+    }
+  } else {
+    // key === 'sessions'
+    lines.push('## Recent Planning Sessions');
+    if (sections.sessions.length > 0) {
+      for (const session of sections.sessions.slice(0, 5)) {
+        lines.push(`### ${session.date}: ${session.title}`);
+
+        // Summary if available
+        if (session.summary) {
+          lines.push(`**Summary:** ${session.summary}`);
+          lines.push('');
+        }
+
+        // Key decisions
+        if (session.decisions.length > 0) {
+          lines.push('**Key Decisions:**');
+          for (const decision of session.decisions) {
+            lines.push(`- ${decision}`);
+          }
+          lines.push('');
+        }
+
+        // Implementation steps
+        if (session.steps && session.steps.length > 0) {
+          lines.push('**Implementation:**');
+          for (const step of session.steps) {
+            lines.push(`- ${step}`);
+          }
+          lines.push('');
+        }
+
+        // Affected files
+        if (session.files && session.files.length > 0) {
+          lines.push(`**Files:** ${session.files.join(', ')}`);
+          lines.push('');
+        }
+
+        // Verification
+        if (session.verification && session.verification.length > 0) {
+          lines.push(`**Verification:** ${session.verification[0]}`);
+          lines.push('');
+        }
+      }
+    } else {
+      lines.push('_No planning sessions recorded._');
+    }
+  }
+
+  return lines;
+}
+
+/**
+ * Render a single managed section's lines, INCLUDING its `## Header` line and
+ * exactly one trailing blank line.
+ *
+ * The body byte-matches what generateRoadmap emits for that section; the
+ * uniform single trailing blank lets applyRoadmapUpdate splice sections in
+ * place without accumulating or dropping blank lines.
+ */
+function renderManagedSection(
+  key: 'current' | 'completed' | 'planned' | 'sessions',
+  sections: RoadmapSection,
+): string[] {
+  const lines = renderSectionBody(key, sections);
+  // Collapse any trailing blanks (sessions sub-blocks may leave one) to exactly one.
+  while (lines.length > 0 && lines[lines.length - 1] === '') {
+    lines.pop();
+  }
+  lines.push('');
+  return lines;
+}
+
 function generateRoadmap(sections: RoadmapSection): string {
+  // Reproduce the pre-refactor byte output exactly: title, then each managed
+  // section body followed by a single blank line — EXCEPT the trailing sessions
+  // block, which keeps its raw body (no forced trailing blank) as before.
   const lines: string[] = ['# Project Roadmap', ''];
-
-  lines.push('## Current Focus');
-  if (sections.current) {
-    lines.push(`**${sections.current.title}**`);
-    if (sections.current.description) {
-      lines.push(`- ${sections.current.description}`);
-    }
-    if (sections.current.started) {
-      lines.push(`- Started: ${sections.current.started}`);
-    }
-  } else {
-    lines.push('No current focus set.');
-  }
-  lines.push('');
-
-  lines.push('## Completed');
-  if (sections.completed.length > 0) {
-    for (const item of sections.completed) {
-      const dateStr = item.completed ? ` (${item.completed})` : '';
-      lines.push(`- [x] ${item.title}${dateStr}`);
-    }
-  } else {
-    lines.push('_No completed items yet._');
-  }
-  lines.push('');
-
-  lines.push('## Planned');
-  if (sections.planned.length > 0) {
-    for (const item of sections.planned) {
-      // priorityBucket is normalized 'high' | 'medium' | 'low' (Phase 3A shared parser).
-      const bucket = item.priorityBucket || 'medium';
-      lines.push(`- [ ] ${item.title} (${bucket} priority)`);
-    }
-  } else {
-    lines.push('_No planned items yet._');
-  }
-  lines.push('');
-
-  lines.push('## Recent Planning Sessions');
-  if (sections.sessions.length > 0) {
-    for (const session of sections.sessions.slice(0, 5)) {
-      lines.push(`### ${session.date}: ${session.title}`);
-
-      // Summary if available
-      if (session.summary) {
-        lines.push(`**Summary:** ${session.summary}`);
-        lines.push('');
-      }
-
-      // Key decisions
-      if (session.decisions.length > 0) {
-        lines.push('**Key Decisions:**');
-        for (const decision of session.decisions) {
-          lines.push(`- ${decision}`);
-        }
-        lines.push('');
-      }
-
-      // Implementation steps
-      if (session.steps && session.steps.length > 0) {
-        lines.push('**Implementation:**');
-        for (const step of session.steps) {
-          lines.push(`- ${step}`);
-        }
-        lines.push('');
-      }
-
-      // Affected files
-      if (session.files && session.files.length > 0) {
-        lines.push(`**Files:** ${session.files.join(', ')}`);
-        lines.push('');
-      }
-
-      // Verification
-      if (session.verification && session.verification.length > 0) {
-        lines.push(`**Verification:** ${session.verification[0]}`);
-        lines.push('');
-      }
-    }
-  } else {
-    lines.push('_No planning sessions recorded._');
-  }
-
+  lines.push(...renderSectionBody('current', sections), '');
+  lines.push(...renderSectionBody('completed', sections), '');
+  lines.push(...renderSectionBody('planned', sections), '');
+  lines.push(...renderSectionBody('sessions', sections));
   return lines.join('\n');
+}
+
+/**
+ * Regenerate ONLY the 4 managed sections in place, splicing every other line
+ * (intro prose, `## Notes` / custom sections, loose prose) back verbatim from
+ * the original file. Uses the parser's rawSections line-range map.
+ *
+ * Pure: depends only on `sections.rawContent` (original text) and
+ * `sections.rawSections` (original line ranges — unaffected by main()'s later
+ * mutation of the structured fields), plus the mutated structured fields the
+ * managed sections are regenerated from.
+ */
+export function applyRoadmapUpdate(sections: RoadmapDoc): string {
+  const original = sections.rawContent;
+  if (!original.trim()) return generateRoadmap(sections);   // fresh/empty file -> canonical
+
+  const lines = original.split('\n');
+  const MANAGED: Array<'current' | 'completed' | 'planned' | 'sessions'> = ['current', 'completed', 'planned', 'sessions'];
+
+  // present managed ranges, sorted by original start line
+  const present = MANAGED
+    .map(key => ({ key, range: sections.rawSections.get(key) }))
+    .filter(x => x.range)
+    .sort((a, b) => a.range!.start - b.range!.start);
+
+  const out: string[] = [];
+  let cursor = 0;
+  for (const { key, range } of present) {
+    // verbatim unmanaged lines before this managed section (preamble / custom sections / loose prose)
+    for (let i = cursor; i < range!.start; i++) out.push(lines[i]);
+    // regenerated managed block in place
+    out.push(...renderManagedSection(key, sections));
+    cursor = range!.end;
+  }
+  // trailing verbatim content after the last managed section
+  for (let i = cursor; i < lines.length; i++) out.push(lines[i]);
+
+  // append any managed section that did not exist in the original (canonical order)
+  for (const key of MANAGED) {
+    if (!sections.rawSections.get(key)) out.push(...renderManagedSection(key, sections));
+  }
+  return out.join('\n');
 }
 
 export function demoteCurrentFocusToPlanned(sections: RoadmapDoc, newTitle: string): void {
@@ -529,7 +614,7 @@ async function main() {
 
   sections.sessions = sections.sessions.slice(0, 5);
 
-  const newContent = generateRoadmap(sections);
+  const newContent = applyRoadmapUpdate(sections);
   fs.mkdirSync(path.dirname(roadmapPath), { recursive: true });
   fs.writeFileSync(roadmapPath, newContent, 'utf-8');
 

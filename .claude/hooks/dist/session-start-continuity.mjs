@@ -275,6 +275,22 @@ function extractLedgerSection(handoffContent) {
   return match ? `## Ledger
 ${match[1].trim()}` : null;
 }
+function extractNotesSections(roadmapContent) {
+  const HEADERS = ["Notes", "For Next Session", "Scratch"];
+  const blocks = [];
+  for (const header of HEADERS) {
+    const re = new RegExp(`## ${header}\\n([\\s\\S]*?)(?=\\n## |$)`);
+    const match = roadmapContent.match(re);
+    if (match) {
+      const body = match[1].trim();
+      if (body) {
+        blocks.push(`## ${header}
+${body}`);
+      }
+    }
+  }
+  return blocks;
+}
 function findSessionHandoff(sessionName) {
   const projectDir = process.env.CLAUDE_PROJECT_DIR || process.cwd();
   const handoffDir = path2.join(projectDir, "thoughts", "shared", "handoffs", sessionName);
@@ -358,6 +374,12 @@ ${currentMatch[1].trim().substring(0, 500)}`);
         const sessionContent = sessionMatch[3].substring(0, 400);
         sections.push(`## Recent Planning: ${sessionMatch[2]}
 ${sessionContent}`);
+      }
+      const roadmapNotes = extractNotesSections(roadmap);
+      for (const note of roadmapNotes) {
+        const [header, ...body] = note.split("\n");
+        sections.push(`## ROADMAP - ${header.replace(/^##\s*/, "")}
+${body.join("\n").substring(0, 800)}`);
       }
     } catch (error) {
       console.error(`Warning: Error reading ROADMAP.md for unified context: ${error}`);
@@ -836,6 +858,7 @@ async function readStdin() {
     let data = "";
     process.stdin.on("data", (chunk) => data += chunk);
     process.stdin.on("end", () => resolve2(data));
+    setTimeout(() => resolve2(data), 1e3);
   });
 }
 main().catch((err) => {
@@ -845,6 +868,7 @@ main().catch((err) => {
 export {
   buildHandoffDirName,
   extractLedgerSection,
+  extractNotesSections,
   extractYamlFields,
   findSessionHandoff,
   findSessionHandoffWithUUID,

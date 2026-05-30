@@ -244,76 +244,113 @@ function parseRoadmap(content) {
 }
 
 // src/post-plan-roadmap.ts
+function renderSectionBody(key, sections) {
+  const lines = [];
+  if (key === "current") {
+    lines.push("## Current Focus");
+    if (sections.current) {
+      lines.push(`**${sections.current.title}**`);
+      if (sections.current.description) {
+        lines.push(`- ${sections.current.description}`);
+      }
+      if (sections.current.started) {
+        lines.push(`- Started: ${sections.current.started}`);
+      }
+    } else {
+      lines.push("No current focus set.");
+    }
+  } else if (key === "completed") {
+    lines.push("## Completed");
+    if (sections.completed.length > 0) {
+      for (const item of sections.completed) {
+        const dateStr = item.completed ? ` (${item.completed})` : "";
+        lines.push(`- [x] ${item.title}${dateStr}`);
+      }
+    } else {
+      lines.push("_No completed items yet._");
+    }
+  } else if (key === "planned") {
+    lines.push("## Planned");
+    if (sections.planned.length > 0) {
+      for (const item of sections.planned) {
+        const bucket = item.priorityBucket || "medium";
+        lines.push(`- [ ] ${item.title} (${bucket} priority)`);
+      }
+    } else {
+      lines.push("_No planned items yet._");
+    }
+  } else {
+    lines.push("## Recent Planning Sessions");
+    if (sections.sessions.length > 0) {
+      for (const session of sections.sessions.slice(0, 5)) {
+        lines.push(`### ${session.date}: ${session.title}`);
+        if (session.summary) {
+          lines.push(`**Summary:** ${session.summary}`);
+          lines.push("");
+        }
+        if (session.decisions.length > 0) {
+          lines.push("**Key Decisions:**");
+          for (const decision of session.decisions) {
+            lines.push(`- ${decision}`);
+          }
+          lines.push("");
+        }
+        if (session.steps && session.steps.length > 0) {
+          lines.push("**Implementation:**");
+          for (const step of session.steps) {
+            lines.push(`- ${step}`);
+          }
+          lines.push("");
+        }
+        if (session.files && session.files.length > 0) {
+          lines.push(`**Files:** ${session.files.join(", ")}`);
+          lines.push("");
+        }
+        if (session.verification && session.verification.length > 0) {
+          lines.push(`**Verification:** ${session.verification[0]}`);
+          lines.push("");
+        }
+      }
+    } else {
+      lines.push("_No planning sessions recorded._");
+    }
+  }
+  return lines;
+}
+function renderManagedSection(key, sections) {
+  const lines = renderSectionBody(key, sections);
+  while (lines.length > 0 && lines[lines.length - 1] === "") {
+    lines.pop();
+  }
+  lines.push("");
+  return lines;
+}
 function generateRoadmap(sections) {
   const lines = ["# Project Roadmap", ""];
-  lines.push("## Current Focus");
-  if (sections.current) {
-    lines.push(`**${sections.current.title}**`);
-    if (sections.current.description) {
-      lines.push(`- ${sections.current.description}`);
-    }
-    if (sections.current.started) {
-      lines.push(`- Started: ${sections.current.started}`);
-    }
-  } else {
-    lines.push("No current focus set.");
-  }
-  lines.push("");
-  lines.push("## Completed");
-  if (sections.completed.length > 0) {
-    for (const item of sections.completed) {
-      const dateStr = item.completed ? ` (${item.completed})` : "";
-      lines.push(`- [x] ${item.title}${dateStr}`);
-    }
-  } else {
-    lines.push("_No completed items yet._");
-  }
-  lines.push("");
-  lines.push("## Planned");
-  if (sections.planned.length > 0) {
-    for (const item of sections.planned) {
-      const bucket = item.priorityBucket || "medium";
-      lines.push(`- [ ] ${item.title} (${bucket} priority)`);
-    }
-  } else {
-    lines.push("_No planned items yet._");
-  }
-  lines.push("");
-  lines.push("## Recent Planning Sessions");
-  if (sections.sessions.length > 0) {
-    for (const session of sections.sessions.slice(0, 5)) {
-      lines.push(`### ${session.date}: ${session.title}`);
-      if (session.summary) {
-        lines.push(`**Summary:** ${session.summary}`);
-        lines.push("");
-      }
-      if (session.decisions.length > 0) {
-        lines.push("**Key Decisions:**");
-        for (const decision of session.decisions) {
-          lines.push(`- ${decision}`);
-        }
-        lines.push("");
-      }
-      if (session.steps && session.steps.length > 0) {
-        lines.push("**Implementation:**");
-        for (const step of session.steps) {
-          lines.push(`- ${step}`);
-        }
-        lines.push("");
-      }
-      if (session.files && session.files.length > 0) {
-        lines.push(`**Files:** ${session.files.join(", ")}`);
-        lines.push("");
-      }
-      if (session.verification && session.verification.length > 0) {
-        lines.push(`**Verification:** ${session.verification[0]}`);
-        lines.push("");
-      }
-    }
-  } else {
-    lines.push("_No planning sessions recorded._");
-  }
+  lines.push(...renderSectionBody("current", sections), "");
+  lines.push(...renderSectionBody("completed", sections), "");
+  lines.push(...renderSectionBody("planned", sections), "");
+  lines.push(...renderSectionBody("sessions", sections));
   return lines.join("\n");
+}
+function applyRoadmapUpdate(sections) {
+  const original = sections.rawContent;
+  if (!original.trim()) return generateRoadmap(sections);
+  const lines = original.split("\n");
+  const MANAGED = ["current", "completed", "planned", "sessions"];
+  const present = MANAGED.map((key) => ({ key, range: sections.rawSections.get(key) })).filter((x) => x.range).sort((a, b) => a.range.start - b.range.start);
+  const out = [];
+  let cursor = 0;
+  for (const { key, range } of present) {
+    for (let i = cursor; i < range.start; i++) out.push(lines[i]);
+    out.push(...renderManagedSection(key, sections));
+    cursor = range.end;
+  }
+  for (let i = cursor; i < lines.length; i++) out.push(lines[i]);
+  for (const key of MANAGED) {
+    if (!sections.rawSections.get(key)) out.push(...renderManagedSection(key, sections));
+  }
+  return out.join("\n");
 }
 function demoteCurrentFocusToPlanned(sections, newTitle) {
   if (!sections.current || sections.current.title === newTitle) return;
@@ -651,7 +688,7 @@ async function main() {
     sections.sessions.unshift(newSession);
   }
   sections.sessions = sections.sessions.slice(0, 5);
-  const newContent = generateRoadmap(sections);
+  const newContent = applyRoadmapUpdate(sections);
   fs2.mkdirSync(path2.dirname(roadmapPath), { recursive: true });
   fs2.writeFileSync(roadmapPath, newContent, "utf-8");
   console.error(`[post-plan-roadmap] ROADMAP.md updated: ${planInfo.title}`);
@@ -688,5 +725,6 @@ main().catch((err) => {
   console.log(JSON.stringify({ result: "continue" }));
 });
 export {
+  applyRoadmapUpdate,
   demoteCurrentFocusToPlanned
 };
