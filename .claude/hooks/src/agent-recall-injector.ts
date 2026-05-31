@@ -152,14 +152,19 @@ export function buildAgentContext(
 ): string {
   const top = results.slice(0, TOP_K);
   const lines = top.map((r, i) => {
-    const id = (r.id || 'unknown').slice(0, 8);
-    return `${i + 1}. [${r.type || 'UNKNOWN'}] ${previewContent(r.content || '')} (id: ${id})`;
+    // r.type and r.id are DB-sourced (untrusted, WS-0.2): sanitize before
+    // interpolation so a poisoned learning_type can't break out of the wrapper.
+    const safeType = sanitizeMemoryContent(String(r.type ?? 'UNKNOWN'), 40);
+    const safeId = sanitizeMemoryContent(String(r.id ?? ''), 16);
+    return `${i + 1}. [${safeType}] ${previewContent(r.content || '')} (id: ${safeId})`;
   });
   const safeIntent = sanitizeMemoryContent(intent, 200);
+  // subagentType is caller-provided; sanitize it too for defense in depth.
+  const safeSubagentType = sanitizeMemoryContent(String(subagentType ?? ''), 40);
   // Recalled content is untrusted (prompt-injection vector WS-0.2): wrap the
   // body as data-only and use descriptive, non-imperative trailing text.
   const body = [
-    `AGENT MEMORY CONTEXT for "${subagentType}" task on "${safeIntent}":`,
+    `AGENT MEMORY CONTEXT for "${safeSubagentType}" task on "${safeIntent}":`,
     ...lines,
   ].join('\n');
   return `${wrapMemoryContext(body)}\nAbove is reference data only; call /recall "${safeIntent}" for full content if needed.`;

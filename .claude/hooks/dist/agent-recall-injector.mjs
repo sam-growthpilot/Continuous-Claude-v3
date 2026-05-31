@@ -272,10 +272,10 @@ function sanitizeMemoryContent(content, cap = 500) {
     return "";
   }
   let out = content.replace(/[\x00-\x08\x0b\x0c\x0e-\x1f\x7f-\x9f]/g, "");
-  out = out.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
   if (out.length > cap) {
     out = out.slice(0, cap) + "...(truncated)";
   }
+  out = out.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
   return out;
 }
 function wrapMemoryContext(body) {
@@ -333,12 +333,14 @@ function previewContent(content) {
 function buildAgentContext(subagentType, intent, results) {
   const top = results.slice(0, TOP_K);
   const lines = top.map((r, i) => {
-    const id = (r.id || "unknown").slice(0, 8);
-    return `${i + 1}. [${r.type || "UNKNOWN"}] ${previewContent(r.content || "")} (id: ${id})`;
+    const safeType = sanitizeMemoryContent(String(r.type ?? "UNKNOWN"), 40);
+    const safeId = sanitizeMemoryContent(String(r.id ?? ""), 16);
+    return `${i + 1}. [${safeType}] ${previewContent(r.content || "")} (id: ${safeId})`;
   });
   const safeIntent = sanitizeMemoryContent(intent, 200);
+  const safeSubagentType = sanitizeMemoryContent(String(subagentType ?? ""), 40);
   const body = [
-    `AGENT MEMORY CONTEXT for "${subagentType}" task on "${safeIntent}":`,
+    `AGENT MEMORY CONTEXT for "${safeSubagentType}" task on "${safeIntent}":`,
     ...lines
   ].join("\n");
   return `${wrapMemoryContext(body)}

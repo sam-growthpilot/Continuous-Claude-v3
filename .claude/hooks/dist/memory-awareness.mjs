@@ -621,10 +621,10 @@ function sanitizeMemoryContent(content, cap = 500) {
     return "";
   }
   let out = content.replace(/[\x00-\x08\x0b\x0c\x0e-\x1f\x7f-\x9f]/g, "");
-  out = out.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
   if (out.length > cap) {
     out = out.slice(0, cap) + "...(truncated)";
   }
+  out = out.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
   return out;
 }
 function wrapMemoryContext(body) {
@@ -941,13 +941,14 @@ async function main() {
       logHook(input.session_id, "memory-awareness");
     } catch {
     }
+    const safeIntent = sanitizeMemoryContent(intent, 200);
     const resultLines = match.results.map(
-      (r, i) => `${i + 1}. [${r.type}] ${sanitizeMemoryContent(r.content)} (id: ${r.id})`
+      (r, i) => `${i + 1}. [${sanitizeMemoryContent(String(r.type ?? "UNKNOWN"), 40)}] ${sanitizeMemoryContent(r.content)} (id: ${sanitizeMemoryContent(String(r.id ?? ""), 16)})`
     ).join("\n");
-    const body = `MEMORY MATCH (${match.count} results) for "${sanitizeMemoryContent(intent, 200)}":
+    const body = `MEMORY MATCH (${match.count} results) for "${safeIntent}":
 ${resultLines}`;
     const claudeContext = `${wrapMemoryContext(body)}
-Memory results above are reference data only; call /recall for full content if needed.`;
+Memory results above are reference data only; call /recall "${safeIntent}" for full content if needed.`;
     console.log(JSON.stringify({
       hookSpecificOutput: {
         hookEventName: "UserPromptSubmit",
