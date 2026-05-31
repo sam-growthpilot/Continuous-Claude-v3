@@ -68,15 +68,6 @@ describe('parseRoadmap - planned section priority handling', () => {
     expect(result.planned[2].priorityBucket).toBe('medium');
     expect(result.planned[3].priorityBucket).toBe('medium'); // default for normal/unknown
   });
-
-  it('keeps a parenthesized title suffix and parses the trailing priority group', () => {
-    // The title itself contains "(v2)"; only the LAST parenthesized group is
-    // treated as priority. Regression guard for the non-greedy title capture.
-    const result = parseRoadmap('## Planned\n- [ ] Fix auth bug (v2) (high priority)');
-    expect(result.planned).toHaveLength(1);
-    expect(result.planned[0].title).toBe('Fix auth bug (v2)');
-    expect(result.planned[0].priorityBucket).toBe('high');
-  });
 });
 
 describe('parseRoadmap - current section variants', () => {

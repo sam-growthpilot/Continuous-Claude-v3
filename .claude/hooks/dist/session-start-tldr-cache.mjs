@@ -36,11 +36,11 @@ function main() {
   }
   const projectDir = process.env.CLAUDE_PROJECT_DIR || input.cwd;
   if (isCacheStale(projectDir)) {
-    const child = spawn("tldr", ["daemon", "warm", "--project", projectDir], {
+    const child = spawn("tldr", ["warm", "."], {
+      cwd: projectDir,
       detached: true,
       stdio: "ignore",
-      shell: process.platform === "win32"
-      // Shell needed on Windows
+      windowsHide: true
     });
     child.unref();
   }

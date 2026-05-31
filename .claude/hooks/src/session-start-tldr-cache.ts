@@ -69,11 +69,18 @@ function main() {
   // Warm cache in detached background process if stale
   // Uses spawn with detached:true so process exits immediately
   if (isCacheStale(projectDir)) {
-    // Cross-platform: use tldr daemon warm command
-    const child = spawn('tldr', ['daemon', 'warm', '--project', projectDir], {
+    // Cross-platform: pre-build the call-graph cache via `tldr warm`.
+    // `warm` is a top-level command (NOT `tldr daemon warm`). Spawn tldr.exe
+    // directly with NO shell: a detached process started without a shell gets
+    // no console window. With shell:true, Windows routes through cmd.exe and
+    // pops a console that windowsHide cannot reliably suppress. Omit
+    // `--background` so tldr indexes inside this hidden detached process rather
+    // than forking its own (console-creating) background worker.
+    const child = spawn('tldr', ['warm', '.'], {
+      cwd: projectDir,
       detached: true,
       stdio: 'ignore',
-      shell: process.platform === 'win32', // Shell needed on Windows
+      windowsHide: true,
     });
     child.unref(); // Allow parent to exit immediately
   }

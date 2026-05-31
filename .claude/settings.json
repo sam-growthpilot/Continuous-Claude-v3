@@ -559,16 +559,6 @@
         "C:/Users/david.hayes/.claude/servers/qlty/server.py"
       ],
       "disabled": true
-    },
-    "pageindex": {
-      "type": "stdio",
-      "command": "cmd",
-      "args": [
-        "/c",
-        "npx",
-        "-y",
-        "@pageindex/mcp"
-      ]
     }
   },
   "effortLevel": "high"

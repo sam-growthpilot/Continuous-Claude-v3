@@ -39,11 +39,6 @@
       "args": ["/c", "npx", "-y", "next-devtools-mcp@latest"],
       "type": "stdio"
     },
-    "pageindex": {
-      "command": "cmd",
-      "args": ["/c", "npx", "-y", "@pageindex/mcp"],
-      "type": "stdio"
-    },
     "nia": {
       "command": "cmd",
       "args": ["/c", "uv", "tool", "run", "nia-mcp-server"],
