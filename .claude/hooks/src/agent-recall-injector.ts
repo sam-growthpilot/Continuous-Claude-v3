@@ -42,7 +42,7 @@ import { sanitizeMemoryContent, wrapMemoryContext } from './shared/memory-saniti
 // ---------------------------------------------------------------------------
 
 export const PROACTIVE_INJECTION_FLOOR = 0.05;
-const RECALL_TIMEOUT_MS = 2000;
+const RECALL_TIMEOUT_MS = 3500;
 const MIN_PROMPT_LENGTH = 30;
 const TOP_K = 3;
 const PREVIEW_CHARS = 120;
@@ -101,8 +101,8 @@ export function shouldSkip(input: TaskHookInput): SkipDecision {
   if (!input || typeof input !== 'object') {
     return { skip: true, reason: 'invalid input' };
   }
-  if (input.tool_name !== 'Task') {
-    return { skip: true, reason: `tool_name is not Task (${input.tool_name})` };
+  if (input.tool_name !== 'Agent' && input.tool_name !== 'Task') {
+    return { skip: true, reason: `tool_name is not Agent/Task (${input.tool_name})` };
   }
   const ti = input.tool_input;
   if (!ti || typeof ti !== 'object') {
@@ -336,7 +336,15 @@ function readStdin(): string {
   }
 }
 
-async function main(): Promise<void> {
+export async function main(): Promise<void> {
+  // Emergency kill-switch (Codex #5): this hook fires on every agent spawn,
+  // so provide an escape hatch if recall ever degrades agent latency.
+  // Checked before stdin is read/parsed so it can never add overhead.
+  if (process.env.CCV3_AGENT_RECALL_OFF === '1') {
+    outputContinue();
+    return;
+  }
+
   let input: TaskHookInput;
   try {
     const raw = readStdin().trim();

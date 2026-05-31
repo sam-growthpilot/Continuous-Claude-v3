@@ -14,7 +14,7 @@
  * hitting the real Postgres backend.
  */
 
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import * as fs from 'fs';
 import * as path from 'path';
 import * as os from 'os';
@@ -23,6 +23,7 @@ import {
   shouldSkip,
   buildAgentContext,
   handleAgentTask,
+  main,
   PROACTIVE_INJECTION_FLOOR,
   type RecallFn,
   type RecallResult,
@@ -125,6 +126,13 @@ describe('shouldSkip', () => {
     const decision = shouldSkip(makeInput({ tool_name: 'Bash' }));
     expect(decision.skip).toBe(true);
     expect(decision.reason).toMatch(/not.*task/i);
+  });
+
+  it('does NOT skip when tool_name is Agent (Claude Code sends "Agent")', () => {
+    // Activation fix: Claude Code emits tool_name="Agent" for the Agent tool.
+    // shouldSkip must accept it so spawned agents actually get memory recall.
+    const decision = shouldSkip(makeInput({ tool_name: 'Agent' }));
+    expect(decision.skip).toBe(false);
   });
 
   it('returns true for subagent_type=oracle (external research)', () => {
@@ -245,7 +253,7 @@ describe('buildAgentContext', () => {
     expect(xCount).toBeLessThanOrEqual(125);
   });
 
-  it('shortens result ids to 8 chars', () => {
+  it('sanitizes and caps result ids to 16 chars', () => {
     const ctx = buildAgentContext('kraken', 'intent', [
       {
         id: 'super-long-uuid-that-should-be-shortened',
@@ -254,9 +262,13 @@ describe('buildAgentContext', () => {
         score: 0.5,
       },
     ]);
-    // The 8-char shortened id appears in the context
-    expect(ctx).toContain('id: super-lo');
-    expect(ctx).not.toContain('id: super-long-uuid');
+    // id is sanitized and capped to 16 chars: "super-long-uuid-...(truncated)"
+    // The 16-char prefix survives
+    expect(ctx).toContain('super-long-uuid-');
+    // The tail beyond 16 chars is gone
+    expect(ctx).not.toContain('that-should-be-shortened');
+    // Truncation marker is present
+    expect(ctx).toContain('...(truncated)');
   });
 
   it('caps at top 3 even when more provided', () => {
@@ -449,5 +461,63 @@ describe('agent-recall.jsonl logging', () => {
     expect(entry.results_count).toBe(2);
     expect(entry.kept_after_floor).toBe(1);
     expect(entry.top_score).toBeCloseTo(0.42, 3);
+  });
+});
+
+// =============================================================================
+// Activation: tool_name="Agent" reaches the recall path end-to-end
+// =============================================================================
+
+describe('handleAgentTask -- Agent tool_name activation', () => {
+  it('injects context when tool_name is "Agent" (reaches recall, mocked)', () => {
+    // Proves the activation fix: an "Agent" tool call is NOT skipped and
+    // flows all the way through to injection. recall is mocked (no subprocess).
+    const recall = recallReturning([FAKE_RESULT_A, FAKE_RESULT_B]);
+    const out = handleAgentTask(makeInput({ tool_name: 'Agent' }), recall);
+    expect(out).not.toBeNull();
+    expect(out!.hookSpecificOutput?.hookEventName).toBe('PreToolUse');
+    expect(out!.hookSpecificOutput?.additionalContext).toContain('AGENT MEMORY CONTEXT');
+    expect(out!.hookSpecificOutput?.additionalContext).toContain('ERROR_FIX');
+  });
+});
+
+// =============================================================================
+// Kill-switch: CCV3_AGENT_RECALL_OFF short-circuits main() to continue
+// =============================================================================
+
+describe('CCV3_AGENT_RECALL_OFF kill-switch', () => {
+  let prevOff: string | undefined;
+
+  beforeEach(() => {
+    prevOff = process.env.CCV3_AGENT_RECALL_OFF;
+  });
+
+  afterEach(() => {
+    if (prevOff === undefined) {
+      delete process.env.CCV3_AGENT_RECALL_OFF;
+    } else {
+      process.env.CCV3_AGENT_RECALL_OFF = prevOff;
+    }
+  });
+
+  it('main() emits a continue and injects nothing when set to "1"', async () => {
+    process.env.CCV3_AGENT_RECALL_OFF = '1';
+    const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+    let calls: unknown[][];
+    try {
+      // The guard returns before stdin is read, so no stdin mock is needed.
+      await main();
+      // Snapshot recorded calls BEFORE mockRestore() — restore clears them.
+      calls = logSpy.mock.calls.map((c) => [...c]);
+    } finally {
+      logSpy.mockRestore();
+    }
+
+    expect(calls.length).toBe(1);
+    const emitted = String(calls[0][0]);
+    // Standard continue/no-op shape — never an injected memory context.
+    expect(emitted).toContain('continue');
+    expect(emitted).not.toContain('AGENT MEMORY CONTEXT');
+    expect(emitted).not.toContain('additionalContext');
   });
 });

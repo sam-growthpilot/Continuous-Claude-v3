@@ -286,7 +286,7 @@ ${body}
 
 // src/agent-recall-injector.ts
 var PROACTIVE_INJECTION_FLOOR = 0.05;
-var RECALL_TIMEOUT_MS = 2e3;
+var RECALL_TIMEOUT_MS = 3500;
 var MIN_PROMPT_LENGTH = 30;
 var TOP_K = 3;
 var PREVIEW_CHARS = 120;
@@ -299,8 +299,8 @@ function shouldSkip(input) {
   if (!input || typeof input !== "object") {
     return { skip: true, reason: "invalid input" };
   }
-  if (input.tool_name !== "Task") {
-    return { skip: true, reason: `tool_name is not Task (${input.tool_name})` };
+  if (input.tool_name !== "Agent" && input.tool_name !== "Task") {
+    return { skip: true, reason: `tool_name is not Agent/Task (${input.tool_name})` };
   }
   const ti = input.tool_input;
   if (!ti || typeof ti !== "object") {
@@ -463,6 +463,10 @@ function readStdin() {
   }
 }
 async function main() {
+  if (process.env.CCV3_AGENT_RECALL_OFF === "1") {
+    outputContinue();
+    return;
+  }
   let input;
   try {
     const raw = readStdin().trim();
@@ -504,5 +508,6 @@ export {
   buildAgentContext,
   defaultRecall,
   handleAgentTask,
+  main,
   shouldSkip
 };
