@@ -177,7 +177,7 @@ async function main() {
     const completedTasks = tasks.filter((t) => t.status === "complete" || t.status === "completed").length;
     const checkpoints = unified.checkpoints || [];
     const lastCheckpoint = checkpoints.length > 0 ? checkpoints[checkpoints.length - 1] : null;
-    if (totalTasks > 0) {
+    if (totalTasks > 0 && completedTasks < totalTasks) {
       unifiedRecoveryInfo = [
         `  **Ralph** workflow (unified state)`,
         `  Story: ${unified.story_id}`,

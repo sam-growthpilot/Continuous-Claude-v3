@@ -45,7 +45,7 @@ diff -rq "$REPO/hooks/src/" "$ACTIVE/hooks/src/" 2>/dev/null | grep -v node_modu
 
 #### 1b. hooks/dist/ (built output)
 
-The dist directory is NOT synced by `sync-to-active.sh` -- it is rebuilt locally via `npm run build`. Check for stale builds by comparing modification times.
+The dist directory IS synced by `sync-to-active.sh` -- the repo's pre-built `hooks/dist/*.mjs` are copied to active. Check for stale builds (active src newer than its synced dist) by comparing modification times.
 
 ```bash
 # Check if any src file is newer than its dist counterpart

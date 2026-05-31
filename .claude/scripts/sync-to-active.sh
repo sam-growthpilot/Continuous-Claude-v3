@@ -36,7 +36,7 @@ done
 $VERBOSE && echo "Syncing: $REPO_CLAUDE → $ACTIVE_CLAUDE" || true
 
 # hooks/src excluded: dist/*.mjs is what runs; copying src stomps mtimes and breaks hook-dist-freshness.
-SYNC_DIRS="rules agents skills docs"
+SYNC_DIRS="rules agents skills scripts docs"
 
 NEVER_SYNC="CLAUDE.md RULES.md .env .credentials.json settings.json history.jsonl knowledge-tree.json"
 
@@ -70,11 +70,29 @@ copy_dir() {
     done < <(find "$src_path" -type f ! -name "*.pid" ! -name "*.lock" ! -path "*/.tldr/*" ! -path "*/node_modules/*" ! -path "*/cache/*" ! -path "*/dist/*" 2>/dev/null)
 }
 
+# Regenerate .json sidecars from .md frontmatter before copying agents.
+# This ensures any .md edits are reflected in the .json files that claude_spawn.py reads.
+SYNC_AGENT_JSON="$SCRIPT_DIR/sync-agent-json.py"
+if [[ -f "$SYNC_AGENT_JSON" ]]; then
+    if $DRY_RUN; then
+        echo "[DRY RUN] Would regenerate agent .json sidecars from .md frontmatter"
+    else
+        $VERBOSE && echo "Regenerating agent .json sidecars..." || true
+        python "$SYNC_AGENT_JSON" --target "$REPO_CLAUDE/agents" --apply \
+            $( $VERBOSE && echo "--verbose" || true ) 2>&1 \
+            | python -c "import json,sys; d=json.load(sys.stdin); print(f'  agent-json-sync: {d[\"summary\"][\"updated\"]} updated, {d[\"summary\"][\"no_change\"]} unchanged')" \
+            || echo "  Warning: agent .json sidecar sync failed (non-fatal)"
+    fi
+fi
+
 for dir in $SYNC_DIRS; do
     copy_dir "$dir"
 done
 
 # Sync top-level .claude/*.md files (canonical entry points / redirect stubs)
+# mkdir -p the target root first -- a fresh-install machine may not have ~/.claude/
+# yet, and `cp file dir/` requires the dir to exist.
+$DRY_RUN || mkdir -p "$ACTIVE_CLAUDE"
 for src_file in "$REPO_CLAUDE"/*.md; do
     [[ ! -f "$src_file" ]] && continue
     base=$(basename "$src_file")
@@ -144,6 +162,19 @@ if [[ -d "$TEMPLATES_SRC" ]]; then
     done
 fi
 
+# Sync opc/scripts/core/project_memory.py → scripts/core/ (needed by memory-awareness.ts)
+CORE_SRC="$REPO_ROOT/opc/scripts/core/project_memory.py"
+CORE_DST="$ACTIVE_CLAUDE/scripts/core/project_memory.py"
+if [[ -f "$CORE_SRC" ]]; then
+    $DRY_RUN || mkdir -p "$(dirname "$CORE_DST")"
+    if $DRY_RUN; then
+        echo "[DRY RUN] Would copy: $CORE_SRC -> $CORE_DST"
+    else
+        cp "$CORE_SRC" "$CORE_DST"
+        $VERBOSE && echo "Copied: opc/scripts/core/project_memory.py -> scripts/core/project_memory.py" || true
+    fi
+fi
+
 # Sync scripts/ralph/*.py (create target directory if needed for fresh installs)
 RALPH_SRC="$REPO_CLAUDE/scripts/ralph"
 RALPH_DST="$ACTIVE_CLAUDE/scripts/ralph"
@@ -162,17 +193,7 @@ if [[ -d "$RALPH_SRC" ]]; then
     done
 fi
 
-if ! $DRY_RUN && ! $SKIP_BUILD; then
-    if [[ -f "$ACTIVE_CLAUDE/hooks/package.json" ]]; then
-        echo "Rebuilding hooks..."
-        cd "$ACTIVE_CLAUDE/hooks"
-        if [[ -f "build.sh" ]]; then
-            bash build.sh
-        elif command -v npm &> /dev/null; then
-            npm run build 2>/dev/null || echo "Warning: Hook build failed"
-        fi
-    fi
-fi
+# Build step removed (CCv3 WS-0.3 structural fix): dist is pre-built in the repo and copied to active by the hooks/dist block above. No build-from-active-src.
 
 # Merge mcpServers from repo settings.json into active settings.json
 # This preserves machine-specific settings while syncing MCP server config
@@ -181,13 +202,17 @@ if ! $DRY_RUN && command -v jq &> /dev/null; then
     ACTIVE_SETTINGS="$ACTIVE_CLAUDE/settings.json"
 
     if [[ -f "$REPO_SETTINGS" && -f "$ACTIVE_SETTINGS" ]]; then
-        # Extract mcpServers from repo and merge into active
-        MCP_SERVERS=$(jq '.mcpServers // empty' "$REPO_SETTINGS" 2>/dev/null)
+        # Extract mcpServers from repo and merge into active.
+        # Both jq calls run under `set -e`, so a malformed JSON file would
+        # abort the entire sync before reaching the cleanup paths below.
+        # The `|| MCP_SERVERS=""` and `if jq ...; then` forms keep set -e
+        # from killing the script on a non-zero jq exit -- we want a
+        # graceful skip instead.
+        MCP_SERVERS=$(jq '.mcpServers // empty' "$REPO_SETTINGS" 2>/dev/null) || MCP_SERVERS=""
         if [[ -n "$MCP_SERVERS" && "$MCP_SERVERS" != "null" ]]; then
             # Create temp file with merged content
             TEMP_SETTINGS=$(mktemp)
-            jq --argjson mcp "$MCP_SERVERS" '.mcpServers = $mcp' "$ACTIVE_SETTINGS" > "$TEMP_SETTINGS" 2>/dev/null
-            if [[ $? -eq 0 && -s "$TEMP_SETTINGS" ]]; then
+            if jq --argjson mcp "$MCP_SERVERS" '.mcpServers = $mcp' "$ACTIVE_SETTINGS" > "$TEMP_SETTINGS" 2>/dev/null && [[ -s "$TEMP_SETTINGS" ]]; then
                 mv "$TEMP_SETTINGS" "$ACTIVE_SETTINGS"
                 $VERBOSE && echo "Merged mcpServers into ~/.claude/settings.json" || true
             else

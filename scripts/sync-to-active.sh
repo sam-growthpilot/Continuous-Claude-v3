@@ -193,17 +193,7 @@ if [[ -d "$RALPH_SRC" ]]; then
     done
 fi
 
-if ! $DRY_RUN && ! $SKIP_BUILD; then
-    if [[ -f "$ACTIVE_CLAUDE/hooks/package.json" ]]; then
-        echo "Rebuilding hooks..."
-        cd "$ACTIVE_CLAUDE/hooks"
-        if [[ -f "build.sh" ]]; then
-            bash build.sh
-        elif command -v npm &> /dev/null; then
-            npm run build 2>/dev/null || echo "Warning: Hook build failed"
-        fi
-    fi
-fi
+# Build step removed (CCv3 WS-0.3 structural fix): dist is pre-built in the repo and copied to active by the hooks/dist block above. No build-from-active-src.
 
 # Merge mcpServers from repo settings.json into active settings.json
 # This preserves machine-specific settings while syncing MCP server config
