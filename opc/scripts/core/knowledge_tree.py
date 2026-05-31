@@ -40,10 +40,28 @@ KEY_FILES = {
 }
 
 IGNORE_DIRS = {
+    # Build artifacts, dependencies, and tool caches
     ".git", "node_modules", "__pycache__", ".venv", "venv",
     "dist", "build", ".next", ".cache", "coverage", ".pytest_cache",
-    ".mypy_cache", ".ruff_cache", "target", ".idea", ".vscode"
+    ".mypy_cache", ".ruff_cache", "target", ".idea", ".vscode",
+    # Non-structural dirs: scratch copies, scratch output, experiments,
+    # runtime caches, and archives. These are not project architecture and
+    # were polluting component/entry-point discovery (e.g. test-screenshots
+    # matching "routes/", spark-frontend-experiment matching "oauth/").
+    ".agents", "thoughts", "cache", "backup", "test-screenshots",
+    "test-data", "test-results", "screenshots", "tmp", "temp",
+    "logs", "transcripts", "proofs",
+    # Archive conventions used across this codebase (dot-, underscore-, and
+    # plain-prefixed). Archived skills/agents/hooks are dead weight in the tree.
+    ".archive", "_archive", "_archived", "_snapshots", "_sandbox",
+    "archive", "snapshots",
 }
+
+# Substrings that mark a directory path segment as non-structural even when
+# the leaf dir name itself is not in IGNORE_DIRS (e.g. "spark-frontend-experiment").
+IGNORE_NAME_SUBSTRINGS = (
+    "-experiment", "experiment-", "-scratch", "scratch-",
+)
 
 IGNORE_PATTERNS = {
     r"\.pyc$", r"\.pyo$", r"\.so$", r"\.dll$", r"\.exe$",
@@ -80,6 +98,10 @@ def should_ignore(path: Path) -> bool:
     name = path.name
     if name in IGNORE_DIRS:
         return True
+    name_lower = name.lower()
+    for marker in IGNORE_NAME_SUBSTRINGS:
+        if marker in name_lower:
+            return True
     for pattern in IGNORE_PATTERNS:
         if re.search(pattern, name):
             return True
@@ -327,6 +349,30 @@ def infer_directory_purpose(name: str, files: list[str]) -> str:
     return "Project directory"
 
 
+def _path_segments(dir_path: str) -> list[str]:
+    """Split a tree directory key into lowercase path segments.
+
+    Keys look like 'opc\\scripts\\core\\db/' (Windows) or 'opc/scripts/core/db/'
+    (POSIX) with a trailing slash. Returns ['opc', 'scripts', 'core', 'db'].
+    """
+    return [seg for seg in re.split(r"[\\/]+", dir_path.lower()) if seg]
+
+
+def _segment_matches(dir_path: str, patterns: list[str]) -> bool:
+    """True if any whole path segment of dir_path equals a pattern's dir name.
+
+    Patterns are dir-name tokens with a trailing slash (e.g. 'auth/'). Matching
+    on whole segments (not arbitrary substrings) prevents false positives like
+    'oauth' matching 'auth' or 'test-routes' matching 'routes'.
+    """
+    segments = set(_path_segments(dir_path))
+    for pattern in patterns:
+        token = pattern.rstrip("/").lower()
+        if token in segments:
+            return True
+    return False
+
+
 def detect_components(root: Path, directories: dict[str, Any]) -> list[dict[str, Any]]:
     components = []
 
@@ -342,10 +388,8 @@ def detect_components(root: Path, directories: dict[str, Any]) -> list[dict[str,
     for comp_key, (name, comp_type, patterns) in component_dirs.items():
         matching_dirs = []
         for dir_path in directories.keys():
-            for pattern in patterns:
-                if pattern in dir_path.lower():
-                    matching_dirs.append(dir_path)
-                    break
+            if _segment_matches(dir_path, patterns):
+                matching_dirs.append(dir_path)
 
         if matching_dirs:
             components.append({
@@ -373,10 +417,12 @@ def build_navigation(directories: dict[str, Any]) -> dict[str, Any]:
     }
 
     for task, patterns in task_mappings.items():
-        matching = [d for d in directories.keys() for p in patterns if p in d.lower()]
+        matching = [d for d in directories.keys() if _segment_matches(d, patterns)]
         if matching:
             common_tasks[task] = matching[:3]
 
+    # Dir-name tokens (trailing "/") match on whole path segments; path-fragment
+    # tokens (e.g. "src/index", "main.py") still use substring matching.
     entry_mappings = {
         "main": ["src/index", "src/main", "src/app", "main.py", "app.py", "index.ts"],
         "cli": ["bin/", "cli/", "cli.py", "cli.ts"],
@@ -384,12 +430,14 @@ def build_navigation(directories: dict[str, Any]) -> dict[str, Any]:
     }
 
     for entry, patterns in entry_mappings.items():
+        dir_tokens = [p for p in patterns if p.endswith("/")]
+        frag_tokens = [p for p in patterns if not p.endswith("/")]
         for d in directories.keys():
-            for p in patterns:
-                if p in d.lower():
-                    entry_points[entry] = d
-                    break
-            if entry in entry_points:
+            d_lower = d.lower()
+            if (dir_tokens and _segment_matches(d, dir_tokens)) or any(
+                p in d_lower for p in frag_tokens
+            ):
+                entry_points[entry] = d
                 break
 
     return {"common_tasks": common_tasks, "entry_points": entry_points}
