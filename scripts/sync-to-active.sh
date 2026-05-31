@@ -16,14 +16,16 @@ while [[ $# -gt 0 ]]; do
     case $1 in
         --dry-run) DRY_RUN=true; shift ;;
         --verbose) VERBOSE=true; shift ;;
+        --skip-build) shift ;;
         --help|-h)
-            echo "Usage: $0 [--dry-run] [--verbose]"
+            echo "Usage: $0 [--dry-run] [--verbose] [--skip-build]"
             echo ""
             echo "Syncs continuous-claude/.claude/ → ~/.claude/"
             echo ""
             echo "Options:"
             echo "  --dry-run     Show what would be copied without copying"
             echo "  --verbose     Show detailed progress"
+            echo "  --skip-build  Accepted for back-compat; no-op (build step was removed)"
             exit 0
             ;;
         *) echo "Unknown option: $1"; exit 1 ;;
