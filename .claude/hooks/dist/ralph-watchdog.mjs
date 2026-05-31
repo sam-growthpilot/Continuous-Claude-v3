@@ -119,6 +119,10 @@ async function main() {
   const staleWorkflows = [];
   const projectDir = process.env.CLAUDE_PROJECT_DIR || process.cwd();
   const unified = readRalphUnifiedState(projectDir);
+  if (!unified?.session?.active) {
+    console.log(JSON.stringify({ result: "continue" }));
+    return;
+  }
   if (unified?.session?.active) {
     const lastHeartbeat = unified.session.last_activity || 0;
     const elapsed = Date.now() - lastHeartbeat;

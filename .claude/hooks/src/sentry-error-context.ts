@@ -99,6 +99,14 @@ async function main() {
     return;
   }
 
+  // Early-exit: if Sentry isn't configured for this project, this hook is a
+  // pure no-op. Skip the keyword regex work entirely. Both SENTRY_ORG and
+  // SENTRY_DSN must be unset/empty for us to bail.
+  if (!process.env.SENTRY_ORG && !process.env.SENTRY_DSN) {
+    console.log('{}');
+    return;
+  }
+
   const result = handleUserPrompt(input);
 
   if (result) {

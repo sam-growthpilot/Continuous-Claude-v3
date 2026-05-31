@@ -41,6 +41,10 @@ async function main() {
     console.log("{}");
     return;
   }
+  if (!process.env.SENTRY_ORG && !process.env.SENTRY_DSN) {
+    console.log("{}");
+    return;
+  }
   const result = handleUserPrompt(input);
   if (result) {
     console.log(JSON.stringify(result));

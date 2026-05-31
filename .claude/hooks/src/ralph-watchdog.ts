@@ -44,6 +44,16 @@ async function main() {
   // Check unified Ralph state
   const projectDir = process.env.CLAUDE_PROJECT_DIR || process.cwd();
   const unified = readRalphUnifiedState(projectDir);
+
+  // Explicit early-exit when no active Ralph session - matches the guard in
+  // ralph-progress-inject and ralph-retry-reminder. Previously this hook
+  // exited implicitly (empty staleWorkflows -> continue at the end); making
+  // it explicit lets it bail immediately like its siblings.
+  if (!unified?.session?.active) {
+    console.log(JSON.stringify({ result: 'continue' }));
+    return;
+  }
+
   if (unified?.session?.active) {
     const lastHeartbeat = unified.session.last_activity || 0;
     const elapsed = Date.now() - lastHeartbeat;

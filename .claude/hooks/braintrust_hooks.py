@@ -851,6 +851,35 @@ def main():
         print(f"Unknown hook: {hook_name}", file=sys.stderr)
         sys.exit(1)
 
+    # Earliest-possible TRACE-disabled early-out for the per-prompt hot path.
+    # user_prompt_submit fires on every prompt; when tracing is off (the
+    # default) we want to do the absolute minimum before returning the no-op
+    # continue result -- skipping the config re-parse, stdin read, and dispatch
+    # below. We must NOT short-circuit when tracing is effectively enabled, so
+    # we resolve TRACE_TO_BRAINTRUST from BOTH the process env and ~/.env (the
+    # latter is how tracing is enabled on machines that don't export the var).
+    # The full path (which mutates os.environ and re-parses every config var)
+    # still runs whenever tracing is on or for any other subcommand.
+    if hook_name == "user_prompt_submit":
+        trace_effective = os.environ.get("TRACE_TO_BRAINTRUST", "").lower() == "true"
+        if not trace_effective:
+            try:
+                env_file_probe = Path.home() / ".claude" / ".env"
+                if env_file_probe.exists():
+                    for probe_line in env_file_probe.read_text().splitlines():
+                        if probe_line.startswith("#") or "=" not in probe_line:
+                            continue
+                        k, _, v = probe_line.partition("=")
+                        if k.strip() == "TRACE_TO_BRAINTRUST":
+                            trace_effective = v.strip().lower() == "true"
+                            break
+            except Exception:
+                # Fail open toward the full path -- never silently lose a trace.
+                trace_effective = True
+        if not trace_effective:
+            print(json.dumps({"result": "continue"}))
+            sys.exit(0)
+
     # Load .env if exists
     env_file = Path.home() / ".claude" / ".env"
     if env_file.exists():

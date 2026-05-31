@@ -10,7 +10,8 @@
  * task prompts get full architectural guidance.
  */
 
-import { readFileSync } from 'fs';
+import { readFileSync, appendFileSync, mkdirSync } from 'fs';
+import { join } from 'path';
 import {
   detectTaskType,
   extractQueryKeywords,
@@ -23,6 +24,12 @@ import {
 } from './shared/navigator-state.js';
 import { queryPageIndex, PageIndexResult } from './shared/pageindex-client.js';
 import { outputContinue } from './shared/output.js';
+
+// Hit-vs-fallback instrumentation (Phase 2 Step 3a).
+// Set to true whenever any query helper gets a real PageIndex row back;
+// stays false when every helper falls through to a static fallback string.
+// Reset per invocation at the top of main().
+let pageIndexHit = false;
 
 interface UserPromptSubmitInput {
   session_id: string;
@@ -108,6 +115,7 @@ function queryDecisionTree(
   });
 
   if (results.length > 0) {
+    pageIndexHit = true;
     // Format results as decision tree snippet
     const lines = results.map(r =>
       `  ${r.title}: ${r.relevanceReason}`
@@ -142,11 +150,17 @@ function queryRelevantRules(
 
   if (!query) return [];
 
-  return queryPageIndex(query, null, {
+  const results = queryPageIndex(query, null, {
     maxResults: 2,
     docType: 'DOCUMENTATION', // Rules are indexed as documentation
     timeoutMs: 2000,
   });
+
+  if (results.length > 0) {
+    pageIndexHit = true;
+  }
+
+  return results;
 }
 
 /**
@@ -166,6 +180,7 @@ function queryAgentGuidance(
   });
 
   if (results.length > 0) {
+    pageIndexHit = true;
     return results.map(r => r.title);
   }
 
@@ -227,13 +242,42 @@ function formatGuidance(
 }
 
 /**
- * Format minimal output for casual prompts.
+ * Append one observability line to .claude/logs/pageindex-nav.jsonl.
+ *
+ * Records whether a real PageIndex row was returned (pageIndexHit) vs a
+ * static fallback, plus the wall-clock spent in the query helpers. This is
+ * the evidence the "instrument first, then decide" plan needs to later
+ * choose keep-vs-skip on cold PageIndex DBs. Fail-open: never break the hook.
  */
-function formatMinimalGuidance(): string {
-  return '\nNAVIGATOR: No specific task detected.\n';
+function logNavFire(
+  projectDir: string,
+  taskType: TaskType,
+  hit: boolean,
+  durationMs: number
+): void {
+  try {
+    const dir = join(projectDir, '.claude', 'logs');
+    try {
+      mkdirSync(dir, { recursive: true });
+    } catch {
+      /* dir already exists */
+    }
+    const entry = {
+      ts: new Date().toISOString(),
+      taskType,
+      pageIndexHit: hit,
+      durationMs,
+    };
+    appendFileSync(join(dir, 'pageindex-nav.jsonl'), JSON.stringify(entry) + '\n');
+  } catch {
+    /* fail-open: never let logging break the hook */
+  }
 }
 
 async function main() {
+  // Reset per-invocation instrumentation flag.
+  pageIndexHit = false;
+
   const input: UserPromptSubmitInput = JSON.parse(readStdin());
   const projectDir = process.env.CLAUDE_PROJECT_DIR || input.cwd;
 
@@ -255,11 +299,19 @@ async function main() {
     return;
   }
 
-  // Load session state
-  const state = loadState(input.session_id);
-
   // Detect task type
   const taskType = detectTaskType(input.prompt);
+
+  // CASUAL short-circuit: no PageIndex query, no spawn, no injection.
+  // (Previously emitted a ~40-char "No specific task detected" block; now a
+  // true no-op continue so casual prompts skip the Python spawn entirely.)
+  if (taskType === 'CASUAL') {
+    outputContinue();
+    return;
+  }
+
+  // Load session state
+  const state = loadState(input.session_id);
 
   // Extract keywords for queries
   const keywords = extractQueryKeywords(input.prompt);
@@ -267,34 +319,32 @@ async function main() {
   // Check if we should abbreviate (same task type as before)
   const abbreviated = shouldAbbreviate(state, taskType);
 
-  let guidance: string;
+  // Query architecture for guidance (instrumented for hit-vs-fallback).
+  const queryStart = Date.now();
+  const decisionTree = queryDecisionTree(taskType, keywords);
+  const rules = queryRelevantRules(taskType, keywords);
+  const agents = queryAgentGuidance(taskType, keywords);
+  const durationMs = Date.now() - queryStart;
 
-  if (taskType === 'CASUAL') {
-    // Minimal output for casual prompts
-    guidance = formatMinimalGuidance();
-  } else {
-    // Query architecture for guidance
-    const decisionTree = queryDecisionTree(taskType, keywords);
-    const rules = queryRelevantRules(taskType, keywords);
-    const agents = queryAgentGuidance(taskType, keywords);
+  // Append observability line (fail-open).
+  logNavFire(projectDir, taskType, pageIndexHit, durationMs);
 
-    // Format guidance
-    guidance = formatGuidance(
-      taskType,
-      decisionTree,
-      rules,
-      agents,
-      abbreviated
-    );
+  // Format guidance
+  const guidance = formatGuidance(
+    taskType,
+    decisionTree,
+    rules,
+    agents,
+    abbreviated
+  );
 
-    // Update state
-    markGuidanceShown(
-      state,
-      taskType,
-      rules.map(r => r.docPath || r.title),
-      agents
-    );
-  }
+  // Update state
+  markGuidanceShown(
+    state,
+    taskType,
+    rules.map(r => r.docPath || r.title),
+    agents
+  );
 
   // Save state
   state.currentPromptKeywords = keywords;

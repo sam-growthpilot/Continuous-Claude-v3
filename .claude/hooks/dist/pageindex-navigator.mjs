@@ -1,5 +1,6 @@
 // src/pageindex-navigator.ts
-import { readFileSync as readFileSync2 } from "fs";
+import { readFileSync as readFileSync2, appendFileSync, mkdirSync as mkdirSync2 } from "fs";
+import { join as join3 } from "path";
 
 // src/shared/navigator-state.ts
 import { existsSync, readFileSync, writeFileSync, mkdirSync } from "fs";
@@ -365,6 +366,7 @@ function outputContinue() {
 }
 
 // src/pageindex-navigator.ts
+var pageIndexHit = false;
 var ARCHITECTURE_DOCS = {
   decisionTrees: ".claude/docs/architecture/DECISION-TREES.md",
   agentPicker: ".claude/docs/architecture/quick-ref/agent-picker.md",
@@ -423,6 +425,7 @@ function queryDecisionTree(taskType, keywords) {
     timeoutMs: 2e3
   });
   if (results.length > 0) {
+    pageIndexHit = true;
     const lines = results.map(
       (r) => `  ${r.title}: ${r.relevanceReason}`
     );
@@ -444,12 +447,16 @@ function queryRelevantRules(taskType, keywords) {
   const baseQuery = ruleQueries[taskType] || "";
   const query = `${baseQuery} ${keywords.slice(0, 3).join(" ")}`.trim();
   if (!query) return [];
-  return queryPageIndex(query, null, {
+  const results = queryPageIndex(query, null, {
     maxResults: 2,
     docType: "DOCUMENTATION",
     // Rules are indexed as documentation
     timeoutMs: 2e3
   });
+  if (results.length > 0) {
+    pageIndexHit = true;
+  }
+  return results;
 }
 function queryAgentGuidance(taskType, keywords) {
   if (taskType === "CASUAL") return [];
@@ -459,6 +466,7 @@ function queryAgentGuidance(taskType, keywords) {
     timeoutMs: 2e3
   });
   if (results.length > 0) {
+    pageIndexHit = true;
     return results.map((r) => r.title);
   }
   return getSuggestedAgents(taskType);
@@ -494,10 +502,25 @@ function formatGuidance(taskType, decisionTree, rules, agents, abbreviated) {
   lines.push("");
   return lines.join("\n");
 }
-function formatMinimalGuidance() {
-  return "\nNAVIGATOR: No specific task detected.\n";
+function logNavFire(projectDir, taskType, hit, durationMs) {
+  try {
+    const dir = join3(projectDir, ".claude", "logs");
+    try {
+      mkdirSync2(dir, { recursive: true });
+    } catch {
+    }
+    const entry = {
+      ts: (/* @__PURE__ */ new Date()).toISOString(),
+      taskType,
+      pageIndexHit: hit,
+      durationMs
+    };
+    appendFileSync(join3(dir, "pageindex-nav.jsonl"), JSON.stringify(entry) + "\n");
+  } catch {
+  }
 }
 async function main() {
+  pageIndexHit = false;
   const input = JSON.parse(readStdin());
   const projectDir = process.env.CLAUDE_PROJECT_DIR || input.cwd;
   if (isInfrastructureDir(projectDir)) {
@@ -512,31 +535,33 @@ async function main() {
     outputContinue();
     return;
   }
-  const state = loadState(input.session_id);
   const taskType = detectTaskType(input.prompt);
+  if (taskType === "CASUAL") {
+    outputContinue();
+    return;
+  }
+  const state = loadState(input.session_id);
   const keywords = extractQueryKeywords(input.prompt);
   const abbreviated = shouldAbbreviate(state, taskType);
-  let guidance;
-  if (taskType === "CASUAL") {
-    guidance = formatMinimalGuidance();
-  } else {
-    const decisionTree = queryDecisionTree(taskType, keywords);
-    const rules = queryRelevantRules(taskType, keywords);
-    const agents = queryAgentGuidance(taskType, keywords);
-    guidance = formatGuidance(
-      taskType,
-      decisionTree,
-      rules,
-      agents,
-      abbreviated
-    );
-    markGuidanceShown(
-      state,
-      taskType,
-      rules.map((r) => r.docPath || r.title),
-      agents
-    );
-  }
+  const queryStart = Date.now();
+  const decisionTree = queryDecisionTree(taskType, keywords);
+  const rules = queryRelevantRules(taskType, keywords);
+  const agents = queryAgentGuidance(taskType, keywords);
+  const durationMs = Date.now() - queryStart;
+  logNavFire(projectDir, taskType, pageIndexHit, durationMs);
+  const guidance = formatGuidance(
+    taskType,
+    decisionTree,
+    rules,
+    agents,
+    abbreviated
+  );
+  markGuidanceShown(
+    state,
+    taskType,
+    rules.map((r) => r.docPath || r.title),
+    agents
+  );
   state.currentPromptKeywords = keywords;
   saveState(state);
   console.log(JSON.stringify({
