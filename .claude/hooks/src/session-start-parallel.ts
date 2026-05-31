@@ -20,7 +20,7 @@ import { spawn } from 'child_process';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { registerSession, getActiveSessions } from './shared/db-utils-pg.js';
-import { generateSessionId, writeSessionId, getProject, loadSessionId } from './shared/session-id.js';
+import { generateSessionId, writeSessionId, getProject } from './shared/session-id.js';
 import type { SessionStartInput, HookOutput } from './shared/types.js';
 
 interface TaskResult {

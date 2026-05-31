@@ -1,7 +1,7 @@
 // src/session-start-parallel.ts
 import { readFileSync as readFileSync2 } from "fs";
 import { spawn } from "child_process";
-import { homedir } from "node:os";
+import { homedir as homedir2 } from "node:os";
 import { join as join3 } from "node:path";
 
 // src/shared/db-utils-pg.ts
@@ -194,10 +194,11 @@ asyncio.run(main())
 
 // src/shared/session-id.ts
 import { mkdirSync, readFileSync, writeFileSync } from "fs";
+import { homedir } from "os";
 import { join as join2 } from "path";
 var SESSION_ID_FILENAME = ".coordination-session-id";
 function getSessionIdFile(options = {}) {
-  const claudeDir = join2(process.env.HOME || "/tmp", ".claude");
+  const claudeDir = join2(process.env.HOME || process.env.USERPROFILE || homedir(), ".claude");
   if (options.createDir) {
     try {
       mkdirSync(claudeDir, { recursive: true, mode: 448 });
@@ -325,7 +326,7 @@ async function main() {
   } catch {
     input = {};
   }
-  const hooksDir = join3(homedir(), ".claude", "hooks").replace(/\\/g, "/");
+  const hooksDir = join3(homedir2(), ".claude", "hooks").replace(/\\/g, "/");
   const distDir = `${hooksDir}/dist`;
   const results = await Promise.all([
     // Inline task (no subprocess)

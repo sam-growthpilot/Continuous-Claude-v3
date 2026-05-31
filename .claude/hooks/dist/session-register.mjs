@@ -191,10 +191,11 @@ asyncio.run(main())
 
 // src/shared/session-id.ts
 import { mkdirSync, readFileSync, writeFileSync } from "fs";
+import { homedir } from "os";
 import { join as join2 } from "path";
 var SESSION_ID_FILENAME = ".coordination-session-id";
 function getSessionIdFile(options = {}) {
-  const claudeDir = join2(process.env.HOME || "/tmp", ".claude");
+  const claudeDir = join2(process.env.HOME || process.env.USERPROFILE || homedir(), ".claude");
   if (options.createDir) {
     try {
       mkdirSync(claudeDir, { recursive: true, mode: 448 });

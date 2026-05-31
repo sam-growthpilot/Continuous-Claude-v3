@@ -11,6 +11,7 @@
  */
 
 import { mkdirSync, readFileSync, writeFileSync } from 'fs';
+import { homedir } from 'os';
 import { join } from 'path';
 
 /** Default filename for session ID persistence */
@@ -24,7 +25,7 @@ const SESSION_ID_FILENAME = '.coordination-session-id';
  * @returns Path to ~/.claude/.coordination-session-id
  */
 export function getSessionIdFile(options: { createDir?: boolean } = {}): string {
-  const claudeDir = join(process.env.HOME || '/tmp', '.claude');
+  const claudeDir = join(process.env.HOME || process.env.USERPROFILE || homedir(), '.claude');
 
   if (options.createDir) {
     try {
