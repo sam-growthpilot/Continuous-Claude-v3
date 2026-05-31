@@ -11,22 +11,19 @@ ACTIVE_CLAUDE="$HOME/.claude"
 
 DRY_RUN=false
 VERBOSE=false
-SKIP_BUILD=false
 
 while [[ $# -gt 0 ]]; do
     case $1 in
         --dry-run) DRY_RUN=true; shift ;;
         --verbose) VERBOSE=true; shift ;;
-        --skip-build) SKIP_BUILD=true; shift ;;
         --help|-h)
-            echo "Usage: $0 [--dry-run] [--verbose] [--skip-build]"
+            echo "Usage: $0 [--dry-run] [--verbose]"
             echo ""
             echo "Syncs continuous-claude/.claude/ → ~/.claude/"
             echo ""
             echo "Options:"
             echo "  --dry-run     Show what would be copied without copying"
             echo "  --verbose     Show detailed progress"
-            echo "  --skip-build  Skip npm build for hooks"
             exit 0
             ;;
         *) echo "Unknown option: $1"; exit 1 ;;

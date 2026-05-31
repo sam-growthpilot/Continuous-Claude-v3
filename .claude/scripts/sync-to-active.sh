@@ -5,28 +5,26 @@
 set -e
 
 SCRIPT_DIR="$( cd "$( dirname "$0" )" && pwd )"
-REPO_ROOT="$(dirname "$SCRIPT_DIR")"
+# up two levels: .claude/scripts -> .claude -> repo root (this copy is one level deeper than scripts/sync-to-active.sh)
+REPO_ROOT="$(dirname "$(dirname "$SCRIPT_DIR")")"
 REPO_CLAUDE="$REPO_ROOT/.claude"
 ACTIVE_CLAUDE="$HOME/.claude"
 
 DRY_RUN=false
 VERBOSE=false
-SKIP_BUILD=false
 
 while [[ $# -gt 0 ]]; do
     case $1 in
         --dry-run) DRY_RUN=true; shift ;;
         --verbose) VERBOSE=true; shift ;;
-        --skip-build) SKIP_BUILD=true; shift ;;
         --help|-h)
-            echo "Usage: $0 [--dry-run] [--verbose] [--skip-build]"
+            echo "Usage: $0 [--dry-run] [--verbose]"
             echo ""
             echo "Syncs continuous-claude/.claude/ → ~/.claude/"
             echo ""
             echo "Options:"
             echo "  --dry-run     Show what would be copied without copying"
             echo "  --verbose     Show detailed progress"
-            echo "  --skip-build  Skip npm build for hooks"
             exit 0
             ;;
         *) echo "Unknown option: $1"; exit 1 ;;

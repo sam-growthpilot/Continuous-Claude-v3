@@ -122,6 +122,9 @@ async function main() {
     const checkpoints = unified.checkpoints || [];
     const lastCheckpoint = checkpoints.length > 0 ? checkpoints[checkpoints.length - 1] : null;
 
+    // Guard is load-bearing: ralph-state-v2.py owns clearing session.active on
+    // completion but may lag, so this prevents a completed-but-active state file
+    // from surfacing a false "WORKFLOW RECOVERY" banner.
     if (totalTasks > 0 && completedTasks < totalTasks) {
       unifiedRecoveryInfo = [
         `  **Ralph** workflow (unified state)`,
