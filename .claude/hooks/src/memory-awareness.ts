@@ -226,7 +226,13 @@ function checkDbMemory(
       ...process.env,
       PYTHONPATH: opcDir
     },
-    timeout: 12000,
+    // Daemon fail-fast (Phase 3 tail): text-only recall is a pure Postgres FTS
+    // query with no embed-daemon round-trip -- measured ~750ms warm. Cap it at
+    // 5000ms so a degraded DB cannot hold session-start near the 12s hybrid
+    // ceiling, while staying well above cold `uv` start (~2.2s) + query so we do
+    // NOT reintroduce the 2000ms-SIGKILLs-every-recall regression noted above.
+    // Hybrid keeps 12000ms (cold BGE daemon embed warmup).
+    timeout: useHybrid ? 12000 : 5000,
     killSignal: 'SIGKILL',
   });
 
