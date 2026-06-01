@@ -153,11 +153,23 @@ PROMPT_EOF
 # fall back to gpt-5.4 if you see "requires a newer version of Codex" errors).
 CODEX_ADVERSARY_MODEL="${CODEX_ADVERSARY_MODEL:-gpt-5.5}"
 
+# Clean-capture the final answer via -o. A healthy codex exec streams a large
+# block of environmental startup noise to stdout/stderr BEFORE the real answer
+# (~150 `failed to load skill ... invalid YAML` lines from .agents/skills/, MCP
+# connection failures, a `[features].collab is deprecated` warning, many
+# `hook: ... Failed` lines). -o writes ONLY the model's final message, so you
+# parse findings from a clean file instead of grepping past the preamble.
+# --ephemeral avoids persisting a session for a throwaway review run.
+FINAL_MSG_FILE="$CLAUDE_PROJECT_DIR/.claude/cache/agents/codex-adversary/codex-final.txt"
+mkdir -p "$(dirname "$FINAL_MSG_FILE")"
+
 codex exec \
   --model "$CODEX_ADVERSARY_MODEL" \
   -c model_reasoning_effort=xhigh \
   --sandbox read-only \
+  --ephemeral \
   -C "$CLAUDE_PROJECT_DIR" \
+  -o "$FINAL_MSG_FILE" \
   - < "$PROMPT_FILE" \
   > "$OUTPUT_FILE" 2>&1
 
@@ -167,7 +179,9 @@ rm -f "$PROMPT_FILE"
 Notes:
 - `-` as positional PROMPT tells `codex exec` to read from stdin (avoids huge argv on Windows)
 - `--sandbox read-only` prevents any accidental file writes during review
-- Stderr is captured into the output file - Codex sometimes streams progress there
+- `-o "$FINAL_MSG_FILE"` captures ONLY the model's final message — this is your clean findings source. `$OUTPUT_FILE` keeps the full noisy combined log for debugging. (Verified 2026-06-01: `-o` returns a clean answer even when stdout has 100+ noise lines; auth and exit 0 unaffected.)
+- `--ephemeral` skips session-file persistence (review runs are throwaway; avoids growing `~/.codex/*.sqlite`)
+- Stderr is still captured into `$OUTPUT_FILE` - Codex sometimes streams progress there
 - If `codex exec` is not on PATH, surface the error clearly so the user knows to run Phase A install
 
 ## Step 6: Capture and Summarize
@@ -179,6 +193,8 @@ $CLAUDE_PROJECT_DIR/.claude/cache/agents/codex-adversary/latest-output.md
 ```
 
 Use the canonical convention from CLAUDE.md (NOT `output-{timestamp}.md`). The single `latest-output.md` makes synthesis consumers (review-agent, premortem) deterministic.
+
+**Parse findings from `$FINAL_MSG_FILE` (the `-o` clean capture), NOT from `$OUTPUT_FILE`.** `$OUTPUT_FILE`/`latest-output.md` is the full combined log and is dominated by environmental startup noise; the model's JSON/findings live cleanly in `$FINAL_MSG_FILE`. Fallback: if `$FINAL_MSG_FILE` is empty or missing (e.g. an older CLI without `-o`, or codex errored before answering), parse `$OUTPUT_FILE` instead, taking only the text AFTER the last line that is exactly `codex` (the sentinel preceding the final message). If both are empty, codex genuinely failed — surface the error verbatim, do not improvise findings.
 
 Return a concise summary to your caller:
 

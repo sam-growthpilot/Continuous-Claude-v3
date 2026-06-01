@@ -55,7 +55,7 @@ A healthy `codex exec` on this machine still streams a large block of non-fatal 
 - `[features].collab is deprecated. Use [features].multi_agent instead.`
 - Many `hook: SessionStart/UserPromptSubmit Failed` lines from `~/.codex/hooks.json`.
 
-The codex-adversary agent parses findings from after the `codex` sentinel and ignores this preamble. Cleaning it up (trimming `~/.codex/config.toml` MCP servers, fixing the deprecation, scoping skill dirs) is an optional follow-up that touches Dave's personal Codex env — confirm before editing those.
+The codex-adversary agent now captures the model's final answer via `codex exec -o <file>` and parses findings from that **clean** file (fix applied 2026-06-01), so this preamble no longer pollutes findings. The noise is therefore a cosmetic + latency tax only. Empirically (2026-06-01) it is NOT config-driven: `--ignore-user-config` still left ~106/125 noise lines, so the sources are hardcoded `.agents/skills/` scanning (a **673-file** mirror of the Claude skill library — `_snapshots/`/`archive/`/`.bak` dirs included), the separate `~/.codex/hooks.json`, and MCP connection attempts. The lone `config.toml` deprecation (`collab` -> `multi_agent`) is fixed. Cutting the remaining LATENCY would mean pruning/scoping `~/.agents/skills/` — but that is deletion of an unknown-provenance mirror, so check what regenerates it first and confirm before removing. Not needed for correct findings.
 
 ## Cost Awareness
 
