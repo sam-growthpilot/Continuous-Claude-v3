@@ -1,6 +1,6 @@
 ---
 name: excalidraw-mcp
-description: Create, edit, and export live Excalidraw diagrams using mcp-excalidraw-server (MCP tools + canvas REST API). Use when an agent needs to draw/lay out diagrams, convert Mermaid to Excalidraw, query/update/delete elements, or export/import elements from a running canvas server (EXPRESS_SERVER_URL, default http://localhost:3000).
+description: Create, edit, and export live Excalidraw diagrams using mcp-excalidraw-server (MCP tools + canvas REST API). Use when an agent needs to draw/lay out diagrams, convert Mermaid to Excalidraw, query/update/delete elements, or export/import elements from a running canvas server (EXPRESS_SERVER_URL, default http://localhost:3100).
 ---
 
 # Excalidraw MCP
@@ -11,7 +11,7 @@ Create and refine diagrams on a live Excalidraw canvas via MCP tools, with helpe
 
 ## Quick Start
 
-- Ensure the canvas server is reachable at `EXPRESS_SERVER_URL` (default `http://localhost:3000`).
+- Ensure the canvas server is reachable at `EXPRESS_SERVER_URL` (default `http://localhost:3100`).
 - Use MCP tools for interactive diagram edits; use `scripts/*.cjs` for file-ish workflows (export/import/clear/health).
 - For detailed endpoint/tool reference, read `references/cheatsheet.md`.
 

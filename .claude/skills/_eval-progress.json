@@ -252,10 +252,10 @@
     },
     "excalidraw-mcp": {
       "phase": "validated",
-      "structural": "fail",
+      "structural": "pass",
       "trigger_accuracy": null,
       "eval_tier": null,
-      "notes": "missing: scripts/*.cjs (healthcheck, clear-canvas, export/import)"
+      "notes": "scripts present; port reconciled 3002/3000->3100; live smoke PASS (health/create/export/delete) 2026-05-31"
     },
     "explore": {
       "phase": "evaluated",
