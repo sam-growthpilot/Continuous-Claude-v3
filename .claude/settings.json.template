@@ -250,11 +250,6 @@
             "type": "command",
             "command": "node {{CLAUDE_HOME}}/hooks/dist/roadmap-reconcile.mjs",
             "timeout": 10000
-          },
-          {
-            "type": "command",
-            "command": "node {{CLAUDE_HOME}}/hooks/dist/session-start-tldr-cache.mjs",
-            "timeout": 15000
           }
         ]
       }

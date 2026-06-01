@@ -34,7 +34,7 @@ If the file does not exist, report an error and stop. Extract the frontmatter (n
 RUN the structural validator:
 
 ```bash
-python ~/.claude/skills/skill-creator/scripts/quick_validate.py --skill-path ~/.claude/skills/<skill-name>/SKILL.md
+python ~/.claude/skills/skill-forge/scripts/quick_validate.py --skill-path ~/.claude/skills/<skill-name>/SKILL.md
 ```
 
 - If validation **FAILS**: report the specific errors to the user and **STOP**. Do NOT proceed to registration. The skill must be fixed first.
@@ -90,7 +90,7 @@ Write the eval set to `~/.claude/skills/<skill-name>/eval_set.json`:
 RUN the evaluation harness:
 
 ```bash
-python ~/.claude/skills/skill-creator/scripts/run_eval.py \
+python ~/.claude/skills/skill-forge/scripts/run_eval.py \
   --eval-set ~/.claude/skills/<skill-name>/eval_set.json \
   --skill-path ~/.claude/skills/<skill-name>/ \
   --runs-per-query 3 \
@@ -120,7 +120,7 @@ Also compute:
 RUN the optimization loop to improve the skill's description:
 
 ```bash
-python ~/.claude/skills/skill-creator/scripts/run_loop.py \
+python ~/.claude/skills/skill-forge/scripts/run_loop.py \
   --eval-set ~/.claude/skills/<skill-name>/eval_set.json \
   --skill-path ~/.claude/skills/<skill-name>/ \
   --max-iterations 5
