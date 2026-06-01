@@ -1,5 +1,7 @@
 # Codex CLI Repair — Handoff (2026-06-01)
 
+> **✅ RESOLVED 2026-06-01 (same day).** By the time the repair session ran, the CLI was already at `codex-cli 0.131.0` (the hang/0.104.0 state below was stale) and `codex --version` answered in <2s. No reinstall was needed. Verified end-to-end: `codex login status` = "Logged in using ChatGPT"; a `codex exec --sandbox read-only --model gpt-5.5 -c model_reasoning_effort=xhigh` smoke test returned model text at exit 0 (**ChatGPT-subscription auth authorizes `exec` — no `OPENAI_API_KEY`**, settling §4 below); and a real `codex-adversary` spawn on a live diff emitted genuine `[Codex]` findings. Docs updated: `codex-adversarial.md` + `cli-integration-strategy.md` (version + verified-auth note). Remaining wart: cosmetic startup noise (skill-YAML / MCP / hook errors) — documented in `codex-adversarial.md` "Startup Noise", optional cleanup. The playbook below is retained as the diagnostic record.
+
 **For:** a fresh session whose sole job is to restore the OpenAI Codex CLI so the cross-model adversarial review (`codex-adversary`) works again in `/review` and `/premortem`.
 
 **One-line problem:** the `codex` CLI **hangs on `codex --version`** (>=20s, exit 124) in BOTH git-bash and PowerShell — the binary itself is wedged, so every `codex exec` call in `codex-adversary` either hangs to timeout or returns garbage. There is currently **no cross-model lift** from `/review`.

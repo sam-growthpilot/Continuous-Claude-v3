@@ -30,7 +30,7 @@ Also did a `/review` (4 reviewers) of the whole sweep -> verdict **APPROVE** + t
 
 ## Open items (prioritized)
 
-1. **Repair the Codex CLI** -> see `docs/codex-cli-repair-handoff-2026-06-01.md`. `codex --version` hangs in both shells; `/review` + `/premortem` have **no cross-model lift** until fixed. After the fix, correct the stale claims in `codex-adversarial.md` (CLI version, auth model) + `cli-integration-strategy.md` (Codex version). **This is the next planned session.**
+1. ~~**Repair the Codex CLI**~~ **✅ DONE 2026-06-01.** The hang was already gone by repair time — CLI is `codex-cli 0.131.0`, `codex --version` <2s, logged in via ChatGPT. Verified `codex exec` runs on subscription auth alone (no `OPENAI_API_KEY`), and a real `codex-adversary` spawn emitted genuine `[Codex]` findings. Stale claims corrected in `codex-adversarial.md` (version + verified-auth + startup-noise note) and `cli-integration-strategy.md` (0.104.0 -> 0.131.0). `/review` + `/premortem` cross-model lift is restored. See `docs/codex-cli-repair-handoff-2026-06-01.md` (RESOLVED banner) for the diagnostic record. **Only remaining (optional):** cosmetic startup noise — Codex rejects `.agents/skills/` YAML, hits expired Linear/Neon MCP tokens + a dead Paper localhost, fires failing `~/.codex/hooks.json` hooks, and warns `[features].collab` is deprecated. None block findings; cleanup touches Dave's personal `~/.codex/` env (confirm first).
 
 2. **Item 6 — PageIndex keep-vs-archive** (the last Phase 0-3 item). DEFERRED pending `.claude/logs/pageindex-nav.jsonl` hit-vs-fallback telemetry (the navigator was instrumented in Step 3). Once enough prompts have accrued: if it always static-falls-back, archive the homegrown PageIndex pillar (~7,100 LOC + 4 hooks); if it's used, keep + improve.
 
@@ -44,7 +44,7 @@ Also did a `/review` (4 reviewers) of the whole sweep -> verdict **APPROVE** + t
    - **WS-1 P1** per-prompt hot-path prune (merge the 3 Ralph UPS hooks; early-exit sentry/braintrust) — must precede WS-2 Phase A (Gate G2).
    - **WS-2** context-bus spine (Phases A-E) — the v3 "Cohesive Intelligence" substrate. Biggest effort; gated; standalone value at A or B.5.
 
-5. **Codex telemetry honesty:** the `/review` codex-lift row for 2026-06-01 should record **codex_only = 0 (CLI down)** so the cross-model-lift metric isn't inflated by a non-functional pass.
+5. ~~**Codex telemetry honesty**~~ **MOOT 2026-06-01.** The CLI is healthy, so there is no "CLI down" row to record — the concern (a non-functional pass inflating cross-model lift) no longer applies. The next *real* `/review` will append an honest `codex-lift.jsonl` row with its actual `codex_only` count. (The post-repair verification on `store_learning.py` was a direct `codex-adversary` spawn, not a `/review`, so it correctly did not write a codex-lift row.)
 
 ## Operational notes carried forward
 

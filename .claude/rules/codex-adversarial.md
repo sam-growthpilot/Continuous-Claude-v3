@@ -1,6 +1,6 @@
 # Codex Adversarial Review Rules
 
-OpenAI Codex (default `gpt-5.5 @ xhigh`; override via `CODEX_ADVERSARY_MODEL` env var; requires `@openai/codex` CLI >= 0.131) is wired into CCv3 as a **cross-model adversarial reviewer** via:
+OpenAI Codex (default `gpt-5.5 @ xhigh`; override via `CODEX_ADVERSARY_MODEL` env var; requires `@openai/codex` CLI >= 0.131 — verified working on `codex-cli 0.131.0` as of 2026-06-01) is wired into CCv3 as a **cross-model adversarial reviewer** via:
 - `codex-plugin-cc` plugin (slash commands `/codex:*`)
 - `codex-adversary` agent (used by `/review` and `/premortem`)
 - `plan-exit-premortem-prompt` hook (auto-offers `/premortem` after every approved plan)
@@ -44,6 +44,18 @@ Before running ANY of these, explain what it does and wait for explicit user app
 ## Auth Model
 
 Codex authenticates via OAuth against Dave's ChatGPT subscription (Plus/Pro). Quota usage counts against that subscription, not against an OpenAI API key. There is no separate API billing - if `codex auth status` shows a logged-in ChatGPT account, every adversarial-review call is on the subscription.
+
+**Verified 2026-06-01:** with `codex-cli 0.131.0` and `codex login status` reporting "Logged in using ChatGPT", a smoke test of `codex exec --sandbox read-only --model gpt-5.5 -c model_reasoning_effort=xhigh` returned model output at exit 0. `exec` is authorized by the ChatGPT subscription **alone — no `OPENAI_API_KEY` is needed**. (A 2026-06-01 run against a wedged CLI had improvised that exec required an API key and that it was trying `o3`/`gpt-4o`; both were hallucinated noise after the binary hung, not a real auth or model gap. Do not trust a single broken run's self-reported auth diagnosis.)
+
+## Startup Noise (cosmetic, not a failure)
+
+A healthy `codex exec` on this machine still streams a large block of non-fatal startup noise to stderr/stdout *before* the real answer (which appears after the `codex` sentinel line). Treat all of the following as environmental, NOT as review findings or auth failures:
+- ~150 `failed to load skill ... invalid YAML` lines — Codex scans `~/.agents/skills/` and `<project>/.agents/skills/` (the gitignored next-skills mirror + `_snapshots/`) with its stricter `SkillFrontmatter` schema and rejects Claude-format skills.
+- MCP connection errors (Linear/Neon expired OAuth tokens; Paper `127.0.0.1:29979` not running) from `~/.codex/config.toml`.
+- `[features].collab is deprecated. Use [features].multi_agent instead.`
+- Many `hook: SessionStart/UserPromptSubmit Failed` lines from `~/.codex/hooks.json`.
+
+The codex-adversary agent parses findings from after the `codex` sentinel and ignores this preamble. Cleaning it up (trimming `~/.codex/config.toml` MCP servers, fixing the deprecation, scoping skill dirs) is an optional follow-up that touches Dave's personal Codex env — confirm before editing those.
 
 ## Cost Awareness
 
