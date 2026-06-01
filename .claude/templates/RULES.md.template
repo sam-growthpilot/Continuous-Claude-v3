@@ -210,11 +210,10 @@ Never let work evaporate into a closed session. Persistent artifacts > ephemeral
 
 ### Ralph Mode [C:10]
 
-When Ralph is active, direct implementation is BLOCKED by `ralph-delegation-enforcer` hook.
-- Ralph proposes work -> delegates to agents -> NEVER touches code directly
-- Edit/Write/Bash (code-modifying) calls are blocked during Ralph sessions
+When Ralph is active, the `ralph-delegation-enforcer` hook LOGS delegation activity but does NOT block tools -- soft enforcement since 2026-04-23 (it cannot distinguish orchestrator from sub-agents on a shared session_id, so blocking caused broad collateral damage). "Ralph orchestrates -> agents implement" is a convention maintained by prompts + CLAUDE.md, not a hook denial.
+- Ralph proposes work -> delegates to agents -> should not touch code directly (convention, not hook-enforced)
+- The real post-plan code-edit gate is the SEPARATE `plan-to-ralph-enforcer` hook -- it denies Edit/Write on code files after ExitPlanMode unless Ralph is active (see `plan-to-ralph-enforcement.md`)
 - Bounded iterations: 10 (small), 30 (medium), 50 (large) -- escalate after limit
-- Violation triggers hook denial -- this is enforced, not advisory
 
 ### Maestro Mode [C:10]
 
