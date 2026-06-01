@@ -38,7 +38,31 @@ Predecessor: `docs/ccv3-hardening-handoff-2026-05-30.md` (the original plan). Th
 - ~~5. P-docs~~ — DONE `2ceefc9`. **NOTE:** `plan-to-ralph-enforcement.md` was CORRECT (documents the *separate* `plan-to-ralph-enforcer`, which genuinely blocks) — left untouched. Fixed only the false "BLOCKED/enforced, not advisory" claim in active `~/.claude/RULES.md` + repo `RULES.md.template`.
 
 **REMAINING:**
+- ~~4. P3 dead-weight~~ — **COMPLETED 2026-06-01** (Maestro, commits `f65837e`..`f196ac1`). See the **Session 3** block below for what shipped + key findings.
+6. **PageIndex keep-vs-archive** — still the only open item (deferred, telemetry-gated).
+
+### Session 3 (2026-06-01) — item 4 done + excalidraw repair
+Six commits on `main` (unpushed), each per-phase with explicit pathspec:
+- `f65837e` deleted 8 tracked dead files (3 stale `.bak`/`.backup`, `skill-rules.json.backup`, dead `session-start-tldr-cache` hook src+dist, its test) + dropped that hook from `system-coherence-stress.mjs:278` (dangling-ref guard).
+- `0264da3` archived 8 dead-weight skills (skill-creator, create-better-skills, claude-in-chrome, agentica-{claude-proxy,infrastructure,server}, wiring, tdd-migration-pipeline) — removed from tracked tree; local copies in **gitignored** `skills/archive/`.
+- `d7d1ae3` + `f196ac1` **excalidraw skill repaired** (user-requested, replaced archival): port reconciled 3000/3002→**3100** across 7 scripts + SKILL.md + `~/.claude/mcp.json`; eval status corrected fail→pass; **live smoke test PASS** (server boot + health + create + export + delete round-trip); start-command documented.
+- `04117cc` removed 3 vibe-trading agent dupes from global (byte-identical to `Projects/vibe-trading/.claude/agents/`).
+- `a233a43` dropped 14 broken `math/*` routings from skill-rules.json (skills 100→86; they live in `skills/archive/math/`).
+- MCP cleanup (active-only, no repo home): `~/.mcp.json` next-devtools removed (→7 servers); `~/.claude/mcp.json` trimmed to **excalidraw + exa** (8 dupes/dead removed).
+
+**Key findings (carry forward):**
+- `liaison` + `surveyor` are **LIVE** (maestro Jury pattern + migrate Phase-5 spawn) — the audit's "possibly dead" was wrong; KEPT. Reverse-reference closure earned its keep.
+- `skills/archive/` is **gitignored** — archival = `git rm` from the tracked tree (recoverable via history) + local copy in the ignored `archive/`. `git mv` into a pre-existing archive dir nests; de-nest by rebuilding from the clean active copy.
+- excalidraw-mcp's `_eval-progress.json` "structural-FAIL" was **stale (2026-03-07)** — scripts were actually present + correct. Always re-verify eval-tracker claims against live files.
+- Verification baseline still green post-sweep: emit-audit 4/4, `hook-manifest-check` OK (no missing dist), `npm run build` clean (deleted hook orphaned no imports), 0 dist churn.
+
+<details><summary>Original item-4 scope (for history)</summary>
+
 4. **P3 dead-weight** — BEFORE archiving anything, run **reverse-reference closure** (Codex #4): scan skills/hooks/settings/`.mcp.json`/rules for consumers (e.g. `claude-in-chrome` still has live `mcp__claude-in-chrome__*` refs). Then archive `skill-creator`(==`skill-forge`)/`create-better-skills`/`claude-in-chrome`; **delete `*.bak`/`*.backup`** (confirmed in `hooks/src`: `session-start-continuity.ts.bak`, `skill-activation-prompt.ts.bak`, `skill-activation-prompt.ts.backup`) **+ the now-dead `session-start-tldr-cache.{ts,mjs}` + `tldr-hooks.test.ts`**; reconcile `math/*` routing; move vibe-trading agents (`quant-analyst`/`risk-officer`/`paper-trader`) out of global; remove `next-devtools`+`idearalph` MCP + dedupe 6 dup `.claude/mcp.json` entries. **Deletions need user confirmation. Best done in a fresh, clean context** (per the original handoff — avoids dangling references).
+
+</details>
+
+(Original item 6, full detail — still the open item:)
 6. **PageIndex keep-vs-archive** — DEFERRED until `.claude/logs/pageindex-nav.jsonl` (instrumented in Step 3) has real hit-vs-fallback data. Decide after telemetry.
 
 ### New operational note (2026-05-31, session 2)
