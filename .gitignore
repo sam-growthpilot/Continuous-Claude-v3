@@ -226,3 +226,6 @@ x-article-*
 # Match .ralph/ anywhere in the tree (root, opc/, project subdirs, ...).
 # Anchored patterns like ".ralph/state.json" only catch the root copy.
 .ralph/
+
+# skills.sh universal install mirror (regenerable via 'npx skills add'); CCv3 vendors real dirs in .claude/skills/
+.agents/
