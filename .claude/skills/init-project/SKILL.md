@@ -124,6 +124,32 @@ Skip entirely for HTML/CSS/Markdown-only projects.
 
 ---
 
+### Phase 4.5: Next.js DevTools MCP (Conditional)
+
+If the project is **Next.js 16 or above** (check the `next` version in `package.json` — the runtime endpoint `/_next/mcp` requires v16+), add the official Vercel devtools MCP to the project's **root `.mcp.json`** so the agent gets live runtime access (build/runtime/type errors, routes, server actions, dev logs) from the running dev server:
+
+```jsonc
+// <project>/.mcp.json  — merge into existing mcpServers if the file already exists
+{
+  "mcpServers": {
+    "next-devtools": {
+      "command": "cmd",
+      "args": ["/c", "npx", "-y", "next-devtools-mcp@latest"],
+      "type": "stdio"
+    }
+  }
+}
+```
+
+- **Windows:** use the `cmd /c` wrapper above — bare `npx` fails on Windows (see `windows-platform.md`). The official Vercel docs show bare `npx`; we wrap it.
+- It auto-connects when the dev server runs (`npm run dev`); with no dev server it no-ops harmlessly. This is why it's project-scoped, **not** global.
+- Pairs with the globally-vendored `next-best-practices` / `next-cache-components` / `next-upgrade` skills — those cover *static* best-practice knowledge; this MCP is the *runtime* side.
+- **Skip if** Next.js < 16 (no `/_next/mcp` endpoint) or not a Next.js project.
+
+Reference: https://nextjs.org/docs/app/guides/mcp
+
+---
+
 ### Phase 5: Project Registry
 
 Update `~/.claude/project-registry.json` with the new project:

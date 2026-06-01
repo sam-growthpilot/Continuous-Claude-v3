@@ -56,6 +56,13 @@ Six commits on `main` (unpushed), each per-phase with explicit pathspec:
 - excalidraw-mcp's `_eval-progress.json` "structural-FAIL" was **stale (2026-03-07)** — scripts were actually present + correct. Always re-verify eval-tracker claims against live files.
 - Verification baseline still green post-sweep: emit-audit 4/4, `hook-manifest-check` OK (no missing dist), `npm run build` clean (deleted hook orphaned no imports), 0 dist churn.
 
+### Session 3 addenda (2026-06-01) — eval pass + Next.js tooling rebuild
+- **Eval pass (user-requested):** session-start-continuity, skill-activation, TLDR, and system-coherence-stress all verified **GREEN via real code paths** after the deletions (live hook runs exit 0; skill-rules.json valid at 86 skills; `tldr structure/search` work on-demand; coherence harness `node --check` valid, all 8 sessionStartHooks built). The removed files were confirmed dead (deregistered no-op / stale dupes / missing-scripts).
+- **next-devtools rebuild (user-requested):** removed from global MCP in Phase 5, but it's needed for future Next.js work. Eval found it's **official Vercel** and **complementary** to next-skills (runtime vs static knowledge). Rebuilt correctly:
+  - Vendored official `vercel-labs/next-skills` (next-best-practices / next-cache-components / next-upgrade) as real dirs in `.claude/skills/`; `.agents/` skills.sh mirror gitignored.
+  - `next-devtools-mcp` is **project-scoped per official docs** (`<project>/.mcp.json`, **Next.js 16+**) — NOT global. Baked a conditional phase into the `init-project` skill (Windows `cmd /c` wrapper). **Do NOT re-add it to global `~/.mcp.json`.**
+  - No existing project qualifies yet (agent-factory is Next.js 15.3.3; others <16 / non-Next). Add per-project when each reaches v16.
+
 <details><summary>Original item-4 scope (for history)</summary>
 
 4. **P3 dead-weight** — BEFORE archiving anything, run **reverse-reference closure** (Codex #4): scan skills/hooks/settings/`.mcp.json`/rules for consumers (e.g. `claude-in-chrome` still has live `mcp__claude-in-chrome__*` refs). Then archive `skill-creator`(==`skill-forge`)/`create-better-skills`/`claude-in-chrome`; **delete `*.bak`/`*.backup`** (confirmed in `hooks/src`: `session-start-continuity.ts.bak`, `skill-activation-prompt.ts.bak`, `skill-activation-prompt.ts.backup`) **+ the now-dead `session-start-tldr-cache.{ts,mjs}` + `tldr-hooks.test.ts`**; reconcile `math/*` routing; move vibe-trading agents (`quant-analyst`/`risk-officer`/`paper-trader`) out of global; remove `next-devtools`+`idearalph` MCP + dedupe 6 dup `.claude/mcp.json` entries. **Deletions need user confirmation. Best done in a fresh, clean context** (per the original handoff — avoids dangling references).
