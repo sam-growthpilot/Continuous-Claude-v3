@@ -1,6 +1,8 @@
 # CCv3 Hardening — Progress + Phase 3 Continuation (2026-05-31)
 
-**Status:** Phases 0–2 COMPLETE. Phase 3 crown jewel (agent-side recall) SHIPPED + live + load-tested. Remaining Phase 3 tail handed off below. All work pushed to **fork** (`Rev4nchist`), `e48dc92..017929a` (0 ahead).
+**Status:** Phases 0–2 COMPLETE. Phase 3 crown jewel (agent-side recall) SHIPPED + live + load-tested.
+
+**Continuation session (2026-05-31, session 2):** Tail items **1, 2, 3, 5 DONE** (commits `ded901b`→`28184c3`, **5 ahead of fork/main, NOT yet pushed**). **MAJOR:** caught the `hooks/src` regression reproducing live — the **THIRD vector** (`~/.claude/.git/hooks/post-commit` ran an unguarded `cp -r hooks/src` active→repo). Root-caused, recovered from HEAD, active src refreshed, and the vector neutralized (post-commit re-routed through the audited `sync-claude.sh`, which excludes `hooks/src`). Full forensics + recovery: `docs/ccv3-reverse-sync-regression-2026-05-31.md`. **Remaining: item 4 (dead-weight) + item 6 (PageIndex, still deferred).**
 
 Predecessor: `docs/ccv3-hardening-handoff-2026-05-30.md` (the original plan). This doc supersedes it for execution status.
 
@@ -27,14 +29,20 @@ Predecessor: `docs/ccv3-hardening-handoff-2026-05-30.md` (the original plan). Th
 
 ---
 
-## Remaining Phase 3 tail (next session — recon already done)
+## Phase 3 tail — status
 
-1. **BGE daemon fail-fast** — `memory-awareness.ts:222` `checkDbMemory` has only a 12s `spawnSync` timeout. Add a ~3s fast-path timeout when `mode === 'text-only'` (daemon down / no embed). Daemon auto-spawns on `memory-awareness` when `!isDaemonReady()` (no watchdog). `memory-awareness.ts` is the **historically-regressed file — minimal-diff Edit only, preserve the `await emitBraintrustScore` at :596, re-run `scripts/audit-braintrust-emits.sh` (must stay 4/4)**.
-2. **TLDR warm-cache hook removal** — broken no-op loop (`isCacheStale()` infinite-true; no `meta.json` ever created). Remove the SessionStart warm-cache hook; on-demand `tldr` only.
-3. **RLM** — document as the explicit large-overflow tool (dormant). Doc only.
-4. **P3 dead-weight** — BEFORE archiving anything, run **reverse-reference closure** (Codex #4): scan skills/hooks/settings/`.mcp.json`/rules for consumers (e.g. `claude-in-chrome` still has live `mcp__claude-in-chrome__*` refs). Then archive `skill-creator`(==`skill-forge`)/`create-better-skills`/`claude-in-chrome`; delete `*.bak`; reconcile `math/*` routing; move vibe-trading agents (`quant-analyst`/`risk-officer`/`paper-trader`) out of global; remove `next-devtools`+`idearalph` MCP + dedupe 6 dup `.claude/mcp.json` entries.
-5. **P-docs** — fix `RULES.md` / `plan-to-ralph-enforcement.md`: `ralph-delegation-enforcer` is advisory-only (not blocking) since 2026-04-23.
+**DONE this session (commits `ded901b`..`28184c3`, unpushed):**
+- ~~1. BGE daemon fail-fast~~ — DONE `28184c3`. Implemented at **5000ms**, NOT the 3s the recon suggested: text-only recall measured **~750ms warm**, so the 12s ceiling was never the bottleneck — only a DB *hang* trips it. 5s sits safely above cold `uv` (~2.2s)+query, avoiding the 2000ms-SIGKILL regression. `timeout: useHybrid ? 12000 : 5000` in `memory-awareness.ts`. emit-audit 4/4, tests green.
+- ~~2. TLDR warm-cache removal~~ — DONE `a08014a`. Verified `isCacheStale()` permanently true (cache dir never created). Deregistered from both settings; **source-file retirement folded into the item-4 deletion sweep** (`session-start-tldr-cache.ts` + dist + `tldr-hooks.test.ts` now dead).
+- ~~3. RLM doc~~ — DONE `42a950e`. RLM was already architected (`docs/architecture/rlm/rlm-architecture.md`); added discoverability (INDEX "System at a Glance" row + Role/dormant framing line).
+- ~~5. P-docs~~ — DONE `2ceefc9`. **NOTE:** `plan-to-ralph-enforcement.md` was CORRECT (documents the *separate* `plan-to-ralph-enforcer`, which genuinely blocks) — left untouched. Fixed only the false "BLOCKED/enforced, not advisory" claim in active `~/.claude/RULES.md` + repo `RULES.md.template`.
+
+**REMAINING:**
+4. **P3 dead-weight** — BEFORE archiving anything, run **reverse-reference closure** (Codex #4): scan skills/hooks/settings/`.mcp.json`/rules for consumers (e.g. `claude-in-chrome` still has live `mcp__claude-in-chrome__*` refs). Then archive `skill-creator`(==`skill-forge`)/`create-better-skills`/`claude-in-chrome`; **delete `*.bak`/`*.backup`** (confirmed in `hooks/src`: `session-start-continuity.ts.bak`, `skill-activation-prompt.ts.bak`, `skill-activation-prompt.ts.backup`) **+ the now-dead `session-start-tldr-cache.{ts,mjs}` + `tldr-hooks.test.ts`**; reconcile `math/*` routing; move vibe-trading agents (`quant-analyst`/`risk-officer`/`paper-trader`) out of global; remove `next-devtools`+`idearalph` MCP + dedupe 6 dup `.claude/mcp.json` entries. **Deletions need user confirmation. Best done in a fresh, clean context** (per the original handoff — avoids dangling references).
 6. **PageIndex keep-vs-archive** — DEFERRED until `.claude/logs/pageindex-nav.jsonl` (instrumented in Step 3) has real hit-vs-fallback data. Decide after telemetry.
+
+### New operational note (2026-05-31, session 2)
+- **THIRD reverse-sync vector found + fixed:** `~/.claude/.git/hooks/post-commit` did a raw `cp -r hooks/src` active→repo with no audit gate (the `.sh`/`.mjs` were fixed in `ddc0641`; this hand-rolled git hook, no repo template, was missed). It fires when `git-auto-commit` commits `~/.claude` (10-min debounce) after editing any tracked active file. **Now routed through `sync-claude.sh --to-repo`**; original at `~/.claude/.git/hooks/post-commit.bak.2026-05-31`. **Lesson: editing active `~/.claude/{rules,docs,...}` files can still trigger a `~/.claude` auto-commit → forward sync churn; the dangerous reverse-clobber is closed, but prefer editing repo files where possible.**
 
 ### Deferred beyond Phases 0–3 (scope decisions)
 - **WS-2 context-bus spine** (Phases A–E) — out of scope per the approved Phases-0–3 tier; re-decide after re-measuring.
