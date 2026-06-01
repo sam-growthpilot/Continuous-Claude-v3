@@ -1,5 +1,7 @@
 # RLM (Recursive Language Models) — Architecture
 
+**Role:** The explicit escape hatch for analyzing inputs that overflow the normal context window — whole-repo sweeps, very large documents, multi-file corpora. Currently **dormant**: the engine is wired (Phases 0–2) but no active flow invokes it automatically; reach for it deliberately via the `rlm-analyze` skill / `/rlm-analyze path "question"`. Requires Docker + `ANTHROPIC_API_KEY`.
+
 Status: **MVP in place** (Phase 0 + Phase 1 + Phase 2 shipped 2026-04-23). Docker sandbox required. `max_depth=1` locked.
 Reference: paper [arXiv:2512.24601](https://arxiv.org/abs/2512.24601), library [alexzhang13/rlm](https://github.com/alexzhang13/rlm), adoption plan `C:/Users/david.hayes/.claude/plans/i-have-a-new-abstract-quail.md`.
 

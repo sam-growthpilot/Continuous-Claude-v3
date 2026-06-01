@@ -23,6 +23,7 @@
 | PageIndex | Document navigation & search | `pageindex_cli.py` |
 | Workflows | Multi-step orchestration | `/ralph`, `/maestro` |
 | Braintrust | Observability — score system performance | `emitBraintrustScore()`, `judge_session.py` |
+| RLM | Analyze inputs that overflow the context window — the large-context escape hatch (dormant; Docker-gated) | `/rlm-analyze`, `rlm_client.py` |
 
 ## Six Pillars
 
