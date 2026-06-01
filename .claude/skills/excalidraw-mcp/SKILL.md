@@ -11,7 +11,7 @@ Create and refine diagrams on a live Excalidraw canvas via MCP tools, with helpe
 
 ## Quick Start
 
-- Ensure the canvas server is reachable at `EXPRESS_SERVER_URL` (default `http://localhost:3100`).
+- Start the canvas server on port 3100 first — from the `mcp_excalidraw` project run `PORT=3100 npm run canvas`. The MCP server (`~/.claude/mcp.json` → `EXPRESS_SERVER_URL`) and every `scripts/*.cjs` default to `http://localhost:3100`; override with `EXPRESS_SERVER_URL` to point elsewhere. (Port 3100 avoids the 3000/3002 collisions with the Fourth Connect / NorthStar dev servers.)
 - Use MCP tools for interactive diagram edits; use `scripts/*.cjs` for file-ish workflows (export/import/clear/health).
 - For detailed endpoint/tool reference, read `references/cheatsheet.md`.
 
