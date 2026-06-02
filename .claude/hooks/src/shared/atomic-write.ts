@@ -143,6 +143,91 @@ export function writeStateWithLock(filePath: string, content: string): void {
 }
 
 /**
+ * Read-modify-write a state file with the ENTIRE read -> apply -> write
+ * sequence performed under a SINGLE lock hold. This is the race-free primitive:
+ * unlike `read; then writeStateWithLock`, no other writer can slip in between
+ * the read and the write, so there is no lost-update / TOCTOU window.
+ *
+ * Contract:
+ *  - Acquires the lock ONCE (same lock file as writeStateWithLock, so the two
+ *    are mutually exclusive on the same path).
+ *  - Reads the current file content INSIDE the lock. A genuinely-absent file
+ *    (ENOENT) yields `null`. A file that EXISTS but cannot be read (EBUSY /
+ *    EACCES / EPERM, etc.) is a TRANSIENT failure: the read error is rethrown
+ *    to the caller's transform via the `current` argument being unavailable --
+ *    instead we surface it by throwing, which mutateStateWithLock catches and
+ *    turns into a safe no-op (returns false) so existing-but-unreadable state is
+ *    never clobbered with derived-from-empty content.
+ *  - Calls `transformFn(current)`. Returning a string writes it atomically
+ *    (temp + rename) inside the same lock hold. Returning `null` is a NO-OP:
+ *    nothing is written (the caller decided the current state must be left as-is).
+ *  - Releases the lock in `finally`, always.
+ *
+ * Fail-open: never throws. On lock-acquire failure, a read failure of an
+ * existing file, or a throwing transform, it returns `false` (no write) rather
+ * than risk corrupting or erasing state.
+ *
+ * @returns true if a write happened, false if it was a no-op / safe abort.
+ */
+export function mutateStateWithLock(
+  filePath: string,
+  transformFn: (current: string | null) => string | null,
+): boolean {
+  const locked = acquireLockSync(filePath);
+  if (!locked) {
+    // Could not get the lock -> do NOT write blind (that is exactly the clobber
+    // we are preventing). Safe abort.
+    log.warn('mutateStateWithLock: lock not acquired, skipping write', { filePath });
+    return false;
+  }
+
+  try {
+    // Read current content under the lock. Distinguish genuinely-absent (null)
+    // from a read FAILURE of a file that exists (transient -> safe abort).
+    let current: string | null;
+    if (!existsSync(filePath)) {
+      current = null; // ENOENT: legitimate empty case
+    } else {
+      try {
+        current = readFileSync(filePath, 'utf-8');
+      } catch (err) {
+        // File exists but is unreadable right now (EBUSY/EACCES/EPERM). Do NOT
+        // overwrite it with anything derived from "empty" -- abort safely.
+        log.warn('mutateStateWithLock: existing file unreadable, aborting write', {
+          filePath,
+          error: String(err),
+        });
+        return false;
+      }
+    }
+
+    let next: string | null;
+    try {
+      next = transformFn(current);
+    } catch (err) {
+      // A throwing transform must never corrupt the file.
+      log.error('mutateStateWithLock: transform threw, leaving file untouched', {
+        filePath,
+        error: String(err),
+      });
+      return false;
+    }
+
+    if (next == null) {
+      return false; // transform chose a no-op
+    }
+
+    atomicWriteSync(filePath, next);
+    return true;
+  } catch (err) {
+    log.error('mutateStateWithLock: write failed', { filePath, error: String(err) });
+    return false;
+  } finally {
+    releaseLockSync(filePath);
+  }
+}
+
+/**
  * Read state with locking to prevent reading mid-write.
  * Falls back to direct read if lock can't be acquired.
  */

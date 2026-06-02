@@ -1,0 +1,672 @@
+/**
+ * L2 Context Bus single-writer (WS-2 Phase A.1).
+ *
+ * One small JSON file per session at:
+ *   <projectDir>/.claude/cache/session/<bus_id>/context.json
+ * where projectDir = process.env.CLAUDE_PROJECT_DIR || process.cwd() and the
+ * default bus_id comes from shared/session-bus-id.ts getBusId(). NOTE: the bus
+ * lives under the PROJECT dir (not home), so there is no home-resolution trap.
+ *
+ * Hooks (and only hooks) write the bus via this owner module; L3 specialists
+ * read it to bias queries. This is the only sanctioned writer -- there is no
+ * direct fs.writeFileSync to the bus path anywhere else.
+ *
+ * Schema: BusEntry v3 verbatim from the design doc section 4.1 (SCIP-style
+ * focus_symbols[].id, ranks_by_source, stale_check, the 8-role files_in_play
+ * taxonomy with a 30% ambient cap, recent_findings, open_threads,
+ * schema_version=3, compact_generation, revision).
+ *
+ * Concurrency (mitigation #14, design doc section 13 Q4; review finding #1):
+ * the default write path performs read -> apply -> write ATOMICALLY under a
+ * SINGLE lock hold via atomic-write.ts mutateStateWithLock (atomic temp+rename
+ * inside one O_EXCL lock acquisition). Correctness comes from the lock: two
+ * writers can no longer observe the same pre-image and clobber each other. The
+ * monotone `revision` counter is kept as defense-in-depth and bumped on each
+ * successful write; the injected-write test branch additionally runs a CAS retry
+ * loop so deterministic contention tests still exercise no-lost-update behavior.
+ *
+ * Transient-failure safety (review finding #2): a genuinely-absent file (ENOENT)
+ * is the empty case (write revision 1); a file that EXISTS but fails to read
+ * (EBUSY/EACCES/EPERM) or a NON-EMPTY file that fails to parse is treated as a
+ * transient failure and is NEVER overwritten with empty-derived state -- mutateBus
+ * no-ops instead.
+ *
+ * Path-traversal safety (review finding #3): busPath validates the bus id against
+ * a strict directory-name pattern and asserts the resolved path stays under
+ * <projectDir>/.claude/cache/session. An unsafe id makes readBus -> emptyBus and
+ * mutateBus -> no-op, touching no filesystem outside the root.
+ *
+ * Re-read-on-every-call (design doc section 4.4): readBus re-reads disk EVERY
+ * call -- there is no module-level cache. This makes hook ordering irrelevant
+ * and survives compaction (the first reader after a compact pays a fresh disk
+ * hit and gets restored content).
+ *
+ * Kill switch (mitigation #19): CCV3_BUS_OFF=1 -> readBus returns emptyBus and
+ * mutateBus is a no-op. Read lazily on every call.
+ *
+ * Latency instrument (finding #8, design doc section 13 Q5): readBus times the
+ * disk read; if it exceeds LATENCY_BUDGET_MS (50ms -- Windows Defender file-lock
+ * territory), it appends a `bus_read_latency` event to intel-bus and STILL
+ * returns. Day-1 instrument; the real >=70%-under-50ms gate is Phase C.
+ *
+ * Fail-open: NEVER throw into the hot path. Any fs/lock/parse error -> emptyBus
+ * (reads) or best-effort no-throw (writes).
+ *
+ * Test seams: readBus/mutateBus accept injected read/write/now/onLatency (and a
+ * beforeWrite hook for deterministic CAS tests), matching the host-ram.ts /
+ * session-bus-id.ts injected-dependency style. ASCII only.
+ */
+
+import { readFileSync } from 'node:fs';
+import { dirname, join, resolve, sep } from 'node:path';
+import { mkdirSync, existsSync } from 'node:fs';
+import { getBusId } from './session-bus-id.js';
+import { mutateStateWithLock } from './atomic-write.js';
+import { appendIntelBus } from './intel-bus.js';
+
+/** Read budget in ms; a slower read logs a latency event but still returns. */
+export const LATENCY_BUDGET_MS = 50;
+
+/** Ambient files_in_play may occupy at most this fraction of total slots. */
+export const AMBIENT_CAP_RATIO = 0.3;
+
+/**
+ * Minimum ambient floor. The 30% cap prevents ambient (grep/browse/doc reads)
+ * from FLOODING OUT load-bearing context -- it is not meant to forbid ambient
+ * entirely on a near-empty bus (where ratio math would otherwise reject the very
+ * first ambient add, since 1/1 > 0.3). Up to this many ambient slots are always
+ * allowed; beyond the floor, the 30% ratio governs.
+ */
+export const AMBIENT_MIN_SLOTS = 3;
+
+/** Bounded CAS retries before a best-effort write (never an infinite loop). */
+const MAX_CAS_RETRIES = 5;
+
+// ---------------------------------------------------------------------------
+// BusEntry v3 schema (design doc section 4.1)
+// ---------------------------------------------------------------------------
+
+/** SCIP-style stable symbol identity (design doc section 13 Q10). */
+export interface SymbolId {
+  git_sha?: string;
+  file_uri: string;
+  lang: string;
+  container?: string;
+  name: string;
+  /** sha256(normalized_signature)[:8] -- survives moves. */
+  signature_hash?: string;
+}
+
+/** Per-source ranks (design doc section 13 Q12 -- replaces confidence in [0,1]). */
+export interface RanksBySource {
+  codegraph_fts?: number | null;
+  serena_lsp?: number | null;
+  tldr_ast?: number | null;
+  user_mentioned?: number | null;
+  [source: string]: number | null | undefined;
+}
+
+/** Stale-detection provenance (design doc section 13 Q9). */
+export interface StaleCheck {
+  git_head_at_discovery?: string;
+  content_hash?: string;
+  mtime_at_discovery?: number;
+}
+
+/** A symbol the session is focused on. */
+export interface FocusSymbol {
+  id: SymbolId;
+  ranks_by_source?: RanksBySource;
+  stale_check?: StaleCheck;
+  discovered_via?: string[];
+  turn_added: number;
+  last_referenced_turn?: number;
+  stale?: boolean;
+}
+
+/** The 8 roles in the files_in_play taxonomy (design doc section 4.2). */
+export type FileRole =
+  // load_bearing slice
+  | 'user_mentioned'
+  | 'edited'
+  | 'test_failed'
+  | 'dependency_traced'
+  | 'read_for_context'
+  // ambient slice
+  | 'grep_hit'
+  | 'read_for_browse'
+  | 'doc_read';
+
+/** A file in play, with its role and provenance. */
+export interface FileInPlay {
+  path: string;
+  role: FileRole;
+  turn_added: number;
+  stale_check?: StaleCheck;
+  stale?: boolean;
+}
+
+/** Two-slice files_in_play (design doc section 4.2). */
+export interface FilesInPlay {
+  load_bearing: FileInPlay[];
+  ambient: FileInPlay[];
+}
+
+/** A recent tool finding (design doc section 4.1). */
+export interface RecentFinding {
+  correlation_id: string;
+  tool: string;
+  subject_id: string;
+  result_count: number;
+  rank: number;
+  ts: string;
+  duration_ms?: number;
+}
+
+/** An open sub-agent thread (design doc section 4.1). */
+export interface OpenThread {
+  agent: string;
+  task_id: string;
+  subject_id: string;
+  parent_correlation_id?: string | null;
+}
+
+/** The whole bus entry (design doc section 4.1, schema_version 3). */
+export interface BusEntry {
+  bus_id: string;
+  current_intent: string | null;
+  focus_symbols: FocusSymbol[];
+  files_in_play: FilesInPlay;
+  recent_findings: RecentFinding[];
+  open_threads: OpenThread[];
+  schema_version: 3;
+  compact_generation: number;
+  /** CAS-style monotone counter (design doc section 13 Q4). */
+  revision: number;
+}
+
+/** The load-bearing roles (everything else is ambient). */
+const LOAD_BEARING_ROLES: ReadonlySet<FileRole> = new Set<FileRole>([
+  'user_mentioned',
+  'edited',
+  'test_failed',
+  'dependency_traced',
+  'read_for_context',
+]);
+
+/** Build a fresh, empty bus entry. */
+export function emptyBus(busId: string): BusEntry {
+  return {
+    bus_id: busId,
+    current_intent: null,
+    focus_symbols: [],
+    files_in_play: { load_bearing: [], ambient: [] },
+    recent_findings: [],
+    open_threads: [],
+    schema_version: 3,
+    compact_generation: 0,
+    revision: 0,
+  };
+}
+
+/**
+ * Strict directory-name pattern for a bus id (finding #3). Must start with an
+ * alphanumeric, then up to 80 more of [A-Za-z0-9._-]. This intentionally forbids
+ * path separators, leading dots, and anything that could form a traversal.
+ */
+const VALID_BUS_ID = /^[A-Za-z0-9][A-Za-z0-9._-]{0,80}$/;
+
+/**
+ * Validate a bus id against the strict pattern AND explicitly reject the obvious
+ * traversal shapes. Throws on anything unsafe; callers (busPath, and through it
+ * readBus/mutateBus) catch this and fail SAFE. Centralizing here means all three
+ * exported entry points are covered by one chokepoint.
+ */
+function assertSafeBusId(busId: string): void {
+  if (
+    typeof busId !== 'string' ||
+    busId.length === 0 ||
+    busId === '.' ||
+    busId === '..' ||
+    busId.includes('/') ||
+    busId.includes('\\') ||
+    busId.includes('..') ||
+    !VALID_BUS_ID.test(busId)
+  ) {
+    throw new Error('unsafe bus id');
+  }
+}
+
+/** The session-cache root that every bus path MUST stay under. */
+function sessionCacheRoot(projectDir?: string): string {
+  const root = projectDir || process.env.CLAUDE_PROJECT_DIR || process.cwd();
+  return join(root, '.claude', 'cache', 'session');
+}
+
+/**
+ * Resolve the project-relative bus path for a given id. Validates the id and
+ * asserts the fully-resolved path stays under <projectDir>/.claude/cache/session
+ * (defense in depth against traversal -- finding #3). Throws on an unsafe id or
+ * an escaping path; readBus/mutateBus catch and fail safe.
+ */
+export function busPath(busId: string, projectDir?: string): string {
+  assertSafeBusId(busId);
+  const sessionRoot = sessionCacheRoot(projectDir);
+  const full = join(sessionRoot, busId, 'context.json');
+
+  // Resolve both sides and assert containment. A trailing separator on the root
+  // prevents a sibling-prefix bypass (e.g. ".../session-evil" vs ".../session").
+  const resolvedRoot = resolve(sessionRoot);
+  const resolvedFull = resolve(full);
+  const rootWithSep = resolvedRoot.endsWith(sep) ? resolvedRoot : resolvedRoot + sep;
+  if (!resolvedFull.startsWith(rootWithSep)) {
+    throw new Error('bus path escapes session root');
+  }
+  return full;
+}
+
+/** Is the kill switch engaged? Read lazily on every call. */
+function busOff(): boolean {
+  return process.env.CCV3_BUS_OFF === '1';
+}
+
+/**
+ * Coerce arbitrary parsed JSON into a well-formed BusEntry. Missing or wrong
+ * fields fall back to empty defaults so a partially-written or older file still
+ * yields a usable bus (fail-soft).
+ */
+function coerceBus(busId: string, parsed: unknown): BusEntry {
+  const base = emptyBus(busId);
+  if (!parsed || typeof parsed !== 'object') return base;
+  const p = parsed as Record<string, unknown>;
+  return {
+    bus_id: typeof p.bus_id === 'string' ? p.bus_id : busId,
+    current_intent: typeof p.current_intent === 'string' ? p.current_intent : null,
+    focus_symbols: Array.isArray(p.focus_symbols) ? (p.focus_symbols as FocusSymbol[]) : [],
+    files_in_play: coerceFilesInPlay(p.files_in_play),
+    recent_findings: Array.isArray(p.recent_findings)
+      ? (p.recent_findings as RecentFinding[])
+      : [],
+    open_threads: Array.isArray(p.open_threads) ? (p.open_threads as OpenThread[]) : [],
+    schema_version: 3,
+    compact_generation: typeof p.compact_generation === 'number' ? p.compact_generation : 0,
+    revision: typeof p.revision === 'number' && Number.isFinite(p.revision) ? p.revision : 0,
+  };
+}
+
+function coerceFilesInPlay(value: unknown): FilesInPlay {
+  if (!value || typeof value !== 'object') return { load_bearing: [], ambient: [] };
+  const v = value as Record<string, unknown>;
+  return {
+    load_bearing: Array.isArray(v.load_bearing) ? (v.load_bearing as FileInPlay[]) : [],
+    ambient: Array.isArray(v.ambient) ? (v.ambient as FileInPlay[]) : [],
+  };
+}
+
+/** Options shared by readBus / mutateBus. All optional; defaults hit disk. */
+export interface BusOptions {
+  /** Project root override (default: CLAUDE_PROJECT_DIR || cwd). */
+  projectDir?: string;
+  /** Disk read seam (default: readFileSync -> string | null). Test seam. */
+  read?: (path: string) => string | null;
+  /**
+   * Disk write seam. When PROVIDED, mutateBus uses the injected-write CAS branch
+   * (in-memory disk tests). When ABSENT, the default lock-backed atomic primitive
+   * (atomic-write.ts mutateStateWithLock) performs the read+write under one lock.
+   * Test seam.
+   */
+  write?: (path: string, content: string) => void;
+  /** Monotonic-ish clock in ms (default: Date.now). Test seam. */
+  now?: () => number;
+  /** Latency sink (default: appendIntelBus latency event). Test seam. */
+  onLatency?: (event: Record<string, unknown>) => void;
+  /**
+   * Fired inside mutateBus AFTER the mutation is applied but BEFORE the write,
+   * on each attempt. Lets tests inject a competing writer to exercise CAS.
+   */
+  beforeWrite?: () => void;
+}
+
+/** Default disk read: returns file contents or null if missing/unreadable. */
+function defaultRead(path: string): string | null {
+  try {
+    return readFileSync(path, 'utf-8');
+  } catch {
+    return null; // missing or unreadable -> caller treats as empty
+  }
+}
+
+/**
+ * Read the bus, re-reading disk on every call (no cache, design doc section
+ * 4.4). Missing/unreadable/unparseable -> emptyBus. Times the read; if it
+ * exceeds LATENCY_BUDGET_MS, logs a latency event to intel-bus and still
+ * returns. Kill switch + fail-open honored. NEVER throws.
+ *
+ * @param busId Bus id (default: getBusId()).
+ * @param opts  Injected seams.
+ */
+export function readBus(busId?: string, opts: BusOptions = {}): BusEntry {
+  const id = busId ?? safeBusId();
+  if (busOff()) return emptyBus(id);
+
+  const read = opts.read ?? defaultRead;
+  const now = opts.now ?? Date.now;
+
+  try {
+    // busPath validates the id; an unsafe id throws here, BEFORE the read seam
+    // is touched, so a traversal id never causes any filesystem access.
+    const path = busPath(id, opts.projectDir);
+
+    const start = now();
+    const raw = read(path);
+    const elapsed = now() - start;
+
+    if (elapsed >= LATENCY_BUDGET_MS) {
+      reportLatency(id, elapsed, opts);
+    }
+
+    if (raw == null) return emptyBus(id);
+    return coerceBus(id, JSON.parse(raw));
+  } catch {
+    // Any fs/parse/validation error -> empty bus, never throw into the hot path.
+    return emptyBus(id);
+  }
+}
+
+/** Emit a bus_read_latency event (default: intel-bus; test seam overrides). */
+function reportLatency(busId: string, durationMs: number, opts: BusOptions): void {
+  const event = {
+    bus_id: busId,
+    query_type: 'bus_read_latency',
+    duration_ms: durationMs,
+  };
+  try {
+    if (opts.onLatency) {
+      opts.onLatency(event);
+    } else {
+      appendIntelBus({ ...event, bus_id: busId }, { projectDir: opts.projectDir });
+    }
+  } catch {
+    // Latency logging must never break a read.
+  }
+}
+
+/**
+ * Classified read of the current bus state. Critically distinguishes:
+ *  - 'absent'  : the file genuinely does not exist (read returned null / ENOENT)
+ *  - 'present' : the file exists and parsed into a usable bus
+ *  - 'failed'  : the file EXISTS but could not be read (read threw) OR a
+ *                NON-EMPTY file failed to parse (transient lock / parse race)
+ * The 'failed' case must NEVER be coerced to empty-and-written (finding #2).
+ */
+type LoadResult =
+  | { kind: 'absent' }
+  | { kind: 'present'; bus: BusEntry }
+  | { kind: 'failed' };
+
+/**
+ * Read + classify current bus state through the given (possibly injected) read
+ * seam. A throwing read => 'failed' (existing-but-unreadable). A null read =>
+ * 'absent'. A non-null string that fails to parse => 'failed' only if it is
+ * non-empty (a non-empty-but-corrupt file is a transient/parse race we must not
+ * clobber); a whitespace-only string parses as absent-equivalent empty.
+ */
+function loadState(
+  id: string,
+  read: (path: string) => string | null,
+  path: string,
+): LoadResult {
+  let raw: string | null;
+  try {
+    raw = read(path);
+  } catch {
+    // The file exists but the read failed (EBUSY/EACCES/EPERM). Transient.
+    return { kind: 'failed' };
+  }
+  if (raw == null) return { kind: 'absent' };
+  if (raw.trim().length === 0) return { kind: 'absent' }; // empty file ~ absent
+  try {
+    return { kind: 'present', bus: coerceBus(id, JSON.parse(raw)) };
+  } catch {
+    // Non-empty file that failed to parse -> transient parse race; do not erase.
+    return { kind: 'failed' };
+  }
+}
+
+/**
+ * Read-modify-write the bus with the read -> apply -> write performed ATOMICALLY
+ * under a SINGLE lock hold (finding #1). The revision counter is kept as
+ * defense-in-depth and is bumped monotonically, but correctness now comes from
+ * the lock: no two writers can observe the same pre-image and clobber each other.
+ *
+ * A genuinely-absent file is the legitimate empty case (write revision 1). A
+ * file that exists but fails to read/parse is a TRANSIENT failure -> NO-OP, so
+ * real state is never overwritten with empty-derived state (finding #2).
+ *
+ * An unsafe busId fails SAFE: no filesystem access, returns emptyBus (finding #3).
+ * Kill switch + fail-open honored. NEVER throws; returns the best-effort BusEntry.
+ *
+ * @param busId Bus id (default: getBusId()).
+ * @param fn    Mutation applied in place to the working BusEntry.
+ * @param opts  Injected seams.
+ */
+export function mutateBus(
+  busId: string | undefined,
+  fn: (bus: BusEntry) => void,
+  opts: BusOptions = {},
+): BusEntry {
+  const id = busId ?? safeBusId();
+  if (busOff()) return emptyBus(id);
+
+  let path: string;
+  try {
+    // Validate the id FIRST. An unsafe id throws here, before any read/write
+    // seam is touched -> no filesystem access at all (finding #3 fail-safe).
+    path = busPath(id, opts.projectDir);
+  } catch {
+    return emptyBus(id);
+  }
+
+  // The injected-write branch (unit tests with an in-memory disk) keeps the
+  // seam-based CAS loop; the default branch uses the real lock-backed atomic
+  // primitive. Both share the same transient-failure + validation semantics.
+  if (opts.write) {
+    return mutateViaSeam(id, path, fn, opts);
+  }
+  return mutateViaLock(id, path, fn, opts);
+}
+
+/**
+ * Default path: perform the whole read -> apply -> write inside ONE lock hold via
+ * mutateStateWithLock. The transform reads the current bytes (honoring an
+ * injected read seam if present, for deterministic contention tests), classifies
+ * them, applies fn, bumps revision, and serializes. On a transient failure it
+ * returns null -> the primitive performs a NO-OP (no clobber).
+ */
+function mutateViaLock(
+  id: string,
+  path: string,
+  fn: (bus: BusEntry) => void,
+  opts: BusOptions,
+): BusEntry {
+  const read = opts.read; // may be undefined -> the primitive reads the file itself
+  let result = emptyBus(id);
+
+  try {
+    ensureDir(path, opts);
+    mutateStateWithLock(path, (current) => {
+      // Determine the pre-image. If a read seam is injected, classify through it
+      // (lets the contention test slip a competitor write in). Otherwise use the
+      // `current` string the primitive already read under the lock.
+      let loaded: LoadResult;
+      if (read) {
+        loaded = loadState(id, read, path);
+      } else if (current == null) {
+        loaded = { kind: 'absent' };
+      } else if (current.trim().length === 0) {
+        loaded = { kind: 'absent' };
+      } else {
+        try {
+          loaded = { kind: 'present', bus: coerceBus(id, JSON.parse(current)) };
+        } catch {
+          loaded = { kind: 'failed' };
+        }
+      }
+
+      if (loaded.kind === 'failed') {
+        // Transient: do not overwrite existing-but-unreadable state.
+        return null;
+      }
+
+      const base = loaded.kind === 'present' ? loaded.bus : emptyBus(id);
+      const baseRevision = base.revision;
+      fn(base);
+      base.revision = baseRevision + 1;
+      result = base;
+      return JSON.stringify(base, null, 2);
+    });
+  } catch {
+    // Fail-open: never throw into the hot path.
+  }
+  return result;
+}
+
+/**
+ * Injected-write branch: seam-based CAS retry loop (used by unit tests with an
+ * in-memory disk). Honors the beforeWrite seam so tests can inject a competing
+ * writer. Shares the transient-failure semantics: a 'failed' load is a NO-OP
+ * (no clobber), an 'absent' load is the empty case.
+ */
+function mutateViaSeam(
+  id: string,
+  path: string,
+  fn: (bus: BusEntry) => void,
+  opts: BusOptions,
+): BusEntry {
+  const read = opts.read ?? defaultRead;
+  const write = opts.write!;
+
+  let working = emptyBus(id);
+
+  try {
+    // Initial load. A transient failure here means existing-but-unreadable state
+    // -> abort without writing (finding #2).
+    const initial = loadState(id, read, path);
+    if (initial.kind === 'failed') return working;
+
+    let base = initial.kind === 'present' ? initial.bus : emptyBus(id);
+    let baseRevision = base.revision;
+    fn(base);
+    working = base;
+
+    for (let attempt = 0; attempt <= MAX_CAS_RETRIES; attempt++) {
+      // Test seam: a competing writer may commit here.
+      if (opts.beforeWrite) opts.beforeWrite();
+
+      // CAS: re-load and check whether the on-disk revision moved.
+      const reload = loadState(id, read, path);
+      if (reload.kind === 'failed') {
+        // Became unreadable mid-flight -> do not clobber. Safe abort.
+        return working;
+      }
+      const currentRevision = reload.kind === 'present' ? reload.bus.revision : 0;
+
+      if (currentRevision === baseRevision) {
+        working.revision = baseRevision + 1;
+        write(path, JSON.stringify(working, null, 2));
+        return working;
+      }
+
+      // Stale: someone bumped it. Re-apply fn onto the NEWER state and retry so
+      // we never clobber the competitor's update (no lost update).
+      base = reload.kind === 'present' ? reload.bus : emptyBus(id);
+      baseRevision = base.revision;
+      fn(base);
+      working = base;
+    }
+
+    // Retry budget exhausted (pathological contention). Best-effort write at
+    // current+1 so we don't silently drop the mutation; never throw.
+    const tail = loadState(id, read, path);
+    if (tail.kind === 'failed') return working;
+    const tailRevision = tail.kind === 'present' ? tail.bus.revision : 0;
+    working.revision = tailRevision + 1;
+    try {
+      write(path, JSON.stringify(working, null, 2));
+    } catch {
+      /* swallow: fail-open */
+    }
+    return working;
+  } catch {
+    // Any unexpected error -> return the best-effort working copy, never throw.
+    return working;
+  }
+}
+
+/** Ensure the bus directory exists before a default disk write. */
+function ensureDir(path: string, opts: BusOptions): void {
+  // Only the default writer needs the directory pre-created; an injected write
+  // seam manages its own storage. Detect "default" by absence of opts.write.
+  if (opts.write) return;
+  try {
+    const dir = dirname(path);
+    if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
+  } catch {
+    /* swallow: fail-open */
+  }
+}
+
+/** getBusId() but never throws (extra belt-and-suspenders for the hot path). */
+function safeBusId(): string {
+  try {
+    return getBusId();
+  } catch {
+    return 's-unknown';
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Typed mutation helpers (operate in place on a BusEntry; revision is bumped by
+// mutateBus, not here -- these are the building blocks callers pass to it).
+// ---------------------------------------------------------------------------
+
+/** Set the current intent. */
+export function setIntent(bus: BusEntry, intent: string): void {
+  bus.current_intent = intent;
+}
+
+/** Append a focus symbol. */
+export function addFocusSymbol(bus: BusEntry, sym: FocusSymbol): void {
+  bus.focus_symbols.push(sym);
+}
+
+/** Append a recent finding. */
+export function addRecentFinding(bus: BusEntry, finding: RecentFinding): void {
+  bus.recent_findings.push(finding);
+}
+
+/**
+ * Add a file in play, routing by role into the load_bearing or ambient slice
+ * and enforcing the 30% ambient cap (design doc section 4.2). Load-bearing
+ * entries are never evicted by ambient pressure; an ambient add that would
+ * breach the cap is dropped.
+ */
+export function addFileInPlay(bus: BusEntry, file: FileInPlay): void {
+  if (LOAD_BEARING_ROLES.has(file.role)) {
+    bus.files_in_play.load_bearing.push(file);
+    return;
+  }
+  // Ambient: accept if it stays within the floor OR keeps ambient/total within
+  // the 30% cap. The floor lets the first few ambient files in on a near-empty
+  // bus; the ratio prevents ambient from flooding out load-bearing context.
+  const lb = bus.files_in_play.load_bearing.length;
+  const amb = bus.files_in_play.ambient.length;
+  const totalAfter = lb + amb + 1;
+  const ambAfter = amb + 1;
+  const withinFloor = ambAfter <= AMBIENT_MIN_SLOTS;
+  const withinRatio = ambAfter / totalAfter <= AMBIENT_CAP_RATIO + 1e-9;
+  if (withinFloor || withinRatio) {
+    bus.files_in_play.ambient.push(file);
+  }
+  // else: cap reached -> drop the ambient entry (load_bearing untouched).
+}

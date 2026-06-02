@@ -31,6 +31,38 @@ INVARIANT_4=4
 
 cd "$(dirname "$0")/.."
 
+# ==============================================================
+# CONTEXT BUS SURFACE GUARD (WS-2 Phase A.4)
+# The L2 context-bus single-writer and its foundations carry NO
+# emitBraintrustScore() calls, so the emit invariant below does
+# NOT protect them. This block asserts each critical module still
+# exports its core surface -- a silent whole-file regen that drops
+# an export (the agent-rewrite collision hazard, e.g. regression #6)
+# trips this check. Do NOT weaken these assertions to silence a
+# regression; fix the module the check points at.
+# ==============================================================
+bus_fail=0
+check_bus_export() {
+  # $1 = file, $2 = export pattern, $3 = human label
+  if [ ! -f "$1" ]; then
+    echo "FAIL: $1 is missing (expected export $3)."
+    bus_fail=1
+  elif ! grep -qE "$2" "$1"; then
+    echo "FAIL: $1 no longer exports $3."
+    bus_fail=1
+  fi
+}
+check_bus_export ".claude/hooks/src/shared/session-bus-id.ts" "export function getBusId" "getBusId()"
+check_bus_export ".claude/hooks/src/shared/context-bus.ts"    "export function readBus"   "readBus()"
+check_bus_export ".claude/hooks/src/shared/context-bus.ts"    "export function mutateBus" "mutateBus()"
+check_bus_export ".claude/hooks/src/shared/intel-bus.ts"      "export function appendIntelBus" "appendIntelBus()"
+if [ "$bus_fail" -ne 0 ]; then
+  echo "FAIL: context bus surface guard -- a core export was dropped or a file went missing."
+  exit 1
+fi
+echo "Context bus surface guard: OK (session-bus-id, context-bus, intel-bus exports intact)."
+echo ""
+
 echo "Scanning .claude/hooks/src/ for awaited emitBraintrustScore( call sites..."
 echo ""
 
