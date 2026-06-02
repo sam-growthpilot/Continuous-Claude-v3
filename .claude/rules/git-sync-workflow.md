@@ -14,6 +14,23 @@ continuous-claude (repo)  →  ~/.claude (active)
 
 **Note:** Post-commit sync runs in the background (`&`) so `git commit` returns instantly. Sync completes asynchronously.
 
+## Reverse Sync is MANUAL-ONLY (root-cause fix, 2026-06-01)
+
+**The repo is the single source of truth.** Forward sync (repo → active) is the ONLY automatic direction. Reverse sync (active → repo) is **manual-only** — run it deliberately, and only when you edited `~/.claude/` directly and want those edits captured in the repo:
+
+```bash
+bash ~/continuous-claude/scripts/sync-claude.sh --to-repo
+```
+
+**Why manual-only:** two *automatic* reverse-sync triggers used to race the background forward-sync and **clobber fresh repo edits with stale active copies** (they reverted `rules/codex-adversarial.md` twice on 2026-06-01; the emit-only audit gate doesn't protect non-emit docs). Both were disabled at the root:
+
+| Trigger | Fix |
+|---------|-----|
+| `~/.claude/.git/hooks/post-commit` (hand-rolled, ran `sync-claude.sh --to-repo` on every active commit) | **Neutered to a no-op.** Backup at `post-commit.bak.2026-05-31`. |
+| `sync-to-repo` PostToolUse:Write\|Edit hook (`hooks/src/sync-to-repo.ts`, ran the FULL reverse-sync on any edit touching `~/.claude/{hooks,skills,rules,scripts,agents}` — so an edit to ANY active file clobbered ALL uncommitted repo edits in those dirs) | **Unregistered** from active + repo `settings.json`. Source retained (unused). |
+
+**Defense in depth:** `sync-claude.sh --to-repo` now **aborts if the repo has uncommitted changes** in the synced dirs (`rules/agents/skills/scripts/docs/hooks`) — so even a re-introduced or accidental reverse-sync can't clobber fresh repo work. Commit or stash repo edits before reverse-syncing.
+
 ## Quick Workflow
 
 ```bash

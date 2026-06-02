@@ -131,10 +131,6 @@
             "timeout": 10000
           }
         ]
-      },
-      {
-        "matcher": "Skill",
-        "hooks": []
       }
     ],
     "UserPromptSubmit": [
@@ -388,11 +384,6 @@
             "type": "command",
             "command": "node C:/Users/david.hayes/.claude/hooks/dist/prd-roadmap-sync.mjs",
             "timeout": 5000
-          },
-          {
-            "type": "command",
-            "command": "node C:/Users/david.hayes/.claude/hooks/dist/sync-to-repo.mjs",
-            "timeout": 15000
           },
           {
             "type": "command",

@@ -52,6 +52,26 @@ if [[ "$DIRECTION" == "to-repo" ]]; then
             exit 1
         fi
     fi
+
+    # Pre-flight 2 (2026-06-01): refuse reverse-sync if the REPO has uncommitted
+    # changes in the synced dirs. Reverse-sync (active -> repo) would overwrite
+    # fresh repo edits with the active copy -- the exact clobber that reverted
+    # rules/codex-adversarial.md twice on 2026-06-01 (the emit-only gate above
+    # does not protect non-emit docs). The repo is the source of truth: commit
+    # or stash repo edits first, or let the forward-sync handle repo -> active.
+    # This makes an accidental or re-introduced automatic reverse-sync safe.
+    if git -C "$REPO_ROOT" rev-parse --git-dir >/dev/null 2>&1; then
+        DIRTY="$(git -C "$REPO_ROOT" status --porcelain -- \
+            .claude/rules .claude/agents .claude/skills .claude/scripts \
+            .claude/docs .claude/hooks 2>/dev/null)"
+        if [ -n "$DIRTY" ]; then
+            echo "ABORT: reverse-sync refused -- repo has uncommitted changes in synced dirs:" >&2
+            echo "$DIRTY" | head -20 >&2
+            echo "       Reverse-sync would clobber these fresh repo edits. Commit or stash" >&2
+            echo "       them first (the repo is the source of truth)." >&2
+            exit 1
+        fi
+    fi
 fi
 
 # Directories to sync
