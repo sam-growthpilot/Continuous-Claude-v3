@@ -203,6 +203,15 @@ export interface BusEntry {
   compact_generation: number;
   /** CAS-style monotone counter (design doc section 13 Q4). */
   revision: number;
+  /**
+   * Per-turn counter (WS-2 Phase B.4a). Bumped once per UserPromptSubmit by the
+   * bus populator; PostToolUse writers stamp entries with the turn they landed
+   * on. The reader (B.3) uses it to compute focus/file staleness, since the bus
+   * READ happens at UserPromptSubmit but WRITES happen at PostToolUse -- so by
+   * the time a later turn reads, focus/files from a prior turn are >=1 turn
+   * stale (design mitigation #4).
+   */
+  current_turn: number;
 }
 
 /** The load-bearing roles (everything else is ambient). */
@@ -226,6 +235,7 @@ export function emptyBus(busId: string): BusEntry {
     schema_version: 3,
     compact_generation: 0,
     revision: 0,
+    current_turn: 0,
   };
 }
 
@@ -311,6 +321,8 @@ function coerceBus(busId: string, parsed: unknown): BusEntry {
     schema_version: 3,
     compact_generation: typeof p.compact_generation === 'number' ? p.compact_generation : 0,
     revision: typeof p.revision === 'number' && Number.isFinite(p.revision) ? p.revision : 0,
+    current_turn:
+      typeof p.current_turn === 'number' && Number.isFinite(p.current_turn) ? p.current_turn : 0,
   };
 }
 
@@ -789,25 +801,71 @@ export function setIntent(bus: BusEntry, intent: string): void {
   bus.current_intent = intent;
 }
 
-/** Append a focus symbol. */
-export function addFocusSymbol(bus: BusEntry, sym: FocusSymbol): void {
-  bus.focus_symbols.push(sym);
-}
-
-/** Append a recent finding. */
-export function addRecentFinding(bus: BusEntry, finding: RecentFinding): void {
-  bus.recent_findings.push(finding);
+/**
+ * Increment the per-turn counter (WS-2 Phase B.4a). Tolerates a missing/garbage
+ * counter on a legacy bus (coalesces to 0 before bumping) so the first bump on
+ * an older file still yields 1.
+ */
+export function bumpTurn(bus: BusEntry): void {
+  bus.current_turn = (bus.current_turn ?? 0) + 1;
 }
 
 /**
- * Add a file in play, routing by role into the load_bearing or ambient slice
- * and enforcing the 30% ambient cap (design doc section 4.2). Load-bearing
- * entries are never evicted by ambient pressure; an ambient add that would
- * breach the cap is dropped.
+ * Per-array caps (WS-2 cross-model review finding F3). The bus JSON is
+ * read+parsed+written on every mutateBus call, so an unbounded array makes writes
+ * progressively slower and the 200ms lock hold creep up over a long session --
+ * which would feed back into MORE write drops. Each writer keeps its slice
+ * bounded: load_bearing evicts the oldest last-touch turn, focus/findings are
+ * FIFO. Exported so tests can pin the boundary.
+ */
+export const LOAD_BEARING_CAP = 50;
+export const FOCUS_SYMBOLS_CAP = 50;
+export const RECENT_FINDINGS_CAP = 50;
+
+/** Append a focus symbol, keeping the slice within FOCUS_SYMBOLS_CAP (FIFO). */
+export function addFocusSymbol(bus: BusEntry, sym: FocusSymbol): void {
+  bus.focus_symbols.push(sym);
+  if (bus.focus_symbols.length > FOCUS_SYMBOLS_CAP) {
+    bus.focus_symbols.splice(0, bus.focus_symbols.length - FOCUS_SYMBOLS_CAP);
+  }
+}
+
+/** Append a recent finding, keeping the slice within RECENT_FINDINGS_CAP (FIFO). */
+export function addRecentFinding(bus: BusEntry, finding: RecentFinding): void {
+  bus.recent_findings.push(finding);
+  if (bus.recent_findings.length > RECENT_FINDINGS_CAP) {
+    bus.recent_findings.splice(0, bus.recent_findings.length - RECENT_FINDINGS_CAP);
+  }
+}
+
+/**
+ * Add a file in play, routing by role into the load_bearing or ambient slice.
+ *
+ * Load-bearing (review F3): DEDUP by (path, role) -- a re-touched file refreshes
+ * its turn_added in place instead of appending a duplicate -- then CAP the slice
+ * at LOAD_BEARING_CAP, evicting the entry with the oldest last-touch turn. This
+ * keeps a long edit-heavy session from growing the bus without bound. The dedup
+ * scan is O(LOAD_BEARING_CAP) (the array is capped small), not a full-session scan.
+ *
+ * Ambient: the 30% cap (design doc section 4.2). Load-bearing is never evicted by
+ * ambient pressure; an ambient add that would breach the cap is dropped.
  */
 export function addFileInPlay(bus: BusEntry, file: FileInPlay): void {
   if (LOAD_BEARING_ROLES.has(file.role)) {
-    bus.files_in_play.load_bearing.push(file);
+    const lbArr = bus.files_in_play.load_bearing;
+    const existing = lbArr.find((f) => f.path === file.path && f.role === file.role);
+    if (existing) {
+      // Re-touch: refresh recency + freshness in place (no duplicate row).
+      existing.turn_added = file.turn_added;
+      existing.stale = file.stale;
+      existing.stale_check = file.stale_check;
+      return;
+    }
+    lbArr.push(file);
+    if (lbArr.length > LOAD_BEARING_CAP) {
+      lbArr.sort((a, b) => (a.turn_added ?? 0) - (b.turn_added ?? 0));
+      lbArr.splice(0, lbArr.length - LOAD_BEARING_CAP);
+    }
     return;
   }
   // Ambient: accept if it stays within the floor OR keeps ambient/total within

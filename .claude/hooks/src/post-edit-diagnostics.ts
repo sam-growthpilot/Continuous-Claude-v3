@@ -10,6 +10,7 @@
 import { readFileSync } from 'fs';
 import { spawnSync } from 'child_process';
 import { queryDaemonSync, trackHookActivitySync } from './daemon-client.js';
+import { mutateBus, addFileInPlay } from './shared/context-bus.js';
 
 interface HookInput {
   tool_name: string;
@@ -26,6 +27,35 @@ interface HookOutput {
     hookEventName: string;
     additionalContext?: string;
   };
+}
+
+/**
+ * Record the just-edited file on the L2 context bus (WS-2 Phase B.4a) so the
+ * recall path (B.3) can bias on load-bearing files. This is a SIDE EFFECT layered
+ * on top of the hook's diagnostics behavior -- it MUST NOT change or block the
+ * hook's output. mutateBus is fail-open and honors CCV3_BUS_OFF + the 200ms lock
+ * cap (a contended-out write is LOGGED by mutateBus as bus_write_dropped, not
+ * silent -- review F4); we additionally wrap the call so a throwing bus write is
+ * swallowed and never surfaces in the diagnostics path.
+ *
+ * Role: `edited` ONLY. A type-check failure is deliberately NOT marked
+ * `test_failed` (review F6) -- that role is reserved for a real test-runner; a
+ * type error on an edited file is already captured by the `edited` role.
+ *
+ * turn_added is stamped from the bus's current_turn (best-effort: if the
+ * per-prompt turn bump was itself dropped under contention, a freshly-edited file
+ * can read one turn stale -- a bounded, fail-safe over-estimate, review F2).
+ *
+ * @param filePath The edited file (load-bearing).
+ */
+export function recordBusFilesInPlay(filePath: string): void {
+  try {
+    mutateBus(undefined, (b) => {
+      addFileInPlay(b, { path: filePath, role: 'edited', turn_added: b.current_turn ?? 0 });
+    });
+  } catch {
+    // Fail-open: a bus write must never break or block the diagnostics hook.
+  }
 }
 
 async function main() {
@@ -114,6 +144,12 @@ function runPythonDiagnostics(filePath: string, projectDir: string): void {
       type_errors: typeErrors,
       lint_issues: lintIssues,
     });
+
+    // WS-2 Phase B.4a: record the edited file on the bus (load-bearing), and
+    // mark it test_failed when the diagnostics found type errors. Fail-open;
+    // runs before the early-return so the `edited` role lands even on a clean
+    // file. Does not affect the diagnostics output below.
+    recordBusFilesInPlay(filePath);
 
     // No errors - silent success
     if (typeErrors === 0 && lintIssues === 0) {
@@ -212,6 +248,12 @@ function runTscDiagnostics(filePath: string, projectDir: string): void {
       lint_issues: warningCount,
     });
 
+    // WS-2 Phase B.4a: record the edited file on the bus (load-bearing), and
+    // mark it test_failed when tsc found type errors. Fail-open; runs before the
+    // early-return so the `edited` role lands even on a clean file. Does not
+    // affect the diagnostics output below.
+    recordBusFilesInPlay(filePath);
+
     // No diagnostics - silent success
     if (diagnostics.length === 0) {
       console.log('{}');
@@ -247,4 +289,28 @@ function runTscDiagnostics(filePath: string, projectDir: string): void {
   }
 }
 
-main().catch(() => console.log('{}'));
+// Only run main() when executed directly (not when imported by tests). Tests
+// import this module to unit-test recordBusFilesInPlay without driving stdin;
+// vitest does not invoke the bundle as an entry point. The production dist is
+// invoked by node as `post-edit-diagnostics.mjs`, so this stays true at runtime.
+// (Idiom mirrored from agent-recall-injector.ts.)
+const isDirectInvocation = (() => {
+  try {
+    const arg1 = process.argv[1] || '';
+    return (
+      arg1.endsWith('post-edit-diagnostics.mjs') ||
+      arg1.endsWith('post-edit-diagnostics.js') ||
+      arg1.endsWith('post-edit-diagnostics.ts')
+    );
+  } catch {
+    return false;
+  }
+})();
+
+if (isDirectInvocation) {
+  main().catch(() => console.log('{}'));
+}
+
+// Re-export the entry-detection flag so the guard above is resilient to
+// bundler path-mangling (no-op for runtime).
+export const __isDirectInvocation = isDirectInvocation;
