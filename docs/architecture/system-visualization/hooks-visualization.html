@@ -721,7 +721,7 @@
         <div class="step"><div class="step-num">2</div><div class="step-body"><h4>session-register</h4><p>Writes a row to the <code>sessions</code> table for cross-terminal awareness. Other terminals can now see this session and its <code>working_on</code> field.</p><span class="file-ref">session-register.ts</span></div></div>
         <div class="step"><div class="step-num">3</div><div class="step-body"><h4>session-start-continuity + init-check</h4><p>Loads the handoff/continuity ledger and validates <code>knowledge-tree.json</code>. If the tree is missing or empty it auto-regenerates (for projects with code files).</p><span class="file-ref">session-start-continuity.ts · session-start-init-check.ts</span></div></div>
         <div class="step"><div class="step-num">4</div><div class="step-body"><h4>session-start-recovery</h4><p>Detects an in-flight Ralph loop via <code>.ralph/state.json</code> and resumes it, surfacing the active task back into context.</p><span class="file-ref">session-start-recovery.ts</span></div></div>
-        <div class="step"><div class="step-num">5</div><div class="step-body"><h4>memory + tldr cache warmers</h4><p><code>session-start-memory-loaders</code> primes recall; <code>session-start-tldr-cache</code> pre-builds code summaries. The BGE embedding daemon is spawned fire-and-forget here so prompt #1 hits a warm daemon.</p><span class="file-ref">session-start-memory-loaders.ts · session-start-tldr-cache.ts</span></div></div>
+        <div class="step"><div class="step-num">5</div><div class="step-body"><h4>memory cache warmer</h4><p><code>session-start-memory-loaders</code> primes recall. The BGE embedding daemon is spawned fire-and-forget here so prompt #1 hits a warm daemon.</p><span class="file-ref">session-start-memory-loaders.ts</span></div></div>
         <div class="step"><div class="step-num">6</div><div class="step-body"><h4>hook-health-monitor</h4><p>Audits that every registered hook's <code>dist/*.mjs</code> exists and isn't stale (src newer than dist). Stays quiet when healthy; reports fix commands when not. Also emits the <span class="pill score">hook_health_ratio</span> Braintrust score once per boot.</p><span class="file-ref">hook-health-monitor.ts</span></div></div>
       </div>
     </section>
@@ -796,7 +796,7 @@
           <table class="tbl">
             <tr><th>Hook</th><th>Role</th></tr>
             <tr><td><code>skill-activation-prompt</code></td><td>keyword + intent → skill suggestion</td></tr>
-            <tr><td><code>pageindex-navigator</code></td><td>doc-search routing</td></tr>
+            <tr><td><code>pageindex-navigator</code></td><td>doc-search routing (disabled 2026-06-01; on-demand only)</td></tr>
             <tr><td><code>maestro-detector</code></td><td>detect Maestro workflow intent</td></tr>
             <tr><td><code>maestro-state-manager</code></td><td>phase gating state</td></tr>
             <tr><td><code>ralph-watchdog</code></td><td>iteration-limit guard</td></tr>

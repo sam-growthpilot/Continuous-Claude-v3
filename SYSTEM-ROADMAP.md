@@ -52,7 +52,7 @@ All four signals green:
 | 9 | Skill routing | Embed-and-match via BGE |
 | 10 | Tool-tier policy | Adopt + audit |
 | 11 | Hook scope | Codify gate vs orchestrator |
-| 12 | create-better-skills | Deprecated; skill-forge canonical |
+| 12 | create-better-skills | Archived; skill-forge canonical |
 | 13 | Agent vs skill | Dedicated Phase 5 + design doc |
 | 14 | Tree health | Add freshness + completeness |
 | 15 | Bridge health | Add bridge health checks |

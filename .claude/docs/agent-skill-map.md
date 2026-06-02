@@ -180,13 +180,12 @@ Archived in `_archived/2026-04-26-tldr-cleanup/`: `tldr-router`, `tldr-overview`
 | qlty | — |
 | health-check | — |
 
-### Agentica (3)
+### Agentica (2)
 
 | Skill | Companion Agent |
 |-------|-----------------|
 | agentica | — |
 | agentica-sdk | agentica-agent |
-| agentica-server | — |
 
 ### Meta / Reference (3)
 

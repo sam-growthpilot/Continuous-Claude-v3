@@ -13,7 +13,6 @@ Current registrations live in `~/.claude/settings.json`. For totals and per-even
 | session-start-recovery | Recover from interrupted sessions |
 | braintrust_hooks session_start | Braintrust observability trace init |
 | roadmap-reconcile | Sync ROADMAP.md with actual state on session start |
-| session-start-tldr-cache | Pre-cache TLDR structure analysis |
 | hook-health-monitor | Verify hook registration health on startup |
 
 ## UserPromptSubmit
@@ -25,7 +24,7 @@ Current registrations live in `~/.claude/settings.json`. For totals and per-even
 | guardrail-enforcer | Enforce operational guardrails on user prompts |
 | skill-activation-prompt | Detect skill trigger keywords in user input |
 | memory-awareness | Inject relevant memories from semantic search |
-| pageindex-navigator | Route to PageIndex for document queries |
+| pageindex-navigator | Route to PageIndex for document queries (disabled 2026-06-01; on-demand only) |
 | maestro-detector | Detect /maestro workflow activation |
 | user-confirmation-detector | Detect user confirmations for gated operations |
 | ralph-watchdog | Monitor Ralph iteration limits and escalation |
