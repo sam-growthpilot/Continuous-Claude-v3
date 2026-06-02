@@ -1,288 +1,34 @@
-// src/post-edit-diagnostics.ts
-import { readFileSync as readFileSync5 } from "fs";
-import { spawnSync as spawnSync2 } from "child_process";
+// src/bus-session-populator.ts
+import { readFileSync as readFileSync4 } from "fs";
 
-// src/daemon-client.ts
-import { existsSync, readFileSync, writeFileSync, unlinkSync, mkdirSync } from "fs";
-import { execSync, spawnSync } from "child_process";
-import { join, resolve } from "path";
-import { tmpdir } from "os";
-import * as crypto from "crypto";
-function getTldrTmpDir() {
-  if (process.platform === "win32") {
-    const dir = "C:/tmp";
-    if (!existsSync(dir)) {
-      try {
-        mkdirSync(dir, { recursive: true });
-      } catch {
-      }
-    }
-    return dir;
-  }
-  return tmpdir();
-}
-function resolveProjectDir(projectDir) {
-  return resolve(projectDir);
-}
-function getLockPath(projectDir) {
-  const resolvedPath = resolveProjectDir(projectDir);
-  const hash = crypto.createHash("md5").update(resolvedPath).digest("hex").substring(0, 8);
-  return `${getTldrTmpDir()}/tldr-${hash}.lock`;
-}
-function getPidPath(projectDir) {
-  const resolvedPath = resolveProjectDir(projectDir);
-  const hash = crypto.createHash("md5").update(resolvedPath).digest("hex").substring(0, 8);
-  return `${getTldrTmpDir()}/tldr-${hash}.pid`;
-}
-function isDaemonProcessRunning(projectDir) {
-  const pidPath = getPidPath(projectDir);
-  if (!existsSync(pidPath)) return false;
-  try {
-    const pid = parseInt(readFileSync(pidPath, "utf-8").trim(), 10);
-    if (isNaN(pid) || pid <= 0) return false;
-    process.kill(pid, 0);
-    return true;
-  } catch {
-    return false;
-  }
-}
-function tryAcquireLock(projectDir) {
-  const lockPath = getLockPath(projectDir);
-  try {
-    if (existsSync(lockPath)) {
-      const lockContent = readFileSync(lockPath, "utf-8");
-      const lockTime = parseInt(lockContent, 10);
-      if (!isNaN(lockTime) && Date.now() - lockTime < 3e4) {
-        return false;
-      }
-      try {
-        unlinkSync(lockPath);
-      } catch {
-      }
-    }
-    writeFileSync(lockPath, Date.now().toString(), { flag: "wx" });
-    return true;
-  } catch {
-    return false;
-  }
-}
-function releaseLock(projectDir) {
-  try {
-    unlinkSync(getLockPath(projectDir));
-  } catch {
-  }
-}
-var QUERY_TIMEOUT = 3e3;
-function getConnectionInfo(projectDir) {
-  const resolvedPath = resolveProjectDir(projectDir);
-  const hash = crypto.createHash("md5").update(resolvedPath).digest("hex").substring(0, 8);
-  if (process.platform === "win32") {
-    const port = 49152 + parseInt(hash, 16) % 1e4;
-    return { type: "tcp", host: "127.0.0.1", port };
-  } else {
-    return { type: "unix", path: `${getTldrTmpDir()}/tldr-${hash}.sock` };
-  }
-}
-function getStatusFile(projectDir) {
-  const statusPath = join(projectDir, ".tldr", "status");
-  if (existsSync(statusPath)) {
-    try {
-      return readFileSync(statusPath, "utf-8").trim();
-    } catch {
-      return null;
-    }
-  }
-  return null;
-}
-function isIndexing(projectDir) {
-  return getStatusFile(projectDir) === "indexing";
-}
-function isDaemonReachable(projectDir) {
-  const connInfo = getConnectionInfo(projectDir);
-  if (connInfo.type === "tcp") {
-    try {
-      const script = `const s=require('net').connect(${connInfo.port},'${connInfo.host}',()=>{s.destroy();process.exit(0)});s.on('error',()=>process.exit(1));s.setTimeout(500,()=>{s.destroy();process.exit(1)})`;
-      const result = spawnSync(process.execPath, ["-e", script], {
-        timeout: 2e3,
-        stdio: "pipe"
-      });
-      return result.status === 0;
-    } catch {
-      return false;
-    }
-  } else {
-    if (!existsSync(connInfo.path)) {
-      return false;
-    }
-    if (isDaemonProcessRunning(projectDir)) {
-      try {
-        execSync(`echo '{"cmd":"ping"}' | nc -U "${connInfo.path}"`, {
-          encoding: "utf-8",
-          timeout: 1e3,
-          // Increased from 500ms
-          stdio: ["pipe", "pipe", "pipe"]
-        });
-        return true;
-      } catch {
-        return true;
-      }
-    }
-    try {
-      execSync(`echo '{"cmd":"ping"}' | nc -U "${connInfo.path}"`, {
-        encoding: "utf-8",
-        timeout: 500,
-        stdio: ["pipe", "pipe", "pipe"]
-      });
-      return true;
-    } catch {
-      try {
-        unlinkSync(connInfo.path);
-      } catch {
-      }
-      return false;
-    }
-  }
-}
-function tryStartDaemon(projectDir) {
-  try {
-    if (isDaemonProcessRunning(projectDir)) {
-      return true;
-    }
-    if (isDaemonReachable(projectDir)) {
-      return true;
-    }
-    if (!tryAcquireLock(projectDir)) {
-      const start = Date.now();
-      while (Date.now() - start < 5e3) {
-        if (isDaemonProcessRunning(projectDir) || isDaemonReachable(projectDir)) {
-          return true;
-        }
-        const end = Date.now() + 100;
-        while (Date.now() < end) {
-        }
-      }
-      return isDaemonProcessRunning(projectDir) || isDaemonReachable(projectDir);
-    }
-    try {
-      const tldrPath = join(projectDir, "opc", "packages", "tldr-code");
-      let started = false;
-      if (existsSync(tldrPath)) {
-        const result = spawnSync("uv", ["run", "tldr", "daemon", "start", "--project", projectDir], {
-          timeout: 1e4,
-          stdio: "ignore",
-          cwd: tldrPath
-        });
-        started = result.status === 0;
-      }
-      if (!started && !process.env.TLDR_DEV) {
-        spawnSync("tldr", ["daemon", "start", "--project", projectDir], {
-          timeout: 5e3,
-          stdio: "ignore"
-        });
-      }
-      const start = Date.now();
-      while (Date.now() - start < 1e4) {
-        if (isDaemonReachable(projectDir)) {
-          const cooldown = Date.now() + 1e3;
-          while (Date.now() < cooldown) {
-          }
-          return true;
-        }
-        const end = Date.now() + 100;
-        while (Date.now() < end) {
-        }
-      }
-      return isDaemonReachable(projectDir);
-    } finally {
-      releaseLock(projectDir);
-    }
-  } catch {
-    return false;
-  }
-}
-function queryDaemonSync(query, projectDir) {
-  if (isIndexing(projectDir)) {
-    return {
-      indexing: true,
-      status: "indexing",
-      message: "Daemon is still indexing, results may be incomplete"
-    };
-  }
-  const connInfo = getConnectionInfo(projectDir);
-  if (!isDaemonReachable(projectDir)) {
-    if (!tryStartDaemon(projectDir)) {
-      return { status: "unavailable", error: "Daemon not running and could not start" };
-    }
-  }
-  try {
-    const input = JSON.stringify(query);
-    let result;
-    if (connInfo.type === "tcp") {
-      const psCommand = `
-        $client = New-Object System.Net.Sockets.TcpClient('${connInfo.host}', ${connInfo.port})
-        $stream = $client.GetStream()
-        $writer = New-Object System.IO.StreamWriter($stream)
-        $reader = New-Object System.IO.StreamReader($stream)
-        $writer.WriteLine('${input.replace(/'/g, "''")}')
-        $writer.Flush()
-        $response = $reader.ReadLine()
-        $client.Close()
-        Write-Output $response
-      `.trim();
-      result = execSync(`powershell -Command "${psCommand.replace(/"/g, '\\"')}"`, {
-        encoding: "utf-8",
-        timeout: QUERY_TIMEOUT
-      });
-    } else {
-      result = execSync(`echo '${input}' | nc -U "${connInfo.path}"`, {
-        encoding: "utf-8",
-        timeout: QUERY_TIMEOUT
-      });
-    }
-    return JSON.parse(result.trim());
-  } catch (err) {
-    if (err.killed) {
-      return { status: "error", error: "timeout" };
-    }
-    if (err.message?.includes("ECONNREFUSED") || err.message?.includes("ENOENT")) {
-      return { status: "unavailable", error: "Daemon not running" };
-    }
-    return { status: "error", error: err.message || "Unknown error" };
-  }
-}
-function trackHookActivitySync(hookName, projectDir, success = true, metrics = {}) {
-  try {
-    queryDaemonSync(
-      { cmd: "track", hook: hookName, success, metrics },
-      projectDir
-    );
-  } catch {
-  }
+// src/shared/output.ts
+function outputContinue() {
+  console.log(JSON.stringify({ result: "continue" }));
 }
 
 // src/shared/context-bus.ts
-import { readFileSync as readFileSync4 } from "node:fs";
-import { dirname as dirname3, join as join6, resolve as resolve2, sep } from "node:path";
-import { mkdirSync as mkdirSync5, existsSync as existsSync5 } from "node:fs";
+import { readFileSync as readFileSync3 } from "node:fs";
+import { dirname as dirname3, join as join5, resolve, sep } from "node:path";
+import { mkdirSync as mkdirSync4, existsSync as existsSync4 } from "node:fs";
 
 // src/shared/session-bus-id.ts
-import { createHash as createHash2 } from "node:crypto";
+import { createHash } from "node:crypto";
 import { realpathSync } from "node:fs";
 
 // src/shared/session-id.ts
-import { mkdirSync as mkdirSync2, readFileSync as readFileSync2, writeFileSync as writeFileSync2 } from "fs";
+import { mkdirSync, readFileSync, writeFileSync } from "fs";
 import { homedir } from "os";
-import { join as join2 } from "path";
+import { join } from "path";
 var SESSION_ID_FILENAME = ".coordination-session-id";
 function getSessionIdFile(options = {}) {
-  const claudeDir = join2(process.env.HOME || process.env.USERPROFILE || homedir(), ".claude");
+  const claudeDir = join(process.env.HOME || process.env.USERPROFILE || homedir(), ".claude");
   if (options.createDir) {
     try {
-      mkdirSync2(claudeDir, { recursive: true, mode: 448 });
+      mkdirSync(claudeDir, { recursive: true, mode: 448 });
     } catch {
     }
   }
-  return join2(claudeDir, SESSION_ID_FILENAME);
+  return join(claudeDir, SESSION_ID_FILENAME);
 }
 function generateSessionId() {
   const spanId = process.env.BRAINTRUST_SPAN_ID;
@@ -294,7 +40,7 @@ function generateSessionId() {
 function readSessionId() {
   try {
     const sessionFile = getSessionIdFile();
-    const id = readFileSync2(sessionFile, "utf-8").trim();
+    const id = readFileSync(sessionFile, "utf-8").trim();
     return id || null;
   } catch {
     return null;
@@ -327,7 +73,7 @@ function hashProjectPath(cwd, realpath = realpathSync) {
     resolved = cwd;
   }
   const normalized = resolved.toLowerCase();
-  return createHash2("sha256").update(normalized).digest("hex").slice(0, PROJECT_HASH_LEN);
+  return createHash("sha256").update(normalized).digest("hex").slice(0, PROJECT_HASH_LEN);
 }
 function sanitizeBusPart(part) {
   return part.replace(/[^A-Za-z0-9._-]/g, "_").replace(/\.{2,}/g, ".").slice(0, 40);
@@ -345,24 +91,24 @@ function getBusId(opts = {}) {
 
 // src/shared/atomic-write.ts
 import {
-  writeFileSync as writeFileSync3,
+  writeFileSync as writeFileSync2,
   renameSync as renameSync2,
-  unlinkSync as unlinkSync2,
-  existsSync as existsSync3,
+  unlinkSync,
+  existsSync as existsSync2,
   openSync,
   closeSync,
-  readFileSync as readFileSync3,
+  readFileSync as readFileSync2,
   statSync as statSync2,
   constants
 } from "fs";
-import { dirname, basename, join as join4 } from "path";
+import { dirname, basename, join as join3 } from "path";
 
 // src/shared/logger.ts
-import { appendFileSync, existsSync as existsSync2, mkdirSync as mkdirSync3, statSync, renameSync } from "fs";
-import { join as join3 } from "path";
+import { appendFileSync, existsSync, mkdirSync as mkdirSync2, statSync, renameSync } from "fs";
+import { join as join2 } from "path";
 import { homedir as homedir2 } from "os";
-var LOG_DIR = join3(homedir2(), ".claude", "logs");
-var LOG_FILE = join3(LOG_DIR, "hooks.log");
+var LOG_DIR = join2(homedir2(), ".claude", "logs");
+var LOG_FILE = join2(LOG_DIR, "hooks.log");
 var MAX_LOG_SIZE = 5 * 1024 * 1024;
 var MIN_LEVEL = process.env.CLAUDE_HOOK_LOG_LEVEL || "info";
 var LEVEL_ORDER = {
@@ -375,13 +121,13 @@ function shouldLog(level) {
   return LEVEL_ORDER[level] >= LEVEL_ORDER[MIN_LEVEL];
 }
 function ensureLogDir() {
-  if (!existsSync2(LOG_DIR)) {
-    mkdirSync3(LOG_DIR, { recursive: true });
+  if (!existsSync(LOG_DIR)) {
+    mkdirSync2(LOG_DIR, { recursive: true });
   }
 }
 function rotateIfNeeded() {
   try {
-    if (existsSync2(LOG_FILE)) {
+    if (existsSync(LOG_FILE)) {
       const stat = statSync(LOG_FILE);
       if (stat.size > MAX_LOG_SIZE) {
         const rotated = LOG_FILE + ".1";
@@ -435,13 +181,13 @@ var LOCK_RETRY_MS = 50;
 var LOCK_TIMEOUT_MS = 5e3;
 function atomicWriteSync(filePath, content) {
   const dir = dirname(filePath);
-  const tmpFile = join4(dir, `.${basename(filePath)}.tmp.${process.pid}`);
+  const tmpFile = join3(dir, `.${basename(filePath)}.tmp.${process.pid}`);
   try {
-    writeFileSync3(tmpFile, content, "utf-8");
+    writeFileSync2(tmpFile, content, "utf-8");
     renameSync2(tmpFile, filePath);
   } catch (err) {
     try {
-      if (existsSync3(tmpFile)) unlinkSync2(tmpFile);
+      if (existsSync2(tmpFile)) unlinkSync(tmpFile);
     } catch {
     }
     throw err;
@@ -453,7 +199,7 @@ function acquireLockSync(filePath, timeoutMs = LOCK_TIMEOUT_MS) {
   while (true) {
     try {
       const fd = openSync(lockFile, constants.O_CREAT | constants.O_EXCL | constants.O_WRONLY);
-      writeFileSync3(fd, `${process.pid}
+      writeFileSync2(fd, `${process.pid}
 ${Date.now()}`, "utf-8");
       closeSync(fd);
       return true;
@@ -463,7 +209,7 @@ ${Date.now()}`, "utf-8");
           const stat = statSync2(lockFile);
           if (Date.now() - stat.mtimeMs > LOCK_STALE_MS) {
             log.warn("Removing stale lock", { lockFile, ageMs: Date.now() - stat.mtimeMs });
-            unlinkSync2(lockFile);
+            unlinkSync(lockFile);
             continue;
           }
         } catch {
@@ -486,8 +232,8 @@ ${Date.now()}`, "utf-8");
 function releaseLockSync(filePath) {
   const lockFile = filePath + ".lock";
   try {
-    if (existsSync3(lockFile)) {
-      unlinkSync2(lockFile);
+    if (existsSync2(lockFile)) {
+      unlinkSync(lockFile);
     }
   } catch (err) {
     log.warn("Failed to release lock", { lockFile, error: String(err) });
@@ -510,11 +256,11 @@ function mutateStateWithLock(filePath, transformFn, opts = {}) {
   }
   try {
     let current;
-    if (!existsSync3(filePath)) {
+    if (!existsSync2(filePath)) {
       current = null;
     } else {
       try {
-        current = readFileSync3(filePath, "utf-8");
+        current = readFileSync2(filePath, "utf-8");
       } catch (err) {
         log.warn("mutateStateWithLock: existing file unreadable, aborting write", {
           filePath,
@@ -554,14 +300,14 @@ function mutateStateWithLock(filePath, transformFn, opts = {}) {
 }
 
 // src/shared/intel-bus.ts
-import { appendFileSync as appendFileSync2, existsSync as existsSync4, mkdirSync as mkdirSync4, renameSync as renameSync3, statSync as statSync3, unlinkSync as unlinkSync3 } from "node:fs";
-import { dirname as dirname2, join as join5 } from "node:path";
+import { appendFileSync as appendFileSync2, existsSync as existsSync3, mkdirSync as mkdirSync3, renameSync as renameSync3, statSync as statSync3, unlinkSync as unlinkSync2 } from "node:fs";
+import { dirname as dirname2, join as join4 } from "node:path";
 var MAX_LINE_BYTES = 4096;
 var MAX_INTEL_BUS_BYTES = 2e6;
 var DEFAULT_RETENTION_MS = 7 * 24 * 60 * 60 * 1e3;
 function intelBusPath(projectDir) {
   const root = projectDir || process.env.CLAUDE_PROJECT_DIR || process.cwd();
-  return join5(root, ".claude", "logs", "intel-bus.jsonl");
+  return join4(root, ".claude", "logs", "intel-bus.jsonl");
 }
 function stripNewlinesDeep(value) {
   if (typeof value === "string") {
@@ -660,13 +406,13 @@ function appendIntelBus(event, opts = {}) {
 }
 function defaultAppend(path, line) {
   const dir = dirname2(path);
-  if (!existsSync4(dir)) {
-    mkdirSync4(dir, { recursive: true });
+  if (!existsSync3(dir)) {
+    mkdirSync3(dir, { recursive: true });
   }
   appendFileSync2(path, line, "utf-8");
 }
 function defaultSize(path) {
-  if (!existsSync4(path)) return 0;
+  if (!existsSync3(path)) return 0;
   return statSync3(path).size;
 }
 function resolveMaxBytes() {
@@ -697,18 +443,9 @@ function maybeRotate(path, sizeFn, renameFn) {
 
 // src/shared/context-bus.ts
 var LATENCY_BUDGET_MS = 50;
-var AMBIENT_CAP_RATIO = 0.3;
-var AMBIENT_MIN_SLOTS = 3;
 var MAX_CAS_RETRIES = 5;
 var BUS_LOCK_TIMEOUT_MS = 200;
 var BUS_WRITE_SLOW_MS = LATENCY_BUDGET_MS;
-var LOAD_BEARING_ROLES = /* @__PURE__ */ new Set([
-  "user_mentioned",
-  "edited",
-  "test_failed",
-  "dependency_traced",
-  "read_for_context"
-]);
 function emptyBus(busId) {
   return {
     bus_id: busId,
@@ -731,14 +468,14 @@ function assertSafeBusId(busId) {
 }
 function sessionCacheRoot(projectDir) {
   const root = projectDir || process.env.CLAUDE_PROJECT_DIR || process.cwd();
-  return join6(root, ".claude", "cache", "session");
+  return join5(root, ".claude", "cache", "session");
 }
 function busPath(busId, projectDir) {
   assertSafeBusId(busId);
   const sessionRoot = sessionCacheRoot(projectDir);
-  const full = join6(sessionRoot, busId, "context.json");
-  const resolvedRoot = resolve2(sessionRoot);
-  const resolvedFull = resolve2(full);
+  const full = join5(sessionRoot, busId, "context.json");
+  const resolvedRoot = resolve(sessionRoot);
+  const resolvedFull = resolve(full);
   const rootWithSep = resolvedRoot.endsWith(sep) ? resolvedRoot : resolvedRoot + sep;
   if (!resolvedFull.startsWith(rootWithSep)) {
     throw new Error("bus path escapes session root");
@@ -775,7 +512,7 @@ function coerceFilesInPlay(value) {
 }
 function defaultRead(path) {
   try {
-    return readFileSync4(path, "utf-8");
+    return readFileSync3(path, "utf-8");
   } catch {
     return null;
   }
@@ -955,7 +692,7 @@ function ensureDir(path, opts) {
   if (opts.write) return;
   try {
     const dir = dirname3(path);
-    if (!existsSync5(dir)) mkdirSync5(dir, { recursive: true });
+    if (!existsSync4(dir)) mkdirSync4(dir, { recursive: true });
   } catch {
   }
 }
@@ -966,226 +703,53 @@ function safeBusId() {
     return "s-unknown";
   }
 }
-var LOAD_BEARING_CAP = 50;
-function addFileInPlay(bus, file) {
-  if (LOAD_BEARING_ROLES.has(file.role)) {
-    const lbArr = bus.files_in_play.load_bearing;
-    const existing = lbArr.find((f) => f.path === file.path && f.role === file.role);
-    if (existing) {
-      existing.turn_added = file.turn_added;
-      existing.stale = file.stale;
-      existing.stale_check = file.stale_check;
-      return;
-    }
-    lbArr.push(file);
-    if (lbArr.length > LOAD_BEARING_CAP) {
-      lbArr.sort((a, b) => (a.turn_added ?? 0) - (b.turn_added ?? 0));
-      lbArr.splice(0, lbArr.length - LOAD_BEARING_CAP);
-    }
-    return;
-  }
-  const lb = bus.files_in_play.load_bearing.length;
-  const amb = bus.files_in_play.ambient.length;
-  const totalAfter = lb + amb + 1;
-  const ambAfter = amb + 1;
-  const withinFloor = ambAfter <= AMBIENT_MIN_SLOTS;
-  const withinRatio = ambAfter / totalAfter <= AMBIENT_CAP_RATIO + 1e-9;
-  if (withinFloor || withinRatio) {
-    bus.files_in_play.ambient.push(file);
-  }
+function setIntent(bus, intent) {
+  bus.current_intent = intent;
+}
+function bumpTurn(bus) {
+  bus.current_turn = (bus.current_turn ?? 0) + 1;
 }
 
-// src/post-edit-diagnostics.ts
-function recordBusFilesInPlay(filePath) {
+// src/shared/memory-sanitize.ts
+function sanitizeMemoryContent(content, cap = 500) {
+  if (typeof content !== "string" || content.length === 0) {
+    return "";
+  }
+  let out = content.replace(/[\x00-\x08\x0b\x0c\x0e-\x1f\x7f-\x9f]/g, "");
+  if (out.length > cap) {
+    out = out.slice(0, cap) + "...(truncated)";
+  }
+  out = out.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+  return out;
+}
+
+// src/bus-session-populator.ts
+var INTENT_CAP = 120;
+var MIN_PROMPT_LEN = 15;
+function readStdin() {
+  return readFileSync4(0, "utf-8");
+}
+function shouldSeed(prompt) {
+  if (process.env.CLAUDE_AGENT_ID) return false;
+  if (typeof prompt !== "string") return false;
+  if (prompt.length < MIN_PROMPT_LEN) return false;
+  if (prompt.trim().startsWith("/")) return false;
+  return true;
+}
+function main() {
   try {
+    const input = JSON.parse(readStdin());
+    if (!shouldSeed(input.prompt)) {
+      outputContinue();
+      return;
+    }
+    const intent = sanitizeMemoryContent(input.prompt, INTENT_CAP);
     mutateBus(void 0, (b) => {
-      addFileInPlay(b, { path: filePath, role: "edited", turn_added: b.current_turn ?? 0 });
+      bumpTurn(b);
+      setIntent(b, intent);
     });
   } catch {
   }
+  outputContinue();
 }
-async function main() {
-  const input = JSON.parse(readFileSync5(0, "utf-8"));
-  if (input.tool_name !== "Edit" && input.tool_name !== "Write") {
-    console.log("{}");
-    return;
-  }
-  const filePath = input.tool_input?.file_path;
-  if (!filePath) {
-    console.log("{}");
-    return;
-  }
-  const codeExtensions = [
-    // Python (has linters: pyright + ruff)
-    ".py",
-    ".pyx",
-    ".pyi",
-    // TypeScript/JavaScript (has linter: tsc --noEmit)
-    ".ts",
-    ".tsx",
-    ".js",
-    ".jsx",
-    ".mjs",
-    ".cjs",
-    // Go (TODO: add go vet)
-    ".go",
-    // Rust (TODO: add clippy)
-    ".rs",
-    // Java
-    ".java",
-    // C/C++
-    ".c",
-    ".h",
-    ".cpp",
-    ".hpp",
-    ".cc",
-    ".cxx",
-    ".hh",
-    // Ruby
-    ".rb",
-    // C#
-    ".cs"
-  ];
-  const ext = filePath.substring(filePath.lastIndexOf("."));
-  if (!codeExtensions.includes(ext)) {
-    console.log("{}");
-    return;
-  }
-  const pythonExtensions = [".py", ".pyx", ".pyi"];
-  const tsJsExtensions = [".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs"];
-  const projectDir = process.env.CLAUDE_PROJECT_DIR || process.cwd();
-  if (pythonExtensions.includes(ext)) {
-    runPythonDiagnostics(filePath, projectDir);
-  } else if (tsJsExtensions.includes(ext)) {
-    runTscDiagnostics(filePath, projectDir);
-  } else {
-    console.log("{}");
-  }
-}
-function runPythonDiagnostics(filePath, projectDir) {
-  try {
-    const response = queryDaemonSync(
-      { cmd: "diagnostics", file: filePath },
-      projectDir
-    );
-    if (response.status === "unavailable" || response.error) {
-      console.log("{}");
-      return;
-    }
-    const summary = response.summary || response;
-    const typeErrors = summary.type_errors || 0;
-    const lintIssues = summary.lint_errors || summary.lint_issues || 0;
-    const errors = response.errors || [];
-    trackHookActivitySync("post-edit-diagnostics", projectDir, true, {
-      edits_analyzed: 1,
-      type_errors: typeErrors,
-      lint_issues: lintIssues
-    });
-    recordBusFilesInPlay(filePath);
-    if (typeErrors === 0 && lintIssues === 0) {
-      console.log("{}");
-      return;
-    }
-    const lines = [];
-    lines.push(`Diagnostics: ${typeErrors} type errors, ${lintIssues} lint issues`);
-    const maxPreviews = 5;
-    const previews = errors.slice(0, maxPreviews);
-    for (const err of previews) {
-      const location = err.column ? `${err.file}:${err.line}:${err.column}` : `${err.file}:${err.line}`;
-      lines.push(`   - ${location}: ${err.message}`);
-    }
-    if (errors.length > maxPreviews) {
-      const remaining = errors.length - maxPreviews;
-      lines.push(`   ... and ${remaining} more`);
-    }
-    const output = {
-      hookSpecificOutput: {
-        hookEventName: "PostToolUse",
-        additionalContext: lines.join("\n")
-      }
-    };
-    console.log(JSON.stringify(output));
-  } catch {
-    console.log("{}");
-  }
-}
-var TSC_LINE_REGEX = /^(.+)\((\d+),(\d+)\): (error|warning) TS(\d+): (.+)$/;
-function parseTscOutput(stdout) {
-  const diagnostics = [];
-  for (const line of stdout.split("\n")) {
-    const match = line.match(TSC_LINE_REGEX);
-    if (match) {
-      diagnostics.push({
-        file: match[1],
-        line: parseInt(match[2], 10),
-        column: parseInt(match[3], 10),
-        severity: match[4],
-        code: parseInt(match[5], 10),
-        message: match[6]
-      });
-    }
-  }
-  return diagnostics;
-}
-function runTscDiagnostics(filePath, projectDir) {
-  try {
-    const result = spawnSync2("tsc", ["--noEmit", "--pretty", "false"], {
-      cwd: projectDir,
-      timeout: 3e4,
-      encoding: "utf-8"
-    });
-    if (result.error || result.status === null) {
-      console.log("{}");
-      return;
-    }
-    const diagnostics = parseTscOutput(result.stdout || "");
-    const errorCount = diagnostics.filter((d) => d.severity === "error").length;
-    const warningCount = diagnostics.filter((d) => d.severity === "warning").length;
-    trackHookActivitySync("post-edit-diagnostics", projectDir, true, {
-      edits_analyzed: 1,
-      type_errors: errorCount,
-      lint_issues: warningCount
-    });
-    recordBusFilesInPlay(filePath);
-    if (diagnostics.length === 0) {
-      console.log("{}");
-      return;
-    }
-    const lines = [];
-    lines.push(`Diagnostics: ${errorCount} type errors, ${warningCount} warnings`);
-    const maxPreviews = 5;
-    const previews = diagnostics.slice(0, maxPreviews);
-    for (const d of previews) {
-      lines.push(`   - ${d.file}:${d.line}:${d.column}: ${d.message}`);
-    }
-    if (diagnostics.length > maxPreviews) {
-      const remaining = diagnostics.length - maxPreviews;
-      lines.push(`   ... and ${remaining} more`);
-    }
-    const output = {
-      hookSpecificOutput: {
-        hookEventName: "PostToolUse",
-        additionalContext: lines.join("\n")
-      }
-    };
-    console.log(JSON.stringify(output));
-  } catch {
-    console.log("{}");
-  }
-}
-var isDirectInvocation = (() => {
-  try {
-    const arg1 = process.argv[1] || "";
-    return arg1.endsWith("post-edit-diagnostics.mjs") || arg1.endsWith("post-edit-diagnostics.js") || arg1.endsWith("post-edit-diagnostics.ts");
-  } catch {
-    return false;
-  }
-})();
-if (isDirectInvocation) {
-  main().catch(() => console.log("{}"));
-}
-var __isDirectInvocation = isDirectInvocation;
-export {
-  __isDirectInvocation,
-  recordBusFilesInPlay
-};
+main();
