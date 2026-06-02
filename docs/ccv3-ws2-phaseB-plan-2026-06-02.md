@@ -175,3 +175,22 @@ Estimated **2–3 days**. Stop-condition: after the B.3 quality gate, **re-measu
 - **Rollback thresholds (flip `CCV3_BUS_OFF=1` and re-measure if ANY trip):** recall hit-rate drops vs baseline; mean top-score regresses > ~10%; injected-stale rate exceeds a set fraction; any added prompt latency is observable; any `bus_write_dropped` storm under normal (non-stress) use.
 
 Each subsequent phase (C/D) keeps its own telemetry gate; B does not commit to them.
+
+---
+
+## Build Progress (2026-06-02, this session)
+
+Executed via kraken-TDD with a cross-model codex-adversary `/review` before each commit (both passes found genuine lifts — the cross-model gate is earning its quota).
+
+| Step | Status | Commit | Notes |
+|---|---|---|---|
+| B.0 write-path hardening | DONE | `8745249` | 200ms lock cap, `bus_write_dropped` never-silent, `wait_ms`/`write_ms` instrument. Codex lift: a pre-acquire exception left `acquired=false` and mislabeled the drop `lock_timeout` -> an `outcomeKnown` flag now emits an honest `reason`. Also root-caused a load-flaky test (`BUS_WRITE_SLOW_MS` 10->50 = `LATENCY_BUDGET_MS`; the test now asserts the gating invariant). |
+| B.4 telemetry hardening | DONE | `9389032` | Secret redaction (ReDoS-safe, quantifiers bounded) + single-generation size rotation + exported `pruneIntelBus`. kraken caught + fixed a real ReDoS in its first regex. Codex lifts: F1 delimiter tail-leak (value now runs to whitespace), F2 standalone shape patterns (GitHub/Slack/JWT/Bearer), F4 anchored credential field-name redaction (no over-redaction of `token_count`/`*_id`). F3/F5 rotation/prune cross-process races documented ACCEPTED (telemetry-history loss only; growth-bound + fail-open always hold). |
+| B.1/B.2 facade | NEXT | — | `scripts/code-intel.mjs` (model `cdp.mjs`) + SKILL.md. Backend-dependent: wire available backends (recall/TLDR/ast-grep/bus); codegraph routing is Phase-C-deferred. |
+| B.3a agent-recall read | TODO | — | `agent-recall-injector.ts` reads bus, biases recall (read-only on bus). |
+| B.3b memory-awareness read | TODO (DELICATE) | — | Surgical insert near intent-build (~L522-525); emit reachability vitest (Q-B1); emit-guard after each edit; one agent. |
+| B.4a populators + turn counter | TODO | — | Extend `post-edit-diagnostics.ts` -> `edited`/`test_failed` via the B.0-hardened `mutateBus`; tiny UPS populator owns `current_intent` + turn counter (staleness suppression). |
+| Quality gate | TODO | — | before/after recall eval + rollback thresholds before B.3 stays enabled. |
+| B.5 enforcer | TODO | — | `code-intel-enforcer.ts` (default OFF, never denies) + dual settings.json registration; ALSO wire `pruneIntelBus` at session-start here. |
+
+**Resume point:** hardening (B.0 + B.4) complete, committed, independently verified (build clean, emit-guard 4/4, bus suites green). The Phase A API + B.0's bounded `mutateBus` + B.4's safe `appendIntelBus` are the foundation the activation steps build on. Next is B.1 (facade, read-only/safe) or the activation loop (B.4a write + B.3a read). Outstanding follow-up: `pruneIntelBus` needs its session-start wiring (fold into B.5). Git: `HEAD = 9389032`, 5 commits this session, **not yet pushed** to `fork` (Rev4nchist). One known rare test-timing blip: the busy-spin cap tests in `context-bus.write-cap` / `atomic-write.lock-cap` can flake under PEAK parallel-worker CPU load (bounds already generous; 25x B.0-only was clean) — if it becomes disruptive, add an injectable clock to `acquireLockSync` to make them deterministic.
