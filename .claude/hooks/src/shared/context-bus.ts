@@ -82,6 +82,26 @@ export const AMBIENT_MIN_SLOTS = 3;
 /** Bounded CAS retries before a best-effort write (never an infinite loop). */
 const MAX_CAS_RETRIES = 5;
 
+/**
+ * Default bus lock-wait cap (WS-2 Phase B.0). A per-tool bus write waits at most
+ * this long for the lock before it is treated as a DROPPED write (logged, never
+ * silent) -- far below atomic-write's 5s default so the hook can never hang on a
+ * contended bus. Callers override via BusOptions.lockTimeoutMs.
+ */
+export const BUS_LOCK_TIMEOUT_MS = 200;
+
+/**
+ * Slow-path threshold (ms) above which a successful bus write ALSO emits a
+ * `bus_write` timing row to intel-bus. The fast common path stays quiet (the
+ * onOutcome seam carries every-call timing) so intel-bus is not spammed.
+ * Aligned to LATENCY_BUDGET_MS (50ms): a bus write is "slow" once it crosses the
+ * same budget a slow READ does. A 10ms threshold was too chatty -- ordinary
+ * writes cross it under CPU/Defender load, which would spam intel-bus in
+ * production (and made the "fast write stays quiet" test load-flaky). Exported so
+ * tests can assert the gating invariant (a `bus_write` row appears IFF slow).
+ */
+export const BUS_WRITE_SLOW_MS = LATENCY_BUDGET_MS;
+
 // ---------------------------------------------------------------------------
 // BusEntry v3 schema (design doc section 4.1)
 // ---------------------------------------------------------------------------
@@ -325,6 +345,20 @@ export interface BusOptions {
    * on each attempt. Lets tests inject a competing writer to exercise CAS.
    */
   beforeWrite?: () => void;
+  /**
+   * Max time the real-lock write path waits for the bus lock, in ms (WS-2 Phase
+   * B.0). DEFAULT is 200 (BUS_LOCK_TIMEOUT_MS) so a per-tool bus write can never
+   * hang the hook on atomic-write's 5s default. Only the real-lock path
+   * (mutateViaLock) honors this; the injected-write CAS branch ignores it.
+   */
+  lockTimeoutMs?: number;
+  /**
+   * Every-call write outcome seam (WS-2 Phase B.0). Fires once per real-lock
+   * mutateBus with whether the write was DROPPED (lock timeout) and the timings.
+   * A dropped write is ALSO logged to intel-bus (bus_write_dropped) so the drop
+   * is never silent; onOutcome is the in-process signal tests/benches read.
+   */
+  onOutcome?: (o: { dropped: boolean; wait_ms: number; write_ms?: number }) => void;
 }
 
 /** Default disk read: returns file contents or null if missing/unreadable. */
@@ -482,6 +516,15 @@ export function mutateBus(
  * injected read seam if present, for deterministic contention tests), classifies
  * them, applies fn, bumps revision, and serializes. On a transient failure it
  * returns null -> the primitive performs a NO-OP (no clobber).
+ *
+ * WS-2 Phase B.0: the lock wait is capped (default BUS_LOCK_TIMEOUT_MS = 200ms)
+ * so a contended per-tool bus write can never hang the hook on the 5s default.
+ * A lock-timeout is a DROPPED write -- it is LOGGED to intel-bus
+ * (bus_write_dropped) and signaled via opts.onOutcome, NEVER silently swallowed.
+ * The bus file is left untouched on a drop; we return the best-effort `result`
+ * (the pre-write emptyBus/last-read), so a drop is surfaced, not hidden behind a
+ * clobbered/empty bus. A successful write that crossed the slow threshold also
+ * emits a `bus_write` timing row; the fast common path stays quiet on intel-bus.
  */
 function mutateViaLock(
   id: string,
@@ -490,45 +533,156 @@ function mutateViaLock(
   opts: BusOptions,
 ): BusEntry {
   const read = opts.read; // may be undefined -> the primitive reads the file itself
+  const lockTimeoutMs = opts.lockTimeoutMs ?? BUS_LOCK_TIMEOUT_MS;
   let result = emptyBus(id);
+
+  // Captured from the primitive's instrumentation callbacks. `outcomeKnown`
+  // distinguishes a REPORTED lock outcome from an exception that prevented the
+  // acquire from ever running, so a drop's intel-bus `reason` stays honest
+  // (cross-model review finding: a pre-acquire throw must not masquerade as a
+  // lock_timeout). The acquire callback flips it true.
+  let outcomeKnown = false;
+  let acquired = false;
+  let waitMs = 0;
+  let writeMs: number | undefined;
 
   try {
     ensureDir(path, opts);
-    mutateStateWithLock(path, (current) => {
-      // Determine the pre-image. If a read seam is injected, classify through it
-      // (lets the contention test slip a competitor write in). Otherwise use the
-      // `current` string the primitive already read under the lock.
-      let loaded: LoadResult;
-      if (read) {
-        loaded = loadState(id, read, path);
-      } else if (current == null) {
-        loaded = { kind: 'absent' };
-      } else if (current.trim().length === 0) {
-        loaded = { kind: 'absent' };
-      } else {
-        try {
-          loaded = { kind: 'present', bus: coerceBus(id, JSON.parse(current)) };
-        } catch {
-          loaded = { kind: 'failed' };
+    mutateStateWithLock(
+      path,
+      (current) => {
+        // Determine the pre-image. If a read seam is injected, classify through
+        // it (lets the contention test slip a competitor write in). Otherwise use
+        // the `current` string the primitive already read under the lock.
+        let loaded: LoadResult;
+        if (read) {
+          loaded = loadState(id, read, path);
+        } else if (current == null) {
+          loaded = { kind: 'absent' };
+        } else if (current.trim().length === 0) {
+          loaded = { kind: 'absent' };
+        } else {
+          try {
+            loaded = { kind: 'present', bus: coerceBus(id, JSON.parse(current)) };
+          } catch {
+            loaded = { kind: 'failed' };
+          }
         }
-      }
 
-      if (loaded.kind === 'failed') {
-        // Transient: do not overwrite existing-but-unreadable state.
-        return null;
-      }
+        if (loaded.kind === 'failed') {
+          // Transient: do not overwrite existing-but-unreadable state.
+          return null;
+        }
 
-      const base = loaded.kind === 'present' ? loaded.bus : emptyBus(id);
-      const baseRevision = base.revision;
-      fn(base);
-      base.revision = baseRevision + 1;
-      result = base;
-      return JSON.stringify(base, null, 2);
-    });
+        const base = loaded.kind === 'present' ? loaded.bus : emptyBus(id);
+        const baseRevision = base.revision;
+        fn(base);
+        base.revision = baseRevision + 1;
+        result = base;
+        return JSON.stringify(base, null, 2);
+      },
+      {
+        lockTimeoutMs,
+        onLockOutcome: (o) => {
+          outcomeKnown = true;
+          acquired = o.acquired;
+          waitMs = o.wait_ms;
+        },
+        onWriteTiming: (o) => {
+          writeMs = o.write_ms;
+        },
+      },
+    );
   } catch {
     // Fail-open: never throw into the hot path.
   }
+
+  // B.0 outcome handling. A non-acquire is a DROPPED write (the mutation did not
+  // land): log it (never silent) and signal it. Distinguish a genuine lock-timeout
+  // (outcome reported) from an exception before the acquire ran (outcomeKnown
+  // false) so the intel-bus `reason` is honest -- both are dropped:true + logged.
+  if (!acquired) {
+    emitDropEvent(id, waitMs, opts, outcomeKnown ? 'lock_timeout' : 'write_error');
+    fireOutcome(opts, { dropped: true, wait_ms: waitMs });
+  } else {
+    fireOutcome(opts, { dropped: false, wait_ms: waitMs, write_ms: writeMs });
+    if (waitMs > BUS_WRITE_SLOW_MS || (writeMs ?? 0) > BUS_WRITE_SLOW_MS) {
+      emitWriteTiming(id, waitMs, writeMs, opts);
+    }
+  }
+
   return result;
+}
+
+/**
+ * Log a DROPPED bus write to intel-bus (WS-2 Phase B.0). A drop means a per-tool
+ * mutation could not land -- either the lock timed out (`reason:'lock_timeout'`)
+ * or an exception prevented the acquire (`reason:'write_error'`). Surfacing it
+ * here is what makes the drop NON-silent. Fully fail-open: a throwing
+ * appendIntelBus must NEVER propagate into the write path.
+ */
+function emitDropEvent(
+  id: string,
+  waitMs: number,
+  opts: BusOptions,
+  reason: 'lock_timeout' | 'write_error',
+): void {
+  try {
+    appendIntelBus(
+      {
+        bus_id: id,
+        query_type: 'bus_write_dropped',
+        reason,
+        wait_ms: waitMs,
+        duration_ms: waitMs,
+      },
+      { projectDir: opts.projectDir },
+    );
+  } catch {
+    // Drop-logging must never break the write path (fail-open).
+  }
+}
+
+/**
+ * Log a slow-but-successful bus write to intel-bus (WS-2 Phase B.0). Only fired
+ * when the wait or write crossed BUS_WRITE_SLOW_MS so the fast common path stays
+ * quiet. Fully fail-open.
+ */
+function emitWriteTiming(
+  id: string,
+  waitMs: number,
+  writeMs: number | undefined,
+  opts: BusOptions,
+): void {
+  try {
+    appendIntelBus(
+      {
+        bus_id: id,
+        query_type: 'bus_write',
+        wait_ms: waitMs,
+        // Explicit null (not undefined): keep the field present so a consumer can
+        // tell "write not measured" from "sub-ms write" (review finding).
+        write_ms: writeMs ?? null,
+        duration_ms: waitMs + (writeMs ?? 0),
+      },
+      { projectDir: opts.projectDir },
+    );
+  } catch {
+    // Timing-logging must never break the write path (fail-open).
+  }
+}
+
+/** Fire the per-call write outcome seam, fail-open (a throwing sink is ignored). */
+function fireOutcome(
+  opts: BusOptions,
+  o: { dropped: boolean; wait_ms: number; write_ms?: number },
+): void {
+  if (!opts.onOutcome) return;
+  try {
+    opts.onOutcome(o);
+  } catch {
+    // The outcome seam must never throw into the write path.
+  }
 }
 
 /**
