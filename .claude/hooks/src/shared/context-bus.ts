@@ -300,10 +300,27 @@ function busOff(): boolean {
   return process.env.CCV3_BUS_OFF === '1';
 }
 
+/** Keep at most `cap` newest (tail) entries -- FIFO eviction of the oldest. */
+function capTail<T>(arr: T[], cap: number): T[] {
+  return arr.length > cap ? arr.slice(arr.length - cap) : arr;
+}
+
+/** Keep at most `cap` FileInPlay entries with the newest turn_added (oldest evicted). */
+function capByTurn(arr: FileInPlay[], cap: number): FileInPlay[] {
+  if (arr.length <= cap) return arr;
+  return [...arr].sort((a, b) => (a.turn_added ?? 0) - (b.turn_added ?? 0)).slice(arr.length - cap);
+}
+
 /**
  * Coerce arbitrary parsed JSON into a well-formed BusEntry. Missing or wrong
  * fields fall back to empty defaults so a partially-written or older file still
  * yields a usable bus (fail-soft).
+ *
+ * The per-slice CAPS are enforced HERE (the read/coerce choke point), not only in
+ * the add* write helpers: bumpTurn/setIntent re-serialize the WHOLE bus without
+ * going through those helpers, so a file that arrived already bloated (an older
+ * version, an external writer) would otherwise persist and grow unbounded on every
+ * turn-bump -- the write-slowdown feedback loop (session-3 Codex#5 / critic F5).
  */
 function coerceBus(busId: string, parsed: unknown): BusEntry {
   const base = emptyBus(busId);
@@ -312,12 +329,19 @@ function coerceBus(busId: string, parsed: unknown): BusEntry {
   return {
     bus_id: typeof p.bus_id === 'string' ? p.bus_id : busId,
     current_intent: typeof p.current_intent === 'string' ? p.current_intent : null,
-    focus_symbols: Array.isArray(p.focus_symbols) ? (p.focus_symbols as FocusSymbol[]) : [],
+    focus_symbols: capTail(
+      Array.isArray(p.focus_symbols) ? (p.focus_symbols as FocusSymbol[]) : [],
+      FOCUS_SYMBOLS_CAP,
+    ),
     files_in_play: coerceFilesInPlay(p.files_in_play),
-    recent_findings: Array.isArray(p.recent_findings)
-      ? (p.recent_findings as RecentFinding[])
-      : [],
-    open_threads: Array.isArray(p.open_threads) ? (p.open_threads as OpenThread[]) : [],
+    recent_findings: capTail(
+      Array.isArray(p.recent_findings) ? (p.recent_findings as RecentFinding[]) : [],
+      RECENT_FINDINGS_CAP,
+    ),
+    open_threads: capTail(
+      Array.isArray(p.open_threads) ? (p.open_threads as OpenThread[]) : [],
+      OPEN_THREADS_CAP,
+    ),
     schema_version: 3,
     compact_generation: typeof p.compact_generation === 'number' ? p.compact_generation : 0,
     revision: typeof p.revision === 'number' && Number.isFinite(p.revision) ? p.revision : 0,
@@ -329,9 +353,13 @@ function coerceBus(busId: string, parsed: unknown): BusEntry {
 function coerceFilesInPlay(value: unknown): FilesInPlay {
   if (!value || typeof value !== 'object') return { load_bearing: [], ambient: [] };
   const v = value as Record<string, unknown>;
+  const lb = Array.isArray(v.load_bearing) ? (v.load_bearing as FileInPlay[]) : [];
+  const amb = Array.isArray(v.ambient) ? (v.ambient as FileInPlay[]) : [];
+  // load_bearing keeps the newest by turn (matches addFileInPlay eviction); ambient
+  // is bounded by the same ceiling so a bloated file cannot grow without bound.
   return {
-    load_bearing: Array.isArray(v.load_bearing) ? (v.load_bearing as FileInPlay[]) : [],
-    ambient: Array.isArray(v.ambient) ? (v.ambient as FileInPlay[]) : [],
+    load_bearing: capByTurn(lb, LOAD_BEARING_CAP),
+    ambient: capTail(amb, LOAD_BEARING_CAP),
   };
 }
 
@@ -557,10 +585,14 @@ function mutateViaLock(
   let acquired = false;
   let waitMs = 0;
   let writeMs: number | undefined;
+  // Whether the mutation actually PERSISTED. mutateStateWithLock returns false on
+  // every in-lock failure too (corrupt/unreadable pre-image -> null transform, a
+  // throwing transform, or a failed atomicWriteSync), not just on a lock timeout.
+  let wrote = false;
 
   try {
     ensureDir(path, opts);
-    mutateStateWithLock(
+    wrote = mutateStateWithLock(
       path,
       (current) => {
         // Determine the pre-image. If a read seam is injected, classify through
@@ -609,12 +641,21 @@ function mutateViaLock(
     // Fail-open: never throw into the hot path.
   }
 
-  // B.0 outcome handling. A non-acquire is a DROPPED write (the mutation did not
-  // land): log it (never silent) and signal it. Distinguish a genuine lock-timeout
-  // (outcome reported) from an exception before the acquire ran (outcomeKnown
-  // false) so the intel-bus `reason` is honest -- both are dropped:true + logged.
+  // B.0 outcome handling. A DROPPED write is any mutation that did NOT persist.
+  // Three cases, all logged (never silent) + signaled dropped:true:
+  //   1. lock never acquired -> reason 'lock_timeout' (outcome reported) or
+  //      'write_error' (a pre-acquire exception -- outcomeKnown stays false).
+  //   2. lock acquired but the write did not land (corrupt pre-image, throwing
+  //      transform, or a failed atomicWriteSync -> wrote === false) -> 'write_error'.
+  //      This is the session-3 Codex#1 hole: the acquired-but-no-write path used to
+  //      report dropped:false (a silent drop) -- the drop-storm rollback signal the
+  //      quality gate relies on would have missed exactly these failures.
+  // Only an acquired AND persisted write is a success.
   if (!acquired) {
     emitDropEvent(id, waitMs, opts, outcomeKnown ? 'lock_timeout' : 'write_error');
+    fireOutcome(opts, { dropped: true, wait_ms: waitMs });
+  } else if (!wrote) {
+    emitDropEvent(id, waitMs, opts, 'write_error');
     fireOutcome(opts, { dropped: true, wait_ms: waitMs });
   } else {
     fireOutcome(opts, { dropped: false, wait_ms: waitMs, write_ms: writeMs });
@@ -821,6 +862,7 @@ export function bumpTurn(bus: BusEntry): void {
 export const LOAD_BEARING_CAP = 50;
 export const FOCUS_SYMBOLS_CAP = 50;
 export const RECENT_FINDINGS_CAP = 50;
+export const OPEN_THREADS_CAP = 50;
 
 /** Append a focus symbol, keeping the slice within FOCUS_SYMBOLS_CAP (FIFO). */
 export function addFocusSymbol(bus: BusEntry, sym: FocusSymbol): void {

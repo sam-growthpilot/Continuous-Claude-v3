@@ -289,6 +289,101 @@ describe('appendIntelBus -- secret redaction (cross-model hardening)', () => {
 });
 
 // ===========================================================================
+// Change 1c -- Secret redaction: session-3 review hardening (Codex #2/#3)
+// ===========================================================================
+describe('appendIntelBus -- secret redaction (session-3 hardening)', () => {
+  it('Codex#2: redacts an OPAQUE Bearer token (no shape) in an Authorization header', () => {
+    // ASSIGNMENT_RE used to consume "Bearer" as Authorization's value, leaving the
+    // opaque token, and the Bearer SHAPE could no longer match it. Shapes now run
+    // BEFORE the assignment pass so the token is caught regardless of the header.
+    const { lines, append } = makeCapture();
+    const opaque = 'abcDEF123456ghiJKL789mnoPQRstu'; // no sk-/gh-/xox-/jwt shape
+    appendIntelBus(
+      { bus_id: 'abc123', note: 'Authorization: Bearer ' + opaque },
+      { append, now: FIXED_NOW },
+    );
+    const parsed = JSON.parse(lines[0].line.slice(0, -1));
+    expect(parsed.note).not.toContain(opaque);
+    expect(parsed.note).toContain('[REDACTED]');
+  });
+
+  it('Codex#3: redacts opaque secrets inside an ARRAY under a credential-named field', () => {
+    // redactSecretsDeep dropped keyHint when recursing into arrays, so an array of
+    // opaque secrets under e.g. `tokens` survived. keyHint now threads through.
+    const { lines, append } = makeCapture();
+    appendIntelBus(
+      {
+        bus_id: 'abc123',
+        tokens: ['opaque-no-shape-aaaa', 'opaque-no-shape-bbbb'],
+      } as IntelBusEvent,
+      { append, now: FIXED_NOW },
+    );
+    const parsed = JSON.parse(lines[0].line.slice(0, -1));
+    const blob = JSON.stringify(parsed.tokens);
+    expect(blob).not.toContain('opaque-no-shape-aaaa');
+    expect(blob).not.toContain('opaque-no-shape-bbbb');
+    expect(blob).toContain('[REDACTED]');
+  });
+
+  it('does NOT over-redact a benign array under a non-credential field', () => {
+    const { lines, append } = makeCapture();
+    appendIntelBus(
+      { bus_id: 'abc123', edited_files: ['a.ts', 'b.ts'] } as IntelBusEvent,
+      { append, now: FIXED_NOW },
+    );
+    const parsed = JSON.parse(lines[0].line.slice(0, -1));
+    expect(parsed.edited_files).toEqual(['a.ts', 'b.ts']);
+  });
+
+  it('fix-review: still redacts a secret assignment with MANY spaces around the separator', () => {
+    // Guards the fix-review codex finding: bounding the ASSIGNMENT_RE separator to
+    // {0,40} would let a `KEY  :  VALUE` with 41+ spaces leak. The separator stays
+    // `\s*` (it is never the ReDoS surface -- the {1,2048} VALUE bound is).
+    const { lines, append } = makeCapture();
+    appendIntelBus(
+      { bus_id: 'abc123', note: 'api_key' + ' '.repeat(50) + '= opaque_value_here' },
+      { append, now: FIXED_NOW },
+    );
+    const parsed = JSON.parse(lines[0].line.slice(0, -1));
+    expect(parsed.note).not.toContain('opaque_value_here');
+    expect(parsed.note).toContain('[REDACTED]');
+  });
+});
+
+// ===========================================================================
+// Change 4 -- Kill switch gates the appender (critic F6)
+// ===========================================================================
+describe('appendIntelBus -- CCV3_BUS_OFF kill switch', () => {
+  it('writes nothing when CCV3_BUS_OFF=1 (plan property: kills ALL bus I/O)', () => {
+    const { lines, append } = makeCapture();
+    const prev = process.env.CCV3_BUS_OFF;
+    process.env.CCV3_BUS_OFF = '1';
+    try {
+      appendIntelBus(
+        { bus_id: 'abc123', query_type: 'should_not_write' },
+        { append, now: FIXED_NOW },
+      );
+    } finally {
+      if (prev === undefined) delete process.env.CCV3_BUS_OFF;
+      else process.env.CCV3_BUS_OFF = prev;
+    }
+    expect(lines).toHaveLength(0);
+  });
+
+  it('writes normally when CCV3_BUS_OFF is unset', () => {
+    const { lines, append } = makeCapture();
+    const prev = process.env.CCV3_BUS_OFF;
+    delete process.env.CCV3_BUS_OFF;
+    try {
+      appendIntelBus({ bus_id: 'abc123', query_type: 'writes' }, { append, now: FIXED_NOW });
+    } finally {
+      if (prev !== undefined) process.env.CCV3_BUS_OFF = prev;
+    }
+    expect(lines).toHaveLength(1);
+  });
+});
+
+// ===========================================================================
 // Change 2 -- Size-based rotation
 // ===========================================================================
 describe('appendIntelBus -- size-based rotation', () => {

@@ -523,6 +523,54 @@ describe('bus arrays stay bounded (review F3)', () => {
 });
 
 // ---------------------------------------------------------------------------
+// coerceBus enforces the array caps on the READ path too (session-3 Codex#5 /
+// critic F5). The per-write helpers cap their slices, but bumpTurn/setIntent
+// re-serialize the whole bus WITHOUT going through them -- so a file that arrived
+// already bloated (older version, external writer) must be trimmed at coerce time
+// or it grows unbounded on every turn-bump (the write-slowdown feedback loop).
+// ---------------------------------------------------------------------------
+describe('coerceBus enforces caps on a bloated file (read path)', () => {
+  function bloatedBusJson(): string {
+    const focus = Array.from({ length: FOCUS_SYMBOLS_CAP + 40 }, (_, i) => ({
+      scip_id: `sym${i}`, name: `sym${i}`, kind: 'function', turn_added: i,
+    }));
+    const findings = Array.from({ length: RECENT_FINDINGS_CAP + 40 }, (_, i) => ({
+      correlation_id: `c${i}`, tool: 'grep', subject_id: `s${i}`,
+      result_count: 1, rank: 1, ts: '2026-06-02T00:00:00.000Z',
+    }));
+    const lb = Array.from({ length: LOAD_BEARING_CAP + 40 }, (_, i) => ({
+      path: `lb${i}.ts`, role: 'edited', turn_added: i,
+    }));
+    const amb = Array.from({ length: 200 }, (_, i) => ({
+      path: `amb${i}.ts`, role: 'read_for_context', turn_added: i,
+    }));
+    return JSON.stringify({
+      bus_id: BUS_ID, schema_version: 3, revision: 1, current_turn: 1,
+      current_intent: null, focus_symbols: focus, recent_findings: findings,
+      open_threads: [], files_in_play: { load_bearing: lb, ambient: amb },
+    });
+  }
+
+  it('readBus trims every over-cap array to within its cap', () => {
+    const disk = makeMemoryDisk({ [busPath(BUS_ID)]: bloatedBusJson() });
+    const b = readBus(BUS_ID, { read: disk.read });
+    expect(b.focus_symbols.length).toBeLessThanOrEqual(FOCUS_SYMBOLS_CAP);
+    expect(b.recent_findings.length).toBeLessThanOrEqual(RECENT_FINDINGS_CAP);
+    expect(b.files_in_play.load_bearing.length).toBeLessThanOrEqual(LOAD_BEARING_CAP);
+    // ambient is bounded by the same cap ceiling (kept from growing without bound)
+    expect(b.files_in_play.ambient.length).toBeLessThanOrEqual(LOAD_BEARING_CAP);
+  });
+
+  it('a turn-bump on a bloated file persists a trimmed bus (no unbounded growth)', () => {
+    const disk = makeMemoryDisk({ [busPath(BUS_ID)]: bloatedBusJson() });
+    mutateBus(BUS_ID, (b) => bumpTurn(b), { read: disk.read, write: disk.write });
+    const reread = readBus(BUS_ID, { read: disk.read });
+    expect(reread.focus_symbols.length).toBeLessThanOrEqual(FOCUS_SYMBOLS_CAP);
+    expect(reread.files_in_play.load_bearing.length).toBeLessThanOrEqual(LOAD_BEARING_CAP);
+  });
+});
+
+// ---------------------------------------------------------------------------
 // current_turn -- the per-turn staleness counter (WS-2 Phase B.4a).
 // The bus READ is at UserPromptSubmit but WRITES land at PostToolUse, so the
 // reader needs a turn counter to compute how stale focus/files are. Cover:

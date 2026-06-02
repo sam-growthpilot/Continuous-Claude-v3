@@ -587,14 +587,14 @@ function redactSecretString(s, keyHint) {
     return "[REDACTED]";
   }
   let out = s;
-  out = out.replace(
-    ASSIGNMENT_RE,
-    (m, key, sep2, quote) => SECRET_KEY_RE.test(key) ? `${key}${sep2}${quote}[REDACTED]` : m
-  );
   out = out.replace(/sk-[A-Za-z0-9_-]{16,512}/g, "sk-[REDACTED]").replace(/AKIA[0-9A-Z]{16}/g, "[REDACTED-AWS-KEY]").replace(/gh[posru]_[A-Za-z0-9]{30,255}/g, "[REDACTED-GH-TOKEN]").replace(/xox[abprs]-[A-Za-z0-9-]{10,512}/gi, "[REDACTED-SLACK-TOKEN]").replace(
     /eyJ[A-Za-z0-9_-]{8,2048}\.[A-Za-z0-9_-]{8,2048}\.[A-Za-z0-9_-]{6,2048}/g,
     "[REDACTED-JWT]"
   ).replace(/\bBearer\s+[A-Za-z0-9._~+/=-]{12,2048}/gi, "Bearer [REDACTED]").replace(/postgres(ql)?:\/\/[^:@\s/]+:[^@\s/]+@/gi, "postgresql://[REDACTED]@");
+  out = out.replace(
+    ASSIGNMENT_RE,
+    (m, key, sep2, quote) => SECRET_KEY_RE.test(key) ? `${key}${sep2}${quote}[REDACTED]` : m
+  );
   return out;
 }
 function redactSecretsDeep(value, keyHint) {
@@ -602,7 +602,7 @@ function redactSecretsDeep(value, keyHint) {
     return redactSecretString(value, keyHint);
   }
   if (Array.isArray(value)) {
-    return value.map((v) => redactSecretsDeep(v));
+    return value.map((v) => redactSecretsDeep(v, keyHint));
   }
   if (value && typeof value === "object") {
     const out = {};
@@ -625,6 +625,7 @@ function longestStringKey(obj) {
   return key;
 }
 function appendIntelBus(event, opts = {}) {
+  if (process.env.CCV3_BUS_OFF === "1") return;
   try {
     const now = opts.now ?? (() => (/* @__PURE__ */ new Date()).toISOString());
     const append = opts.append ?? defaultAppend;
@@ -748,6 +749,13 @@ function busPath(busId, projectDir) {
 function busOff() {
   return process.env.CCV3_BUS_OFF === "1";
 }
+function capTail(arr, cap) {
+  return arr.length > cap ? arr.slice(arr.length - cap) : arr;
+}
+function capByTurn(arr, cap) {
+  if (arr.length <= cap) return arr;
+  return [...arr].sort((a, b) => (a.turn_added ?? 0) - (b.turn_added ?? 0)).slice(arr.length - cap);
+}
 function coerceBus(busId, parsed) {
   const base = emptyBus(busId);
   if (!parsed || typeof parsed !== "object") return base;
@@ -755,10 +763,19 @@ function coerceBus(busId, parsed) {
   return {
     bus_id: typeof p.bus_id === "string" ? p.bus_id : busId,
     current_intent: typeof p.current_intent === "string" ? p.current_intent : null,
-    focus_symbols: Array.isArray(p.focus_symbols) ? p.focus_symbols : [],
+    focus_symbols: capTail(
+      Array.isArray(p.focus_symbols) ? p.focus_symbols : [],
+      FOCUS_SYMBOLS_CAP
+    ),
     files_in_play: coerceFilesInPlay(p.files_in_play),
-    recent_findings: Array.isArray(p.recent_findings) ? p.recent_findings : [],
-    open_threads: Array.isArray(p.open_threads) ? p.open_threads : [],
+    recent_findings: capTail(
+      Array.isArray(p.recent_findings) ? p.recent_findings : [],
+      RECENT_FINDINGS_CAP
+    ),
+    open_threads: capTail(
+      Array.isArray(p.open_threads) ? p.open_threads : [],
+      OPEN_THREADS_CAP
+    ),
     schema_version: 3,
     compact_generation: typeof p.compact_generation === "number" ? p.compact_generation : 0,
     revision: typeof p.revision === "number" && Number.isFinite(p.revision) ? p.revision : 0,
@@ -768,9 +785,11 @@ function coerceBus(busId, parsed) {
 function coerceFilesInPlay(value) {
   if (!value || typeof value !== "object") return { load_bearing: [], ambient: [] };
   const v = value;
+  const lb = Array.isArray(v.load_bearing) ? v.load_bearing : [];
+  const amb = Array.isArray(v.ambient) ? v.ambient : [];
   return {
-    load_bearing: Array.isArray(v.load_bearing) ? v.load_bearing : [],
-    ambient: Array.isArray(v.ambient) ? v.ambient : []
+    load_bearing: capByTurn(lb, LOAD_BEARING_CAP),
+    ambient: capTail(amb, LOAD_BEARING_CAP)
   };
 }
 function defaultRead(path) {
@@ -817,9 +836,10 @@ function mutateViaLock(id, path, fn, opts) {
   let acquired = false;
   let waitMs = 0;
   let writeMs;
+  let wrote = false;
   try {
     ensureDir(path, opts);
-    mutateStateWithLock(
+    wrote = mutateStateWithLock(
       path,
       (current) => {
         let loaded;
@@ -862,6 +882,9 @@ function mutateViaLock(id, path, fn, opts) {
   }
   if (!acquired) {
     emitDropEvent(id, waitMs, opts, outcomeKnown ? "lock_timeout" : "write_error");
+    fireOutcome(opts, { dropped: true, wait_ms: waitMs });
+  } else if (!wrote) {
+    emitDropEvent(id, waitMs, opts, "write_error");
     fireOutcome(opts, { dropped: true, wait_ms: waitMs });
   } else {
     fireOutcome(opts, { dropped: false, wait_ms: waitMs, write_ms: writeMs });
@@ -967,6 +990,9 @@ function safeBusId() {
   }
 }
 var LOAD_BEARING_CAP = 50;
+var FOCUS_SYMBOLS_CAP = 50;
+var RECENT_FINDINGS_CAP = 50;
+var OPEN_THREADS_CAP = 50;
 function addFileInPlay(bus, file) {
   if (LOAD_BEARING_ROLES.has(file.role)) {
     const lbArr = bus.files_in_play.load_bearing;

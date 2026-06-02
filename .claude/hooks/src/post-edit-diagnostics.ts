@@ -145,10 +145,10 @@ function runPythonDiagnostics(filePath: string, projectDir: string): void {
       lint_issues: lintIssues,
     });
 
-    // WS-2 Phase B.4a: record the edited file on the bus (load-bearing), and
-    // mark it test_failed when the diagnostics found type errors. Fail-open;
-    // runs before the early-return so the `edited` role lands even on a clean
-    // file. Does not affect the diagnostics output below.
+    // WS-2 Phase B.4a: record the edited file on the bus with role `edited` ONLY.
+    // (A type error is NOT a test failure -- `test_failed` is reserved for a real
+    // test runner; session-2 Codex#6.) Fail-open; runs before the early-return so
+    // the `edited` role lands even on a clean file. Does not affect output below.
     recordBusFilesInPlay(filePath);
 
     // No errors - silent success
@@ -248,10 +248,10 @@ function runTscDiagnostics(filePath: string, projectDir: string): void {
       lint_issues: warningCount,
     });
 
-    // WS-2 Phase B.4a: record the edited file on the bus (load-bearing), and
-    // mark it test_failed when tsc found type errors. Fail-open; runs before the
-    // early-return so the `edited` role lands even on a clean file. Does not
-    // affect the diagnostics output below.
+    // WS-2 Phase B.4a: record the edited file on the bus with role `edited` ONLY.
+    // (A type error is NOT a test failure -- `test_failed` is reserved for a real
+    // test runner; session-2 Codex#6.) Fail-open; runs before the early-return so
+    // the `edited` role lands even on a clean file. Does not affect output below.
     recordBusFilesInPlay(filePath);
 
     // No diagnostics - silent success

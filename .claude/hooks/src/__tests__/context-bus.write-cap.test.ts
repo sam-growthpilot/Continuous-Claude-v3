@@ -148,6 +148,37 @@ describe('mutateBus -- lock-timeout is a logged, signaled DROP (never silent)', 
   });
 });
 
+describe('mutateBus -- a write that fails INSIDE an acquired lock is also a logged DROP', () => {
+  it('corrupt pre-image: dropped:true + one write_error row, no clobber (never silent)', () => {
+    // Lock is FREE (acquire succeeds) but the existing file is unparseable, so the
+    // transform classifies it failed and returns null -> no write lands. This must
+    // be surfaced as a DROP, not silently reported as a success (session-3 Codex#1).
+    writeFileSync(busFile, '{ this is not valid json at all', 'utf-8');
+
+    const outcomes: Array<{ dropped: boolean; wait_ms: number }> = [];
+    mutateBus(
+      BUS_ID,
+      (b) => {
+        b.current_intent = 'should be dropped';
+      },
+      { lockTimeoutMs: 200, onOutcome: (o) => outcomes.push(o) },
+    );
+
+    // Signaled as a drop.
+    expect(outcomes).toHaveLength(1);
+    expect(outcomes[0].dropped).toBe(true);
+
+    // Logged exactly once with an HONEST reason: the lock WAS acquired, so this is
+    // a write_error, NOT a lock_timeout.
+    const dropRows = readIntelRows().filter((r) => r.query_type === 'bus_write_dropped');
+    expect(dropRows).toHaveLength(1);
+    expect(dropRows[0].reason).toBe('write_error');
+
+    // The unreadable file was NOT clobbered with empty-derived content.
+    expect(readFileSync(busFile, 'utf-8')).toContain('not valid json');
+  });
+});
+
 describe('mutateBus -- normal write fires onOutcome{dropped:false, timings}', () => {
   it('reports dropped:false with numeric wait_ms and write_ms', () => {
     const outcomes: Array<{ dropped: boolean; wait_ms: number; write_ms?: number }> = [];

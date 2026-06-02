@@ -192,15 +192,11 @@ function redactSecretString(s: string, keyHint?: string): string {
 
   let out = s;
 
-  // 1. Generic secret assignments: KEY=VALUE / KEY: VALUE where the KEY name
-  //    contains a secret keyword. Redact the VALUE (to whitespace, finding F1).
-  out = out.replace(ASSIGNMENT_RE, (m, key, sep, quote) =>
-    SECRET_KEY_RE.test(key) ? `${key}${sep}${quote}[REDACTED]` : m,
-  );
-
-  // 2. Standalone secret SHAPES (caught regardless of field name -- this is what
-  //    covers `Authorization: Bearer gho_...`, JWTs, GitHub/Slack tokens, etc.).
-  //    All quantifiers are upper-bounded so every pattern stays linear.
+  // 1. Standalone secret SHAPES first. Running these BEFORE the generic assignment
+  //    pass is what catches `Authorization: Bearer <opaque>` (session-3 Codex#2):
+  //    the assignment pass would otherwise consume "Bearer" as Authorization's
+  //    value and leave the real token behind, defeating the Bearer shape below.
+  //    All quantifiers are upper-bounded so every pattern stays linear (ReDoS-safe).
   out = out
     .replace(/sk-[A-Za-z0-9_-]{16,512}/g, 'sk-[REDACTED]') // OpenAI
     .replace(/AKIA[0-9A-Z]{16}/g, '[REDACTED-AWS-KEY]') // AWS access key id
@@ -213,21 +209,29 @@ function redactSecretString(s: string, keyHint?: string): string {
     .replace(/\bBearer\s+[A-Za-z0-9._~+/=-]{12,2048}/gi, 'Bearer [REDACTED]') // bearer token
     .replace(/postgres(ql)?:\/\/[^:@\s/]+:[^@\s/]+@/gi, 'postgresql://[REDACTED]@'); // DB creds
 
+  // 2. Generic secret assignments: KEY=VALUE / KEY: VALUE where the KEY name
+  //    contains a secret keyword. Redact the VALUE (runs to whitespace, finding F1).
+  out = out.replace(ASSIGNMENT_RE, (m, key, sep, quote) =>
+    SECRET_KEY_RE.test(key) ? `${key}${sep}${quote}[REDACTED]` : m,
+  );
+
   return out;
 }
 
 /**
  * Recurse redactSecretString into every string field. When recursing into an
  * object, the field name is threaded as `keyHint` so a credential-named field
- * (password/token/...) has its whole value redacted. Array elements carry no
- * field name of their own.
+ * (password/token/...) has its whole value redacted. Array elements INHERIT the
+ * parent field name as `keyHint`, so an array under a credential-named field
+ * (e.g. `tokens: ['opaque', ...]`) has each element redacted too (session-3
+ * Codex#3 -- the keyHint used to be dropped on the array branch, leaking it).
  */
 function redactSecretsDeep(value: unknown, keyHint?: string): unknown {
   if (typeof value === 'string') {
     return redactSecretString(value, keyHint);
   }
   if (Array.isArray(value)) {
-    return value.map((v) => redactSecretsDeep(v));
+    return value.map((v) => redactSecretsDeep(v, keyHint));
   }
   if (value && typeof value === 'object') {
     const out: Record<string, unknown> = {};
@@ -262,6 +266,13 @@ function longestStringKey(obj: Record<string, unknown>): string | null {
  * @param opts  Injected seams (path/clock/append) -- defaults write to disk.
  */
 export function appendIntelBus(event: IntelBusEvent, opts: AppendIntelBusOptions = {}): void {
+  // Kill switch: CCV3_BUS_OFF=1 silences ALL bus I/O, telemetry included. This is
+  // the single choke point every intel-bus write passes through, so gating here is
+  // what makes the plan's "CCV3_BUS_OFF kills all bus I/O" property hold for every
+  // caller -- including the B.3 recall readers that will call appendIntelBus
+  // directly to log source_age/injected (critic F6). Reading env cannot throw, so
+  // the fail-open contract is preserved.
+  if (process.env.CCV3_BUS_OFF === '1') return;
   try {
     const now = opts.now ?? (() => new Date().toISOString());
     const append = opts.append ?? defaultAppend;
