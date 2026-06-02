@@ -156,10 +156,19 @@ CODEX_ADVERSARY_MODEL="${CODEX_ADVERSARY_MODEL:-gpt-5.5}"
 # Clean-capture the final answer via -o. A healthy codex exec streams a large
 # block of environmental startup noise to stdout/stderr BEFORE the real answer
 # (~150 `failed to load skill ... invalid YAML` lines from .agents/skills/, MCP
-# connection failures, a `[features].collab is deprecated` warning, many
-# `hook: ... Failed` lines). -o writes ONLY the model's final message, so you
-# parse findings from a clean file instead of grepping past the preamble.
+# connection failures, deprecation warnings, many `hook: ... Failed` lines).
+# -o writes ONLY the model's final message, so you parse findings from a clean
+# file instead of grepping past the preamble.
 # --ephemeral avoids persisting a session for a throwaway review run.
+#
+# --disable multi_agent is REQUIRED (verified 2026-06-01): with multi_agent on,
+# a large diff makes Codex spawn built-in explorer/worker sub-agents whose model
+# override is dropped by a Codex role-config bug (openai/codex #15170/#16893),
+# so they fall back to `gpt-4.1` -- NOT available on a ChatGPT subscription ->
+# `400 invalid_request: 'gpt-4.1' model is not supported`. The whole review
+# then fails. Adversarial review is single-shot and gets its cross-model value
+# from the different model FAMILY (gpt-5.5 vs Claude), not from Codex's internal
+# fan-out, so disabling it costs nothing and is faster. See codex-adversarial.md.
 FINAL_MSG_FILE="$CLAUDE_PROJECT_DIR/.claude/cache/agents/codex-adversary/codex-final.txt"
 mkdir -p "$(dirname "$FINAL_MSG_FILE")"
 
@@ -168,6 +177,7 @@ codex exec \
   -c model_reasoning_effort=xhigh \
   --sandbox read-only \
   --ephemeral \
+  --disable multi_agent \
   -C "$CLAUDE_PROJECT_DIR" \
   -o "$FINAL_MSG_FILE" \
   - < "$PROMPT_FILE" \
