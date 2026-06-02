@@ -23,7 +23,8 @@ This doc is self-sufficient. Read it fully, then the linked plans. Verify every 
 
 - **Git:** `HEAD = b12db49`, branch `main`. **9 commits this session**, **NOT pushed** to `fork` (Rev4nchist; push target — never `origin`). The user chose "don't push yet".
 - **Working tree:** clean of session-2 changes. The only `M` files (`ROADMAP.md`, `docs/architecture/system-visualization/{architecture.json,index.html}`, `docs/fastmcp-connector-playbook.md`, `opc/scripts/core/store_learning.py`) are **pre-existing, not mine** — leave them. Plus pre-existing `??` untracked docs/dirs (`.codex/`, `ONBOARDING.md`, etc.) — also not mine.
-- **Baseline (re-run to confirm):** `npm run build` clean · `audit-braintrust-emits.sh` 4/4 (+ context-bus surface guard OK) · all 9 bus test files green.
+- **Baseline (re-run to confirm):** `npm run build` clean · `audit-braintrust-emits.sh` 4/4 (+ context-bus surface guard OK) · all 9 bus test files green. **Verified end of session 2: a clean run is 152/152.** (One run *during* the handoff commit's concurrent sync showed 2 transient cap-test failures — the §6 flake; the immediate clean re-run was 152/152.)
+- **Live bus confirmed working:** a real `.claude/cache/session/<bus_id>/context.json` was written this session and `.claude/logs/intel-bus.jsonl` is accumulating (~114 KB) — the populator + post-edit writers fire correctly.
 - **The bus is LIVE but inert:** the populator (per prompt) + post-edit (per edit) WRITE the bus; **nothing READS it yet** → still **zero behavior change**. Active `~/.claude/hooks/dist/` was redeployed current (see §6 deploy gap).
 
 ### The 9 commits
@@ -54,7 +55,7 @@ cd .claude/hooks && npx vitest run \
   src/__tests__/intel-bus-hardening.test.ts src/__tests__/bus-session-populator.test.ts \
   src/__tests__/post-edit-diagnostics.test.ts
 ```
-**Run the bus suite 5–10× in a loop.** There is a KNOWN rare flake (see §6) in the busy-spin cap tests under peak CPU load — if you see exactly 1 failure in `context-bus.write-cap`/`atomic-write.lock-cap` on a timing assertion, that's the known blip, not a regression. If it's anything else, investigate.
+**Run the bus suite 5–10× in a loop.** There is a KNOWN rare flake (see §6) in the busy-spin cap tests under peak CPU load — **1–2 failures** (I observed 2 once, under heavy concurrent load) in `context-bus.write-cap`/`atomic-write.lock-cap` on a *timing* assertion (e.g. `elapsed`/`wait_ms`/`p95` bounds) is the known blip; a clean run is 152/152. If a failure is on anything OTHER than those timing bounds, or it reproduces on a quiet machine, investigate — it's a regression.
 
 ### 2b. Read the diffs and check the invariants per step
 
