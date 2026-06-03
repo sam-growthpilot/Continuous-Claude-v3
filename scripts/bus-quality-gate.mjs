@@ -60,6 +60,20 @@ for (const c of CASES) {
   rows.push({ intent: c.intent, base, biased });
 }
 
+// CodeRabbit PR#5: recall() fails soft (returns ok:false on subprocess/JSON
+// error). Without this guard a total failure (DB down, `uv` missing) would make
+// every score 0 -> no rollback threshold trips -> a MISLEADING "KEEP ENABLED".
+// Count failed CALLS and refuse to emit a verdict when the run is unreliable.
+const failedCalls = rows.reduce((acc, r) => acc + (r.base.ok ? 0 : 1) + (r.biased.ok ? 0 : 1), 0);
+const totalCalls = rows.length * 2;
+if (failedCalls > totalCalls / 2) {
+  console.error(`\nABORT: ${failedCalls}/${totalCalls} recall calls FAILED (DB/subprocess issue?) -- gate result is unreliable; not emitting a verdict.`);
+  process.exit(2);
+}
+if (failedCalls > 0) {
+  console.warn(`\nWARNING: ${failedCalls}/${totalCalls} recall calls failed; the aggregates below may be skewed.`);
+}
+
 const n = rows.length;
 const mean = (xs) => xs.reduce((a, b) => a + b, 0) / xs.length;
 const baseTop = mean(rows.map((r) => r.base.top));

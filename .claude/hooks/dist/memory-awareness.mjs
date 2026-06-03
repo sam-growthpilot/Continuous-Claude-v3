@@ -1432,11 +1432,14 @@ async function main() {
       injected: !!match || focusBlock.length > 0,
       focus_injected: focusBlock.length > 0,
       focus_count: focusTerms.length,
-      // The actual sanitized terms appended to the recall query when biased --
-      // makes a biased recall REPRODUCIBLE from telemetry (premortem Codex#2,
-      // 2026-06-02). Terms are already allowlist-sanitized in bus-focus.ts and
-      // bounded (<=8 x 60 chars); intel-bus redaction is a further backstop.
-      focus_terms: focusTerms,
+      // The sanitized terms appended to the recall query when biased -- makes a
+      // biased recall REPRODUCIBLE from local intel-bus telemetry (premortem
+      // Codex#2, 2026-06-02). Terms are already allowlist-sanitized in
+      // bus-focus.ts; here we additionally CAP count (<=8) and per-term length
+      // (<=32) so local telemetry can't accumulate long/unbounded identifiers
+      // even if upstream caps change (CodeRabbit PR#5 privacy nudge). Secret
+      // SHAPES inside terms are still scrubbed by intel-bus redactSecretsDeep.
+      focus_terms: focusTerms.slice(0, 8).map((t) => t.slice(0, 32)),
       stale_symbols_count: busFocus.staleSymbolsCount,
       current_turn: busTurn,
       result_count: match ? match.results.length : 0
