@@ -143,6 +143,29 @@ export function writeStateWithLock(filePath: string, content: string): void {
 }
 
 /**
+ * Options for mutateStateWithLock (WS-2 Phase B.0). All optional and fully
+ * backward-compatible: omitting the bag (or passing `{}`) reproduces the
+ * pre-B.0 behavior exactly -- a 5000ms lock wait and no instrumentation -- so
+ * existing callers (writeStateWithLock, etc.) are byte-for-behavior identical.
+ */
+export interface MutateLockOptions {
+  /**
+   * Max time to wait for the lock, passed straight to acquireLockSync. DEFAULT
+   * STAYS LOCK_TIMEOUT_MS (5000) so existing callers are unchanged; a caller
+   * that needs a tight cap (e.g. the context bus at 200ms) sets this.
+   */
+  lockTimeoutMs?: number;
+  /**
+   * Fired ALWAYS, on BOTH the success and the timeout path, with the acquire
+   * result and how long the wait took. This is how a caller observes a dropped
+   * (lock-timeout) write instead of it being silent.
+   */
+  onLockOutcome?: (o: { acquired: boolean; wait_ms: number }) => void;
+  /** Fired on the SUCCESS path only, with the atomic-write duration. */
+  onWriteTiming?: (o: { write_ms: number }) => void;
+}
+
+/**
  * Read-modify-write a state file with the ENTIRE read -> apply -> write
  * sequence performed under a SINGLE lock hold. This is the race-free primitive:
  * unlike `read; then writeStateWithLock`, no other writer can slip in between
@@ -150,7 +173,8 @@ export function writeStateWithLock(filePath: string, content: string): void {
  *
  * Contract:
  *  - Acquires the lock ONCE (same lock file as writeStateWithLock, so the two
- *    are mutually exclusive on the same path).
+ *    are mutually exclusive on the same path). The wait is bounded by
+ *    opts.lockTimeoutMs (default LOCK_TIMEOUT_MS = 5000, unchanged).
  *  - Reads the current file content INSIDE the lock. A genuinely-absent file
  *    (ENOENT) yields `null`. A file that EXISTS but cannot be read (EBUSY /
  *    EACCES / EPERM, etc.) is a TRANSIENT failure: the read error is rethrown
@@ -163,6 +187,10 @@ export function writeStateWithLock(filePath: string, content: string): void {
  *    nothing is written (the caller decided the current state must be left as-is).
  *  - Releases the lock in `finally`, always.
  *
+ * Observability (B.0): opts.onLockOutcome fires ALWAYS with { acquired, wait_ms }
+ * (success AND timeout), and opts.onWriteTiming fires on the success path with
+ * { write_ms }. Both are no-ops when undefined -> zero cost for existing callers.
+ *
  * Fail-open: never throws. On lock-acquire failure, a read failure of an
  * existing file, or a throwing transform, it returns `false` (no write) rather
  * than risk corrupting or erasing state.
@@ -172,8 +200,24 @@ export function writeStateWithLock(filePath: string, content: string): void {
 export function mutateStateWithLock(
   filePath: string,
   transformFn: (current: string | null) => string | null,
+  opts: MutateLockOptions = {},
 ): boolean {
-  const locked = acquireLockSync(filePath);
+  const lockTimeoutMs = opts.lockTimeoutMs ?? LOCK_TIMEOUT_MS;
+
+  const lockStart = Date.now();
+  const locked = acquireLockSync(filePath, lockTimeoutMs);
+  const waitMs = Date.now() - lockStart;
+
+  // Report the acquire outcome ALWAYS (success or timeout). A failing callback
+  // must never break the write path.
+  if (opts.onLockOutcome) {
+    try {
+      opts.onLockOutcome({ acquired: locked, wait_ms: waitMs });
+    } catch {
+      /* observability must never throw into the write path */
+    }
+  }
+
   if (!locked) {
     // Could not get the lock -> do NOT write blind (that is exactly the clobber
     // we are preventing). Safe abort.
@@ -217,7 +261,15 @@ export function mutateStateWithLock(
       return false; // transform chose a no-op
     }
 
+    const writeStart = Date.now();
     atomicWriteSync(filePath, next);
+    if (opts.onWriteTiming) {
+      try {
+        opts.onWriteTiming({ write_ms: Date.now() - writeStart });
+      } catch {
+        /* observability must never throw into the write path */
+      }
+    }
     return true;
   } catch (err) {
     log.error('mutateStateWithLock: write failed', { filePath, error: String(err) });

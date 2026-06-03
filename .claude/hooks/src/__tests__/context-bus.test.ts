@@ -33,8 +33,12 @@ import {
   addFocusSymbol,
   addFileInPlay,
   addRecentFinding,
+  bumpTurn,
   AMBIENT_CAP_RATIO,
   AMBIENT_MIN_SLOTS,
+  LOAD_BEARING_CAP,
+  FOCUS_SYMBOLS_CAP,
+  RECENT_FINDINGS_CAP,
   LATENCY_BUDGET_MS,
   type BusEntry,
 } from '../shared/context-bus.js';
@@ -102,6 +106,7 @@ describe('emptyBus', () => {
     expect(b.files_in_play.ambient).toEqual([]);
     expect(b.current_intent).toBeNull();
     expect(b.compact_generation).toBe(0);
+    expect(b.current_turn).toBe(0);
   });
 });
 
@@ -460,6 +465,181 @@ describe('addFileInPlay -- load_bearing vs ambient + 30% cap', () => {
     const amb = b.files_in_play.ambient.length;
     expect(amb).toBe(AMBIENT_MIN_SLOTS);
     expect(amb).toBeLessThan(10); // far below the number we tried to add
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Bounded growth (cross-model review F3): the bus JSON is rewritten on every
+// mutateBus call, so the writer slices must not grow without bound over a long
+// session. load_bearing dedups by (path, role) + caps; focus/findings are FIFO.
+// ---------------------------------------------------------------------------
+describe('bus arrays stay bounded (review F3)', () => {
+  it('addFileInPlay DEDUPs load_bearing by (path, role), refreshing turn_added', () => {
+    const b = emptyBus(BUS_ID);
+    addFileInPlay(b, { path: 'src/a.ts', role: 'edited', turn_added: 1 });
+    addFileInPlay(b, { path: 'src/a.ts', role: 'edited', turn_added: 5 });
+    expect(b.files_in_play.load_bearing).toHaveLength(1);
+    expect(b.files_in_play.load_bearing[0].turn_added).toBe(5);
+  });
+
+  it('addFileInPlay keeps a DIFFERENT role on the same path as a separate entry', () => {
+    const b = emptyBus(BUS_ID);
+    addFileInPlay(b, { path: 'src/a.ts', role: 'edited', turn_added: 1 });
+    addFileInPlay(b, { path: 'src/a.ts', role: 'user_mentioned', turn_added: 1 });
+    expect(b.files_in_play.load_bearing).toHaveLength(2);
+  });
+
+  it('addFileInPlay CAPS load_bearing at LOAD_BEARING_CAP, evicting the oldest turn', () => {
+    const b = emptyBus(BUS_ID);
+    for (let k = 0; k < LOAD_BEARING_CAP + 5; k++) {
+      addFileInPlay(b, { path: `src/f${k}.ts`, role: 'edited', turn_added: k });
+    }
+    const lb = b.files_in_play.load_bearing;
+    expect(lb).toHaveLength(LOAD_BEARING_CAP);
+    // The 5 oldest (turn_added 0..4) were evicted; min surviving turn is 5.
+    expect(Math.min(...lb.map((f) => f.turn_added))).toBe(5);
+  });
+
+  it('addFocusSymbol caps focus_symbols at FOCUS_SYMBOLS_CAP (FIFO)', () => {
+    const b = emptyBus(BUS_ID);
+    for (let k = 0; k < FOCUS_SYMBOLS_CAP + 3; k++) {
+      addFocusSymbol(b, { id: { file_uri: `src/f${k}.ts`, lang: 'ts', name: `fn${k}` }, turn_added: k });
+    }
+    expect(b.focus_symbols).toHaveLength(FOCUS_SYMBOLS_CAP);
+    expect(b.focus_symbols[0].id.name).toBe('fn3'); // earliest 3 dropped
+  });
+
+  it('addRecentFinding caps recent_findings at RECENT_FINDINGS_CAP (FIFO)', () => {
+    const b = emptyBus(BUS_ID);
+    for (let k = 0; k < RECENT_FINDINGS_CAP + 3; k++) {
+      addRecentFinding(b, {
+        correlation_id: `c${k}`, tool: 'grep', subject_id: `s${k}`,
+        result_count: 1, rank: 1, ts: '2026-06-02T00:00:00.000Z',
+      });
+    }
+    expect(b.recent_findings).toHaveLength(RECENT_FINDINGS_CAP);
+    expect(b.recent_findings[0].correlation_id).toBe('c3');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// coerceBus enforces the array caps on the READ path too (session-3 Codex#5 /
+// critic F5). The per-write helpers cap their slices, but bumpTurn/setIntent
+// re-serialize the whole bus WITHOUT going through them -- so a file that arrived
+// already bloated (older version, external writer) must be trimmed at coerce time
+// or it grows unbounded on every turn-bump (the write-slowdown feedback loop).
+// ---------------------------------------------------------------------------
+describe('coerceBus enforces caps on a bloated file (read path)', () => {
+  function bloatedBusJson(): string {
+    const focus = Array.from({ length: FOCUS_SYMBOLS_CAP + 40 }, (_, i) => ({
+      scip_id: `sym${i}`, name: `sym${i}`, kind: 'function', turn_added: i,
+    }));
+    const findings = Array.from({ length: RECENT_FINDINGS_CAP + 40 }, (_, i) => ({
+      correlation_id: `c${i}`, tool: 'grep', subject_id: `s${i}`,
+      result_count: 1, rank: 1, ts: '2026-06-02T00:00:00.000Z',
+    }));
+    const lb = Array.from({ length: LOAD_BEARING_CAP + 40 }, (_, i) => ({
+      path: `lb${i}.ts`, role: 'edited', turn_added: i,
+    }));
+    const amb = Array.from({ length: 200 }, (_, i) => ({
+      path: `amb${i}.ts`, role: 'read_for_context', turn_added: i,
+    }));
+    return JSON.stringify({
+      bus_id: BUS_ID, schema_version: 3, revision: 1, current_turn: 1,
+      current_intent: null, focus_symbols: focus, recent_findings: findings,
+      open_threads: [], files_in_play: { load_bearing: lb, ambient: amb },
+    });
+  }
+
+  it('readBus trims every over-cap array to within its cap', () => {
+    const disk = makeMemoryDisk({ [busPath(BUS_ID)]: bloatedBusJson() });
+    const b = readBus(BUS_ID, { read: disk.read });
+    expect(b.focus_symbols.length).toBeLessThanOrEqual(FOCUS_SYMBOLS_CAP);
+    expect(b.recent_findings.length).toBeLessThanOrEqual(RECENT_FINDINGS_CAP);
+    expect(b.files_in_play.load_bearing.length).toBeLessThanOrEqual(LOAD_BEARING_CAP);
+    // ambient is bounded by the same cap ceiling (kept from growing without bound)
+    expect(b.files_in_play.ambient.length).toBeLessThanOrEqual(LOAD_BEARING_CAP);
+  });
+
+  it('a turn-bump on a bloated file persists a trimmed bus (no unbounded growth)', () => {
+    const disk = makeMemoryDisk({ [busPath(BUS_ID)]: bloatedBusJson() });
+    mutateBus(BUS_ID, (b) => bumpTurn(b), { read: disk.read, write: disk.write });
+    const reread = readBus(BUS_ID, { read: disk.read });
+    expect(reread.focus_symbols.length).toBeLessThanOrEqual(FOCUS_SYMBOLS_CAP);
+    expect(reread.files_in_play.load_bearing.length).toBeLessThanOrEqual(LOAD_BEARING_CAP);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// current_turn -- the per-turn staleness counter (WS-2 Phase B.4a).
+// The bus READ is at UserPromptSubmit but WRITES land at PostToolUse, so the
+// reader needs a turn counter to compute how stale focus/files are. Cover:
+// emptyBus starts at 0; coerceBus (via the read path) defaults a missing/garbage
+// value to 0 and preserves a valid one; bumpTurn increments (and coalesces a
+// legacy bus); and a mutateBus(id, bumpTurn) persists current_turn across a read.
+// ---------------------------------------------------------------------------
+describe('current_turn counter (Phase B.4a)', () => {
+  it('emptyBus starts current_turn at 0', () => {
+    expect(emptyBus(BUS_ID).current_turn).toBe(0);
+  });
+
+  it('bumpTurn increments the counter', () => {
+    const b = emptyBus(BUS_ID);
+    bumpTurn(b);
+    expect(b.current_turn).toBe(1);
+    bumpTurn(b);
+    bumpTurn(b);
+    expect(b.current_turn).toBe(3);
+  });
+
+  it('bumpTurn coalesces a missing counter on a legacy bus (undefined -> 1)', () => {
+    // A bus persisted before this schema field existed has no current_turn.
+    const legacy = emptyBus(BUS_ID) as Partial<BusEntry> as BusEntry;
+    delete (legacy as { current_turn?: number }).current_turn;
+    bumpTurn(legacy);
+    expect(legacy.current_turn).toBe(1);
+  });
+
+  it('coerceBus (read path) defaults a MISSING current_turn to 0', () => {
+    // Seed disk with a bus object that omits current_turn entirely.
+    const path = busPath(BUS_ID, 'C:/tmp/proj');
+    const seeded = emptyBus(BUS_ID) as Partial<BusEntry>;
+    delete (seeded as { current_turn?: number }).current_turn;
+    const disk = makeMemoryDisk({ [path]: JSON.stringify(seeded) });
+    const b = readBus(BUS_ID, { read: disk.read });
+    expect(b.current_turn).toBe(0);
+  });
+
+  it('coerceBus (read path) defaults a GARBAGE current_turn to 0', () => {
+    const path = busPath(BUS_ID, 'C:/tmp/proj');
+    // current_turn set to a non-finite / non-number value on disk.
+    const raw = JSON.stringify({ ...emptyBus(BUS_ID), current_turn: 'not-a-number' });
+    const disk = makeMemoryDisk({ [path]: raw });
+    const b = readBus(BUS_ID, { read: disk.read });
+    expect(b.current_turn).toBe(0);
+  });
+
+  it('coerceBus (read path) PRESERVES a valid current_turn', () => {
+    const path = busPath(BUS_ID, 'C:/tmp/proj');
+    const seeded = emptyBus(BUS_ID);
+    seeded.current_turn = 7;
+    const disk = makeMemoryDisk({ [path]: JSON.stringify(seeded) });
+    const b = readBus(BUS_ID, { read: disk.read });
+    expect(b.current_turn).toBe(7);
+  });
+
+  it('mutateBus(id, bumpTurn) persists current_turn across a read', () => {
+    const disk = makeMemoryDisk();
+    const opts = { read: disk.read, write: disk.write };
+    const after = mutateBus(BUS_ID, bumpTurn, opts);
+    expect(after.current_turn).toBe(1);
+    // A subsequent read sees the persisted counter, not a reset.
+    const reread = readBus(BUS_ID, { read: disk.read });
+    expect(reread.current_turn).toBe(1);
+    // And a second mutate keeps incrementing on top of the persisted value.
+    const after2 = mutateBus(BUS_ID, bumpTurn, opts);
+    expect(after2.current_turn).toBe(2);
+    expect(readBus(BUS_ID, { read: disk.read }).current_turn).toBe(2);
   });
 });
 

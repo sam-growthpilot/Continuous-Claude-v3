@@ -82,6 +82,26 @@ export const AMBIENT_MIN_SLOTS = 3;
 /** Bounded CAS retries before a best-effort write (never an infinite loop). */
 const MAX_CAS_RETRIES = 5;
 
+/**
+ * Default bus lock-wait cap (WS-2 Phase B.0). A per-tool bus write waits at most
+ * this long for the lock before it is treated as a DROPPED write (logged, never
+ * silent) -- far below atomic-write's 5s default so the hook can never hang on a
+ * contended bus. Callers override via BusOptions.lockTimeoutMs.
+ */
+export const BUS_LOCK_TIMEOUT_MS = 200;
+
+/**
+ * Slow-path threshold (ms) above which a successful bus write ALSO emits a
+ * `bus_write` timing row to intel-bus. The fast common path stays quiet (the
+ * onOutcome seam carries every-call timing) so intel-bus is not spammed.
+ * Aligned to LATENCY_BUDGET_MS (50ms): a bus write is "slow" once it crosses the
+ * same budget a slow READ does. A 10ms threshold was too chatty -- ordinary
+ * writes cross it under CPU/Defender load, which would spam intel-bus in
+ * production (and made the "fast write stays quiet" test load-flaky). Exported so
+ * tests can assert the gating invariant (a `bus_write` row appears IFF slow).
+ */
+export const BUS_WRITE_SLOW_MS = LATENCY_BUDGET_MS;
+
 // ---------------------------------------------------------------------------
 // BusEntry v3 schema (design doc section 4.1)
 // ---------------------------------------------------------------------------
@@ -183,6 +203,15 @@ export interface BusEntry {
   compact_generation: number;
   /** CAS-style monotone counter (design doc section 13 Q4). */
   revision: number;
+  /**
+   * Per-turn counter (WS-2 Phase B.4a). Bumped once per UserPromptSubmit by the
+   * bus populator; PostToolUse writers stamp entries with the turn they landed
+   * on. The reader (B.3) uses it to compute focus/file staleness, since the bus
+   * READ happens at UserPromptSubmit but WRITES happen at PostToolUse -- so by
+   * the time a later turn reads, focus/files from a prior turn are >=1 turn
+   * stale (design mitigation #4).
+   */
+  current_turn: number;
 }
 
 /** The load-bearing roles (everything else is ambient). */
@@ -206,6 +235,7 @@ export function emptyBus(busId: string): BusEntry {
     schema_version: 3,
     compact_generation: 0,
     revision: 0,
+    current_turn: 0,
   };
 }
 
@@ -270,10 +300,27 @@ function busOff(): boolean {
   return process.env.CCV3_BUS_OFF === '1';
 }
 
+/** Keep at most `cap` newest (tail) entries -- FIFO eviction of the oldest. */
+function capTail<T>(arr: T[], cap: number): T[] {
+  return arr.length > cap ? arr.slice(arr.length - cap) : arr;
+}
+
+/** Keep at most `cap` FileInPlay entries with the newest turn_added (oldest evicted). */
+function capByTurn(arr: FileInPlay[], cap: number): FileInPlay[] {
+  if (arr.length <= cap) return arr;
+  return [...arr].sort((a, b) => (a.turn_added ?? 0) - (b.turn_added ?? 0)).slice(arr.length - cap);
+}
+
 /**
  * Coerce arbitrary parsed JSON into a well-formed BusEntry. Missing or wrong
  * fields fall back to empty defaults so a partially-written or older file still
  * yields a usable bus (fail-soft).
+ *
+ * The per-slice CAPS are enforced HERE (the read/coerce choke point), not only in
+ * the add* write helpers: bumpTurn/setIntent re-serialize the WHOLE bus without
+ * going through those helpers, so a file that arrived already bloated (an older
+ * version, an external writer) would otherwise persist and grow unbounded on every
+ * turn-bump -- the write-slowdown feedback loop (session-3 Codex#5 / critic F5).
  */
 function coerceBus(busId: string, parsed: unknown): BusEntry {
   const base = emptyBus(busId);
@@ -282,24 +329,37 @@ function coerceBus(busId: string, parsed: unknown): BusEntry {
   return {
     bus_id: typeof p.bus_id === 'string' ? p.bus_id : busId,
     current_intent: typeof p.current_intent === 'string' ? p.current_intent : null,
-    focus_symbols: Array.isArray(p.focus_symbols) ? (p.focus_symbols as FocusSymbol[]) : [],
+    focus_symbols: capTail(
+      Array.isArray(p.focus_symbols) ? (p.focus_symbols as FocusSymbol[]) : [],
+      FOCUS_SYMBOLS_CAP,
+    ),
     files_in_play: coerceFilesInPlay(p.files_in_play),
-    recent_findings: Array.isArray(p.recent_findings)
-      ? (p.recent_findings as RecentFinding[])
-      : [],
-    open_threads: Array.isArray(p.open_threads) ? (p.open_threads as OpenThread[]) : [],
+    recent_findings: capTail(
+      Array.isArray(p.recent_findings) ? (p.recent_findings as RecentFinding[]) : [],
+      RECENT_FINDINGS_CAP,
+    ),
+    open_threads: capTail(
+      Array.isArray(p.open_threads) ? (p.open_threads as OpenThread[]) : [],
+      OPEN_THREADS_CAP,
+    ),
     schema_version: 3,
     compact_generation: typeof p.compact_generation === 'number' ? p.compact_generation : 0,
     revision: typeof p.revision === 'number' && Number.isFinite(p.revision) ? p.revision : 0,
+    current_turn:
+      typeof p.current_turn === 'number' && Number.isFinite(p.current_turn) ? p.current_turn : 0,
   };
 }
 
 function coerceFilesInPlay(value: unknown): FilesInPlay {
   if (!value || typeof value !== 'object') return { load_bearing: [], ambient: [] };
   const v = value as Record<string, unknown>;
+  const lb = Array.isArray(v.load_bearing) ? (v.load_bearing as FileInPlay[]) : [];
+  const amb = Array.isArray(v.ambient) ? (v.ambient as FileInPlay[]) : [];
+  // load_bearing keeps the newest by turn (matches addFileInPlay eviction); ambient
+  // is bounded by the same ceiling so a bloated file cannot grow without bound.
   return {
-    load_bearing: Array.isArray(v.load_bearing) ? (v.load_bearing as FileInPlay[]) : [],
-    ambient: Array.isArray(v.ambient) ? (v.ambient as FileInPlay[]) : [],
+    load_bearing: capByTurn(lb, LOAD_BEARING_CAP),
+    ambient: capTail(amb, LOAD_BEARING_CAP),
   };
 }
 
@@ -325,6 +385,20 @@ export interface BusOptions {
    * on each attempt. Lets tests inject a competing writer to exercise CAS.
    */
   beforeWrite?: () => void;
+  /**
+   * Max time the real-lock write path waits for the bus lock, in ms (WS-2 Phase
+   * B.0). DEFAULT is 200 (BUS_LOCK_TIMEOUT_MS) so a per-tool bus write can never
+   * hang the hook on atomic-write's 5s default. Only the real-lock path
+   * (mutateViaLock) honors this; the injected-write CAS branch ignores it.
+   */
+  lockTimeoutMs?: number;
+  /**
+   * Every-call write outcome seam (WS-2 Phase B.0). Fires once per real-lock
+   * mutateBus with whether the write was DROPPED (lock timeout) and the timings.
+   * A dropped write is ALSO logged to intel-bus (bus_write_dropped) so the drop
+   * is never silent; onOutcome is the in-process signal tests/benches read.
+   */
+  onOutcome?: (o: { dropped: boolean; wait_ms: number; write_ms?: number }) => void;
 }
 
 /** Default disk read: returns file contents or null if missing/unreadable. */
@@ -482,6 +556,15 @@ export function mutateBus(
  * injected read seam if present, for deterministic contention tests), classifies
  * them, applies fn, bumps revision, and serializes. On a transient failure it
  * returns null -> the primitive performs a NO-OP (no clobber).
+ *
+ * WS-2 Phase B.0: the lock wait is capped (default BUS_LOCK_TIMEOUT_MS = 200ms)
+ * so a contended per-tool bus write can never hang the hook on the 5s default.
+ * A lock-timeout is a DROPPED write -- it is LOGGED to intel-bus
+ * (bus_write_dropped) and signaled via opts.onOutcome, NEVER silently swallowed.
+ * The bus file is left untouched on a drop; we return the best-effort `result`
+ * (the pre-write emptyBus/last-read), so a drop is surfaced, not hidden behind a
+ * clobbered/empty bus. A successful write that crossed the slow threshold also
+ * emits a `bus_write` timing row; the fast common path stays quiet on intel-bus.
  */
 function mutateViaLock(
   id: string,
@@ -490,45 +573,169 @@ function mutateViaLock(
   opts: BusOptions,
 ): BusEntry {
   const read = opts.read; // may be undefined -> the primitive reads the file itself
+  const lockTimeoutMs = opts.lockTimeoutMs ?? BUS_LOCK_TIMEOUT_MS;
   let result = emptyBus(id);
+
+  // Captured from the primitive's instrumentation callbacks. `outcomeKnown`
+  // distinguishes a REPORTED lock outcome from an exception that prevented the
+  // acquire from ever running, so a drop's intel-bus `reason` stays honest
+  // (cross-model review finding: a pre-acquire throw must not masquerade as a
+  // lock_timeout). The acquire callback flips it true.
+  let outcomeKnown = false;
+  let acquired = false;
+  let waitMs = 0;
+  let writeMs: number | undefined;
+  // Whether the mutation actually PERSISTED. mutateStateWithLock returns false on
+  // every in-lock failure too (corrupt/unreadable pre-image -> null transform, a
+  // throwing transform, or a failed atomicWriteSync), not just on a lock timeout.
+  let wrote = false;
 
   try {
     ensureDir(path, opts);
-    mutateStateWithLock(path, (current) => {
-      // Determine the pre-image. If a read seam is injected, classify through it
-      // (lets the contention test slip a competitor write in). Otherwise use the
-      // `current` string the primitive already read under the lock.
-      let loaded: LoadResult;
-      if (read) {
-        loaded = loadState(id, read, path);
-      } else if (current == null) {
-        loaded = { kind: 'absent' };
-      } else if (current.trim().length === 0) {
-        loaded = { kind: 'absent' };
-      } else {
-        try {
-          loaded = { kind: 'present', bus: coerceBus(id, JSON.parse(current)) };
-        } catch {
-          loaded = { kind: 'failed' };
+    wrote = mutateStateWithLock(
+      path,
+      (current) => {
+        // Determine the pre-image. If a read seam is injected, classify through
+        // it (lets the contention test slip a competitor write in). Otherwise use
+        // the `current` string the primitive already read under the lock.
+        let loaded: LoadResult;
+        if (read) {
+          loaded = loadState(id, read, path);
+        } else if (current == null) {
+          loaded = { kind: 'absent' };
+        } else if (current.trim().length === 0) {
+          loaded = { kind: 'absent' };
+        } else {
+          try {
+            loaded = { kind: 'present', bus: coerceBus(id, JSON.parse(current)) };
+          } catch {
+            loaded = { kind: 'failed' };
+          }
         }
-      }
 
-      if (loaded.kind === 'failed') {
-        // Transient: do not overwrite existing-but-unreadable state.
-        return null;
-      }
+        if (loaded.kind === 'failed') {
+          // Transient: do not overwrite existing-but-unreadable state.
+          return null;
+        }
 
-      const base = loaded.kind === 'present' ? loaded.bus : emptyBus(id);
-      const baseRevision = base.revision;
-      fn(base);
-      base.revision = baseRevision + 1;
-      result = base;
-      return JSON.stringify(base, null, 2);
-    });
+        const base = loaded.kind === 'present' ? loaded.bus : emptyBus(id);
+        const baseRevision = base.revision;
+        fn(base);
+        base.revision = baseRevision + 1;
+        result = base;
+        return JSON.stringify(base, null, 2);
+      },
+      {
+        lockTimeoutMs,
+        onLockOutcome: (o) => {
+          outcomeKnown = true;
+          acquired = o.acquired;
+          waitMs = o.wait_ms;
+        },
+        onWriteTiming: (o) => {
+          writeMs = o.write_ms;
+        },
+      },
+    );
   } catch {
     // Fail-open: never throw into the hot path.
   }
+
+  // B.0 outcome handling. A DROPPED write is any mutation that did NOT persist.
+  // Three cases, all logged (never silent) + signaled dropped:true:
+  //   1. lock never acquired -> reason 'lock_timeout' (outcome reported) or
+  //      'write_error' (a pre-acquire exception -- outcomeKnown stays false).
+  //   2. lock acquired but the write did not land (corrupt pre-image, throwing
+  //      transform, or a failed atomicWriteSync -> wrote === false) -> 'write_error'.
+  //      This is the session-3 Codex#1 hole: the acquired-but-no-write path used to
+  //      report dropped:false (a silent drop) -- the drop-storm rollback signal the
+  //      quality gate relies on would have missed exactly these failures.
+  // Only an acquired AND persisted write is a success.
+  if (!acquired) {
+    emitDropEvent(id, waitMs, opts, outcomeKnown ? 'lock_timeout' : 'write_error');
+    fireOutcome(opts, { dropped: true, wait_ms: waitMs });
+  } else if (!wrote) {
+    emitDropEvent(id, waitMs, opts, 'write_error');
+    fireOutcome(opts, { dropped: true, wait_ms: waitMs });
+  } else {
+    fireOutcome(opts, { dropped: false, wait_ms: waitMs, write_ms: writeMs });
+    if (waitMs > BUS_WRITE_SLOW_MS || (writeMs ?? 0) > BUS_WRITE_SLOW_MS) {
+      emitWriteTiming(id, waitMs, writeMs, opts);
+    }
+  }
+
   return result;
+}
+
+/**
+ * Log a DROPPED bus write to intel-bus (WS-2 Phase B.0). A drop means a per-tool
+ * mutation could not land -- either the lock timed out (`reason:'lock_timeout'`)
+ * or an exception prevented the acquire (`reason:'write_error'`). Surfacing it
+ * here is what makes the drop NON-silent. Fully fail-open: a throwing
+ * appendIntelBus must NEVER propagate into the write path.
+ */
+function emitDropEvent(
+  id: string,
+  waitMs: number,
+  opts: BusOptions,
+  reason: 'lock_timeout' | 'write_error',
+): void {
+  try {
+    appendIntelBus(
+      {
+        bus_id: id,
+        query_type: 'bus_write_dropped',
+        reason,
+        wait_ms: waitMs,
+        duration_ms: waitMs,
+      },
+      { projectDir: opts.projectDir },
+    );
+  } catch {
+    // Drop-logging must never break the write path (fail-open).
+  }
+}
+
+/**
+ * Log a slow-but-successful bus write to intel-bus (WS-2 Phase B.0). Only fired
+ * when the wait or write crossed BUS_WRITE_SLOW_MS so the fast common path stays
+ * quiet. Fully fail-open.
+ */
+function emitWriteTiming(
+  id: string,
+  waitMs: number,
+  writeMs: number | undefined,
+  opts: BusOptions,
+): void {
+  try {
+    appendIntelBus(
+      {
+        bus_id: id,
+        query_type: 'bus_write',
+        wait_ms: waitMs,
+        // Explicit null (not undefined): keep the field present so a consumer can
+        // tell "write not measured" from "sub-ms write" (review finding).
+        write_ms: writeMs ?? null,
+        duration_ms: waitMs + (writeMs ?? 0),
+      },
+      { projectDir: opts.projectDir },
+    );
+  } catch {
+    // Timing-logging must never break the write path (fail-open).
+  }
+}
+
+/** Fire the per-call write outcome seam, fail-open (a throwing sink is ignored). */
+function fireOutcome(
+  opts: BusOptions,
+  o: { dropped: boolean; wait_ms: number; write_ms?: number },
+): void {
+  if (!opts.onOutcome) return;
+  try {
+    opts.onOutcome(o);
+  } catch {
+    // The outcome seam must never throw into the write path.
+  }
 }
 
 /**
@@ -635,25 +842,72 @@ export function setIntent(bus: BusEntry, intent: string): void {
   bus.current_intent = intent;
 }
 
-/** Append a focus symbol. */
-export function addFocusSymbol(bus: BusEntry, sym: FocusSymbol): void {
-  bus.focus_symbols.push(sym);
-}
-
-/** Append a recent finding. */
-export function addRecentFinding(bus: BusEntry, finding: RecentFinding): void {
-  bus.recent_findings.push(finding);
+/**
+ * Increment the per-turn counter (WS-2 Phase B.4a). Tolerates a missing/garbage
+ * counter on a legacy bus (coalesces to 0 before bumping) so the first bump on
+ * an older file still yields 1.
+ */
+export function bumpTurn(bus: BusEntry): void {
+  bus.current_turn = (bus.current_turn ?? 0) + 1;
 }
 
 /**
- * Add a file in play, routing by role into the load_bearing or ambient slice
- * and enforcing the 30% ambient cap (design doc section 4.2). Load-bearing
- * entries are never evicted by ambient pressure; an ambient add that would
- * breach the cap is dropped.
+ * Per-array caps (WS-2 cross-model review finding F3). The bus JSON is
+ * read+parsed+written on every mutateBus call, so an unbounded array makes writes
+ * progressively slower and the 200ms lock hold creep up over a long session --
+ * which would feed back into MORE write drops. Each writer keeps its slice
+ * bounded: load_bearing evicts the oldest last-touch turn, focus/findings are
+ * FIFO. Exported so tests can pin the boundary.
+ */
+export const LOAD_BEARING_CAP = 50;
+export const FOCUS_SYMBOLS_CAP = 50;
+export const RECENT_FINDINGS_CAP = 50;
+export const OPEN_THREADS_CAP = 50;
+
+/** Append a focus symbol, keeping the slice within FOCUS_SYMBOLS_CAP (FIFO). */
+export function addFocusSymbol(bus: BusEntry, sym: FocusSymbol): void {
+  bus.focus_symbols.push(sym);
+  if (bus.focus_symbols.length > FOCUS_SYMBOLS_CAP) {
+    bus.focus_symbols.splice(0, bus.focus_symbols.length - FOCUS_SYMBOLS_CAP);
+  }
+}
+
+/** Append a recent finding, keeping the slice within RECENT_FINDINGS_CAP (FIFO). */
+export function addRecentFinding(bus: BusEntry, finding: RecentFinding): void {
+  bus.recent_findings.push(finding);
+  if (bus.recent_findings.length > RECENT_FINDINGS_CAP) {
+    bus.recent_findings.splice(0, bus.recent_findings.length - RECENT_FINDINGS_CAP);
+  }
+}
+
+/**
+ * Add a file in play, routing by role into the load_bearing or ambient slice.
+ *
+ * Load-bearing (review F3): DEDUP by (path, role) -- a re-touched file refreshes
+ * its turn_added in place instead of appending a duplicate -- then CAP the slice
+ * at LOAD_BEARING_CAP, evicting the entry with the oldest last-touch turn. This
+ * keeps a long edit-heavy session from growing the bus without bound. The dedup
+ * scan is O(LOAD_BEARING_CAP) (the array is capped small), not a full-session scan.
+ *
+ * Ambient: the 30% cap (design doc section 4.2). Load-bearing is never evicted by
+ * ambient pressure; an ambient add that would breach the cap is dropped.
  */
 export function addFileInPlay(bus: BusEntry, file: FileInPlay): void {
   if (LOAD_BEARING_ROLES.has(file.role)) {
-    bus.files_in_play.load_bearing.push(file);
+    const lbArr = bus.files_in_play.load_bearing;
+    const existing = lbArr.find((f) => f.path === file.path && f.role === file.role);
+    if (existing) {
+      // Re-touch: refresh recency + freshness in place (no duplicate row).
+      existing.turn_added = file.turn_added;
+      existing.stale = file.stale;
+      existing.stale_check = file.stale_check;
+      return;
+    }
+    lbArr.push(file);
+    if (lbArr.length > LOAD_BEARING_CAP) {
+      lbArr.sort((a, b) => (a.turn_added ?? 0) - (b.turn_added ?? 0));
+      lbArr.splice(0, lbArr.length - LOAD_BEARING_CAP);
+    }
     return;
   }
   // Ambient: accept if it stays within the floor OR keeps ambient/total within

@@ -36,6 +36,18 @@ import { outputContinue } from './shared/output.js';
 import { extractIntent } from './shared/intent-extractor.js';
 import { createLogger } from './shared/logger.js';
 import { sanitizeMemoryContent, wrapMemoryContext } from './shared/memory-sanitize.js';
+import { readBus, type BusEntry } from './shared/context-bus.js';
+import { appendIntelBus, type IntelBusEvent } from './shared/intel-bus.js';
+import {
+  extractBusFocus,
+  buildFocusBlock,
+  BUS_STALENESS_MAX_AGE,
+  type BusFocus,
+} from './shared/bus-focus.js';
+
+// Re-exported so existing tests that pin the staleness window against this hook
+// keep importing it from here (the logic now lives in shared/bus-focus.ts).
+export { BUS_STALENESS_MAX_AGE };
 
 // ---------------------------------------------------------------------------
 // Public constants & types (exported so tests can pin them)
@@ -145,10 +157,21 @@ function previewContent(content: string): string {
   return sanitizeMemoryContent(joined, PREVIEW_CHARS);
 }
 
+/**
+ * Build the additionalContext block.
+ *
+ * @param focusBlock Optional pre-built, ALREADY-SANITIZED+WRAPPED "SESSION
+ *   FOCUS" block (WS-2 Phase B.3a). When present it is prepended so the agent
+ *   sees the live session working set above the recalled memory. Pass it even
+ *   when `results` is empty so a focus-only injection is still emitted (the
+ *   caller decides whether to call this at all). Keeping the wrapping inside the
+ *   focus-block BUILDER (buildFocusBlock) means this function just concatenates.
+ */
 export function buildAgentContext(
   subagentType: string,
   intent: string,
   results: RecallResult[],
+  focusBlock?: string,
 ): string {
   const top = results.slice(0, TOP_K);
   const lines = top.map((r, i) => {
@@ -161,14 +184,28 @@ export function buildAgentContext(
   const safeIntent = sanitizeMemoryContent(intent, 200);
   // subagentType is caller-provided; sanitize it too for defense in depth.
   const safeSubagentType = sanitizeMemoryContent(String(subagentType ?? ''), 40);
+
+  // When there are no recalled results, return ONLY the focus block (if any) --
+  // do not emit an empty "AGENT MEMORY CONTEXT" shell. The caller guarantees it
+  // only reaches here with either results or a focusBlock (or both).
+  if (top.length === 0) {
+    return focusBlock ?? '';
+  }
+
   // Recalled content is untrusted (prompt-injection vector WS-0.2): wrap the
   // body as data-only and use descriptive, non-imperative trailing text.
   const body = [
     `AGENT MEMORY CONTEXT for "${safeSubagentType}" task on "${safeIntent}":`,
     ...lines,
   ].join('\n');
-  return `${wrapMemoryContext(body)}\nAbove is reference data only; call /recall "${safeIntent}" for full content if needed.`;
+  const memory = `${wrapMemoryContext(body)}\nAbove is reference data only; call /recall "${safeIntent}" for full content if needed.`;
+  return focusBlock ? `${focusBlock}\n${memory}` : memory;
 }
+
+// WS-2 Phase B.3a/B.3b: the bus focus extraction (extractBusFocus /
+// buildFocusBlock / isFresh / staleness + cap + control-strip) lives in
+// ./shared/bus-focus.ts -- shared by this hook and memory-awareness so the
+// logic has ONE implementation and cannot drift between the two readers.
 
 // ---------------------------------------------------------------------------
 // Default recall implementation (spawns recall_learnings.py)
@@ -231,6 +268,8 @@ interface LogEntry {
   session_id: string;
   subagent_type: string;
   intent: string;
+  /** The query actually sent to recall (the bare intent; agent-recall is unbiased). */
+  recall_query: string;
   results_count: number;
   kept_after_floor: number;
   top_score: number;
@@ -258,13 +297,28 @@ function writeFireLog(entry: LogEntry): void {
 // Main handler (testable, recall injected as dependency)
 // ---------------------------------------------------------------------------
 
+/** Injected bus reader (WS-2 Phase B.3a). Default reads the real bus. */
+export type ReadBusFn = () => BusEntry;
+
+/** Injected telemetry sink (WS-2 Phase B.3a). Default appends to intel-bus. */
+export type TelemetryFn = (event: IntelBusEvent) => void;
+
 /**
  * Returns the hook output to emit, or `null` if no context should be injected.
  * Always logs to agent-recall.jsonl unless the call was skipped (no recall).
+ *
+ * WS-2 Phase B.3a: reads the L2 context bus (read-only, fail-open, behind the
+ * CCV3_BUS_OFF kill switch) to (a) BIAS the recall query with the session's
+ * non-stale working set and (b) inject a SESSION FOCUS block -- even when recall
+ * returns nothing -- so a spawned agent inherits the live focus. The bus is
+ * never mutated here. `readBusFn` / `telemetry` are injected for testability,
+ * mirroring the existing `recall` dependency-injection.
  */
 export function handleAgentTask(
   input: TaskHookInput,
   recall: RecallFn = defaultRecall,
+  readBusFn: ReadBusFn = () => readBus(),
+  telemetry: TelemetryFn = appendIntelBus,
 ): HookOutput | null {
   const decision = shouldSkip(input);
   if (decision.skip) {
@@ -281,11 +335,53 @@ export function handleAgentTask(
     return null;
   }
 
+  // --- Bus read (read-only, fail-open) ------------------------------------
+  // readBus is already fail-open + kill-switch-aware; the extra try/catch is
+  // belt-and-suspenders so a thrown reader can NEVER break recall.
+  let bus: BusEntry;
+  try {
+    bus = readBusFn();
+  } catch (e: any) {
+    log.debug('bus read threw (fail-open, no bias)', { error: e?.message });
+    bus = emptyBusFallback();
+  }
+
+  let busFocus: BusFocus;
+  try {
+    busFocus = extractBusFocus(bus);
+  } catch (e: any) {
+    log.debug('bus focus extraction threw (fail-open)', { error: e?.message });
+    busFocus = { terms: [], staleSymbolsCount: 0 };
+  }
+  const focusTerms = busFocus.terms;
+  const focusBlock = buildFocusBlock(focusTerms);
+  // WS-2 B.3b refine (quality gate): agent-recall always runs recall_learnings.py
+  // in --text-only mode (latency budget at agent-spawn), and the gate showed query
+  // bias DILUTES text-only FTS ts_rank. So this hook does NOT bias the recall query
+  // (it recalls on the bare intent); the bus focus is surfaced ONLY via the injected
+  // SESSION FOCUS block, which is orthogonal and never touches recall scores.
+  // (memory-awareness biases the query in HYBRID mode, where it measurably helps.)
+
+  // Bus-read telemetry fields known BEFORE recall runs, so the row is still
+  // emitted if recall throws (the quality gate must see the bus read regardless of
+  // recall outcome -- cross-model B.3a finding Codex#3). injected/result_count are
+  // filled in per outcome.
+  const baseTel = {
+    bus_id: typeof bus.bus_id === 'string' ? bus.bus_id : 'unknown',
+    query_type: 'agent_recall_bus_read',
+    biased: false,
+    focus_count: focusTerms.length,
+    stale_symbols_count: busFocus.staleSymbolsCount,
+    current_turn: typeof bus.current_turn === 'number' ? bus.current_turn : 0,
+  };
+
   let response: RecallResponse;
   try {
     response = recall(intent);
   } catch (e: any) {
     log.warn('recall threw', { error: e?.message });
+    // Preserve the original throw -> null behavior, but DO record the bus read.
+    emitBusReadTelemetry(telemetry, { ...baseTel, injected: false, result_count: 0 });
     return null;
   }
 
@@ -295,11 +391,13 @@ export function handleAgentTask(
     ? results.reduce((m, r) => Math.max(m, r.score ?? 0), 0)
     : 0;
 
-  // Always log fires that reach this point (passed skip checks)
+  // Always log fires that reach this point (passed skip checks). The original
+  // (un-biased) intent is logged for human readability.
   const entry: LogEntry = {
     session_id: String(input.session_id ?? 'unknown'),
     subagent_type: subagentType,
     intent,
+    recall_query: intent,
     results_count: results.length,
     kept_after_floor: kept.length,
     top_score: topScore,
@@ -307,21 +405,75 @@ export function handleAgentTask(
   };
   writeFireLog(entry);
 
+  // Decide whether anything will be injected. A focus block is injectable even
+  // when recall produced nothing, as long as the bus had non-stale focus.
+  const hasFocusBlock = focusBlock.length > 0;
+  const recallUsable = response.ok && kept.length > 0;
+  const injected = recallUsable || hasFocusBlock;
+
+  // Telemetry (fail-open): record the bus-read decision (reuses baseTel so the
+  // throw path above emits the same event shape).
+  emitBusReadTelemetry(telemetry, { ...baseTel, injected, result_count: kept.length });
+
   if (!response.ok) {
     log.debug('recall failed/timeout', { error: response.error });
-    return null;
+    // A failed recall still injects a focus block if the bus had focus.
+    if (!hasFocusBlock) return null;
+    return {
+      hookSpecificOutput: {
+        hookEventName: 'PreToolUse',
+        additionalContext: focusBlock,
+      },
+    };
   }
-  if (kept.length === 0) {
+  if (kept.length === 0 && !hasFocusBlock) {
     return null;
   }
 
-  const additionalContext = buildAgentContext(subagentType, intent, kept);
+  const additionalContext = buildAgentContext(
+    subagentType,
+    intent,
+    kept,
+    hasFocusBlock ? focusBlock : undefined,
+  );
   return {
     hookSpecificOutput: {
       hookEventName: 'PreToolUse',
       additionalContext,
     },
   };
+}
+
+/**
+ * Minimal fail-open empty bus (used only if the injected reader throws). Mirrors
+ * the shape extractBusFocus expects without importing emptyBus into the hot path.
+ */
+function emptyBusFallback(): BusEntry {
+  return {
+    bus_id: 'unknown',
+    current_intent: null,
+    focus_symbols: [],
+    files_in_play: { load_bearing: [], ambient: [] },
+    recent_findings: [],
+    open_threads: [],
+    schema_version: 3,
+    compact_generation: 0,
+    revision: 0,
+    current_turn: 0,
+  };
+}
+
+/** Emit the agent_recall_bus_read telemetry row; fully fail-open. */
+function emitBusReadTelemetry(
+  telemetry: TelemetryFn,
+  event: IntelBusEvent,
+): void {
+  try {
+    telemetry(event);
+  } catch (e: any) {
+    // Telemetry must NEVER break injection (fail-open).
+    log.debug('bus-read telemetry threw (ignored)', { error: e?.message });
+  }
 }
 
 // ---------------------------------------------------------------------------

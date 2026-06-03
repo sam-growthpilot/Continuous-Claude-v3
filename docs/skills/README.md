@@ -154,11 +154,8 @@ Specialized capabilities organized by domain.
 | **agent-orchestration** | Orchestrating complex agent workflows |
 | **agent-context-isolation** | Managing agent context boundaries |
 | **agentica-spawn** | Agentica-specific agent spawning |
-| **agentica-server** | Agentica server integration |
-| **agentica-infrastructure** | Agentica system architecture |
 | **agentica-prompts** | Agentica prompt engineering |
 | **agentica-sdk** | Using the Agentica SDK |
-| **agentica-claude-proxy** | Claude API proxy configuration |
 | **no-polling-agents** | Event-driven agent patterns (avoid polling) |
 | **background-agent-pings** | Keep-alive patterns for long-running agents |
 
