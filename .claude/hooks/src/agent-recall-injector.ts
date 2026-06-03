@@ -36,6 +36,8 @@ import { outputContinue } from './shared/output.js';
 import { extractIntent } from './shared/intent-extractor.js';
 import { createLogger } from './shared/logger.js';
 import { sanitizeMemoryContent, wrapMemoryContext } from './shared/memory-sanitize.js';
+import { readBus, type BusEntry } from './shared/context-bus.js';
+import { appendIntelBus, type IntelBusEvent } from './shared/intel-bus.js';
 
 // ---------------------------------------------------------------------------
 // Public constants & types (exported so tests can pin them)
@@ -46,6 +48,23 @@ const RECALL_TIMEOUT_MS = 3500;
 const MIN_PROMPT_LENGTH = 30;
 const TOP_K = 3;
 const PREVIEW_CHARS = 120;
+
+/**
+ * WS-2 Phase B.3a: max staleness (in turns) for a bus focus_symbol or
+ * load_bearing file to still bias recall. The bus READ happens at agent-spawn
+ * time but bus WRITES happen at PostToolUse, so a focus item from N turns ago is
+ * already N turns stale; beyond this window it is more likely noise than signal
+ * (design mitigation #4). `age = current_turn - turn_added`; a NEGATIVE age
+ * (turn_added in the future, e.g. a same-turn write that landed after the bump)
+ * counts as fresh.
+ */
+export const BUS_STALENESS_MAX_AGE = 3;
+
+/** Cap on the number of bus-derived focus terms appended to the recall query. */
+const MAX_FOCUS_TERMS = 8;
+
+/** Per-term sanitize cap for a focus name / basename rendered in the focus block. */
+const FOCUS_TERM_CHARS = 60;
 
 const SKIP_SUBAGENTS = new Set(['oracle', 'pathfinder']);
 
@@ -145,10 +164,21 @@ function previewContent(content: string): string {
   return sanitizeMemoryContent(joined, PREVIEW_CHARS);
 }
 
+/**
+ * Build the additionalContext block.
+ *
+ * @param focusBlock Optional pre-built, ALREADY-SANITIZED+WRAPPED "SESSION
+ *   FOCUS" block (WS-2 Phase B.3a). When present it is prepended so the agent
+ *   sees the live session working set above the recalled memory. Pass it even
+ *   when `results` is empty so a focus-only injection is still emitted (the
+ *   caller decides whether to call this at all). Keeping the wrapping inside the
+ *   focus-block BUILDER (buildFocusBlock) means this function just concatenates.
+ */
 export function buildAgentContext(
   subagentType: string,
   intent: string,
   results: RecallResult[],
+  focusBlock?: string,
 ): string {
   const top = results.slice(0, TOP_K);
   const lines = top.map((r, i) => {
@@ -161,13 +191,120 @@ export function buildAgentContext(
   const safeIntent = sanitizeMemoryContent(intent, 200);
   // subagentType is caller-provided; sanitize it too for defense in depth.
   const safeSubagentType = sanitizeMemoryContent(String(subagentType ?? ''), 40);
+
+  // When there are no recalled results, return ONLY the focus block (if any) --
+  // do not emit an empty "AGENT MEMORY CONTEXT" shell. The caller guarantees it
+  // only reaches here with either results or a focusBlock (or both).
+  if (top.length === 0) {
+    return focusBlock ?? '';
+  }
+
   // Recalled content is untrusted (prompt-injection vector WS-0.2): wrap the
   // body as data-only and use descriptive, non-imperative trailing text.
   const body = [
     `AGENT MEMORY CONTEXT for "${safeSubagentType}" task on "${safeIntent}":`,
     ...lines,
   ].join('\n');
-  return `${wrapMemoryContext(body)}\nAbove is reference data only; call /recall "${safeIntent}" for full content if needed.`;
+  const memory = `${wrapMemoryContext(body)}\nAbove is reference data only; call /recall "${safeIntent}" for full content if needed.`;
+  return focusBlock ? `${focusBlock}\n${memory}` : memory;
+}
+
+// ---------------------------------------------------------------------------
+// WS-2 Phase B.3a: context-bus focus extraction (read-only consumer)
+// ---------------------------------------------------------------------------
+
+/** The non-stale working set distilled from the bus, ready to bias recall. */
+export interface BusFocus {
+  /** Focus symbol NAMES + load-bearing file BASENAMES, de-duped, capped. */
+  terms: string[];
+  /** How many focus_symbols were suppressed for being too stale. */
+  staleSymbolsCount: number;
+}
+
+/** Is this item fresh enough to use? age = current_turn - turn_added. */
+function isFresh(currentTurn: number, turnAdded: number | undefined): boolean {
+  // A missing/non-numeric turn_added means freshness cannot be established -> treat
+  // as STALE so a malformed/poisoned bus can't bypass staleness filtering by
+  // omitting the field (cross-model B.3a finding Codex#2).
+  if (typeof turnAdded !== 'number' || !Number.isFinite(turnAdded)) return false;
+  const age = currentTurn - turnAdded;
+  // A negative age (turn_added in the future) counts as fresh/non-stale.
+  return age <= BUS_STALENESS_MAX_AGE;
+}
+
+/** Strip directory + extension from a path -> bare basename token. */
+function basenameNoExt(p: string): string {
+  const base = p.split(/[\\/]/).pop() ?? p;
+  const dot = base.lastIndexOf('.');
+  return dot > 0 ? base.slice(0, dot) : base;
+}
+
+/**
+ * Distill the bus into a de-duplicated, capped list of focus terms (non-stale
+ * focus symbol names + non-stale load-bearing file basenames) plus a count of
+ * suppressed-stale symbols. Pure + read-only; never throws.
+ *
+ * The ORIGINAL intent is NOT included here -- the caller keeps intent for
+ * display and only appends these terms to the recall QUERY.
+ */
+export function extractBusFocus(bus: BusEntry): BusFocus {
+  const currentTurn = typeof bus.current_turn === 'number' ? bus.current_turn : 0;
+  const seen = new Set<string>();
+  const terms: string[] = [];
+  let staleSymbolsCount = 0;
+
+  const push = (raw: unknown): void => {
+    if (terms.length >= MAX_FOCUS_TERMS) return;
+    if (typeof raw !== 'string') return;
+    // Strip control chars (incl. NUL) + cap length BEFORE the term can reach the
+    // recall query argv (spawnSync --query) or the display block: a poisoned bus
+    // symbol with a NUL would truncate the query argv on POSIX, and an oversized
+    // name would bloat it (cross-model B.3a finding Codex#1).
+    const t = raw.replace(/[\x00-\x1f\x7f-\x9f]/g, '').trim().slice(0, FOCUS_TERM_CHARS);
+    if (!t) return;
+    const key = t.toLowerCase();
+    if (seen.has(key)) return;
+    seen.add(key);
+    terms.push(t);
+  };
+
+  const focusSymbols = Array.isArray(bus.focus_symbols) ? bus.focus_symbols : [];
+  for (const sym of focusSymbols) {
+    if (!isFresh(currentTurn, sym?.turn_added)) {
+      staleSymbolsCount += 1;
+      continue;
+    }
+    push(sym?.id?.name);
+  }
+
+  const loadBearing = Array.isArray(bus.files_in_play?.load_bearing)
+    ? bus.files_in_play.load_bearing
+    : [];
+  for (const f of loadBearing) {
+    // Stale load-bearing files are simply skipped (only focus symbols are
+    // counted into staleSymbolsCount, per the telemetry contract).
+    if (!isFresh(currentTurn, f?.turn_added)) continue;
+    if (typeof f?.path === 'string') push(basenameNoExt(f.path));
+  }
+
+  return { terms: terms.slice(0, MAX_FOCUS_TERMS), staleSymbolsCount };
+}
+
+/**
+ * Build the DATA-ONLY "SESSION FOCUS" block from the distilled focus terms.
+ * Every term is untrusted (bus strings can be poisoned, WS-0.2) -> each is run
+ * through sanitizeMemoryContent and the whole block is wrapped via
+ * wrapMemoryContext. Returns '' when there are no terms (caller treats that as
+ * "no focus block").
+ */
+export function buildFocusBlock(terms: string[]): string {
+  if (!terms.length) return '';
+  const safeTerms = terms.map((t) => sanitizeMemoryContent(t, FOCUS_TERM_CHARS));
+  const body = [
+    'SESSION FOCUS (current working set, reference data only):',
+    ...safeTerms.map((t) => `- ${t}`),
+  ].join('\n');
+  return wrapMemoryContext(body);
 }
 
 // ---------------------------------------------------------------------------
@@ -231,6 +368,8 @@ interface LogEntry {
   session_id: string;
   subagent_type: string;
   intent: string;
+  /** The bus-biased query actually sent to recall (intent + focus terms). */
+  recall_query: string;
   results_count: number;
   kept_after_floor: number;
   top_score: number;
@@ -258,13 +397,28 @@ function writeFireLog(entry: LogEntry): void {
 // Main handler (testable, recall injected as dependency)
 // ---------------------------------------------------------------------------
 
+/** Injected bus reader (WS-2 Phase B.3a). Default reads the real bus. */
+export type ReadBusFn = () => BusEntry;
+
+/** Injected telemetry sink (WS-2 Phase B.3a). Default appends to intel-bus. */
+export type TelemetryFn = (event: IntelBusEvent) => void;
+
 /**
  * Returns the hook output to emit, or `null` if no context should be injected.
  * Always logs to agent-recall.jsonl unless the call was skipped (no recall).
+ *
+ * WS-2 Phase B.3a: reads the L2 context bus (read-only, fail-open, behind the
+ * CCV3_BUS_OFF kill switch) to (a) BIAS the recall query with the session's
+ * non-stale working set and (b) inject a SESSION FOCUS block -- even when recall
+ * returns nothing -- so a spawned agent inherits the live focus. The bus is
+ * never mutated here. `readBusFn` / `telemetry` are injected for testability,
+ * mirroring the existing `recall` dependency-injection.
  */
 export function handleAgentTask(
   input: TaskHookInput,
   recall: RecallFn = defaultRecall,
+  readBusFn: ReadBusFn = () => readBus(),
+  telemetry: TelemetryFn = appendIntelBus,
 ): HookOutput | null {
   const decision = shouldSkip(input);
   if (decision.skip) {
@@ -281,11 +435,50 @@ export function handleAgentTask(
     return null;
   }
 
+  // --- Bus read (read-only, fail-open) ------------------------------------
+  // readBus is already fail-open + kill-switch-aware; the extra try/catch is
+  // belt-and-suspenders so a thrown reader can NEVER break recall.
+  let bus: BusEntry;
+  try {
+    bus = readBusFn();
+  } catch (e: any) {
+    log.debug('bus read threw (fail-open, no bias)', { error: e?.message });
+    bus = emptyBusFallback();
+  }
+
+  let busFocus: BusFocus;
+  try {
+    busFocus = extractBusFocus(bus);
+  } catch (e: any) {
+    log.debug('bus focus extraction threw (fail-open)', { error: e?.message });
+    busFocus = { terms: [], staleSymbolsCount: 0 };
+  }
+  const focusTerms = busFocus.terms;
+  const focusBlock = buildFocusBlock(focusTerms);
+  const biased = focusTerms.length > 0;
+  // Bias ONLY the recall query; keep the original intent for display/logging.
+  const recallQuery = biased ? `${intent} ${focusTerms.join(' ')}` : intent;
+
+  // Bus-read telemetry fields known BEFORE recall runs, so the row is still
+  // emitted if recall throws (the quality gate must see the bus read regardless of
+  // recall outcome -- cross-model B.3a finding Codex#3). injected/result_count are
+  // filled in per outcome.
+  const baseTel = {
+    bus_id: typeof bus.bus_id === 'string' ? bus.bus_id : 'unknown',
+    query_type: 'agent_recall_bus_read',
+    biased,
+    focus_count: focusTerms.length,
+    stale_symbols_count: busFocus.staleSymbolsCount,
+    current_turn: typeof bus.current_turn === 'number' ? bus.current_turn : 0,
+  };
+
   let response: RecallResponse;
   try {
-    response = recall(intent);
+    response = recall(recallQuery);
   } catch (e: any) {
     log.warn('recall threw', { error: e?.message });
+    // Preserve the original throw -> null behavior, but DO record the bus read.
+    emitBusReadTelemetry(telemetry, { ...baseTel, injected: false, result_count: 0 });
     return null;
   }
 
@@ -295,11 +488,13 @@ export function handleAgentTask(
     ? results.reduce((m, r) => Math.max(m, r.score ?? 0), 0)
     : 0;
 
-  // Always log fires that reach this point (passed skip checks)
+  // Always log fires that reach this point (passed skip checks). The original
+  // (un-biased) intent is logged for human readability.
   const entry: LogEntry = {
     session_id: String(input.session_id ?? 'unknown'),
     subagent_type: subagentType,
     intent,
+    recall_query: recallQuery,
     results_count: results.length,
     kept_after_floor: kept.length,
     top_score: topScore,
@@ -307,21 +502,75 @@ export function handleAgentTask(
   };
   writeFireLog(entry);
 
+  // Decide whether anything will be injected. A focus block is injectable even
+  // when recall produced nothing, as long as the bus had non-stale focus.
+  const hasFocusBlock = focusBlock.length > 0;
+  const recallUsable = response.ok && kept.length > 0;
+  const injected = recallUsable || hasFocusBlock;
+
+  // Telemetry (fail-open): record the bus-read decision (reuses baseTel so the
+  // throw path above emits the same event shape).
+  emitBusReadTelemetry(telemetry, { ...baseTel, injected, result_count: kept.length });
+
   if (!response.ok) {
     log.debug('recall failed/timeout', { error: response.error });
-    return null;
+    // A failed recall still injects a focus block if the bus had focus.
+    if (!hasFocusBlock) return null;
+    return {
+      hookSpecificOutput: {
+        hookEventName: 'PreToolUse',
+        additionalContext: focusBlock,
+      },
+    };
   }
-  if (kept.length === 0) {
+  if (kept.length === 0 && !hasFocusBlock) {
     return null;
   }
 
-  const additionalContext = buildAgentContext(subagentType, intent, kept);
+  const additionalContext = buildAgentContext(
+    subagentType,
+    intent,
+    kept,
+    hasFocusBlock ? focusBlock : undefined,
+  );
   return {
     hookSpecificOutput: {
       hookEventName: 'PreToolUse',
       additionalContext,
     },
   };
+}
+
+/**
+ * Minimal fail-open empty bus (used only if the injected reader throws). Mirrors
+ * the shape extractBusFocus expects without importing emptyBus into the hot path.
+ */
+function emptyBusFallback(): BusEntry {
+  return {
+    bus_id: 'unknown',
+    current_intent: null,
+    focus_symbols: [],
+    files_in_play: { load_bearing: [], ambient: [] },
+    recent_findings: [],
+    open_threads: [],
+    schema_version: 3,
+    compact_generation: 0,
+    revision: 0,
+    current_turn: 0,
+  };
+}
+
+/** Emit the agent_recall_bus_read telemetry row; fully fail-open. */
+function emitBusReadTelemetry(
+  telemetry: TelemetryFn,
+  event: IntelBusEvent,
+): void {
+  try {
+    telemetry(event);
+  } catch (e: any) {
+    // Telemetry must NEVER break injection (fail-open).
+    log.debug('bus-read telemetry threw (ignored)', { error: e?.message });
+  }
 }
 
 // ---------------------------------------------------------------------------
