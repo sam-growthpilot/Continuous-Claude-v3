@@ -1168,13 +1168,15 @@ async def run_setup_wizard() -> None:
         elif bc_result.get("rules_md_error"):
             console.print(f"  [yellow]WARN[/yellow] RULES.md: {bc_result['rules_md_error']}")
 
-    # Step 9: Git Hook Installation
+    # Step 9: Git Hook Installation (post-commit auto-sync + pre-commit build-forget guard)
     console.print("\n[bold]Step 10/15: Git Hook Installation[/bold]")
     repo_root_for_hook = _project_root.parent  # opc/../ = repo root
     git_hooks_dir = repo_root_for_hook / ".git" / "hooks"
-    hook_src = repo_root_for_hook / "scripts" / "post-commit-hook.sh"
+    install_hooks = repo_root_for_hook / "scripts" / "install-hooks.sh"
 
-    if git_hooks_dir.is_dir():
+    def _install_post_commit_inline() -> None:
+        """Legacy fallback: install just the post-commit auto-sync hook (no pre-commit guard)."""
+        hook_src = repo_root_for_hook / "scripts" / "post-commit-hook.sh"
         hook_dst = git_hooks_dir / "post-commit"
         if hook_dst.exists():
             console.print("  [dim]post-commit hook already installed (skipped)[/dim]")
@@ -1187,8 +1189,47 @@ async def run_setup_wizard() -> None:
                 console.print("  [green]OK[/green] Installed post-commit hook (auto-sync to ~/.claude/)")
             except OSError as e:
                 console.print(f"  [yellow]WARN[/yellow] Could not install hook: {e}")
-    else:
+
+    if not git_hooks_dir.is_dir():
         console.print("  [dim]Not a git repo or .git/hooks missing (skipped)[/dim]")
+    elif not install_hooks.exists():
+        # install-hooks.sh absent -> legacy inline post-commit only.
+        _install_post_commit_inline()
+    else:
+        # Single tracked, idempotent installer for BOTH git hooks (post-commit auto-sync +
+        # pre-commit build-forget guard). Re-runnable; never clobbers an existing hook.
+        try:
+            result = subprocess.run(
+                ["bash", str(install_hooks)],
+                cwd=str(repo_root_for_hook),
+                capture_output=True,
+                text=True,
+                encoding="utf-8",
+                errors="replace",
+                timeout=30,
+            )
+            for line in (result.stdout or "").splitlines():
+                console.print(f"  [dim]{line}[/dim]")
+            if result.returncode == 0:
+                console.print("  [green]OK[/green] Git hooks installed (post-commit + pre-commit guard)")
+            else:
+                console.print(
+                    f"  [yellow]WARN[/yellow] install-hooks.sh exited {result.returncode}: "
+                    f"{(result.stderr or '').strip()}"
+                )
+                console.print("  [dim]Falling back to inline post-commit install...[/dim]")
+                _install_post_commit_inline()
+        except FileNotFoundError:
+            console.print(
+                "  [yellow]WARN[/yellow] 'bash' not found on PATH (Git Bash required). "
+                "Installing post-commit inline; add the pre-commit guard manually with "
+                "`bash scripts/install-hooks.sh`."
+            )
+            _install_post_commit_inline()
+        except Exception as e:
+            console.print(f"  [yellow]WARN[/yellow] Could not run install-hooks.sh: {e}")
+            console.print("  [dim]Falling back to inline post-commit install...[/dim]")
+            _install_post_commit_inline()
 
     # Step 10: Math Features (Optional)
     console.print("\n[bold]Step 11/15: Math Features (Optional)[/bold]")
