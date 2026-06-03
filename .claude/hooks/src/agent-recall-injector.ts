@@ -268,7 +268,7 @@ interface LogEntry {
   session_id: string;
   subagent_type: string;
   intent: string;
-  /** The bus-biased query actually sent to recall (intent + focus terms). */
+  /** The query actually sent to recall (the bare intent; agent-recall is unbiased). */
   recall_query: string;
   results_count: number;
   kept_after_floor: number;
@@ -355,9 +355,12 @@ export function handleAgentTask(
   }
   const focusTerms = busFocus.terms;
   const focusBlock = buildFocusBlock(focusTerms);
-  const biased = focusTerms.length > 0;
-  // Bias ONLY the recall query; keep the original intent for display/logging.
-  const recallQuery = biased ? `${intent} ${focusTerms.join(' ')}` : intent;
+  // WS-2 B.3b refine (quality gate): agent-recall always runs recall_learnings.py
+  // in --text-only mode (latency budget at agent-spawn), and the gate showed query
+  // bias DILUTES text-only FTS ts_rank. So this hook does NOT bias the recall query
+  // (it recalls on the bare intent); the bus focus is surfaced ONLY via the injected
+  // SESSION FOCUS block, which is orthogonal and never touches recall scores.
+  // (memory-awareness biases the query in HYBRID mode, where it measurably helps.)
 
   // Bus-read telemetry fields known BEFORE recall runs, so the row is still
   // emitted if recall throws (the quality gate must see the bus read regardless of
@@ -366,7 +369,7 @@ export function handleAgentTask(
   const baseTel = {
     bus_id: typeof bus.bus_id === 'string' ? bus.bus_id : 'unknown',
     query_type: 'agent_recall_bus_read',
-    biased,
+    biased: false,
     focus_count: focusTerms.length,
     stale_symbols_count: busFocus.staleSymbolsCount,
     current_turn: typeof bus.current_turn === 'number' ? bus.current_turn : 0,
@@ -374,7 +377,7 @@ export function handleAgentTask(
 
   let response: RecallResponse;
   try {
-    response = recall(recallQuery);
+    response = recall(intent);
   } catch (e: any) {
     log.warn('recall threw', { error: e?.message });
     // Preserve the original throw -> null behavior, but DO record the bus read.
@@ -394,7 +397,7 @@ export function handleAgentTask(
     session_id: String(input.session_id ?? 'unknown'),
     subagent_type: subagentType,
     intent,
-    recall_query: recallQuery,
+    recall_query: intent,
     results_count: results.length,
     kept_after_floor: kept.length,
     top_score: topScore,

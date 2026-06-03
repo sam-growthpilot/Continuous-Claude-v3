@@ -583,8 +583,14 @@ function spyTelemetry(): { events: IntelBusEvent[]; fn: (e: IntelBusEvent) => vo
   return { events, fn: (e: IntelBusEvent) => { events.push(e); } };
 }
 
-describe('handleAgentTask -- context-bus bias (Phase B.3a)', () => {
-  it('biases the recall QUERY with non-stale focus symbol names', () => {
+describe('handleAgentTask -- context-bus focus injection (Phase B.3a/B.3b)', () => {
+  // B.3b refine: agent-recall is text-only, so it does NOT bias the recall QUERY
+  // (that dilutes FTS -- see the quality gate). The bus focus is surfaced ONLY via
+  // the injected SESSION FOCUS block; recall always runs on the BARE intent. The
+  // detailed term-extraction logic (staleness/cap/control-strip/dedup) is unit-
+  // tested in bus-focus.test.ts; these tests cover the hook INTEGRATION.
+
+  it('surfaces non-stale focus symbol names in the SESSION FOCUS block; query stays bare', () => {
     const recall = spyRecall([FAKE_RESULT_A]);
     const bus = makeBus({
       current_turn: 5,
@@ -592,62 +598,55 @@ describe('handleAgentTask -- context-bus bias (Phase B.3a)', () => {
     });
     const out = handleAgentTask(makeInput(), recall, () => bus, spyTelemetry().fn);
     expect(out).not.toBeNull();
-    // The biased query must include the focus symbol names, appended to intent.
-    expect(recall.last).toContain('refCountClose');
-    expect(recall.last).toContain('kernelPool');
-    // The ORIGINAL extracted intent leads the query; focus terms are appended.
+    const ctx = out!.hookSpecificOutput!.additionalContext!;
+    expect(ctx).toContain('SESSION FOCUS');
+    expect(ctx).toContain('refCountClose');
+    expect(ctx).toContain('kernelPool');
+    // The recall QUERY is the BARE intent -- focus terms are NOT appended.
     const intentOnly = spyRecall([FAKE_RESULT_A]);
     handleAgentTask(makeInput(), intentOnly, () => emptyBus('x'), spyTelemetry().fn);
-    expect(recall.last!.startsWith(intentOnly.last!)).toBe(true);
-    // Focus terms come AFTER the intent portion, not before it.
-    expect(recall.last!.indexOf('refCountClose')).toBeGreaterThan(intentOnly.last!.length - 1);
+    expect(recall.last).toBe(intentOnly.last);
+    expect(recall.last).not.toContain('refCountClose');
   });
 
-  it('biases the recall QUERY with non-stale load-bearing file basenames (dir+ext stripped)', () => {
+  it('surfaces non-stale load-bearing basenames in the block (dir+ext stripped)', () => {
     const recall = spyRecall([FAKE_RESULT_A]);
     const bus = makeBus({
       current_turn: 2,
       load_bearing: [lbFile('src/shared/context-bus.ts', 2), lbFile('opc/scripts/core/store_learning.py', 1)],
     });
-    handleAgentTask(makeInput(), recall, () => bus, spyTelemetry().fn);
-    expect(recall.last).toContain('context-bus');
-    expect(recall.last).toContain('store_learning');
-    // No directory or extension leaked into the query.
-    expect(recall.last).not.toContain('src/shared');
-    expect(recall.last).not.toContain('.ts');
-    expect(recall.last).not.toContain('.py');
+    const out = handleAgentTask(makeInput(), recall, () => bus, spyTelemetry().fn);
+    const ctx = out!.hookSpecificOutput!.additionalContext!;
+    expect(ctx).toContain('context-bus');
+    expect(ctx).toContain('store_learning');
+    expect(ctx).not.toContain('src/shared');
+    expect(ctx).not.toContain('.py');
   });
 
-  it('suppresses a focus symbol older than BUS_STALENESS_MAX_AGE turns', () => {
+  it('suppresses a stale focus symbol from the block + counts it in telemetry', () => {
     const tel = spyTelemetry();
     const recall = spyRecall([FAKE_RESULT_A]);
-    // current_turn 10; fresh added at 8 (age 2, kept), stale added at 5 (age 5 > 3, dropped)
+    // current_turn 10; fresh at 8 (age 2, kept), stale at 5 (age 5 > 3, dropped)
     const bus = makeBus({
       current_turn: 10,
       focus: [focusSym('freshSymbol', 8), focusSym('staleSymbol', 5)],
     });
-    handleAgentTask(makeInput(), recall, () => bus, tel.fn);
-    expect(recall.last).toContain('freshSymbol');
-    expect(recall.last).not.toContain('staleSymbol');
-    // staleness telemetry counts the suppressed symbol.
+    const out = handleAgentTask(makeInput(), recall, () => bus, tel.fn);
+    const ctx = out!.hookSpecificOutput!.additionalContext!;
+    expect(ctx).toContain('freshSymbol');
+    expect(ctx).not.toContain('staleSymbol');
     const ev = tel.events.find((e) => e.query_type === 'agent_recall_bus_read');
-    expect(ev).toBeDefined();
     expect(ev!.stale_symbols_count).toBe(1);
     expect(ev!.focus_count).toBe(1);
   });
 
-  it('tolerates a same-turn-race future turn_added (age -1) as fresh', () => {
+  it('a stale-only bus injects no focus block (and recall stays unbiased)', () => {
     const recall = spyRecall([FAKE_RESULT_A]);
-    // turn_added 11 > current_turn 10 -> age = -1 -> still fresh (race tolerance)
-    const bus = makeBus({ current_turn: 10, focus: [focusSym('raceSymbol', 11)] });
-    handleAgentTask(makeInput(), recall, () => bus, spyTelemetry().fn);
-    expect(recall.last).toContain('raceSymbol');
-  });
-
-  it('suppresses a FAR-future turn_added (poisoned / clock-skew bound)', () => {
-    const recall = spyRecall([FAKE_RESULT_A]);
-    const bus = makeBus({ current_turn: 10, focus: [focusSym('farFuture', 100)] });
-    handleAgentTask(makeInput(), recall, () => bus, spyTelemetry().fn);
+    const bus = makeBus({ current_turn: 10, focus: [focusSym('farFuture', 100)] }); // age -90 -> stale
+    const out = handleAgentTask(makeInput(), recall, () => bus, spyTelemetry().fn);
+    const ctx = out!.hookSpecificOutput!.additionalContext!;
+    expect(ctx).not.toContain('farFuture');
+    expect(ctx).not.toContain('SESSION FOCUS');
     expect(recall.last).not.toContain('farFuture');
   });
 
@@ -667,15 +666,14 @@ describe('handleAgentTask -- context-bus bias (Phase B.3a)', () => {
     expect(out).toBeNull();
   });
 
-  it('caps focus terms at 8 in the biased query', () => {
+  it('caps the SESSION FOCUS block at 8 terms', () => {
     const recall = spyRecall([FAKE_RESULT_A]);
     const focus = Array.from({ length: 12 }, (_, i) => focusSym(`sym${i}uniq`, 1));
     const bus = makeBus({ current_turn: 1, focus });
-    handleAgentTask(makeInput(), recall, () => bus, spyTelemetry().fn);
-    const termsPresent = Array.from({ length: 12 }, (_, i) => `sym${i}uniq`).filter((t) =>
-      recall.last!.includes(t),
-    );
-    expect(termsPresent.length).toBe(8);
+    const out = handleAgentTask(makeInput(), recall, () => bus, spyTelemetry().fn);
+    const ctx = out!.hookSpecificOutput!.additionalContext!;
+    const present = Array.from({ length: 12 }, (_, i) => `sym${i}uniq`).filter((t) => ctx.includes(t));
+    expect(present.length).toBe(8);
   });
 
   it('empty bus -> behavior identical to today (bare intent query, null on empty recall)', () => {
@@ -728,14 +726,14 @@ describe('handleAgentTask -- context-bus bias (Phase B.3a)', () => {
     expect(ctx).toContain('&lt;');
   });
 
-  it('emits agent_recall_bus_read telemetry with biased/injected/turn fields', () => {
+  it('emits agent_recall_bus_read telemetry (biased=false; query unbiased in text-only)', () => {
     const tel = spyTelemetry();
     const recall = spyRecall([FAKE_RESULT_A]);
     const bus = makeBus({ current_turn: 7, focus: [focusSym('telSym', 7)] });
     handleAgentTask(makeInput(), recall, () => bus, tel.fn);
     const ev = tel.events.find((e) => e.query_type === 'agent_recall_bus_read');
     expect(ev).toBeDefined();
-    expect(ev!.biased).toBe(true);
+    expect(ev!.biased).toBe(false);
     expect(ev!.injected).toBe(true);
     expect(ev!.current_turn).toBe(7);
     expect(ev!.focus_count).toBe(1);
@@ -776,29 +774,25 @@ describe('handleAgentTask -- context-bus bias (Phase B.3a)', () => {
   });
 
   // --- fix-review hardening (cross-model codex findings on B.3a) -------------
-  it('Codex#1: strips control chars (incl. NUL) from a focus term before the recall query', () => {
-    const recall = spyRecall([FAKE_RESULT_A]);
-    // A poisoned symbol name with a NUL + control char must not reach the spawnSync
-    // --query argv intact (NUL truncates argv on POSIX).
+  it('Codex#1: strips control chars (incl. NUL) from a focus term in the block', () => {
+    const recall: RecallFn = () => ({ ok: true, results: [] });
     const NUL = String.fromCharCode(0);
     const SOH = String.fromCharCode(1);
     const bus = makeBus({ current_turn: 1, focus: [focusSym(`clean${NUL}name${SOH}x`, 1)] });
-    handleAgentTask(makeInput(), recall, () => bus, spyTelemetry().fn);
-    expect(recall.last).not.toContain(NUL);
-    expect(recall.last).not.toContain(SOH);
-    expect(recall.last).toContain('cleannamex'); // printable part survives
+    const out = handleAgentTask(makeInput(), recall, () => bus, spyTelemetry().fn);
+    const ctx = out!.hookSpecificOutput!.additionalContext!;
+    expect(ctx).not.toContain(NUL);
+    expect(ctx).not.toContain(SOH);
+    expect(ctx).toContain('cleannamex'); // printable part survives
   });
 
-  it('Codex#2: treats a focus symbol with MISSING turn_added as stale, even at low current_turn', () => {
+  it('Codex#2: treats a focus symbol with MISSING turn_added as stale', () => {
     const tel = spyTelemetry();
     const recall = spyRecall([FAKE_RESULT_A]);
-    // current_turn=2: the old `?? 0` default gave age=2 <= 3 -> WRONGLY fresh. A
-    // symbol with no turn_added must be suppressed (a malformed/poisoned bus must
-    // not bypass staleness by omitting the field).
     const noTurn = { id: { file_uri: 'src/x.ts', lang: 'ts', name: 'noTurnSym' } } as FocusSymbol;
     const bus = makeBus({ current_turn: 2, focus: [noTurn] });
-    handleAgentTask(makeInput(), recall, () => bus, tel.fn);
-    expect(recall.last).not.toContain('noTurnSym');
+    const out = handleAgentTask(makeInput(), recall, () => bus, tel.fn);
+    expect(out!.hookSpecificOutput!.additionalContext!).not.toContain('noTurnSym');
     const ev = tel.events.find((e) => e.query_type === 'agent_recall_bus_read');
     expect(ev!.stale_symbols_count).toBe(1);
     expect(ev!.focus_count).toBe(0);
@@ -814,7 +808,7 @@ describe('handleAgentTask -- context-bus bias (Phase B.3a)', () => {
     expect(out).toBeNull(); // existing throw->null behavior preserved
     const ev = tel.events.find((e) => e.query_type === 'agent_recall_bus_read');
     expect(ev).toBeDefined();
-    expect(ev!.biased).toBe(true);
+    expect(ev!.biased).toBe(false);
     expect(ev!.focus_count).toBe(1);
     expect(ev!.result_count).toBe(0);
   });

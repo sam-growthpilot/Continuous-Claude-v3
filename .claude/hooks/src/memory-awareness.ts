@@ -551,9 +551,6 @@ async function main() {
   }
   const focusTerms = busFocus.terms;
   const focusBlock = buildFocusBlock(focusTerms);
-  const biased = focusTerms.length > 0;
-  // Bias ONLY the recall query; keep the original `intent` for display/log/emit.
-  const recallQuery = biased ? `${intent} ${focusTerms.join(' ')}` : intent;
 
   // Task 1.3: probe BGE embedding daemon. If ready, use hybrid (vector +
   // FTS) recall; otherwise fall back to text-only and fire-and-forget the
@@ -573,6 +570,14 @@ async function main() {
     // returns immediately and does NOT block this prompt.
     try { ensureDaemonRunning(); } catch { /* fail-open */ }
   }
+
+  // WS-2 B.3b refine (quality gate): bias the recall QUERY only in HYBRID mode.
+  // The gate showed appending focus terms HELPS vector recall (+15% top-score,
+  // +13pp hit-rate) but DILUTES text-only FTS ts_rank -- so the append is gated on
+  // daemonReady. The focus-block INJECTION (below) stays in BOTH modes; it is
+  // orthogonal and never touches recall scores.
+  const queryBiased = focusTerms.length > 0 && daemonReady;
+  const recallQuery = queryBiased ? `${intent} ${focusTerms.join(' ')}` : intent;
 
   // Run both sources, merge, apply mode-appropriate floor.
   // Hybrid RRF scores (0.01-0.03) require a lower floor than text-only
@@ -617,7 +622,7 @@ async function main() {
     appendIntelBus({
       bus_id: busId,
       query_type: 'memory_awareness_bus_read',
-      biased,
+      biased: queryBiased,
       injected: !!match || focusBlock.length > 0,
       focus_injected: focusBlock.length > 0,
       focus_count: focusTerms.length,

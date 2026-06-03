@@ -861,19 +861,17 @@ function handleAgentTask(input, recall = defaultRecall, readBusFn = () => readBu
   }
   const focusTerms = busFocus.terms;
   const focusBlock = buildFocusBlock(focusTerms);
-  const biased = focusTerms.length > 0;
-  const recallQuery = biased ? `${intent} ${focusTerms.join(" ")}` : intent;
   const baseTel = {
     bus_id: typeof bus.bus_id === "string" ? bus.bus_id : "unknown",
     query_type: "agent_recall_bus_read",
-    biased,
+    biased: false,
     focus_count: focusTerms.length,
     stale_symbols_count: busFocus.staleSymbolsCount,
     current_turn: typeof bus.current_turn === "number" ? bus.current_turn : 0
   };
   let response;
   try {
-    response = recall(recallQuery);
+    response = recall(intent);
   } catch (e) {
     log2.warn("recall threw", { error: e?.message });
     emitBusReadTelemetry(telemetry, { ...baseTel, injected: false, result_count: 0 });
@@ -886,7 +884,7 @@ function handleAgentTask(input, recall = defaultRecall, readBusFn = () => readBu
     session_id: String(input.session_id ?? "unknown"),
     subagent_type: subagentType,
     intent,
-    recall_query: recallQuery,
+    recall_query: intent,
     results_count: results.length,
     kept_after_floor: kept.length,
     top_score: topScore,

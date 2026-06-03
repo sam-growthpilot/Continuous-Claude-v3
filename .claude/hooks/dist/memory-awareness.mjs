@@ -1385,8 +1385,6 @@ async function main() {
   }
   const focusTerms = busFocus.terms;
   const focusBlock = buildFocusBlock(focusTerms);
-  const biased = focusTerms.length > 0;
-  const recallQuery = biased ? `${intent} ${focusTerms.join(" ")}` : intent;
   let daemonReady = false;
   try {
     daemonReady = await isDaemonReady();
@@ -1400,6 +1398,8 @@ async function main() {
     } catch {
     }
   }
+  const queryBiased = focusTerms.length > 0 && daemonReady;
+  const recallQuery = queryBiased ? `${intent} ${focusTerms.join(" ")}` : intent;
   const local = checkLocalMemory(recallQuery, projectDir);
   const [db, dbTimedOut] = checkDbMemory(recallQuery, projectDir, daemonReady);
   const mergedRaw = mergeResults(local, db);
@@ -1428,7 +1428,7 @@ async function main() {
     appendIntelBus({
       bus_id: busId,
       query_type: "memory_awareness_bus_read",
-      biased,
+      biased: queryBiased,
       injected: !!match || focusBlock.length > 0,
       focus_injected: focusBlock.length > 0,
       focus_count: focusTerms.length,
