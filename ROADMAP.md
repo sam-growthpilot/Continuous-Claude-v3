@@ -1,15 +1,72 @@
 # Project Roadmap
 
 ## Current Focus
-
-**Phase 2 follow-ups + Task #11 polish** — clean up carry-forward items from both shipped stories before committing to Phase 3 (Graphiti + FalkorDB graph memory layer).
-
-Priority order:
-1. Phase 2 follow-ups: clean 42/42 reranker re-run (Docker stable required), MEDIUM-1..5 from critic 3.1, unit tests for `rerank.py`
-2. Task #11 polish: HIGH-2 `pingDaemon` double-timeout, MEDIUM-2 test isolation fragility, MEDIUM-3 missing `memory-awareness.test.ts`
-3. Phase 3 kickoff once above are resolved or explicitly deferred
+**CCv3 WS-2 Phase B — Context Bus activation (2026-06-03)**
+- **Bus WRITE + READ sides DONE, reviewed, LIVE, and OPEN in PR #5** (`ws2/phase-b-context-bus` → `fork/main`; https://github.com/Rev4nchist/Continuous-Claude-v3/pull/5). Reviewed via cross-model `/review` per commit + a deep pre-mortem (Claude + Codex); hardening folded in (`d7557bd` bus-focus allowlist + biased-recall telemetry). CodeRabbit re-reviewing the tip `1d1b3e7`; both round-1 findings addressed (gate failure-guard; `focus_terms` cap). **MERGE #5 is the immediate gate.**
+- **Quality gate (#12):** bus-bias HELPS hybrid recall — **+33.6% top-score, 63%→88% hit-rate (KEEP ENABLED)**; text-only −12.8% correctly gated off. `CCV3_BUS_OFF=1` kills all bus I/O; fail-open everywhere.
+- **NEXT (fresh session):** Phase 3 remainder, in order — pre-commit **deploy-guard** (static src⇒dist; NO in-hook `npm build`) → **`/code-intel` facade** (B.1/B.2) → **enforcer** (B.5, default OFF / warn-only) + `pruneIntelBus` wiring → **stronger quality eval**. B.4b (grep_hit/read_for_context populators) deferred.
+- **Handoff:** `docs/ccv3-ws2-phaseB-SESSION5-HANDOFF-2026-06-03.md` · **Execution spec:** `~/.claude/plans/we-have-been-working-resilient-blum.md` (§3.0–3.3 + pre-mortem record).
+- **Open ops follow-ups:** (1) full parallel `vitest run` hangs on a pre-existing Windows daemon/socket suite — use the bus subset; (2) async post-commit sync races, leaving active hook dist stale — hash-verify + `cp` after every hook commit.
+- Started: 2026-06-03
 
 ## Completed
+- [x] fix(ws2): address CodeRabbit PR#5 review -- gate failure-guard + focus_terms cap (2026-06-03) `1d1b3e7`
+- [x] fix(ws2): B.3 premortem hardening -- bus-focus allowlist + biased-recall telemetry (2026-06-03) `d7557bd`
+- [x] docs(ws2): session-4 handoff -- review-then-push-then-resume orientation (2026-06-03) `bcf457b`
+- [x] docs(ws2): session-3 Build Progress -- B.3 read side + quality gate done (2026-06-03) `40180b1`
+- [x] refine(ws2): B.3 quality gate -- gate query-bias to hybrid recall only (2026-06-03) `cfb0be4`
+- [x] feat(ws2): B.3b -- memory-awareness READS the bus + shared bus-focus module (2026-06-03) `0e85d49`
+- [x] feat(ws2): B.3a -- agent-recall-injector READS the context bus (2026-06-03) `8929667`
+- [x] fix(ws2): B.0/B.4/B.4a review hardening -- 5 bus findings + self-regression (2026-06-02) `dd0d24b`
+- [x] fix(codex-adversary): clean findings capture via -o; silence config noise (2026-06-01) `4febb8d`
+- [x] docs(codex): verify CLI repair, reconcile version + auth claims (2026-06-01) `11f99ca`
+- [x] docs(hardening): Phase-3 tail 1/2/3/5 done + 3rd reverse-sync vector fix; item 4 remains (2026-06-01) `cc1ec7f`
+- [x] perf(memory): text-only recall fail-fast (12s->5s) in checkDbMemory (2026-06-01) `28184c3`
+- [x] fix(hooks): deregister broken TLDR warm-cache SessionStart hook (2026-06-01) `a08014a`
+- [x] docs(sync): forensics + fix-record for the 3rd hooks/src regression vector (2026-06-01) `ded901b`
+- [x] docs(hardening): Phase 0-2 + agent-recall shipped; Phase 3 continuation handoff (2026-05-31) `df7ecad`
+- [x] feat(memory): Phase 3 - activate agent-side recall (the audit's #1 gap) (2026-05-31) `017929a`
+- [x] fix(session): Phase 2 Step 4 - Windows HOME fallback + drop dead import; no file_claims migration needed (2026-05-31) `f6a654e`
+- [x] feat(hooks): Phase 2 Step 3 - lean per-prompt hot path + hook-manifest gate (2026-05-31) `7d858cf`
+- [x] fix(sync): restore --skip-build as accepted no-op (post-commit hook passes it) (2026-05-31) `2702bbd`
+- [x] fix(memory): complete WS-0.2 - sanitize type/id/subagentType + cap-before-encode (2026-05-31) `a16e7f9`
+- [x] fix(memory): WS-0.2 sanitize recalled content against prompt injection (2026-05-31) `61625aa`
+- [x] fix(hooks): Phase 0 - recovery-banner gating + knowledge-tree discovery noise (2026-05-31) `e48dc92`
+- [x] feat(roadmap): preserve hand-written notes across planning + surface at session start (2026-05-30) `bf91c19`
+- [x] fix(roadmap): make TaskUpdate advisory-only; demote focus on replan (2026-05-30) `091f19f`
+- [x] [LOW] Close braintrust-emit audit blindness — widen `scripts/audit-braintrust-emits.sh` to assert `detectToolError`/`tool_response_keys` instrumentation is present (audit currently only counts awaited emit sites via `INVARIANT_4`, blind to Gate B2 success-signal reversions, `f681df7`). Optional belt-and-suspenders: PreToolUse Edit/Write guard on `.claude/hooks/src/*.ts`. Re-infection vector closed (`ddc0641`, `6c11a1a`), so low urgency. (2026-05-30)
+- [x] Fix ROADMAP corruption: roadmap-completion TaskUpdate branch (2026-05-30)
+- [x] Fix two session-start annoyances: tldr daemon error + PageIndex login popup (2026-05-29)
+- [x] feat(viz): architecture-stats auto-sync script + post-commit hook (2026-05-27) `158ad4c`
+- [x] feat(viz): CCv3 architecture hub + 4 subsystem deep-dives + refreshed overview (2026-05-27) `e1850bf`
+- [x] fix(sync): add scripts/ to forward-sync SYNC_DIRS — propagate script fixes to active mirror (2026-05-26) `6c11a1a`
+- [x] docs(architecture): refresh to current ops — Braintrust 6th pillar + factual fixes + roster gaps (2026-05-26) `4e3af28`
+- [x] feat(braintrust): judge_session --force + cross-project recall aggregation (2026-05-26) `ca892a9`
+- [x] fix: restore Gate B2 telemetry-tracker + untrack architecture-stats (4aefe81 over-committed) (2026-05-25) `43a1234`
+- [x] docs(braintrust): correct Gate C recipe to local scheduled runner + add batch wrapper (2026-05-25) `4aefe81`
+- [x] feat(braintrust): detectToolError + tool_response_keys instrumentation (2026-05-24) `f681df7`
+- [x] feat(spark): R1+R3+R5+R6+R9 hardening — editing constraints, scope limits, post-spark verification (2026-05-23) `154b23d`
+- [x] harden(audit): INVARIANT_4 rename + await-only grep + pattern banner (R2) (2026-05-23) `0b208d6`
+- [x] Spark Agent Reliability Hardening — R1+R2+R3+R5+R6+R9 (2026-05-23)
+- [x] fix(braintrust): await remaining 2 score emits so subprocess exit doesn't kill POSTs (2026-05-23) `faa99da`
+- [x] fix(braintrust): await skill_trigger_accuracy emit so process.exit doesn't kill POST (2026-05-23) `7edea3c`
+- [x] Phase 3b Pickup — Verify, Harden, Then Autoevals (2026-05-22)
+- [x] Deeper Claude+Codex Adversarial Collaboration (Repair → Envoy Pilot) (2026-05-22)
+- [x] Braintrust Review & Scoring Strategy for CCv3 (2026-05-21)
+- [x] fix(memory): confidence-firming pass — sync project_memory, backfill 244 rows, tighten L0 gate (2026-05-21) `48a2157`
+- [x] docs(memory): add animated HTML visualization of the memory system (2026-05-21) `4379630`
+- [x] fix(memory): P0 audit fixes + close memory-cleanup-round-1 (2026-05-21) `885f8da`
+- [x] Memory System Deep Audit — Go/No-Go Gate (2026-05-21)
+- [x] docs(memory): Phase 5 verified GREEN; close memory-cleanup-round-1 (2026-05-21) `3712579`
+- [x] test(memory): clean 42/42 reranker eval -- verdict reconfirmed opt-in (2026-05-21) `f9ca075`
+- [x] fix(memory): raise daemon ping timeout to 1.5s; lift eval_recall core import to module scope (2026-05-20) `713deaa`
+- [x] fix(memory): embedding daemon refuses to start if another instance is alive (2026-05-20) `7c95ca5`
+- [x] test(memory): mock spawn in embedding-client tests; stop real daemon launches (2026-05-20) `c7412df`
+- [x] fix(memory): hide cmd.exe window on daemon spawn (windowsHide) (2026-05-20) `b3b8177`
+- [x] fix(memory): stop daemon-spawn cascade (ping cleanup + cross-process mutex) (2026-05-20) `0a2d4e1`
+- [x] Make `plan-mode-approval-gate` actually block ExitPlanMode in `--dangerously-skip-permissions` mode (2026-05-19)
+- [x] fix(memory): restore memory-awareness.ts (T#11 + Phase 1 regression from d47b970) (2026-05-19) `0b59faa`
+- [x] fix(hooks): stop emitting broken [type](scope) markdown links in ROADMAP entries (2026-05-19) `a1397ee`
 - [x] Memory System — Task #11 BGE embedding daemon shipped default-on (2026-05-18) — hook-time hybrid recall enabled, Phase 1 Windows timeout regression repaired. Commits: `36b241a` `0f12c43` `3912209` `e8566b3` `57b6724`
 - [x] Memory System — Phase 2 follow-ups + Task #11 hook-time recall path (2026-05-19)
 - [x] [fix](memory) hook subprocess timeout + test isolation + timeout diagnostic (2026-05-18) `e8566b3`
@@ -87,38 +144,43 @@ Priority order:
 - [x] Eliminate Excessive Permission Prompts for Autonomous Agent Tasks (2026-04-02)
 
 ## Planned
-_No planned items yet._
+- [ ] CCv3 Full Hardening & Improvement Program — make the system lean, correct, and *used-correctly* (high priority)
+- [ ] WS-0 — Present-day bugs + live hazards: session-id consolidation (0.1, +`file_claims` migration), memory prompt-injection fix (0.2), structural sync-footgun fix (0.3 — delete `npm run build` from `sync-to-active.sh`), stale-Ralph `ccv3-visualization` deactivation (0.4), knowledge-tree regen (medium priority)
+- [ ] WS-1 — Lean prune/consolidate: per-prompt hot-path (P1), memory reliability + agent-recall activation (P2), dedup/dead-code + Neon-token security (P3), enforcement-docs fix (medium priority)
+- [ ] WS-2 — v3 Cohesive Intelligence substrate: Phase A foundations (context-bus) → B facade (`/code-intel` CLI) → C codegraph → D memory bridge (needs GIN index) → E observability (medium priority)
+- [ ] Hygiene gate (early): verify `architecture-stats-sync` hook registered/built/synced; triage scratch files; push 5 commits to `fork` (medium priority)
+- [ ] Scope decision (next session): full v3 arc vs Phase 0+A (recommended) vs Phase 0 only (medium priority)
+
+## Notes
+**CCv3 Hardening — durable pointers (preserved across planning per `bf91c19`):**
+- Full handoff for the implementing session: `docs/ccv3-hardening-handoff-2026-05-30.md`
+- Lean audit: `docs/ccv3-lean-audit-2026-05-30.md` · v3 design: `~/.claude/plans/we-have-recently-done-refactored-storm.md` · Codex raw: `.claude/cache/agents/codex-adversary/latest-output.md`
+- **The 6 hard gates (do not violate):** G1 sync-fix-structural-before-WS2-hooks · G2 finish-UPS-prune-before-Phase-A · G3 injection-fix-before-agent-recall · G4 never-parallel-edit-the-same-memory-files (the May-2026 regression pattern) · G5 session-id-consolidation-needs-file_claims-migration · G6 skill-archive-cross-check-vs-Phase-B.5.
+- Data note: use `count(*)` not `pg_stat` for usage calls (the latter mis-reported memory/PageIndex as empty). Live counts: archival_memory 569, pageindex_nodes 2418, file_claims 6720, sessions 1117.
 
 ## Recent Planning Sessions
-### 2026-05-16: Planning Session
-### 2026-05-15: Diagnose & Remediate System Memory Pressure (AFK 50% → 99% Growth)
+### 2026-06-03: Planning Session
+### 2026-06-02: CCv3 Hardening — Progress Review + Next Steps (2026-06-02)
 **Key Decisions:**
-- `Live Boost Process Governor` task currently **Running**.
-- 8 SmartScan scheduled tasks: (one per weekday + base + Mon-Sun). Hardware/registry scans during AFK can spike memory.
-- `.wslconfig` at `C:\Users\david.hayes\.wslconfig` correctly caps at 3 GB, 4 procs, 4 GB swap, `autoMemoryReclaim=gradual`.
-- `CCv3-Blocklist-Update` — daily 9 AM (last run succeeded 5/12 9:00).
-- `CCv3-Health-Check` — weekly Friday 8:03 AM.
+- Phases 0–2 + Phase 3 crown jewel (agent-side memory recall, live + load-tested) — prior sessions.
+- Codex CLI repair — DONE this session: (`11f99ca`, `4febb8d`, `ab663ef`): CLI healthy (0.131.0, ChatGPT-subscription auth, exec verified, no API key); cross-model `/review` + `/premortem` restored; root-caused the `gpt-4.1` multi-agent crash → adversary uses `--disable multi_agent`, `explorer.toml` keeps interactive multi-agent working; docs reconciled.
+- WS-2 Phase A (context-bus substrate) — BUILT, reviewed, committed (`cb9c14a`): `session-bus-id.ts` + `context-bus.ts` (atomic single-writer, CAS-under-lock, `CCV3_BUS_OFF`, 50ms fail-open, busId path-traversal validation) + `intel-bus.ts` + boundary doc + emit-guard surface check. 78 vitest green. Cross-model `/review` found 3 issues, all fixed pre-commit (incl. a Codex-only path-traversal lift). **Substrate-only — wired to NO production consumer (that's Phase B).**
+- Reverse-sync clobber — root-caused + fixed (`4631b43`): two automatic active→repo triggers disabled (the `~/.claude` git post-commit hook + the `sync-to-repo` PostToolUse hook); reverse-sync is now manual-only + `sync-claude.sh` aborts on a dirty repo; documented in `git-sync-workflow.md`.
+- Regenerate `knowledge-tree.json`: (currently references `create-better-skills.bak` archive paths): `cd $CLAUDE_OPC_DIR && PYTHONPATH=. uv run python scripts/core/knowledge_tree.py --project continuous-claude --verbose`; validate with `scripts/core/tree_schema.py --validate`.
 
-### 2026-05-14: Plan — Headless 360 is live, what we ship next
+### 2026-05-31: Planning Session
+### 2026-05-30: Preserve hand-written ROADMAP notes across planning, and surface them at session start
 **Key Decisions:**
-- `salesforce_mcp/hosted_mcp/client.py`: — `list_tools()` returns `[]`, `call_tool()` raises `NotImplementedError`. The whole proxy is a stub.
-- ✅ **Headless 360 enabled* — confirmed by admin.
-- ✅ **Token Exchange Handler registered on the ECA* — admin meeting 2026-05-07 closed it. The Step 0 spike below validates this end-to-end.
-- Confirmed scope decisions: *
-- OBO ships before Phase 6 Railway deploy.: Per-user identity all the way down from day one — the audit story matches the build plan §3 value prop. Step 3 is on the critical path, not deferred.
+- `session-start-continuity.ts` `buildUnifiedContext` (line ~302) surfaces only
+- Chosen approach (user-selected): *Preserve all unmanaged content. post-plan
+- Add an exported, pure function:
+- In `main()`, change `const newContent = generateRoadmap(sections);` (line ~530)
+- Contract / caveat:: the 4 managed sections are auto-regenerated, so durable
 
-### 2026-05-13: CCv3 Interactive Architecture Visualization
+### 2026-05-29: Fix ROADMAP corruption: roadmap-completion TaskUpdate branch
 **Key Decisions:**
-- `continuous-claude-explained` → also broken (same root cause; user didn't annotate it but the relative path is identical structure)
-- Edit the master `<footer>` block with the 4 new absolute URLs + `target="_blank" rel="noopener"`.
-- `git add` deployed copy + `git commit` in `ai-enablement-decks` with message `fix(continuous-claude-architecture): point footer source links at GitHub-rendered diagrams`.
-- Wait ~20s; `gh run list --repo Rev4nchist/ai-enablement-decks --limit 1` to confirm `success`.
-- Reload https://rev4nchist.github.io/ai-enablement-decks/continuous-claude-architecture/ in a browser; inspect the footer to confirm new `href` values are present.
-
-### 2026-05-12: CCv3 Interactive Architecture Visualization
-**Key Decisions:**
-- Visual reference: dark theme matching the Dave Jeffery / ToDesktop screenshot — black/navy background, color-coded nodes, yellow highlight for the active flow path, flow list with descriptions on the right, numbered step cards below.
-- Vanilla HTML/CSS/JS — no React, no build step, no npm dependencies
-- Flow click → toggle `.active` on edges + nodes belonging to that flow, render step list
-- File Edit + Coordination: — file-claims hook → check PG → claim or warn
-- Knowledge Tree Regen: — tree-invalidate marks stale → session-start-init-check rebuilds
+- Root cause (verified by reading the code): *
+- `updateRoadmapContent()` — stamps Current Focus as completed-today, blanks it.
+- `git-commit-roadmap.ts` — **NOT the same bug.* It is *additive*:
+- Decision — make the TaskUpdate branch advisory-only (your option b). *
+- Delete the now-dead `updateRoadmapContent` (129-191) and
