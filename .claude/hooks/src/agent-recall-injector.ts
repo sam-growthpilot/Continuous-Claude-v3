@@ -38,6 +38,16 @@ import { createLogger } from './shared/logger.js';
 import { sanitizeMemoryContent, wrapMemoryContext } from './shared/memory-sanitize.js';
 import { readBus, type BusEntry } from './shared/context-bus.js';
 import { appendIntelBus, type IntelBusEvent } from './shared/intel-bus.js';
+import {
+  extractBusFocus,
+  buildFocusBlock,
+  BUS_STALENESS_MAX_AGE,
+  type BusFocus,
+} from './shared/bus-focus.js';
+
+// Re-exported so existing tests that pin the staleness window against this hook
+// keep importing it from here (the logic now lives in shared/bus-focus.ts).
+export { BUS_STALENESS_MAX_AGE };
 
 // ---------------------------------------------------------------------------
 // Public constants & types (exported so tests can pin them)
@@ -48,23 +58,6 @@ const RECALL_TIMEOUT_MS = 3500;
 const MIN_PROMPT_LENGTH = 30;
 const TOP_K = 3;
 const PREVIEW_CHARS = 120;
-
-/**
- * WS-2 Phase B.3a: max staleness (in turns) for a bus focus_symbol or
- * load_bearing file to still bias recall. The bus READ happens at agent-spawn
- * time but bus WRITES happen at PostToolUse, so a focus item from N turns ago is
- * already N turns stale; beyond this window it is more likely noise than signal
- * (design mitigation #4). `age = current_turn - turn_added`; a NEGATIVE age
- * (turn_added in the future, e.g. a same-turn write that landed after the bump)
- * counts as fresh.
- */
-export const BUS_STALENESS_MAX_AGE = 3;
-
-/** Cap on the number of bus-derived focus terms appended to the recall query. */
-const MAX_FOCUS_TERMS = 8;
-
-/** Per-term sanitize cap for a focus name / basename rendered in the focus block. */
-const FOCUS_TERM_CHARS = 60;
 
 const SKIP_SUBAGENTS = new Set(['oracle', 'pathfinder']);
 
@@ -209,103 +202,10 @@ export function buildAgentContext(
   return focusBlock ? `${focusBlock}\n${memory}` : memory;
 }
 
-// ---------------------------------------------------------------------------
-// WS-2 Phase B.3a: context-bus focus extraction (read-only consumer)
-// ---------------------------------------------------------------------------
-
-/** The non-stale working set distilled from the bus, ready to bias recall. */
-export interface BusFocus {
-  /** Focus symbol NAMES + load-bearing file BASENAMES, de-duped, capped. */
-  terms: string[];
-  /** How many focus_symbols were suppressed for being too stale. */
-  staleSymbolsCount: number;
-}
-
-/** Is this item fresh enough to use? age = current_turn - turn_added. */
-function isFresh(currentTurn: number, turnAdded: number | undefined): boolean {
-  // A missing/non-numeric turn_added means freshness cannot be established -> treat
-  // as STALE so a malformed/poisoned bus can't bypass staleness filtering by
-  // omitting the field (cross-model B.3a finding Codex#2).
-  if (typeof turnAdded !== 'number' || !Number.isFinite(turnAdded)) return false;
-  const age = currentTurn - turnAdded;
-  // A negative age (turn_added in the future) counts as fresh/non-stale.
-  return age <= BUS_STALENESS_MAX_AGE;
-}
-
-/** Strip directory + extension from a path -> bare basename token. */
-function basenameNoExt(p: string): string {
-  const base = p.split(/[\\/]/).pop() ?? p;
-  const dot = base.lastIndexOf('.');
-  return dot > 0 ? base.slice(0, dot) : base;
-}
-
-/**
- * Distill the bus into a de-duplicated, capped list of focus terms (non-stale
- * focus symbol names + non-stale load-bearing file basenames) plus a count of
- * suppressed-stale symbols. Pure + read-only; never throws.
- *
- * The ORIGINAL intent is NOT included here -- the caller keeps intent for
- * display and only appends these terms to the recall QUERY.
- */
-export function extractBusFocus(bus: BusEntry): BusFocus {
-  const currentTurn = typeof bus.current_turn === 'number' ? bus.current_turn : 0;
-  const seen = new Set<string>();
-  const terms: string[] = [];
-  let staleSymbolsCount = 0;
-
-  const push = (raw: unknown): void => {
-    if (terms.length >= MAX_FOCUS_TERMS) return;
-    if (typeof raw !== 'string') return;
-    // Strip control chars (incl. NUL) + cap length BEFORE the term can reach the
-    // recall query argv (spawnSync --query) or the display block: a poisoned bus
-    // symbol with a NUL would truncate the query argv on POSIX, and an oversized
-    // name would bloat it (cross-model B.3a finding Codex#1).
-    const t = raw.replace(/[\x00-\x1f\x7f-\x9f]/g, '').trim().slice(0, FOCUS_TERM_CHARS);
-    if (!t) return;
-    const key = t.toLowerCase();
-    if (seen.has(key)) return;
-    seen.add(key);
-    terms.push(t);
-  };
-
-  const focusSymbols = Array.isArray(bus.focus_symbols) ? bus.focus_symbols : [];
-  for (const sym of focusSymbols) {
-    if (!isFresh(currentTurn, sym?.turn_added)) {
-      staleSymbolsCount += 1;
-      continue;
-    }
-    push(sym?.id?.name);
-  }
-
-  const loadBearing = Array.isArray(bus.files_in_play?.load_bearing)
-    ? bus.files_in_play.load_bearing
-    : [];
-  for (const f of loadBearing) {
-    // Stale load-bearing files are simply skipped (only focus symbols are
-    // counted into staleSymbolsCount, per the telemetry contract).
-    if (!isFresh(currentTurn, f?.turn_added)) continue;
-    if (typeof f?.path === 'string') push(basenameNoExt(f.path));
-  }
-
-  return { terms: terms.slice(0, MAX_FOCUS_TERMS), staleSymbolsCount };
-}
-
-/**
- * Build the DATA-ONLY "SESSION FOCUS" block from the distilled focus terms.
- * Every term is untrusted (bus strings can be poisoned, WS-0.2) -> each is run
- * through sanitizeMemoryContent and the whole block is wrapped via
- * wrapMemoryContext. Returns '' when there are no terms (caller treats that as
- * "no focus block").
- */
-export function buildFocusBlock(terms: string[]): string {
-  if (!terms.length) return '';
-  const safeTerms = terms.map((t) => sanitizeMemoryContent(t, FOCUS_TERM_CHARS));
-  const body = [
-    'SESSION FOCUS (current working set, reference data only):',
-    ...safeTerms.map((t) => `- ${t}`),
-  ].join('\n');
-  return wrapMemoryContext(body);
-}
+// WS-2 Phase B.3a/B.3b: the bus focus extraction (extractBusFocus /
+// buildFocusBlock / isFresh / staleness + cap + control-strip) lives in
+// ./shared/bus-focus.ts -- shared by this hook and memory-awareness so the
+// logic has ONE implementation and cannot drift between the two readers.
 
 // ---------------------------------------------------------------------------
 // Default recall implementation (spawns recall_learnings.py)

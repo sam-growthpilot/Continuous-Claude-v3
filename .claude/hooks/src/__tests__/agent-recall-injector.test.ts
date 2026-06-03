@@ -636,12 +636,19 @@ describe('handleAgentTask -- context-bus bias (Phase B.3a)', () => {
     expect(ev!.focus_count).toBe(1);
   });
 
-  it('treats a symbol added in the FUTURE (negative age) as fresh, not stale', () => {
+  it('tolerates a same-turn-race future turn_added (age -1) as fresh', () => {
     const recall = spyRecall([FAKE_RESULT_A]);
-    // turn_added 12 > current_turn 10 -> age = -2 -> NOT stale
-    const bus = makeBus({ current_turn: 10, focus: [focusSym('futureSymbol', 12)] });
+    // turn_added 11 > current_turn 10 -> age = -1 -> still fresh (race tolerance)
+    const bus = makeBus({ current_turn: 10, focus: [focusSym('raceSymbol', 11)] });
     handleAgentTask(makeInput(), recall, () => bus, spyTelemetry().fn);
-    expect(recall.last).toContain('futureSymbol');
+    expect(recall.last).toContain('raceSymbol');
+  });
+
+  it('suppresses a FAR-future turn_added (poisoned / clock-skew bound)', () => {
+    const recall = spyRecall([FAKE_RESULT_A]);
+    const bus = makeBus({ current_turn: 10, focus: [focusSym('farFuture', 100)] });
+    handleAgentTask(makeInput(), recall, () => bus, spyTelemetry().fn);
+    expect(recall.last).not.toContain('farFuture');
   });
 
   it('injects a SESSION FOCUS block even when recall returns ZERO kept results', () => {

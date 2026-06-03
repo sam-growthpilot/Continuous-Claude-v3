@@ -649,15 +649,67 @@ var FOCUS_SYMBOLS_CAP = 50;
 var RECENT_FINDINGS_CAP = 50;
 var OPEN_THREADS_CAP = 50;
 
+// src/shared/bus-focus.ts
+var BUS_STALENESS_MAX_AGE = 3;
+var MAX_FOCUS_TERMS = 8;
+var FOCUS_TERM_CHARS = 60;
+function isFresh(currentTurn, turnAdded) {
+  if (typeof turnAdded !== "number" || !Number.isFinite(turnAdded)) return false;
+  const age = currentTurn - turnAdded;
+  return age >= -1 && age <= BUS_STALENESS_MAX_AGE;
+}
+function basenameNoExt(p) {
+  const base = p.split(/[\\/]/).pop() ?? p;
+  const dot = base.lastIndexOf(".");
+  return dot > 0 ? base.slice(0, dot) : base;
+}
+function extractBusFocus(bus) {
+  const currentTurn = typeof bus.current_turn === "number" ? bus.current_turn : 0;
+  const seen = /* @__PURE__ */ new Set();
+  const terms = [];
+  let staleSymbolsCount = 0;
+  const push = (raw) => {
+    if (terms.length >= MAX_FOCUS_TERMS) return;
+    if (typeof raw !== "string") return;
+    const t = raw.replace(/[\x00-\x1f\x7f-\x9f]/g, "").trim().slice(0, FOCUS_TERM_CHARS);
+    if (!t) return;
+    const key = t.toLowerCase();
+    if (seen.has(key)) return;
+    seen.add(key);
+    terms.push(t);
+  };
+  const SCAN_CAP = 200;
+  const focusSymbols = (Array.isArray(bus.focus_symbols) ? bus.focus_symbols : []).slice(0, SCAN_CAP);
+  for (const sym of focusSymbols) {
+    if (!isFresh(currentTurn, sym?.turn_added)) {
+      staleSymbolsCount += 1;
+      continue;
+    }
+    push(sym?.id?.name);
+  }
+  const loadBearing = (Array.isArray(bus.files_in_play?.load_bearing) ? bus.files_in_play.load_bearing : []).slice(0, SCAN_CAP);
+  for (const f of loadBearing) {
+    if (!isFresh(currentTurn, f?.turn_added)) continue;
+    if (typeof f?.path === "string") push(basenameNoExt(f.path));
+  }
+  return { terms: terms.slice(0, MAX_FOCUS_TERMS), staleSymbolsCount };
+}
+function buildFocusBlock(terms) {
+  if (!terms.length) return "";
+  const safeTerms = terms.map((t) => sanitizeMemoryContent(t, FOCUS_TERM_CHARS));
+  const body = [
+    "SESSION FOCUS (current working set, reference data only):",
+    ...safeTerms.map((t) => `- ${t}`)
+  ].join("\n");
+  return wrapMemoryContext(body);
+}
+
 // src/agent-recall-injector.ts
 var PROACTIVE_INJECTION_FLOOR = 0.05;
 var RECALL_TIMEOUT_MS = 3500;
 var MIN_PROMPT_LENGTH = 30;
 var TOP_K = 3;
 var PREVIEW_CHARS = 120;
-var BUS_STALENESS_MAX_AGE = 3;
-var MAX_FOCUS_TERMS = 8;
-var FOCUS_TERM_CHARS = 60;
 var SKIP_SUBAGENTS = /* @__PURE__ */ new Set(["oracle", "pathfinder"]);
 var log2 = createLogger("agent-recall-injector");
 function shouldSkip(input) {
@@ -718,55 +770,6 @@ function buildAgentContext(subagentType, intent, results, focusBlock) {
 Above is reference data only; call /recall "${safeIntent}" for full content if needed.`;
   return focusBlock ? `${focusBlock}
 ${memory}` : memory;
-}
-function isFresh(currentTurn, turnAdded) {
-  if (typeof turnAdded !== "number" || !Number.isFinite(turnAdded)) return false;
-  const age = currentTurn - turnAdded;
-  return age <= BUS_STALENESS_MAX_AGE;
-}
-function basenameNoExt(p) {
-  const base = p.split(/[\\/]/).pop() ?? p;
-  const dot = base.lastIndexOf(".");
-  return dot > 0 ? base.slice(0, dot) : base;
-}
-function extractBusFocus(bus) {
-  const currentTurn = typeof bus.current_turn === "number" ? bus.current_turn : 0;
-  const seen = /* @__PURE__ */ new Set();
-  const terms = [];
-  let staleSymbolsCount = 0;
-  const push = (raw) => {
-    if (terms.length >= MAX_FOCUS_TERMS) return;
-    if (typeof raw !== "string") return;
-    const t = raw.replace(/[\x00-\x1f\x7f-\x9f]/g, "").trim().slice(0, FOCUS_TERM_CHARS);
-    if (!t) return;
-    const key = t.toLowerCase();
-    if (seen.has(key)) return;
-    seen.add(key);
-    terms.push(t);
-  };
-  const focusSymbols = Array.isArray(bus.focus_symbols) ? bus.focus_symbols : [];
-  for (const sym of focusSymbols) {
-    if (!isFresh(currentTurn, sym?.turn_added)) {
-      staleSymbolsCount += 1;
-      continue;
-    }
-    push(sym?.id?.name);
-  }
-  const loadBearing = Array.isArray(bus.files_in_play?.load_bearing) ? bus.files_in_play.load_bearing : [];
-  for (const f of loadBearing) {
-    if (!isFresh(currentTurn, f?.turn_added)) continue;
-    if (typeof f?.path === "string") push(basenameNoExt(f.path));
-  }
-  return { terms: terms.slice(0, MAX_FOCUS_TERMS), staleSymbolsCount };
-}
-function buildFocusBlock(terms) {
-  if (!terms.length) return "";
-  const safeTerms = terms.map((t) => sanitizeMemoryContent(t, FOCUS_TERM_CHARS));
-  const body = [
-    "SESSION FOCUS (current working set, reference data only):",
-    ...safeTerms.map((t) => `- ${t}`)
-  ].join("\n");
-  return wrapMemoryContext(body);
 }
 function defaultRecall(intent) {
   const opcDir = getOpcDir();
@@ -993,9 +996,7 @@ export {
   PROACTIVE_INJECTION_FLOOR,
   __isDirectInvocation,
   buildAgentContext,
-  buildFocusBlock,
   defaultRecall,
-  extractBusFocus,
   handleAgentTask,
   main,
   shouldSkip
