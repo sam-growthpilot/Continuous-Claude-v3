@@ -25,7 +25,7 @@
 - **PR #5 is OPEN:** https://github.com/Rev4nchist/Continuous-Claude-v3/pull/5 — base `main` ← head `ws2/phase-b-context-bus`, **19 commits** (the bus READ side + hardening + earlier unpushed B.0/B.4/B.4a + Codex-CLI repair). **CodeRabbit is the merge gate** (the user wants CodeRabbit review before merge).
 - **CodeRabbit round 1** posted 2 "Major/Quick-win" findings; **both addressed in `1d1b3e7`** (see §2). A reply was posted on the PR explaining each resolution. CodeRabbit auto-re-reviews `1d1b3e7` — **confirm it comes back clean before merge.**
 - **Bus READ + WRITE sides are LIVE** in active `~/.claude/`: both recall hooks (`agent-recall-injector.ts` PreToolUse:Task, `memory-awareness.ts` UserPromptSubmit) read the bus via shared `shared/bus-focus.ts`. Query-bias gated to **hybrid** recall.
-- **Baseline (all GREEN this session):** `npm run build` clean · `audit-braintrust-emits.sh` **4/4** · bus test subset **260 pass** (then 235 after fixes — counts vary with which files are passed; all green) · cap-test loop ×5 clean · quality gate text-only −12.8% (correctly gated off) / **hybrid +33.6% top-score, 63%→88% hit-rate (KEEP ENABLED)**.
+- **Baseline (all GREEN this session):** `npm run build` clean · `audit-braintrust-emits.sh` **4/4** · bus test subset **235 pass** at `1d1b3e7` (the full bus subset shows up to 260; counts vary with which test files are scoped into a given run — all green) · cap-test loop ×5 clean · quality gate text-only −12.8% (correctly gated off) / **hybrid +33.6% top-score, 63%→88% hit-rate (KEEP ENABLED)**.
 - **`CCV3_BUS_OFF=1` disables everything** (every reader + writer + appender).
 
 ---
@@ -106,7 +106,7 @@ Bus WRITE + READ sides **done, reviewed, committed, LIVE, and in PR #5** (CodeRa
 ## 8. Kickoff prompt (paste into the fresh session)
 
 Resume the CCv3 WS-2 Phase B build. FIRST read this handoff in full:
-C:/Users/david.hayes/continuous-claude/docs/ccv3-ws2-phaseB-SESSION5-HANDOFF-2026-06-03.md — then the approved execution plan it points to (~/.claude/plans/we-have-been-working-resilient-blum.md, §3.0–3.3 + the pre-mortem mitigation record) and the canonical plan (docs/ccv3-ws2-phaseB-plan-2026-06-02.md).
+docs/ccv3-ws2-phaseB-SESSION5-HANDOFF-2026-06-03.md — then the approved execution plan it points to (~/.claude/plans/we-have-been-working-resilient-blum.md, §3.0–3.3 + the pre-mortem mitigation record) and the canonical plan (docs/ccv3-ws2-phaseB-plan-2026-06-02.md).
 
 Your job, in order:
 
