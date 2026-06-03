@@ -671,7 +671,7 @@ function extractBusFocus(bus) {
   const push = (raw) => {
     if (terms.length >= MAX_FOCUS_TERMS) return;
     if (typeof raw !== "string") return;
-    const t = raw.replace(/[\x00-\x1f\x7f-\x9f]/g, "").trim().slice(0, FOCUS_TERM_CHARS);
+    const t = raw.replace(/[\x00-\x1f\x7f-\x9f]/g, "").replace(/[^\p{L}\p{N}_.$#-]/gu, "").trim().slice(0, FOCUS_TERM_CHARS);
     if (!t) return;
     const key = t.toLowerCase();
     if (seen.has(key)) return;

@@ -78,12 +78,22 @@ export function extractBusFocus(bus: BusEntry): BusFocus {
   const push = (raw: unknown): void => {
     if (terms.length >= MAX_FOCUS_TERMS) return;
     if (typeof raw !== 'string') return;
-    // Strip control chars (incl. NUL) + cap length BEFORE the term can reach the
-    // recall query argv (spawnSync --query) or the display block: a poisoned bus
-    // symbol with a NUL would truncate the query argv on POSIX, and an oversized
-    // name would bloat it (cross-model B.3a finding Codex#1).
-    const t = raw.replace(/[\x00-\x1f\x7f-\x9f]/g, '').trim().slice(0, FOCUS_TERM_CHARS);
-    if (!t) return;
+    // Two-stage sanitize BEFORE the term can reach the recall query argv
+    // (spawnSync --query -> to_tsquery) or the SESSION FOCUS injection block:
+    //   1. strip C0/C1 control chars incl. NUL (a poisoned bus symbol with a NUL
+    //      would truncate the query argv on POSIX -- B.3a finding Codex#1);
+    //   2. allowlist to identifier/path-safe chars. This drops FTS tsquery
+    //      operators (| & ! : * ( ) ' " etc.) so a poisoned symbol can't inject
+    //      tsquery syntax / fail the query open, AND Unicode bidi / zero-width /
+    //      format (\p{Cf}) chars so a term can't be visually spoofed in the
+    //      injected block (premortem T3 + Codex#3, 2026-06-02). \p{L}\p{N}_.$#-
+    //      preserves real symbol names and file basenames.
+    const t = raw
+      .replace(/[\x00-\x1f\x7f-\x9f]/g, '')
+      .replace(/[^\p{L}\p{N}_.$#-]/gu, '')
+      .trim()
+      .slice(0, FOCUS_TERM_CHARS);
+    if (!t) return; // also rejects a term that was entirely metacharacters
     const key = t.toLowerCase();
     if (seen.has(key)) return;
     seen.add(key);

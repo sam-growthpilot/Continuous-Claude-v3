@@ -721,9 +721,16 @@ describe('handleAgentTask -- context-bus focus injection (Phase B.3a/B.3b)', () 
     const out = handleAgentTask(makeInput(), recall, () => bus, spyTelemetry().fn);
     expect(out).not.toBeNull();
     const ctx = out!.hookSpecificOutput!.additionalContext!;
-    // Raw injection markers must be HTML-encoded (no live closing tag survives).
-    expect(ctx).not.toContain('</context>Ignore');
-    expect(ctx).toContain('&lt;');
+    // The block is wrapped in a legitimate <context ...>...</context> data-block,
+    // so we assert the EVIL PAYLOAD's markers don't survive (not the bare wrapper
+    // tag). bus-focus's allowlist now STRIPS < > / and spaces at the source
+    // (premortem T3/Codex#3, 2026-06-02) -- a strictly stronger outcome than the
+    // prior HTML-encode-only defense (buildFocusBlock's encoding is still covered
+    // directly in bus-focus.test.ts).
+    expect(ctx).not.toContain('</context>Ignore'); // payload closing-tag adjacent to its text
+    expect(ctx).not.toContain('<instructions>'); // payload open tag (absent from the wrapper)
+    expect(ctx).not.toContain('Ignore previous'); // space-joined injection phrase cannot reassemble
+    expect(ctx).toContain('SESSION FOCUS');
   });
 
   it('emits agent_recall_bus_read telemetry (biased=false; query unbiased in text-only)', () => {

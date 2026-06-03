@@ -1091,7 +1091,7 @@ function extractBusFocus(bus) {
   const push = (raw) => {
     if (terms.length >= MAX_FOCUS_TERMS) return;
     if (typeof raw !== "string") return;
-    const t = raw.replace(/[\x00-\x1f\x7f-\x9f]/g, "").trim().slice(0, FOCUS_TERM_CHARS);
+    const t = raw.replace(/[\x00-\x1f\x7f-\x9f]/g, "").replace(/[^\p{L}\p{N}_.$#-]/gu, "").trim().slice(0, FOCUS_TERM_CHARS);
     if (!t) return;
     const key = t.toLowerCase();
     if (seen.has(key)) return;
@@ -1432,6 +1432,11 @@ async function main() {
       injected: !!match || focusBlock.length > 0,
       focus_injected: focusBlock.length > 0,
       focus_count: focusTerms.length,
+      // The actual sanitized terms appended to the recall query when biased --
+      // makes a biased recall REPRODUCIBLE from telemetry (premortem Codex#2,
+      // 2026-06-02). Terms are already allowlist-sanitized in bus-focus.ts and
+      // bounded (<=8 x 60 chars); intel-bus redaction is a further backstop.
+      focus_terms: focusTerms,
       stale_symbols_count: busFocus.staleSymbolsCount,
       current_turn: busTurn,
       result_count: match ? match.results.length : 0

@@ -112,6 +112,35 @@ describe('extractBusFocus', () => {
     expect(terms.join('')).not.toContain(NUL);
   });
 
+  it('strips tsquery metacharacters from a term (FTS injection defense, premortem T3)', () => {
+    const bus = busWith({ current_turn: 1, focus: [focusSym('foo|bar:*', 1)] });
+    const { terms } = extractBusFocus(bus);
+    expect(terms).toContain('foobar');
+    expect(terms.join('')).not.toMatch(/[|:*&!()'"]/);
+  });
+
+  it('strips Unicode bidi / zero-width / format chars from a term (premortem Codex#3)', () => {
+    const RLO = String.fromCharCode(0x202e); // right-to-left override (bidi)
+    const ZWSP = String.fromCharCode(0x200b); // zero-width space
+    const bus = busWith({ current_turn: 1, focus: [focusSym(`a${RLO}b${ZWSP}c`, 1)] });
+    const { terms } = extractBusFocus(bus);
+    expect(terms).toContain('abc');
+    expect(terms.join('')).not.toContain(RLO);
+    expect(terms.join('')).not.toContain(ZWSP);
+  });
+
+  it('drops a term that is entirely metacharacters (no visible token survives)', () => {
+    const bus = busWith({ current_turn: 1, focus: [focusSym('|&!():*', 1), focusSym('keep', 1)] });
+    const { terms } = extractBusFocus(bus);
+    expect(terms).toEqual(['keep']);
+  });
+
+  it('preserves identifier/path chars ($ # . - _) in a term', () => {
+    const bus = busWith({ current_turn: 1, focus: [focusSym('$scope_v2.helper-fn', 1)] });
+    const { terms } = extractBusFocus(bus);
+    expect(terms).toContain('$scope_v2.helper-fn');
+  });
+
   it('treats a focus symbol with missing turn_added as stale (Codex#2)', () => {
     const bus = busWith({ current_turn: 2, focus: [focusSym('noTurn', undefined)] });
     const { terms, staleSymbolsCount } = extractBusFocus(bus);
