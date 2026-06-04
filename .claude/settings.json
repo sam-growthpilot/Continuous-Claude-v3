@@ -131,6 +131,16 @@
             "timeout": 10000
           }
         ]
+      },
+      {
+        "matcher": "Grep|Agent",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node C:/Users/david.hayes/.claude/hooks/dist/code-intel-enforcer.mjs",
+            "timeout": 5000
+          }
+        ]
       }
     ],
     "UserPromptSubmit": [
@@ -235,6 +245,11 @@
           {
             "type": "command",
             "command": "node C:/Users/david.hayes/.claude/hooks/dist/roadmap-reconcile.mjs",
+            "timeout": 10000
+          },
+          {
+            "type": "command",
+            "command": "node C:/Users/david.hayes/.claude/hooks/dist/session-start-intel-prune.mjs",
             "timeout": 10000
           }
         ]
@@ -423,6 +438,16 @@
             "type": "command",
             "command": "node C:/Users/david.hayes/.claude/hooks/dist/periodic-extract.mjs",
             "timeout": 2000
+          }
+        ]
+      },
+      {
+        "matcher": "Read|Grep",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node C:/Users/david.hayes/.claude/hooks/dist/bus-tool-populator.mjs",
+            "timeout": 5000
           }
         ]
       }

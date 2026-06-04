@@ -95,13 +95,13 @@ Incremental, highest-signal-first. Each write uses the B.0-hardened `mutateBus` 
 ## 3. Gate checklist — Phase B "done" requires ALL
 
 - [ ] B.0: `mutateStateWithLock` `lockTimeoutMs` threaded (default 5000 unchanged for existing callers; bus=200); lock-timeout → `bus_write_dropped` (never silent); `wait_ms`/`write_ms` instrumented; Windows concurrent-write bench green (no lost update, p95 < cap, 1 drop-row per dropped write)
-- [ ] B.1: `code-intel.mjs` typed subcommands; every response carries `backend` + `routing_reason`; ambiguous → `clarify`; one intel-bus row per call
-- [ ] B.2: SKILL.md documents routing + kill switch
+- [x] B.1: `code-intel.mjs` typed subcommands; every response carries `backend` + `routing_reason`; ambiguous → `clarify`; one intel-bus row per call
+- [x] B.2: SKILL.md documents routing + kill switch
 - [ ] B.3: both recall hooks read the bus + bias recall; bus strings `memory-sanitize`-wrapped; **emit reachability vitest green** (recall path emits once; guards exempt); `audit-braintrust-emits.sh` 4/4 after every memory-awareness edit
 - [ ] B.4: `edited`/`test_failed` written via post-edit-diagnostics; turn-counter staleness suppression + `source_age`/`stale_symbols_count` logged; secret-redaction test green (`OPENAI_API_KEY`/`DATABASE_URL` never in `intel-bus.jsonl`); rotation/TTL/cleanup + 10k-write test green; deferred roles (grep_hit/read_for_context) explicitly logged as scoped-out
-- [ ] B.5: enforcer defaults OFF (unset→allow); never denies; exact-route-match warn-only; 4-case test; registered in BOTH settings.json
+- [x] B.5: enforcer defaults OFF (unset→allow); never denies; exact-route-match warn-only; 4-case test; registered in BOTH settings.json
 - [ ] Global: `CCV3_BUS_OFF=1` still no-ops every new caller; `npm run build` clean; `hook-manifest-check.mjs` OK; full vitest green; fresh-session smoke shows the bus populated by real `edited` writes AND read by recall, with zero added prompt latency
-- [ ] **Quality gate (#12):** before/after recall eval run + within rollback thresholds (below) BEFORE B.3 is left enabled
+- [x] **Quality gate (#12):** before/after recall eval run + within rollback thresholds (below) BEFORE B.3 is left enabled
 
 ---
 
@@ -191,8 +191,10 @@ Executed via kraken-TDD with a cross-model codex-adversary `/review` before each
 | B.3a agent-recall read | DONE (S3) | `8929667` | Reads bus, staleness-filters, injects SESSION FOCUS block + telemetry. 4 codex findings fixed (control-char strip, missing-turn=stale, telemetry-on-throw, `recall_query` log). Query-bias later GATED OFF here (text-only) -- see refine row. |
 | B.3b memory-awareness read | DONE (S3, DELICATE) | `0e85d49` | Surgical insert after the intent<3 guard; emit (L602) UNTOUCHED, emit-guard 4/4 after each edit. Extracted shared `shared/bus-focus.ts` (one impl for both readers). Emit reachability via a SOURCE-STRUCTURE vitest (Q-B1; in-process main()-drive rejected as riskier than the regression). 3 codex findings fixed. |
 | Quality gate (#12) | DONE (S3) | `cfb0be4` | `scripts/bus-quality-gate.mjs` (n=8, live DB). Query-bias HELPS hybrid (+15.3% top-score, 75->88% hit-rate) but DILUTES text-only FTS (-12.8%). RESOLVED by gating query-bias to hybrid (memory-awareness `daemonReady`); agent-recall drops query-bias (text-only); focus-injection stays in BOTH. |
-| B.1/B.2 facade | TODO | — | `scripts/code-intel.mjs` (model `cdp.mjs`) + SKILL.md. Backend-dependent: wire available backends (recall/TLDR/ast-grep/bus); codegraph routing is Phase-C-deferred. Has a CLI-session-context wrinkle (busId discovery) -> after the loop. |
-| B.5 enforcer | TODO | — | `code-intel-enforcer.ts` (default OFF, never denies) + dual settings.json registration; ALSO wire `pruneIntelBus` at session-start here. |
+| 3.0 deploy-guard (S5) | DONE | `3c5f659` | `scripts/precommit-build-guard.sh` (static src⇒dist staleness check; NO in-hook `npm build` -- it hangs on Windows git hooks) + tracked idempotent `scripts/install-hooks.sh` (chains, never clobbers; wired into `wizard.py`) + `.gitattributes *.sh eol=lf`. Tests guard 9/9, install 7/7. Cross-model lifts: CRLF non-fail-open (gitattributes), non-exec/exit-0 chaining (`bash`+insert-after-shebang), wizard fallback. Closes the recurring sync deploy gap at commit time. |
+| B.1/B.2 facade (S5) | DONE | `b740723` | `scripts/code-intel.mjs` (model `cdp.mjs`) + SKILL.md. Typed subcommands, `backend`+`routing_reason` every response, ambiguous→`clarify`; reads bus to bias ranking client-side (no query mutation → no tsquery surface), NEVER writes L2, one allowlisted intel-bus row/call; `CCV3_BUS_OFF` honored. codegraph absent→TLDR fallback; ast-grep/Serena MCP-only→guidance. Tests 14/14. Cross-model lifts: dropped raw `subject_id` telemetry, `--bus` traversal sanitize, spawnSync guards, log rotation, quote-escape, **fixed a test-harness subshell false-green**. |
+| B.5 enforcer + prune (S5) | DONE | `6beacca` | `code-intel-enforcer.ts` (PreToolUse Grep\|Agent, default OFF, never denies, `\b`-anchored exact warn-only nudge) + `session-start-intel-prune.ts` (wires `pruneIntelBus`; never touches live log) + dual settings.json registration. Tests 12/12, emit-guard 4/4. Cross-model lifts: `\b` anchor kills keyword-substring false positives, dropped fragile literal-`\s` branch, pinned activation semantics, documented additionalContext-channel caveat. |
+| 3.3 eval hardening (S5) | DONE | `d580fc9` | `bus-quality-gate.mjs` + known-strong-match cases + embedding-daemon warmth detection + **0-DB-writes proof** (count(*) before/after, 574→574 PASS). Read-only; reproduced text-only −12.9% (bias helps only in warm-daemon hybrid). |
 
 **Resume point (updated 2026-06-02, end of SESSION 3):** the bus READ side is now COMPLETE, committed, independently verified, and LIVE in active `~/.claude/` (deployed manually -- the §6 sync deploy gap RECURRED: `memory-awareness.mjs` + `agent-recall-injector.mjs` were stale in active, `cp`'d repo->active + verified MATCH). Both recall hooks read the bus; the query-bias is gated to HYBRID recall (gate measured +15.3% top-score / +13pp hit-rate there); the SESSION FOCUS block injects in both modes; emit-guard 4/4; core bus suite 231 green; `CCV3_BUS_OFF=1` disables everything. Git: 4 session-3 commits (`dd0d24b` hardening · `8929667` B.3a · `0e85d49` B.3b · `cfb0be4` refine) on `main`, **NOT pushed** to `fork` (Rev4nchist). What's LEFT in Phase B: **B.1/B.2 facade + B.5 enforcer** (the user stopped after the quality gate, as planned). **Op follow-up still open:** the forward-sync deploy gap recurred a 2nd time -- fix the sync mechanism (or make `cp` part of a deploy step) BEFORE B.5 adds a new hook.
 
@@ -210,3 +212,28 @@ Executed via kraken-TDD with a cross-model codex-adversary `/review` before each
 - Rare busy-spin cap-test timing blip under PEAK parallel load (bounds generous; 25x B.0-only clean) — if disruptive, add an injectable clock to `acquireLockSync` for determinism.
 
 **Cross-model review note:** all 3 codex passes this session found genuine lifts (B.0 mislabeled-drop-reason; B.4 delimiter secret-leak + token shapes; B.4a unbounded `load_bearing` growth + `test_failed` semantic). Keep the cross-model `/review`-per-commit rhythm for B.3/facade/B.5.
+
+---
+
+## Build Progress (2026-06-03, SESSION 5 — PR #5 merged + Phase 3 COMPLETE)
+
+**PR #5 LANDED.** The bus READ side + hardening merged to `fork/main` via `--merge` (merge commit `1295fd4`, 22 commits, full history preserved). CodeRabbit round-1 (2 Major code findings) + round-2 (2 Minor doc nitpicks) all addressed; final re-review clean ("Review skipped").
+
+**Phase 3 (the remainder of Phase B) is COMPLETE** on branch `ws2/phase-3-code-intel` off the merged `fork/main`, per-step TDD → cross-model `/review` (critic + codex-adversary) → commit-with-dist → hash-verify-active:
+
+| Step | Commit | What |
+|---|---|---|
+| 3.0 deploy-guard | `3c5f659` | pre-commit build-forget guard + idempotent install-hooks.sh + `.gitattributes` |
+| 3.1 `/code-intel` facade | `b740723` | `scripts/code-intel.mjs` + SKILL.md (B.1/B.2) |
+| 3.2 enforcer + prune | `6beacca` | `code-intel-enforcer.ts` + `session-start-intel-prune.ts` + dual registration (B.5) |
+| 3.3 eval hardening | `d580fc9` | known-match cases + 0-DB-writes proof |
+
+The 3.0 guard was validated **live** on 3.2's commit (a real src⇒dist TS commit passed through it). Active `~/.claude/` dist hash-verified current for both new hooks; both settings.json (repo + active) carry the enforcer (matcher `Grep|Agent`, 5000ms) + prune (SessionStart).
+
+**E1 (the elephant) — Phase B ships INERT, by design.** The facade is a manual CLI; the enforcer is default-OFF and warn-only (never denies). Adoption ≠ quality: the actual routing-through-the-facade payoff and any enforcement teeth are future work, not claimed here. The quality value that IS proven is the bus-bias hybrid recall lift (+33.6% top-score / 63→88% hit-rate) from PR #5.
+
+**Deferred (flagged, not dropped):** **B.4b** — `grep_hit` (PostToolUse:Grep) + `read_for_context` (Read) bus-populators. Ship once the read side proves its keep in production use.
+
+**Open ops follow-ups (carried):** (1) full parallel `vitest run` still hangs on a pre-existing Windows daemon/socket suite — use the bus subset (every bus suite passes in isolation); a hard-timeout on those tests is the candidate fix. (2) the async post-commit forward-sync still races (dist stale in active right after a hook commit) — the 3.0 guard addresses build-forget at commit time, but the per-commit hash-verify-and-`cp` ritual stays until the sync race is fixed. (3) warm-daemon hybrid quality-gate leg not re-run this session (daemon cold) — re-run `node scripts/bus-quality-gate.mjs hybrid` with a warm daemon to re-confirm the +33.6%.
+
+**Resume point (end of SESSION 5):** Phase 3 committed + pushed to `fork ws2/phase-3-code-intel`; open the Phase 3 PR → `fork/main` (same CodeRabbit gate). Nothing else outstanding in Phase B except the deferred B.4b and the 3 ops follow-ups above.

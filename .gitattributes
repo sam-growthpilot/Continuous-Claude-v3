@@ -1,0 +1,5 @@
+# Shell scripts MUST stay LF, even on Windows (core.autocrlf=true).
+# A CRLF shebang (`#!/bin/bash\r`) makes a git hook fail with "bad interpreter",
+# which would BLOCK commits instead of failing open -- see scripts/precommit-build-guard.sh
+# and scripts/install-hooks.sh. Pinning eol=lf prevents that on fresh clones.
+*.sh text eol=lf
