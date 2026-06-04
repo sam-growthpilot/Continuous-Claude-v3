@@ -19,7 +19,7 @@ Two execution modes:
 * **Daemon** (long-lived process, TCP loopback, length-prefixed JSON frames).
   Pre-warms the model at startup, then services embed/ping/shutdown
   requests with hot-path latency. PID/port written to
-  ``$TEMP/ccv3-embedding.json`` so clients can find the daemon. Mirrors
+  ``~/.claude/run/ccv3-embedding.json`` so clients can find the daemon. Mirrors
   the Phase 2 rerank daemon protocol (TCP, ``TCP_NODELAY``, 4-byte
   big-endian length prefix, JSON UTF-8 payload, 100MB sanity cap).
 
@@ -29,14 +29,15 @@ Locked decisions (Task 1.1 + user, 2026-05-18):
 * Wrapper: ``SentenceTransformer.encode(text, convert_to_numpy=True).tolist()``
   to byte-for-byte match what ``LocalEmbeddingProvider`` writes today.
 * Lifecycle: spawn-on-first-hit detached. Daemon stays loaded across calls.
-* Discovery file path: ``$TEMP/ccv3-embedding.json``.
+* Discovery file path: ``~/.claude/run/ccv3-embedding.json`` (env-independent;
+  see ``_canonical_run_dir`` -- NOT a temp dir, so Node and Python agree).
 * Transport: TCP loopback on 127.0.0.1, port 0 (OS-assigned), ``TCP_NODELAY``.
 
 Usage::
 
     # Daemon
     uv run --project opc python opc/scripts/core/embedding_daemon.py --daemon
-    # ... writes {pid, port, model, dim} to $TEMP/ccv3-embedding.json
+    # ... writes {pid, port, model, dim} to ~/.claude/run/ccv3-embedding.json
     #     AFTER the model is fully loaded.
 
     # One-shot
@@ -59,7 +60,6 @@ import socket
 import socketserver
 import struct
 import sys
-import tempfile
 import threading
 import time
 from pathlib import Path
@@ -74,15 +74,43 @@ _MODEL_LOCK = threading.Lock()
 MODEL_NAME = "BAAI/bge-large-en-v1.5"
 EMBEDDING_DIM = 1024
 
-# Daemon discovery file. Cross-platform via tempfile.gettempdir().
-DAEMON_INFO_PATH = Path(tempfile.gettempdir()) / "ccv3-embedding.json"
+# Canonical rendezvous directory for the discovery + lock files.
+#
+# ROOT CAUSE (2026-06-03): these paths used to derive from
+# ``tempfile.gettempdir()``, which on Windows honors ``TMPDIR``. The Node hook
+# client (``embedding-client.ts``) uses ``os.tmpdir()``, which honors ``TEMP``
+# and IGNORES ``TMPDIR``. Inside the Claude Code session ``TMPDIR`` is set to a
+# ``...\Temp\claude`` subdir while ``TEMP`` stays ``...\Temp`` -- so the Node
+# spawner and this Python daemon resolved DIFFERENT files. The spawner never
+# saw the daemon it started (-> a thundering herd of husk daemons) and recall
+# fell back to the multi-second in-process embed.
+#
+# Fix: anchor to ``~/.claude/run/``. Node ``os.homedir()``, Python
+# ``Path.home()`` and PowerShell ``$HOME`` all resolve to ``USERPROFILE``
+# identically on Windows, regardless of ``TEMP``/``TMPDIR``. The client
+# (embedding-client.ts), the launcher (start-embedding-daemon.ps1) and the
+# quality gate (bus-quality-gate.mjs) compute the SAME path.
+def _canonical_run_dir() -> Path:
+    """Return ``~/.claude/run`` (created), independent of TEMP/TMPDIR.
+
+    Uses ``Path.home()`` (USERPROFILE on Windows) so every spawner -- Node
+    hook, PowerShell task, uv/bash CLI -- resolves the identical directory.
+    """
+    d = Path.home() / ".claude" / "run"
+    d.mkdir(parents=True, exist_ok=True)
+    return d
+
+
+# Daemon discovery file. Environment-independent (see _canonical_run_dir).
+DAEMON_INFO_PATH = _canonical_run_dir() / "ccv3-embedding.json"
 
 # BLOCKER-1 (memory-system-next-steps-2026-05-21): cross-process exclusive
 # lock used to serialize daemon startup across non-TS spawn paths (Windows
 # Task Scheduler pre-warm, direct CLI invocations). The TS-side spawn lock
 # in embedding-client.ts covers the hook path; this closes the gap for
-# everything else.
-DAEMON_LOCK_PATH = Path(tempfile.gettempdir()) / "ccv3-embedding-daemon.lock"
+# everything else. MUST share the canonical dir with the TS lock so the two
+# languages actually mutually exclude.
+DAEMON_LOCK_PATH = _canonical_run_dir() / "ccv3-embedding-daemon.lock"
 
 
 def load_model() -> Any:
@@ -757,7 +785,7 @@ def _run_bench() -> int:
         "Cold model load on Windows CPU is ~30-45s; warm encode is ~30-100ms per query.",
         "A long-lived daemon eliminates the sentence-transformers import tax on every recall.",
         "Length-prefixed JSON frames over TCP loopback mirror the Phase 2 rerank protocol.",
-        "Discovery file at $TEMP/ccv3-embedding.json gives clients PID and port after warmup.",
+        "Discovery file ~/.claude/run/ccv3-embedding.json gives clients PID+port after warmup.",
         "Spawn-on-first-hit detached lifecycle: cold start blocks first caller, then warm.",
         "The query embedding must byte-for-byte match LocalEmbeddingProvider for cosine recall.",
         "TCP_NODELAY is set on both daemon and client sockets to minimise small-frame latency.",

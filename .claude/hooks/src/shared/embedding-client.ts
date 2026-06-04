@@ -10,7 +10,7 @@
  *   * Frame size cap: 100 MB (mirror of daemon-side sanity cap).
  *
  * Discovery:
- *   * Daemon writes ``$TEMP/ccv3-embedding.json`` AFTER the model is loaded.
+ *   * Daemon writes ``~/.claude/run/ccv3-embedding.json`` AFTER the model is loaded.
  *     File contents:
  *       { "pid": int, "port": int, "started_at": float,
  *         "model": "BAAI/bge-large-en-v1.5", "dim": 1024 }
@@ -29,9 +29,9 @@
  * code -- only conventions.
  */
 
-import { existsSync, readFileSync, unlinkSync, writeFileSync } from 'fs';
+import { existsSync, mkdirSync, readFileSync, unlinkSync, writeFileSync } from 'fs';
 import { spawn } from 'child_process';
-import { tmpdir } from 'os';
+import { homedir } from 'os';
 import { join, resolve } from 'path';
 import * as net from 'net';
 
@@ -39,8 +39,23 @@ import * as net from 'net';
 // Constants
 // ---------------------------------------------------------------------------
 
+/**
+ * Canonical rendezvous directory -- env-independent.
+ *
+ * ROOT CAUSE (2026-06-03): this used to be `tmpdir()` (Node's os.tmpdir(),
+ * which honors TEMP and IGNORES TMPDIR). The Python daemon used
+ * `tempfile.gettempdir()` (honors TMPDIR). Inside the Claude Code session
+ * TMPDIR != TEMP, so the two resolved DIFFERENT files -- this spawner never
+ * saw the daemon it started and re-spawned endlessly (the husk herd).
+ *
+ * `homedir()` resolves to USERPROFILE on Windows, identical to Python
+ * `Path.home()` and PowerShell `$HOME`, regardless of TEMP/TMPDIR. Mirrors
+ * `_canonical_run_dir()` in embedding_daemon.py.
+ */
+const RUN_DIR = join(homedir(), '.claude', 'run');
+
 /** Discovery file path. Daemon writes this AFTER warmup. */
-const DAEMON_INFO_PATH = join(tmpdir(), 'ccv3-embedding.json');
+const DAEMON_INFO_PATH = join(RUN_DIR, 'ccv3-embedding.json');
 
 /**
  * Cross-process spawn mutex lockfile. Written before we fire the daemon
@@ -54,7 +69,7 @@ const DAEMON_INFO_PATH = join(tmpdir(), 'ccv3-embedding.json');
  * ages out (>60s) or is overwritten by the next spawner. Simpler than
  * tracking spawn success/failure across processes.
  */
-const SPAWN_LOCK_PATH = join(tmpdir(), 'ccv3-embedding-spawn.lock');
+const SPAWN_LOCK_PATH = join(RUN_DIR, 'ccv3-embedding-spawn.lock');
 
 /** How long (ms) a spawn lockfile stays valid before we treat it as stale. */
 const SPAWN_LOCK_TTL_MS = 60_000;
@@ -349,15 +364,19 @@ export async function embedText(
       res(val);
     };
 
-    const connectTimer = setTimeout(() => cleanup(null), timeoutMs);
+    // Single overall timer covering connect + send + recv -- mirrors the
+    // pingDaemon fix above. Previously a connectTimer + recvFrame(timeoutMs)
+    // pair allowed a worst-case wall time of 2 * timeoutMs on a slow connect.
+    const overallTimer = setTimeout(() => cleanup(null), timeoutMs);
 
     sock.once('error', () => {
-      clearTimeout(connectTimer);
+      clearTimeout(overallTimer);
       cleanup(null);
     });
 
     sock.connect(info.port, '127.0.0.1', () => {
-      clearTimeout(connectTimer);
+      // Connect succeeded. overallTimer keeps running -- it now covers
+      // send + recv too. Do NOT reset it here.
       try {
         sock.setNoDelay(true);
       } catch {
@@ -366,11 +385,14 @@ export async function embedText(
       try {
         sendFrame(sock, { cmd: 'embed', text });
       } catch {
+        clearTimeout(overallTimer);
         cleanup(null);
         return;
       }
-      recvFrame(sock, timeoutMs)
+      // Pass 0 to recvFrame so the single overallTimer is the only budget.
+      recvFrame(sock, 0)
         .then((reply) => {
+          clearTimeout(overallTimer);
           if (
             reply &&
             typeof reply === 'object' &&
@@ -382,7 +404,10 @@ export async function embedText(
             cleanup(null);
           }
         })
-        .catch(() => cleanup(null));
+        .catch(() => {
+          clearTimeout(overallTimer);
+          cleanup(null);
+        });
     });
   });
 }
@@ -534,6 +559,7 @@ function _readSpawnLock(): { pid: number; started_at: number } | null {
  */
 function _writeSpawnLock(): void {
   try {
+    mkdirSync(RUN_DIR, { recursive: true });
     const data = JSON.stringify({ pid: process.pid, started_at: Math.floor(Date.now() / 1000) });
     writeFileSync(SPAWN_LOCK_PATH, data);
   } catch {

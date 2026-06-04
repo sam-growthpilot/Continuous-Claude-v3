@@ -15,6 +15,7 @@
  */
 import { spawnSync } from 'node:child_process';
 import { existsSync } from 'node:fs';
+import { homedir } from 'node:os';
 import { join } from 'node:path';
 
 const OPC = process.env.CLAUDE_OPC_DIR;
@@ -44,8 +45,10 @@ function dbRowCount() {
 // Embedding-daemon warmth signal (recall_learnings.py:241). When cold, the hybrid leg still runs
 // but embeds locally (slower, less production-realistic). We RECORD which leg ran (pre-mortem M1/M2).
 function daemonWarm() {
-  const tmp = process.env.TEMP || process.env.TMP || '/tmp';
-  return existsSync(join(tmp, 'ccv3-embedding.json'));
+  // Canonical, env-independent rendezvous dir -- mirrors embedding_daemon.py
+  // _canonical_run_dir() and embedding-client.ts RUN_DIR. (Was process.env.TEMP,
+  // which diverged from the Python daemon's TMPDIR-based path -- the root-cause bug.)
+  return existsSync(join(homedir(), '.claude', 'run', 'ccv3-embedding.json'));
 }
 
 // Representative (intent, focus) cases. The focus terms model a real session
