@@ -440,6 +440,16 @@
             "timeout": 2000
           }
         ]
+      },
+      {
+        "matcher": "Read|Grep",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node C:/Users/david.hayes/.claude/hooks/dist/bus-tool-populator.mjs",
+            "timeout": 5000
+          }
+        ]
       }
     ]
   },

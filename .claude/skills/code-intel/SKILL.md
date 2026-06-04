@@ -9,7 +9,7 @@ A single, stateless CLI that routes a code-intelligence query to the correct L3 
 defined in `.claude/rules/code-intel-boundaries.md`, instead of you having to remember which
 tool owns which query. It is a **manual CLI** (Phase B ships it inert; no hook forces its use).
 
-```
+```bash
 node scripts/code-intel.mjs <subcommand> [args...] [--bus <id>] [--k <n>] [--text-only]
 ```
 
