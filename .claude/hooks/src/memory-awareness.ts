@@ -6,7 +6,7 @@
  *
  * Flow:
  * 1. Extract INTENT from user prompt (via shared/intent-extractor)
- * 2. Probe BGE embedding daemon ($TEMP/ccv3-embedding.json, 200ms budget)
+ * 2. Probe BGE embedding daemon (~/.claude/run/ccv3-embedding.json, 1500ms budget)
  *    - Ready -> hybrid RRF (vector + FTS) via recall_learnings.py default mode
  *    - Not ready -> fall back to --text-only AND fire-and-forget spawn the
  *      daemon so the NEXT prompt benefits
@@ -185,7 +185,7 @@ function checkLocalMemory(intent: string, projectDir: string): LearningResult[] 
  *
  * When ``useHybrid`` is true, runs the default (RRF vector + FTS) path.
  * The Python side (Task 1.4, commit 36b241a) routes the query embed
- * through the BGE embedding daemon at ``$TEMP/ccv3-embedding.json`` so
+ * through the BGE embedding daemon at ``~/.claude/run/ccv3-embedding.json`` so
  * we don't pay the ~30s sentence-transformers import tax per call.
  *
  * When ``useHybrid`` is false (daemon not ready), runs ``--text-only``.
@@ -556,8 +556,8 @@ async function main() {
   // FTS) recall; otherwise fall back to text-only and fire-and-forget the
   // daemon spawn so the NEXT prompt benefits.
   //
-  // The probe is bounded to 200ms (DEFAULT_PING_TIMEOUT_MS inside the
-  // client) so we never burn the hook's 2s budget on a hung daemon.
+  // The probe is bounded by DEFAULT_PING_TIMEOUT_MS (currently 1500ms in
+  // embedding-client.ts) so daemon liveness checks stay within a tight budget.
   let daemonReady = false;
   try {
     daemonReady = await isDaemonReady();

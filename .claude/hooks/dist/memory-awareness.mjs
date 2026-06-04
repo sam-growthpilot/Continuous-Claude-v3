@@ -1,5 +1,5 @@
 // src/memory-awareness.ts
-import { readFileSync as readFileSync5, existsSync as existsSync6, mkdirSync as mkdirSync5, appendFileSync as appendFileSync3 } from "fs";
+import { readFileSync as readFileSync5, existsSync as existsSync6, mkdirSync as mkdirSync6, appendFileSync as appendFileSync3 } from "fs";
 import * as path from "path";
 import * as os from "os";
 import { spawnSync } from "child_process";
@@ -259,13 +259,14 @@ function extractIntent(prompt) {
 }
 
 // src/shared/embedding-client.ts
-import { existsSync as existsSync3, readFileSync as readFileSync2, unlinkSync, writeFileSync as writeFileSync2 } from "fs";
+import { existsSync as existsSync3, mkdirSync as mkdirSync2, readFileSync as readFileSync2, unlinkSync, writeFileSync as writeFileSync2 } from "fs";
 import { spawn } from "child_process";
-import { tmpdir } from "os";
+import { homedir } from "os";
 import { join as join3, resolve } from "path";
 import * as net from "net";
-var DAEMON_INFO_PATH = join3(tmpdir(), "ccv3-embedding.json");
-var SPAWN_LOCK_PATH = join3(tmpdir(), "ccv3-embedding-spawn.lock");
+var RUN_DIR = join3(homedir(), ".claude", "run");
+var DAEMON_INFO_PATH = join3(RUN_DIR, "ccv3-embedding.json");
+var SPAWN_LOCK_PATH = join3(RUN_DIR, "ccv3-embedding-spawn.lock");
 var SPAWN_LOCK_TTL_MS = 6e4;
 var FRAME_SIZE_CAP_BYTES = 100 * 1024 * 1024;
 var DEFAULT_PING_TIMEOUT_MS = 1500;
@@ -458,6 +459,7 @@ function _readSpawnLock() {
 }
 function _writeSpawnLock() {
   try {
+    mkdirSync2(RUN_DIR, { recursive: true });
     const data = JSON.stringify({ pid: process.pid, started_at: Math.floor(Date.now() / 1e3) });
     writeFileSync2(SPAWN_LOCK_PATH, data);
   } catch {
@@ -642,15 +644,15 @@ import { createHash } from "node:crypto";
 import { realpathSync } from "node:fs";
 
 // src/shared/session-id.ts
-import { mkdirSync as mkdirSync2, readFileSync as readFileSync3, writeFileSync as writeFileSync3 } from "fs";
-import { homedir } from "os";
+import { mkdirSync as mkdirSync3, readFileSync as readFileSync3, writeFileSync as writeFileSync3 } from "fs";
+import { homedir as homedir2 } from "os";
 import { join as join4 } from "path";
 var SESSION_ID_FILENAME = ".coordination-session-id";
 function getSessionIdFile(options = {}) {
-  const claudeDir = join4(process.env.HOME || process.env.USERPROFILE || homedir(), ".claude");
+  const claudeDir = join4(process.env.HOME || process.env.USERPROFILE || homedir2(), ".claude");
   if (options.createDir) {
     try {
-      mkdirSync2(claudeDir, { recursive: true, mode: 448 });
+      mkdirSync3(claudeDir, { recursive: true, mode: 448 });
     } catch {
     }
   }
@@ -716,10 +718,10 @@ function getBusId(opts = {}) {
 }
 
 // src/shared/logger.ts
-import { appendFileSync, existsSync as existsSync4, mkdirSync as mkdirSync3, statSync, renameSync } from "fs";
+import { appendFileSync, existsSync as existsSync4, mkdirSync as mkdirSync4, statSync, renameSync } from "fs";
 import { join as join5 } from "path";
-import { homedir as homedir2 } from "os";
-var LOG_DIR = join5(homedir2(), ".claude", "logs");
+import { homedir as homedir3 } from "os";
+var LOG_DIR = join5(homedir3(), ".claude", "logs");
 var LOG_FILE = join5(LOG_DIR, "hooks.log");
 var MAX_LOG_SIZE = 5 * 1024 * 1024;
 var MIN_LEVEL = process.env.CLAUDE_HOOK_LOG_LEVEL || "info";
@@ -734,7 +736,7 @@ function shouldLog(level) {
 }
 function ensureLogDir() {
   if (!existsSync4(LOG_DIR)) {
-    mkdirSync3(LOG_DIR, { recursive: true });
+    mkdirSync4(LOG_DIR, { recursive: true });
   }
 }
 function rotateIfNeeded() {
@@ -790,7 +792,7 @@ function createLogger(hookName) {
 var log = createLogger("atomic-write");
 
 // src/shared/intel-bus.ts
-import { appendFileSync as appendFileSync2, existsSync as existsSync5, mkdirSync as mkdirSync4, renameSync as renameSync2, statSync as statSync2, unlinkSync as unlinkSync2 } from "node:fs";
+import { appendFileSync as appendFileSync2, existsSync as existsSync5, mkdirSync as mkdirSync5, renameSync as renameSync2, statSync as statSync2, unlinkSync as unlinkSync2 } from "node:fs";
 import { dirname, join as join6 } from "node:path";
 var MAX_LINE_BYTES = 4096;
 var MAX_INTEL_BUS_BYTES = 2e6;
@@ -898,7 +900,7 @@ function appendIntelBus(event, opts = {}) {
 function defaultAppend(path2, line) {
   const dir = dirname(path2);
   if (!existsSync5(dir)) {
-    mkdirSync4(dir, { recursive: true });
+    mkdirSync5(dir, { recursive: true });
   }
   appendFileSync2(path2, line, "utf-8");
 }
@@ -1308,7 +1310,7 @@ function applyFloor(match, floor) {
 function getRecallLogPath(projectDir) {
   const dir = path.join(projectDir, ".claude", "logs");
   try {
-    mkdirSync5(dir, { recursive: true });
+    mkdirSync6(dir, { recursive: true });
   } catch {
   }
   return path.join(dir, "memory-recall.jsonl");

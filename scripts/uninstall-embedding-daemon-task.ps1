@@ -5,7 +5,7 @@
 .DESCRIPTION
   Deletes the task if it exists. No-op if already absent.
   The running daemon process (if any) is not stopped -- it exits naturally
-  on reboot, or kill it by deleting $env:TEMP\ccv3-embedding.json and
+  on reboot, or kill it by deleting $HOME\.claude\run\ccv3-embedding.json and
   ending the process via Task Manager.
 #>
 

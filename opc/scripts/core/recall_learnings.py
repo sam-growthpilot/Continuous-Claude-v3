@@ -238,7 +238,7 @@ DEFAULT_DECAY_LAMBDA = 0.02
 
 # Task 1.4 (Task #11 Path A): persistent BGE embedding daemon.
 #
-# When the daemon is alive at $TEMP/ccv3-embedding.json AND ping responds
+# When the daemon is alive at ~/.claude/run/ccv3-embedding.json AND ping responds
 # ready=True under EMBED_DAEMON_PING_TIMEOUT_S, query embeds are routed
 # through the daemon (TCP loopback, length-prefixed JSON frames) instead
 # of paying the ~30s sentence-transformers import tax in-process.

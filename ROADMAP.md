@@ -1,15 +1,26 @@
 # Project Roadmap
 
 ## Current Focus
-**CCv3 WS-2 Phase B — Context Bus activation (2026-06-03)**
-- **Bus WRITE + READ sides DONE, reviewed, LIVE, and OPEN in PR #5** (`ws2/phase-b-context-bus` → `fork/main`; https://github.com/Rev4nchist/Continuous-Claude-v3/pull/5). Reviewed via cross-model `/review` per commit + a deep pre-mortem (Claude + Codex); hardening folded in (`d7557bd` bus-focus allowlist + biased-recall telemetry). CodeRabbit re-reviewing the tip `1d1b3e7`; both round-1 findings addressed (gate failure-guard; `focus_terms` cap). **MERGE #5 is the immediate gate.**
-- **Quality gate (#12):** bus-bias HELPS hybrid recall — **+33.6% top-score, 63%→88% hit-rate (KEEP ENABLED)**; text-only −12.8% correctly gated off. `CCV3_BUS_OFF=1` kills all bus I/O; fail-open everywhere.
-- **NEXT (fresh session):** Phase 3 remainder, in order — pre-commit **deploy-guard** (static src⇒dist; NO in-hook `npm build`) → **`/code-intel` facade** (B.1/B.2) → **enforcer** (B.5, default OFF / warn-only) + `pruneIntelBus` wiring → **stronger quality eval**. B.4b (grep_hit/read_for_context populators) deferred.
-- **Handoff:** `docs/ccv3-ws2-phaseB-SESSION5-HANDOFF-2026-06-03.md` · **Execution spec:** `~/.claude/plans/we-have-been-working-resilient-blum.md` (§3.0–3.3 + pre-mortem record).
-- **Open ops follow-ups:** (1) full parallel `vitest run` hangs on a pre-existing Windows daemon/socket suite — use the bus subset; (2) async post-commit sync races, leaving active hook dist stale — hash-verify + `cp` after every hook commit.
-- Started: 2026-06-03
+**Embedding-daemon ping bug → warm hybrid quality-gate re-run (2026-06-04)**
+- **WS-2 Phase B is COMPLETE and MERGED:** PR #5 (`1295fd4`, bus WRITE+READ+hardening) and PR #6 (`0a2e75b`, Phase 3 `/code-intel` facade + inert enforcer + pre-commit deploy-guard + hardened eval + B.4b Read/Grep populator). Both via cross-model `/review` per commit + CodeRabbit. Push target `fork` (Rev4nchist), never `origin`.
+- **THE OPEN TASK (diagnosed this session):** the BGE embedding daemon is **ALIVE** (pid 760228, port 58998 listening, 1190 MB = model loaded) with a **valid discovery file**, but a live recall reports `embed_used_daemon:false, embed_fallback_reason:"ping_failed", embed_elapsed_ms:166106` — the **1.5 s `ping_daemon()` is failing**, so recall pays a ~166 s cold in-process embed. **No scheduled task installed; no launcher log** (daemon started ad-hoc). This IS the intermittent "not warmed → text fallback" symptom.
+- **Prime suspect:** single-threaded `socketserver` blocking the ping under concurrent recalls (fix: `ThreadingTCPServer` and/or raise `EMBED_DAEMON_PING_TIMEOUT_S`); verify ping frame protocol. Root in `opc/scripts/core/embedding_daemon.py` + client `recall_learnings.py` (~L239–350). TDD: `opc/tests/unit/test_embedding_daemon_*.py`. **Do NOT change the BGE model/dim** (archival_memory bound to 1024-dim).
+- **THEN:** persist the daemon (`scripts/start-embedding-daemon.ps1` + `scripts/install-embedding-daemon-task.ps1` scheduled task), confirm warm (`embed_used_daemon:true`, low ms), and re-run **`node scripts/bus-quality-gate.mjs hybrid`** to re-confirm **~+33.6% top-score / 63→88% hit-rate**, verdict KEEP ENABLED, READ-ONLY ASSERTION PASS (0 DB writes). text-only ran COLD this phase and reproduced the documented −12.9% (bias correctly gated off there).
+- **Handoff:** `docs/ccv3-ws2-phaseB-SESSION6-HANDOFF-2026-06-04.md` (full daemon diagnosis + reproduce one-liner + fix→re-run procedure + kickoff prompt).
+- **Open ops follow-ups (carried):** (1) full parallel `vitest run` hangs on a pre-existing Windows daemon/socket suite — use the relevant subset; (2) async post-commit sync races, leaving active hook dist stale — hash-verify + `cp` after every hook commit; (3) flip the plan doc's "deferred B.4b → DONE" note (now merged).
+- Started: 2026-06-04
 
 ## Completed
+- [x] Merge PR #6 — WS-2 Phase B Phase 3 + B.4b into fork/main (2026-06-04) `0a2e75b`
+- [x] feat(ws2): B.4b bus-tool-populator (Read→read_for_context / Grep→grep_hit) + path-containment hardening (2026-06-03) `fbb7b03`
+- [x] docs(ws2): 3.4 close-out — Phase 3 Build Progress (B.1/B.2/B.5 DONE) (2026-06-03) `024eb38`
+- [x] feat(ws2): 3.3 harden bus quality-gate — known-match cases + 0-DB-writes proof (2026-06-03) `d580fc9`
+- [x] feat(ws2): 3.2 code-intel enforcer (inert) + pruneIntelBus wiring + dual registration (2026-06-03) `6beacca`
+- [x] feat(ws2): 3.1 /code-intel facade (code-intel.mjs + SKILL.md) (2026-06-03) `b740723`
+- [x] feat(ws2): 3.0 pre-commit build-forget guard + idempotent install-hooks.sh (2026-06-03) `3c5f659`
+- [x] Merge PR #5 — WS-2 Phase B bus WRITE+READ+hardening into fork/main (2026-06-03) `1295fd4`
+- [x] docs(ws2): address CodeRabbit PR#5 round-2 -- clarify test-count baseline + repo-relative path (2026-06-03) `ebe55ae`
+- [x] docs(ws2): session-5 handoff + ROADMAP -- merge #5 then resume Phase 3 (2026-06-03) `7d27b91`
 - [x] fix(ws2): address CodeRabbit PR#5 review -- gate failure-guard + focus_terms cap (2026-06-03) `1d1b3e7`
 - [x] fix(ws2): B.3 premortem hardening -- bus-focus allowlist + biased-recall telemetry (2026-06-03) `d7557bd`
 - [x] docs(ws2): session-4 handoff -- review-then-push-then-resume orientation (2026-06-03) `bcf457b`

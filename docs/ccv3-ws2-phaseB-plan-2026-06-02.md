@@ -128,7 +128,7 @@ Incremental, highest-signal-first. Each write uses the B.0-hardened `mutateBus` 
 6. **B.4a** `edited`/`test_failed` via post-edit-diagnostics + the turn-counter UPS populator + staleness suppression.
 7. **Quality gate (#12):** run the before/after recall eval; decide enable vs roll back.
 8. **B.5** enforcer (default OFF) + dual registration.
-9. (Deferred) **B.4b** grep_hit/read_for_context if the eval shows the bus is earning its keep.
+9. **B.4b** grep_hit/read_for_context bus-populators — **DONE** (merged in PR #6 `0a2e75b`, "B.4b bus-tool-populator Read/Grep -> files_in_play").
 
 Estimated **2–3 days**. Stop-condition: after the B.3 quality gate, **re-measure before** committing to B.5/B.4b.
 
@@ -232,8 +232,8 @@ The 3.0 guard was validated **live** on 3.2's commit (a real src⇒dist TS commi
 
 **E1 (the elephant) — Phase B ships INERT, by design.** The facade is a manual CLI; the enforcer is default-OFF and warn-only (never denies). Adoption ≠ quality: the actual routing-through-the-facade payoff and any enforcement teeth are future work, not claimed here. The quality value that IS proven is the bus-bias hybrid recall lift (+33.6% top-score / 63→88% hit-rate) from PR #5.
 
-**Deferred (flagged, not dropped):** **B.4b** — `grep_hit` (PostToolUse:Grep) + `read_for_context` (Read) bus-populators. Ship once the read side proves its keep in production use.
+**B.4b — DONE (was deferred):** `grep_hit` (PostToolUse:Grep) + `read_for_context` (Read) bus-populators shipped in PR #6 (`0a2e75b`).
 
-**Open ops follow-ups (carried):** (1) full parallel `vitest run` still hangs on a pre-existing Windows daemon/socket suite — use the bus subset (every bus suite passes in isolation); a hard-timeout on those tests is the candidate fix. (2) the async post-commit forward-sync still races (dist stale in active right after a hook commit) — the 3.0 guard addresses build-forget at commit time, but the per-commit hash-verify-and-`cp` ritual stays until the sync race is fixed. (3) warm-daemon hybrid quality-gate leg not re-run this session (daemon cold) — re-run `node scripts/bus-quality-gate.mjs hybrid` with a warm daemon to re-confirm the +33.6%.
+**Open ops follow-ups (carried):** (1) full parallel `vitest run` still hangs on a pre-existing Windows daemon/socket suite — use the bus subset (every bus suite passes in isolation); a hard-timeout on those tests is the candidate fix. (2) the async post-commit forward-sync still races (dist stale in active right after a hook commit) — the 3.0 guard addresses build-forget at commit time, but the per-commit hash-verify-and-`cp` ritual stays until the sync race is fixed. (3) warm-daemon hybrid quality-gate leg — **RE-RUN 2026-06-04 (warm)**: `node scripts/bus-quality-gate.mjs hybrid` reported daemon WARM, verdict **KEEP ENABLED**, READ-ONLY ASSERTION PASS (576→576, 0 writes). NOTE: the documented +33.6% top-score / 63→88% hit-rate did **NOT** reproduce on the current corpus — this warm run showed **+7.0% top-score, hit-rate flat 69%→69%**. The KEEP-ENABLED verdict holds, but the bus-bias lift is modest here and warrants its own investigation (corpus drift? case set? the +33.6% baseline run state is unverified). The daemon-warmth root cause (TMPDIR/TEMP path mismatch) was fixed separately on `feature/embedding-daemon-ping-fix`.
 
-**Resume point (end of SESSION 5):** Phase 3 committed + pushed to `fork ws2/phase-3-code-intel`; open the Phase 3 PR → `fork/main` (same CodeRabbit gate). Nothing else outstanding in Phase B except the deferred B.4b and the 3 ops follow-ups above.
+**Resume point (end of SESSION 5):** Phase 3 committed + pushed to `fork ws2/phase-3-code-intel`; open the Phase 3 PR → `fork/main` (same CodeRabbit gate). B.4b is now DONE (PR #6). Remaining: ops follow-ups (1) vitest hang and (2) sync race; follow-up (3) warm-gate re-run is done (see above, with the lift caveat).
