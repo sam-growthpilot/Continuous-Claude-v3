@@ -1,16 +1,16 @@
 # Project Roadmap
 
 ## Current Focus
-**Embedding-daemon ping bug → warm hybrid quality-gate re-run (2026-06-04)**
-- **WS-2 Phase B is COMPLETE and MERGED:** PR #5 (`1295fd4`, bus WRITE+READ+hardening) and PR #6 (`0a2e75b`, Phase 3 `/code-intel` facade + inert enforcer + pre-commit deploy-guard + hardened eval + B.4b Read/Grep populator). Both via cross-model `/review` per commit + CodeRabbit. Push target `fork` (Rev4nchist), never `origin`.
-- **THE OPEN TASK (diagnosed this session):** the BGE embedding daemon is **ALIVE** (pid 760228, port 58998 listening, 1190 MB = model loaded) with a **valid discovery file**, but a live recall reports `embed_used_daemon:false, embed_fallback_reason:"ping_failed", embed_elapsed_ms:166106` — the **1.5 s `ping_daemon()` is failing**, so recall pays a ~166 s cold in-process embed. **No scheduled task installed; no launcher log** (daemon started ad-hoc). This IS the intermittent "not warmed → text fallback" symptom.
-- **Prime suspect:** single-threaded `socketserver` blocking the ping under concurrent recalls (fix: `ThreadingTCPServer` and/or raise `EMBED_DAEMON_PING_TIMEOUT_S`); verify ping frame protocol. Root in `opc/scripts/core/embedding_daemon.py` + client `recall_learnings.py` (~L239–350). TDD: `opc/tests/unit/test_embedding_daemon_*.py`. **Do NOT change the BGE model/dim** (archival_memory bound to 1024-dim).
-- **THEN:** persist the daemon (`scripts/start-embedding-daemon.ps1` + `scripts/install-embedding-daemon-task.ps1` scheduled task), confirm warm (`embed_used_daemon:true`, low ms), and re-run **`node scripts/bus-quality-gate.mjs hybrid`** to re-confirm **~+33.6% top-score / 63→88% hit-rate**, verdict KEEP ENABLED, READ-ONLY ASSERTION PASS (0 DB writes). text-only ran COLD this phase and reproduced the documented −12.9% (bias correctly gated off there).
-- **Handoff:** `docs/ccv3-ws2-phaseB-SESSION6-HANDOFF-2026-06-04.md` (full daemon diagnosis + reproduce one-liner + fix→re-run procedure + kickoff prompt).
-- **Open ops follow-ups (carried):** (1) full parallel `vitest run` hangs on a pre-existing Windows daemon/socket suite — use the relevant subset; (2) async post-commit sync races, leaving active hook dist stale — hash-verify + `cp` after every hook commit; (3) flip the plan doc's "deferred B.4b → DONE" note (now merged).
+**Bus-bias hybrid-recall lift — does it earn its keep? (investigation)**
+- Embedding-daemon warmth bug is FIXED + MERGED (PR #7 `3a398236`): root cause was a Node-vs-Python TMPDIR/TEMP discovery-path mismatch, now anchored to `~/.claude/run/`. Daemon warm (~200ms) + persisted via scheduled task `CCv3-Embedding-Daemon`.
+- OPEN QUESTION: the warm hybrid quality gate showed **+7.0% top-score / FLAT 69%→69% hit-rate**, NOT the documented +33.6% / 63→88%. Verdict held KEEP ENABLED but the bias benefit is modest. Trace the +33.6% provenance (corpus drift 574→576? case set? mislabeled-cold baseline?) and decide keep / tune / roll back.
+- Full handoff: `docs/ccv3-session7-handoff-2026-06-04.md`. Push `fork` never `origin`. Do NOT change BGE model/dim (1024).
 - Started: 2026-06-04
 
 ## Completed
+- [x] fix(memory): address CodeRabbit findings on PR #7 (2026-06-04) `d996d7f`
+- [x] docs(ws2): flip B.4b deferred -> DONE; record warm hybrid-gate re-run (2026-06-04) `72cee99`
+- [x] fix(memory): canonical daemon discovery path -- end TMPDIR/TEMP rendezvous mismatch (2026-06-04) `032f940`
 - [x] Merge PR #6 — WS-2 Phase B Phase 3 + B.4b into fork/main (2026-06-04) `0a2e75b`
 - [x] feat(ws2): B.4b bus-tool-populator (Read→read_for_context / Grep→grep_hit) + path-containment hardening (2026-06-03) `fbb7b03`
 - [x] docs(ws2): 3.4 close-out — Phase 3 Build Progress (B.1/B.2/B.5 DONE) (2026-06-03) `024eb38`
@@ -155,6 +155,11 @@
 - [x] Eliminate Excessive Permission Prompts for Autonomous Agent Tasks (2026-04-02)
 
 ## Planned
+- [ ] P1 — Bus-bias lift investigation: warm gate gave +7.0%/flat-hit, not the documented +33.6%/63→88%. Trace provenance, decide keep/tune/roll back the hybrid bias (high priority)
+- [ ] P2 — Verify embedding daemon survives a REAL reboot (scheduled task only ad-hoc-verified; Codex flagged job-object detach). After next restart confirm `~/.claude/run/ccv3-embedding.json` appears <60s + warm recall (medium priority)
+- [ ] P2 — Ops: full parallel `vitest run` hangs on a pre-existing Windows daemon/socket suite — add a hard per-test timeout (medium priority)
+- [ ] P3 — Ops: async post-commit forward-sync race leaves active hook dist stale — hash-verify + `cp` after every hook commit until root-fixed (low priority)
+- [ ] WS-2 Phase B activation: facade/enforcer shipped INERT — wire real routing-through-facade + enforcement teeth, then Phase C (codegraph) → D (memory bridge, needs GIN index) → E (observability) (medium priority)
 - [ ] CCv3 Full Hardening & Improvement Program — make the system lean, correct, and *used-correctly* (high priority)
 - [ ] WS-0 — Present-day bugs + live hazards: session-id consolidation (0.1, +`file_claims` migration), memory prompt-injection fix (0.2), structural sync-footgun fix (0.3 — delete `npm run build` from `sync-to-active.sh`), stale-Ralph `ccv3-visualization` deactivation (0.4), knowledge-tree regen (medium priority)
 - [ ] WS-1 — Lean prune/consolidate: per-prompt hot-path (P1), memory reliability + agent-recall activation (P2), dedup/dead-code + Neon-token security (P3), enforcement-docs fix (medium priority)
@@ -170,6 +175,16 @@
 - Data note: use `count(*)` not `pg_stat` for usage calls (the latter mis-reported memory/PageIndex as empty). Live counts: archival_memory 569, pageindex_nodes 2418, file_claims 6720, sessions 1117.
 
 ## Recent Planning Sessions
+### 2026-06-04: Fix BGE embedding-daemon `ping_failed` → warm hybrid quality-gate re-run
+**Key Decisions:**
+- Branch off `main`: `feature/embedding-daemon-ping-fix`. Push target is `fork`, never `origin`.
+- Do NOT kill the live daemon casually (model reload is ~30-45s). Capture current discovery file first.
+- Run the reproduce one-liner (from `$CLAUDE_OPC_DIR`):
+- Single-shot ping in isolation (expect to SUCCEED, proving the daemon is fine when idle):
+- Reproduce under load: fire several `recall_learnings.py` / direct `embed` calls concurrently while pinging, to
+
+**Files:** embedding-client.ts, recall_learnings.py, opc/tests/unit/test_embedding_daemon_guard.py, ~/.claude/logs/embedding-daemon-launcher.log, docs/ccv3-ws2-phaseB-plan-2026-06-02.md, opc/scripts/core/embedding_daemon.py, opc/scripts/core/recall_learnings.py, cd opc && PYTHONPATH=. uv run pytest tests/unit/test_embedding_daemon_guard.py tests/unit/test_embedding_daemon_lock.py
+
 ### 2026-06-03: Planning Session
 ### 2026-06-02: CCv3 Hardening — Progress Review + Next Steps (2026-06-02)
 **Key Decisions:**
@@ -187,11 +202,3 @@
 - Add an exported, pure function:
 - In `main()`, change `const newContent = generateRoadmap(sections);` (line ~530)
 - Contract / caveat:: the 4 managed sections are auto-regenerated, so durable
-
-### 2026-05-29: Fix ROADMAP corruption: roadmap-completion TaskUpdate branch
-**Key Decisions:**
-- Root cause (verified by reading the code): *
-- `updateRoadmapContent()` — stamps Current Focus as completed-today, blanks it.
-- `git-commit-roadmap.ts` — **NOT the same bug.* It is *additive*:
-- Decision — make the TaskUpdate branch advisory-only (your option b). *
-- Delete the now-dead `updateRoadmapContent` (129-191) and
