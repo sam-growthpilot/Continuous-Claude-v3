@@ -556,8 +556,8 @@ async function main() {
   // FTS) recall; otherwise fall back to text-only and fire-and-forget the
   // daemon spawn so the NEXT prompt benefits.
   //
-  // The probe is bounded to 200ms (DEFAULT_PING_TIMEOUT_MS inside the
-  // client) so we never burn the hook's 2s budget on a hung daemon.
+  // The probe is bounded by DEFAULT_PING_TIMEOUT_MS (currently 1500ms in
+  // embedding-client.ts) so daemon liveness checks stay within a tight budget.
   let daemonReady = false;
   try {
     daemonReady = await isDaemonReady();

@@ -48,9 +48,15 @@ def test_lock_path_is_under_claude_run() -> None:
 
 def test_paths_not_under_tempdir() -> None:
     tmp = Path(tempfile.gettempdir()).resolve()
-    # The canonical dir must not be inside the process temp dir.
-    assert tmp not in _canonical_run_dir().resolve().parents
-    assert _canonical_run_dir().resolve() != tmp
+    run_dir = _canonical_run_dir().resolve()
+    expected = _EXPECTED_DIR.resolve()
+    # Some CI/container layouts put HOME itself under the OS temp root
+    # (e.g. HOME=/tmp/...). That environment shape is not the bug this test
+    # targets, so skip the containment check there -- but still assert the
+    # canonical path is never EXACTLY the tempdir.
+    if tmp not in expected.parents and expected != tmp:
+        assert tmp not in run_dir.parents
+    assert run_dir != tmp
 
 
 # ---------------------------------------------------------------------------
