@@ -522,6 +522,7 @@ function _logLauncher(msg) {
 }
 var _spawnAttempted = false;
 function ensureDaemonRunning() {
+  if (process.env.CCV3_EMBEDDING_NO_SPAWN === "1") return;
   if (_spawnAttempted) return;
   _spawnAttempted = true;
   const info = readDaemonInfo();

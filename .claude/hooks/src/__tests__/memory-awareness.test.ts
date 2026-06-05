@@ -139,6 +139,12 @@ function isolatedEnv(): Record<string, string | undefined> {
     CLAUDE_PROJECT_DIR: projectDir,
     HOME: fakeHome,
     USERPROFILE: fakeHome,
+    // Kill-switch: the hook calls ensureDaemonRunning(), whose resolveRepoRoot()
+    // walks process.argv[1] (the REAL built hook) up to the REAL repo's opc/ —
+    // ignoring our fake HOME/CLAUDE_PROJECT_DIR. Without this, every test case
+    // launches a real model-loading `uv run embedding_daemon.py --daemon`
+    // (a herd of cmd.exe windows + 1.3GB model loads). See embedding-client.ts.
+    CCV3_EMBEDDING_NO_SPAWN: '1',
   };
 }
 

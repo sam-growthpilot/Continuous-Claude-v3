@@ -724,6 +724,15 @@ let _spawnAttempted = false;
  * race (all N read the stale lock, all N passed, all N spawned).
  */
 export function ensureDaemonRunning(): void {
+  // Step 0: kill-switch. Tests/CI set CCV3_EMBEDDING_NO_SPAWN=1 so this hook
+  // NEVER launches a real model-loading daemon. Without it, a herd of cmd.exe
+  // windows appears during `npm test`: memory-awareness.test.ts spawns the REAL
+  // built hook with a fake HOME, and resolveRepoRoot() walks process.argv[1] up
+  // to the REAL repo's opc/ (HOME/CLAUDE_PROJECT_DIR don't gate it), so every
+  // test case launches a real `uv run embedding_daemon.py --daemon`
+  // (2026-06-05). Production leaves this unset — no behavior change.
+  if (process.env.CCV3_EMBEDDING_NO_SPAWN === '1') return;
+
   // Step 1: fast-path — already attempted in this Node process.
   if (_spawnAttempted) return;
   _spawnAttempted = true;

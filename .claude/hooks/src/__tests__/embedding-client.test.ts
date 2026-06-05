@@ -558,6 +558,21 @@ describe('ensureDaemonRunning: cross-process spawn lockfile mutex', () => {
     __test.resetUvPathCache();
   });
 
+  it('kill-switch: CCV3_EMBEDDING_NO_SPAWN=1 makes it a no-op (no lock, no spawn)', () => {
+    const saved = process.env.CCV3_EMBEDDING_NO_SPAWN;
+    process.env.CCV3_EMBEDDING_NO_SPAWN = '1';
+    try {
+      expect(existsSync(SPAWN_LOCK_PATH)).toBe(false);
+      ensureDaemonRunning();
+      // Kill-switch returns before the fast-path, pre-validation, lock, or spawn.
+      expect(mockedSpawn).not.toHaveBeenCalled();
+      expect(existsSync(SPAWN_LOCK_PATH)).toBe(false);
+    } finally {
+      if (saved === undefined) delete process.env.CCV3_EMBEDDING_NO_SPAWN;
+      else process.env.CCV3_EMBEDDING_NO_SPAWN = saved;
+    }
+  });
+
   it('does NOT write a new lockfile when an existing one is less than TTL old', () => {
     // Write a fresh lockfile (age = 0s, well within 60s TTL) with a fake PID.
     const fakePid = process.pid + 1000;
