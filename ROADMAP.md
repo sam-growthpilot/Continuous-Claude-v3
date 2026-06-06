@@ -1,13 +1,13 @@
 # Project Roadmap
 
 ## Current Focus
-**Bus-bias hybrid-recall lift — does it earn its keep? (investigation)**
-- Embedding-daemon warmth bug is FIXED + MERGED (PR #7 `3a398236`): root cause was a Node-vs-Python TMPDIR/TEMP discovery-path mismatch, now anchored to `~/.claude/run/`. Daemon warm (~200ms) + persisted via scheduled task `CCv3-Embedding-Daemon`.
-- OPEN QUESTION: the warm hybrid quality gate showed **+7.0% top-score / FLAT 69%→69% hit-rate**, NOT the documented +33.6% / 63→88%. Verdict held KEEP ENABLED but the bias benefit is modest. Trace the +33.6% provenance (corpus drift 574→576? case set? mislabeled-cold baseline?) and decide keep / tune / roll back.
-- Full handoff: `docs/ccv3-session7-handoff-2026-06-04.md`. Push `fork` never `origin`. Do NOT change BGE model/dim (1024).
-- Started: 2026-06-04
+**Harden the Alpha + Lay a Solid FastMCP v3 Foundation**
+- Locked decisions (this session): (1) ship the approved COUNT fix **first and alone**; (2) **defer* wiring the tool-call rate limiter (out of scope for alpha — Salesforce's upstream limits suffice for 16 users); (3) foundation work this round is **guardrails + cleanup only**, no new capabilities.; The tool-call rate limiter is **unwired**: `build_rate_limiter`/`.acquire()` appear only inside `rate_limit.py`; nothing in the request path consumes `config.rate_limit_rps`. (Deferred per decision 2.)
+- Started: 2026-06-06
 
 ## Completed
+- [x] fix(memory): stop test suite from spawning real embedding daemons (herd source #2) (2026-06-05) `c1b110d`
+- [x] fix(memory): herd-proof embedding-daemon spawn — atomic lock + no-shell Windows spawn (2026-06-05) `ea1b03c`
 - [x] fix(memory): address CodeRabbit findings on PR #7 (2026-06-04) `d996d7f`
 - [x] docs(ws2): flip B.4b deferred -> DONE; record warm hybrid-gate re-run (2026-06-04) `72cee99`
 - [x] fix(memory): canonical daemon discovery path -- end TMPDIR/TEMP rendezvous mismatch (2026-06-04) `032f940`
@@ -155,6 +155,8 @@
 - [x] Eliminate Excessive Permission Prompts for Autonomous Agent Tasks (2026-04-02)
 
 ## Planned
+- [ ] CCv3-Hardening — Session 9: through Phase C (codegraph) (high priority)
+- [ ] Bus-bias hybrid-recall lift — does it earn its keep? (investigation) (high priority)
 - [ ] P1 — Bus-bias lift investigation: warm gate gave +7.0%/flat-hit, not the documented +33.6%/63→88%. Trace provenance, decide keep/tune/roll back the hybrid bias (high priority)
 - [ ] P2 — Verify embedding daemon survives a REAL reboot (scheduled task only ad-hoc-verified; Codex flagged job-object detach). After next restart confirm `~/.claude/run/ccv3-embedding.json` appears <60s + warm recall (medium priority)
 - [ ] P2 — Ops: full parallel `vitest run` hangs on a pre-existing Windows daemon/socket suite — add a hard per-test timeout (medium priority)
@@ -175,6 +177,19 @@
 - Data note: use `count(*)` not `pg_stat` for usage calls (the latter mis-reported memory/PageIndex as empty). Live counts: archival_memory 569, pageindex_nodes 2418, file_claims 6720, sessions 1117.
 
 ## Recent Planning Sessions
+### 2026-06-06: Harden the Alpha + Lay a Solid FastMCP v3 Foundation
+**Key Decisions:**
+- Locked decisions (this session): (1) ship the approved COUNT fix **first and alone**; (2) **defer* wiring the tool-call rate limiter (out of scope for alpha — Salesforce's upstream limits suffice for 16 users); (3) foundation work this round is **guardrails + cleanup only**, no new capabilities.
+- The tool-call rate limiter is **unwired**: `build_rate_limiter`/`.acquire()` appear only inside `rate_limit.py`; nothing in the request path consumes `config.rate_limit_rps`. (Deferred per decision 2.)
+- No `.github/`: directory — CI is absent (the build plan's "committed; activation pending" is inaccurate). **No `pytest-cov`, no `mypy`/`pyright`* in dev deps.
+- Two separate `HostedMCPProxy` instances exist (`proxy_tools._get_proxy()` and the one `build_hosted_mcp_source()` builds at `server.py:220`) — each owns its own httpx client + token store and can diverge.
+- `schema_tools._queryable_fields()` runs `SELECT FIELDS(ALL) … LIMIT 1` **once per object**, looped over every object in `_salesforce_get_schema_summary_impl` (~`:396`) with no caching — an N+1 against the p50<3s/p95<8s target. The code's own docstring (~`:247`) already specifies the fix key `<oid>:<object>`.
+
+**Files:** Mcp.User, salesforce_mcp/hosted_mcp/client.py, CLAUDE.md, rate_limit.py, docs/HANDOFF-2026-06-04-soql-count-limit-fix.md, ~/.claude/plans/we-have-been-working-abstract-coral.md, salesforce_mcp/hosted_mcp/source.py, salesforce_mcp/middleware/safety.py
+
+**Verification:** Per change: `uv run pytest -q` (green, no baseline regression), `uv run ruff check .`, and from Phase 3 on, the coverage gate + `pyright` on the auth core.
+
+### 2026-06-05: Planning Session
 ### 2026-06-04: Fix BGE embedding-daemon `ping_failed` → warm hybrid quality-gate re-run
 **Key Decisions:**
 - Branch off `main`: `feature/embedding-daemon-ping-fix`. Push target is `fork`, never `origin`.
@@ -182,8 +197,6 @@
 - Run the reproduce one-liner (from `$CLAUDE_OPC_DIR`):
 - Single-shot ping in isolation (expect to SUCCEED, proving the daemon is fine when idle):
 - Reproduce under load: fire several `recall_learnings.py` / direct `embed` calls concurrently while pinging, to
-
-**Files:** embedding-client.ts, recall_learnings.py, opc/tests/unit/test_embedding_daemon_guard.py, ~/.claude/logs/embedding-daemon-launcher.log, docs/ccv3-ws2-phaseB-plan-2026-06-02.md, opc/scripts/core/embedding_daemon.py, opc/scripts/core/recall_learnings.py, cd opc && PYTHONPATH=. uv run pytest tests/unit/test_embedding_daemon_guard.py tests/unit/test_embedding_daemon_lock.py
 
 ### 2026-06-03: Planning Session
 ### 2026-06-02: CCv3 Hardening — Progress Review + Next Steps (2026-06-02)
@@ -193,12 +206,3 @@
 - WS-2 Phase A (context-bus substrate) — BUILT, reviewed, committed (`cb9c14a`): `session-bus-id.ts` + `context-bus.ts` (atomic single-writer, CAS-under-lock, `CCV3_BUS_OFF`, 50ms fail-open, busId path-traversal validation) + `intel-bus.ts` + boundary doc + emit-guard surface check. 78 vitest green. Cross-model `/review` found 3 issues, all fixed pre-commit (incl. a Codex-only path-traversal lift). **Substrate-only — wired to NO production consumer (that's Phase B).**
 - Reverse-sync clobber — root-caused + fixed (`4631b43`): two automatic active→repo triggers disabled (the `~/.claude` git post-commit hook + the `sync-to-repo` PostToolUse hook); reverse-sync is now manual-only + `sync-claude.sh` aborts on a dirty repo; documented in `git-sync-workflow.md`.
 - Regenerate `knowledge-tree.json`: (currently references `create-better-skills.bak` archive paths): `cd $CLAUDE_OPC_DIR && PYTHONPATH=. uv run python scripts/core/knowledge_tree.py --project continuous-claude --verbose`; validate with `scripts/core/tree_schema.py --validate`.
-
-### 2026-05-31: Planning Session
-### 2026-05-30: Preserve hand-written ROADMAP notes across planning, and surface them at session start
-**Key Decisions:**
-- `session-start-continuity.ts` `buildUnifiedContext` (line ~302) surfaces only
-- Chosen approach (user-selected): *Preserve all unmanaged content. post-plan
-- Add an exported, pure function:
-- In `main()`, change `const newContent = generateRoadmap(sections);` (line ~530)
-- Contract / caveat:: the 4 managed sections are auto-regenerated, so durable
