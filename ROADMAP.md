@@ -1,11 +1,15 @@
 # Project Roadmap
 
 ## Current Focus
-**Harden the Alpha + Lay a Solid FastMCP v3 Foundation**
-- Locked decisions (this session): (1) ship the approved COUNT fix **first and alone**; (2) **defer* wiring the tool-call rate limiter (out of scope for alpha — Salesforce's upstream limits suffice for 16 users); (3) foundation work this round is **guardrails + cleanup only**, no new capabilities.; The tool-call rate limiter is **unwired**: `build_rate_limiter`/`.acquire()` appear only inside `rate_limit.py`; nothing in the request path consumes `config.rate_limit_rps`. (Deferred per decision 2.)
-- Started: 2026-06-06
+**CCv3-Hardening — Session 9: through Phase C (codegraph)**
+- Orientation: `docs/ccv3-session9-kickoff-2026-06-05.md`; execution plan: `~/.claude/plans/we-have-been-working-starry-pony.md` (premortem-hardened).
+- Finish line: repo reconciliation -> P1 bus-bias decision -> WS-0/WS-1 loose ends -> build+wire codegraph behind `/code-intel`. Phase C.5/D/E explicitly out of scope.
+- Status (2026-06-06): Step 0 reconciliation DONE (herd-fix PR #8 open; chore reconciliation PR #9 open). P1 bus-bias = **KEEP ENABLED** (verified warm gate +7.3%/flat-hit, n=13/corpus-584; the documented +33.6%/63->88% does NOT reproduce — retired as a stale snapshot). NEXT: WS-0/WS-1 loose ends, then Phase C.
+- Constraints: push `fork` never `origin`; do NOT change BGE model/dim (1024). Gates G5 (blocks WS-0.1) and G6 (before P3) binding.
+- Started: 2026-06-05
 
 ## Completed
+- [x] P1 — Bus-bias hybrid-recall lift: **KEEP ENABLED** — verified warm gate +7.3%/flat-hit (n=13, corpus 584); +33.6%/63->88% retired as a stale snapshot; tune focus-weighting deferred (2026-06-06)
 - [x] fix(memory): stop test suite from spawning real embedding daemons (herd source #2) (2026-06-05) `c1b110d`
 - [x] fix(memory): herd-proof embedding-daemon spawn — atomic lock + no-shell Windows spawn (2026-06-05) `ea1b03c`
 - [x] fix(memory): address CodeRabbit findings on PR #7 (2026-06-04) `d996d7f`
@@ -156,8 +160,6 @@
 
 ## Planned
 - [ ] CCv3-Hardening — Session 9: through Phase C (codegraph) (high priority)
-- [ ] Bus-bias hybrid-recall lift — does it earn its keep? (investigation) (high priority)
-- [ ] P1 — Bus-bias lift investigation: warm gate gave +7.0%/flat-hit, not the documented +33.6%/63→88%. Trace provenance, decide keep/tune/roll back the hybrid bias (high priority)
 - [ ] P2 — Verify embedding daemon survives a REAL reboot (scheduled task only ad-hoc-verified; Codex flagged job-object detach). After next restart confirm `~/.claude/run/ccv3-embedding.json` appears <60s + warm recall (medium priority)
 - [ ] P2 — Ops: full parallel `vitest run` hangs on a pre-existing Windows daemon/socket suite — add a hard per-test timeout (medium priority)
 - [ ] P3 — Ops: async post-commit forward-sync race leaves active hook dist stale — hash-verify + `cp` after every hook commit until root-fixed (low priority)
@@ -177,17 +179,15 @@
 - Data note: use `count(*)` not `pg_stat` for usage calls (the latter mis-reported memory/PageIndex as empty). Live counts: archival_memory 569, pageindex_nodes 2418, file_claims 6720, sessions 1117.
 
 ## Recent Planning Sessions
-### 2026-06-06: Harden the Alpha + Lay a Solid FastMCP v3 Foundation
+### 2026-06-06: CCv3-Hardening — Session 9 (reconciliation + P1 bus-bias)
 **Key Decisions:**
-- Locked decisions (this session): (1) ship the approved COUNT fix **first and alone**; (2) **defer* wiring the tool-call rate limiter (out of scope for alpha — Salesforce's upstream limits suffice for 16 users); (3) foundation work this round is **guardrails + cleanup only**, no new capabilities.
-- The tool-call rate limiter is **unwired**: `build_rate_limiter`/`.acquire()` appear only inside `rate_limit.py`; nothing in the request path consumes `config.rate_limit_rps`. (Deferred per decision 2.)
-- No `.github/`: directory — CI is absent (the build plan's "committed; activation pending" is inaccurate). **No `pytest-cov`, no `mypy`/`pyright`* in dev deps.
-- Two separate `HostedMCPProxy` instances exist (`proxy_tools._get_proxy()` and the one `build_hosted_mcp_source()` builds at `server.py:220`) — each owns its own httpx client + token store and can diverge.
-- `schema_tools._queryable_fields()` runs `SELECT FIELDS(ALL) … LIMIT 1` **once per object**, looped over every object in `_salesforce_get_schema_summary_impl` (~`:396`) with no caching — an N+1 against the p50<3s/p95<8s target. The code's own docstring (~`:247`) already specifies the fix key `<oid>:<object>`.
+- Step 0 repo reconciliation DONE: herd-fix PR #8 opened; 7 logical reconciliation commits on `chore/session9-reconciliation` (PR #9); 4 junk stderr-artifact files deleted; `.codex/` mirror + `tools/PerfView.exe` gitignored; leading-# memory-eval doc renamed + inbound ref fixed.
+- P1 bus-bias hybrid-recall lift: **KEEP ENABLED** (user-ratified). Verified warm gate +7.3% top-score / flat 69% hit-rate (n=13, corpus 584); read-only PASS. The documented +33.6%/63->88% does NOT reproduce (stale snapshot; repr-only ~+14.5% matches the original +15.3%, diluted to +7.3% by the 5 STRONG cases). Deferred: tune focus-term weighting. Memory id 79da5d25.
+- Two live-hazard findings flagged for follow-up (out of this push's scope): (a) a `store_learning.py` invocation with unquoted shell metacharacters creates junk files under `opc/` (one regenerated mid-session); (b) the `post-plan-roadmap` hook clobbered this Current Focus with a foreign project's goal (Salesforce/FastMCP plan `abstract-coral`) — the cross-project contamination guard did not catch it; this entry restores the correct session-9 record.
 
-**Files:** Mcp.User, salesforce_mcp/hosted_mcp/client.py, CLAUDE.md, rate_limit.py, docs/HANDOFF-2026-06-04-soql-count-limit-fix.md, ~/.claude/plans/we-have-been-working-abstract-coral.md, salesforce_mcp/hosted_mcp/source.py, salesforce_mcp/middleware/safety.py
+**Files:** ROADMAP.md, opc/scripts/core/store_learning.py, scripts/bus-quality-gate.mjs, .gitignore, docs/ (session-9 handoffs), ~/.claude/plans/we-have-been-working-starry-pony.md
 
-**Verification:** Per change: `uv run pytest -q` (green, no baseline regression), `uv run ruff check .`, and from Phase 3 on, the coverage gate + `pyright` on the auth core.
+**Verification:** `node scripts/bus-quality-gate.mjs hybrid` (WARM, read-only PASS 584->584, KEEP ENABLED); store_learning 12/12 v1-gate tests green; clean `git status`.
 
 ### 2026-06-05: Planning Session
 ### 2026-06-04: Fix BGE embedding-daemon `ping_failed` → warm hybrid quality-gate re-run
