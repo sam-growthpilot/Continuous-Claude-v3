@@ -41,13 +41,13 @@ If the upstream needs SDK-only access, or the connector is a personal-use stdio 
 | Dev hosting | Railway | Test/staging — fast iteration, no auth |
 | Prod hosting | Azure Container Apps in `rg-agent-architecture` / `locmap-env` (Sweden Central) | Easy Auth at platform layer; CAF naming `ca-mcp-<service>` |
 | Identity | Entra ID app registration with custom App Role + `appRoleAssignmentRequired=true` | Per-user gate enforced at OAuth time |
-| Auth pattern | **Easy Auth + `Return401` + `EasyAuthGate`** for token-bearing clients; **FastMCP `RemoteAuthProvider` + `AzureJWTVerifier`** (app-owned, validate-only) when a **Claude Custom Connector** is the client | Easy Auth alone does NOT advertise OAuth discovery (PRM) on ACA, so connectors can't complete OAuth — see Phase 10 (2026-05-29) |
+| Auth pattern | **Easy Auth + `Return401` + `EasyAuthGate`** for token-bearing clients; **FastMCP `AzureProvider`** (OAuth-proxy provider, NOT the CVE-laden in-process `OAuthProxy`) when a **Claude Custom Connector** is the client | `AzureProvider` auto-mounts PRM discovery, strips the RFC 8707 `resource=` param that Entra v2.0 rejects, and handles DCR — no manual client-id entry in claude.ai; Easy Auth alone does NOT advertise OAuth discovery (PRM) on ACA — see Phase 10 (2026-05-29) |
 | ACR pull | **Managed Identity** (`AcrPull` role) | Admin-user is dev-only per Microsoft + PSRule |
 | Secrets | **Key Vault references** (`keyvaultref:`) | Plaintext env vars are visible to anyone with read access on the container app |
 | Image tagging | **Dual: `<service>:<semver>` + `<service>:sha-<short-sha>`, deploy by digest** | Microsoft 2026 guidance; rejects `:latest` in production |
 | Distribution | Anthropic Custom Connector (workspace) | OAuth 2.1, **user-delegated, requires PRM discovery (RFC 9728)** — see Phase 10; egress `160.79.104.0/21` |
 
-> ⚠️ **FastMCP `OAuthProxy` is dev-only.** Active CVEs as of May 2026: [CVE-2026-27124](https://advisories.gitlab.com/pkg/pypi/fastmcp/CVE-2026-27124/) (Confused Deputy), [CVE-2025-69196](https://advisories.gitlab.com/pkg/pypi/fastmcp/CVE-2025-69196/) (token reuse). FastMCP's own release notes describe it as "intended only for development and testing." Do NOT use in production — use Easy Auth instead.
+> ⚠️ **FastMCP `OAuthProxy` is dev-only.** Active CVEs as of May 2026: [CVE-2026-27124](https://advisories.gitlab.com/pkg/pypi/fastmcp/CVE-2026-27124/) (Confused Deputy), [CVE-2025-69196](https://advisories.gitlab.com/pkg/pypi/fastmcp/CVE-2025-69196/) (token reuse). FastMCP's own release notes describe it as "intended only for development and testing." Do NOT use in production. For production: use **Easy Auth + `EasyAuthGate`** for token-bearing clients, or **FastMCP `AzureProvider`** for Claude Custom Connector clients (see Phase 10). **`AzureProvider` is a distinct, safe OAuth-proxy provider — not `OAuthProxy`.**
 
 ---
 
@@ -612,26 +612,31 @@ Set up the federated identity once: [docs](https://learn.microsoft.com/en-us/azu
 
 **Why an Easy-Auth-only endpoint fails.** ACA Easy Auth returns a *bare* `401` (`WWW-Authenticate: Bearer realm=…`, no `resource_metadata`) and 401s the `/.well-known/*` paths too — so Claude discovers nothing and never starts OAuth. The App-Service setting that makes Easy Auth emit PRM (`WEBSITE_AUTH_PRM_DEFAULT_WITH_SCOPES`) is **App-Service-only + preview; it does not exist on Container Apps**. On ACA, advertising discovery is an **application** responsibility.
 
-**Recommended pattern — app-owned OAuth via FastMCP `RemoteAuthProvider` + `AzureJWTVerifier` (validate-only).** Auto-mounts `/.well-known/oauth-protected-resource`, emits the canonical challenge, validates the Entra token in-process. This is NOT the CVE-laden `OAuthProxy`/`AzureProvider` (those proxy the whole OAuth dance — still dev-only). Microsoft's ISE team ships exactly this on ACA (Feb 2026). It replaces the Phase-6 Easy Auth edge:
+**Recommended pattern — FastMCP `AzureProvider` (OAuth-proxy provider).** `AzureProvider` is the production connector path: it auto-mounts `/.well-known/oauth-protected-resource`, emits the canonical `WWW-Authenticate` challenge, and — critically — strips the RFC 8707 `resource=` parameter that Entra v2.0 rejects (the failure mode of the old `RemoteAuthProvider` / "Option B" approach). DCR (dynamic client registration) handles connector registration automatically, so **no manual client ID or secret is entered in claude.ai**. Easy Auth must stay **DISABLED** — `AzureProvider` owns the `/.well-known/oauth-protected-resource/mcp` path.
+
+> **IMPORTANT — `AzureProvider` is NOT `OAuthProxy`.** The in-process `OAuthProxy` (`auth_mode=proxy`) has open CVEs and is DEV-ONLY. `AzureProvider` is a distinct, safe OAuth-proxy provider. Do not conflate them.
 
 ```python
-from fastmcp.server.auth import RemoteAuthProvider
-from fastmcp.server.auth.providers.azure import AzureJWTVerifier
-verifier = AzureJWTVerifier(client_id="<RESOURCE_app_id>", tenant_id="<tenant>",
-                            required_scopes=["access_as_user"])  # bare scp value
-auth = RemoteAuthProvider(token_verifier=verifier,
-    authorization_servers=["https://login.microsoftonline.com/<tenant>/v2.0"],
-    base_url="https://ca-mcp-<svc>.<region>.azurecontainerapps.io/mcp")  # FULL /mcp URL
+from fastmcp import FastMCP
+from fastmcp.server.auth.providers.azure import AzureProvider
+
+auth = AzureProvider(
+    client_id="<ENTRA_APP_ID>",          # same app is BOTH client_id AND audience
+    client_secret="<secret-from-kv>",
+    tenant_id="<tenant>",
+)
 mcp = FastMCP("Service", auth=auth)
 ```
 
-Tools read identity via `get_access_token()` (`.claims` for oid/roles, `.token` for the downstream subject) — replacing the `X-MS-CLIENT-PRINCIPAL` header read. Keep a `RoleGate` middleware checking the `Mcp.User` role from `.claims["roles"]`.
+A single Entra app serves as BOTH the OAuth `client_id` AND the token audience — DCR registers the connector automatically. Tools read identity via `get_access_token()` (`.claims` for oid/roles, `.token` for the downstream RFC 8693 subject). Keep a `RoleGate` middleware checking `Mcp.User` from `.claims["roles"]`.
 
-**Client/resource app separation (security requirement).** The connector's `client_id`+`client_secret` are handed to Anthropic, so do NOT hand over a multi-purpose app's secret. Use **two** app registrations:
-- **CLIENT** = a dedicated app (`HS MCP <Service> Connector`) — Anthropic holds only this secret; carries the `https://claude.ai/api/mcp/auth_callback` redirect URI.
-- **RESOURCE / audience** = the service's API app — exposes `access_as_user`, owns the `Mcp.User` role, stays the token audience (and what any downstream RFC 8693 handler already trusts). The proxy validates this audience and **pins `azp`** to the client app.
+`RemoteAuthProvider` + `AzureJWTVerifier` (validate-only, "Option B") is retained for **smoke/CI scripts only** — it cannot strip the `resource=` param so connector clients (claude.ai) will fail auth against it.
 
-**Register in claude.ai:** Workspace → Connectors → New. Name, URL `…/mcp`, Advanced → the CLIENT app's id + secret. Visibility workspace-only. Anthropic egresses from `160.79.104.0/21`.
+**Single-app model with DCR (AzureProvider production path).** With `AzureProvider`, a single Entra app (`client_id` = token audience = `56012700-c226-4122-bda6-e32a68939c33` in the fourth-salesforce-mcp case) handles everything. DCR (dynamic client registration) registers the connector automatically — **no client ID or secret is entered in the claude.ai UI**. The connector UI takes only Name and MCP URL.
+
+> Note: the two-app CLIENT/RESOURCE separation model described in earlier revisions of this doc was the `RemoteAuthProvider` "Option B" design. It is superseded by `AzureProvider` + DCR. If you see an older Entra app ID like `263c4cf0-…` referenced anywhere, it belongs to a superseded two-app model — drop it.
+
+**Register in claude.ai:** Workspace → Connectors → New. Name, MCP URL `…/mcp`. DCR handles the rest automatically — no manual client-id entry. Visibility workspace-only. Anthropic egresses from `160.79.104.0/21`.
 
 **Gotchas (each verified on fourth-salesforce-mcp, 2026-05-29):**
 - **`aiohttp` missing** → `azure.identity.aio.DefaultAzureCredential` (Cosmos/KeyVault aio) raises `ImportError` building its async pipeline. azure-core does NOT pull it transitively. Add `aiohttp>=3.9` to deps. Masked by SDK-mocked tests; fires on the first live data-plane call.
@@ -663,7 +668,9 @@ Then retire Railway: scale to zero, repoint `~/.claude.json` to ACA URL, mark Ra
 | Mode | When | Server behavior |
 |------|------|----------------|
 | `none` | local dev / smoke tests | `auth=None`, no middleware. Anything can hit. |
-| `easyauth` | **ACA prod (primary)** | `auth=None` (platform validated upstream); `EasyAuthGate` middleware enforces role check. |
+| `easyauth` | **ACA prod — platform-validated token-bearing clients** (e.g. Claude Code, VS Code, API callers with a bearer token) | `auth=None` (Easy Auth validates JWT at the platform edge); `EasyAuthGate` middleware enforces role check. **Not sufficient for Claude Custom Connector clients** — Easy Auth does NOT advertise OAuth Protected Resource Metadata (PRM) on ACA (`WEBSITE_AUTH_PRM` is App Service-only). |
+| `azure` | **ACA prod — Claude Custom Connector clients (production connector path)** | `auth=AzureProvider(client_id=..., client_secret=..., tenant_id=...)`. Auto-mounts PRM discovery, strips the RFC 8707 `resource=` param Entra v2.0 rejects, handles DCR — no manual client-id entry in claude.ai. Easy Auth must be **DISABLED**. `RoleGate` middleware enforces `Mcp.User`. See Phase 10. **This is NOT `OAuthProxy`** — `AzureProvider` is a safe OAuth-proxy provider; `OAuthProxy` is the CVE-laden dev-only variant. |
+| `remote` | **Smoke tests / CI only** — NOT the connector path | `auth=RemoteAuthProvider(token_verifier=AzureJWTVerifier(...))` — validate-only. Cannot strip the RFC 8707 `resource=` param, so connector clients (claude.ai) will fail auth. Retained for `az`-minted bearer token scripts and CI pipelines. See Phase 10. |
 | `proxy` | **DEV ONLY** — never use in prod | `auth=AzureADOAuthProxy(...)` in process. ⚠️ Has open CVEs. Marketing Brain currently uses this; see Addendum A for migration plan. |
 
 Default to `none`.
@@ -705,7 +712,7 @@ Default to `none`.
 | `ctx.fastmcp_context.http_request` accessed in middleware | Middleware fails closed silently; every authenticated user denied; unit tests with mocked context pass because the mock has the attribute the real `Context` doesn't | Use `get_http_request()` from `fastmcp.server.dependencies`, wrapped in `try/except (RuntimeError, LookupError)` to fail closed on STDIO / background tasks |
 | Only `on_call_tool` and `on_read_resource` gated | Tool roster enumerable to unauthenticated callers via `list_tools` if they reach the container directly | Gate all listing + get hooks (`on_list_tools`, `on_list_resources`, `on_list_resource_templates`, `on_list_prompts`, `on_get_prompt`) — but NOT `on_initialize` (gating breaks the MCP handshake) |
 | Audit log shows `upn=<unknown>` for every deny | `name_typ_value` is not a real Easy Auth principal key — UPN lives in `claims[*]` with `typ` in `("preferred_username", ".../upn", ".../name")` | Walk the claims list for one of those three `typ` values, fall back to `<unknown>` |
-| Easy-Auth-only endpoint for a **Claude Custom Connector** | Connector can't complete OAuth — bare `401`, no `resource_metadata`, `.well-known` 401'd | App-owned OAuth: FastMCP `RemoteAuthProvider` + `AzureJWTVerifier` advertises PRM. See Phase 10 |
+| Easy-Auth-only endpoint for a **Claude Custom Connector** | Connector can't complete OAuth — bare `401`, no `resource_metadata`, `.well-known` 401'd | Use FastMCP `AzureProvider` (strips RFC 8707 `resource=`, auto-mounts PRM, handles DCR). Easy Auth must be DISABLED. See Phase 10 |
 | `aiohttp` not in deps | `azure.identity.aio` raises `ImportError` building its async pipeline; masked by SDK-mocked tests, fires on first live Cosmos/KeyVault call | Add `aiohttp>=3.9` (azure-core doesn't pull it) |
 | Connector secret = a multi-purpose app's secret | Anthropic-held credential compromise takes down SSO / token-exchange too | Dedicated CLIENT app reg; existing app stays RESOURCE/audience; pin `azp` |
 
