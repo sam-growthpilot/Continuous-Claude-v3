@@ -4,11 +4,13 @@ Canonical boundary doc for the WS-2 "Cohesive Intelligence" model (v3 design §3
 
 **Phase A status:** the L2 context bus is **substrate-only** — built, atomic, observable, kill-switchable, but wired to NO production consumer yet. Specialist routing through the facade is Phase B. This doc is the contract those phases implement.
 
+**Phase C status (2026-06-07):** codegraph is now **LIVE** — `@colbymchenry/codegraph@0.9.9` is wired behind `/code-intel` as the first L3 specialist (C.2). `who-calls` → `codegraph callers`, `find-symbol` → `codegraph query` (FTS), `code-context` → `codegraph query` + `impact` fused with `tldr structure` + archival recall. TLDR remains the permanent fallback via the kill-switch order **`CCV3_KILLSWITCH` → `CCV3_CODEGRAPH_OFF` → binary-absent → unchanged TLDR path** (checked lazily every call). The C.1 Windows platform contract gate is GREEN (`.claude/rules/windows-platform.md` → "codegraph Phase C").
+
 ## L3 specialist table (§3 verbatim)
 
 | Specialist | Owns this query type | Escalates to | Substrate (L1) |
 |------------|---------------------|--------------|----------------|
-| **codegraph** | "Find symbol X" / "Who calls X" / "Code context for topic Z" — broad, fast, FTS-first | Serena (precision) | `.codegraph/codegraph.db` per project |
+| **codegraph** (LIVE — Phase C) | "Find symbol X" / "Who calls X" / "Code context for topic Z" — broad, fast, FTS-first | Serena (precision) | `.codegraph/codegraph.db` per project |
 | **Serena** | "Resolve symbol through aliases" / "Rename X safely" / LSP truth | terminal authority | `.serena/` per project |
 | **TLDR** | "Control/data flow inside X" / dead code / pyright·ruff / selective tests | codegraph (cross-function calls) | none (recomputed per call) |
 | **ast-grep** | "Find-and-replace this AST pattern" | terminal authority | none |
@@ -19,9 +21,15 @@ Canonical boundary doc for the WS-2 "Cohesive Intelligence" model (v3 design §3
 
 ## Conflict resolutions (§3)
 
-- **codegraph + Serena** — broad survey first, then Serena's precise final word (rank-based escalation; Serena is terminal authority on symbol identity).
-- **codegraph + TLDR `impact`** — codegraph owns symbol-callers; TLDR keeps `cfg`/`dfg`/`slice`/`dead`/`diagnostics`.
-- **TLDR `search`** — deprecated for symbol search (codegraph owns it).
+- **codegraph + Serena** — broad survey first, then Serena's precise final word (rank-based escalation; Serena is terminal authority on symbol identity). The facade emits a `serena_hint` on `find-symbol` (codegraph FTS is not alias resolution) and on `who-calls` when the caller set is empty or the name is alias-prone (see edge-orphaning caveat below).
+- **codegraph + TLDR `impact`** — codegraph owns symbol-callers (`who-calls` → `codegraph callers`); TLDR keeps `cfg`/`dfg`/`slice`/`dead`/`diagnostics` and is the fallback for `who-calls`/`find-symbol`/`code-context` when codegraph is off/absent.
+- **TLDR `search`** — deprecated for symbol search (codegraph owns it; `find-symbol` → `codegraph query`, TLDR `search` is the off/absent fallback only).
+
+## codegraph live-wiring caveats (C.2)
+
+- **Edge-orphaning on `who-calls` (C.1 finding #4).** Incremental `sync` content-hashes and skips unchanged caller files, so after a *callee-file* edit the inbound cross-file caller edge can be ORPHANED — `who-calls` may under-report. The facade's freshness probe re-syncs dirty source files before a query, but a callee edit does not mark the (unchanged) caller dirty. Mitigation: the facade emits a Serena-escalation hint when `callers` is empty or alias-prone; a periodic `index --force` (or re-syncing caller files) fully restores edges. Treat an empty `who-calls` as "possibly incomplete → escalate to Serena `find_referencing_symbols`", not "no callers".
+- **Freshness is on-demand, not watched (C.1 finding #2/#5).** One-shot CLI calls never start codegraph's daemon watcher; the facade runs a cheap O(1) probe (cached `git rev-parse HEAD` + `git status --porcelain`) and `sync`s dirty files before querying. Each codegraph call pays a ~3-4s Node+WASM startup tax — amortized by the freshness cache, never by making codegraph faster.
+- **Facade PROPOSES, never writes L2 (single-writer §4).** Live codegraph calls return `proposed_bus_updates` (`focus_symbols` + `recent_findings`, each a SCIP `signature_hash`) with a TTL/validity stamp (`git_sha` + `corpus_signature`). A downstream `SubagentStop` writer revalidates before applying; stale proposals are dropped. The facade never mutates `context.json`.
 
 ## Operational notes (2026-06-01)
 
