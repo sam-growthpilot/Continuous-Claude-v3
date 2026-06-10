@@ -288,15 +288,16 @@ function buildFixture(): string {
 // Suite. Skipped wholesale when the binary is absent.
 // ---------------------------------------------------------------------------
 
-const describeFn = BINARY_PRESENT ? describe : describe.skip;
+const WINDOWS_CONTRACT_RUNNABLE = process.platform === 'win32' && BINARY_PRESENT;
+const describeFn = WINDOWS_CONTRACT_RUNNABLE ? describe : describe.skip;
 
-if (!BINARY_PRESENT) {
+if (!WINDOWS_CONTRACT_RUNNABLE) {
   // Make the skip reason visible in test output / CI logs.
   // eslint-disable-next-line no-console
   console.warn(
-    '[codegraph-platform-contract] SKIPPED: codegraph binary not found ' +
-      `(checked CCV3_CODEGRAPH_BIN, ${LOCAL_SHIM_JS}, ${LOCAL_BIN}, PATH). ` +
-      'Install @colbymchenry/codegraph in .claude/hooks to run this gate.',
+    '[codegraph-platform-contract] SKIPPED: gate requires Windows + codegraph binary ' +
+      `(platform=${process.platform}, binary checked at CCV3_CODEGRAPH_BIN, ${LOCAL_SHIM_JS}, ${LOCAL_BIN}, PATH). ` +
+      'Install @colbymchenry/codegraph in .claude/hooks and run on Windows to execute this gate.',
   );
 }
 
