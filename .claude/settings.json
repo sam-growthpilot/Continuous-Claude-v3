@@ -98,16 +98,6 @@
         ]
       },
       {
-        "matcher": "Bash",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "node C:/Users/david.hayes/.claude/hooks/dist/navigator-safety.mjs",
-            "timeout": 3000
-          }
-        ]
-      },
-      {
         "matcher": "Edit|Write",
         "hooks": [
           {
