@@ -1,12 +1,9 @@
 # Project Roadmap
 
 ## Current Focus
-**CCv3-Hardening — Session 9: through Phase C (codegraph)**
-- Orientation: `docs/ccv3-session9-kickoff-2026-06-05.md`; execution plan: `~/.claude/plans/we-have-been-working-starry-pony.md` (premortem-hardened).
-- Finish line: repo reconciliation -> P1 bus-bias decision -> WS-0/WS-1 loose ends -> build+wire codegraph behind `/code-intel`. Phase C.5/D/E explicitly out of scope.
-- Status (2026-06-06): Step 0 reconciliation DONE (herd-fix PR #8 open; chore reconciliation PR #9 open). P1 bus-bias = **KEEP ENABLED** (verified warm gate +7.3%/flat-hit, n=13/corpus-584; the documented +33.6%/63->88% does NOT reproduce — retired as a stale snapshot). NEXT: WS-0/WS-1 loose ends, then Phase C.
-- Constraints: push `fork` never `origin`; do NOT change BGE model/dim (1024). Gates G5 (blocks WS-0.1) and G6 (before P3) binding.
-- Started: 2026-06-05
+**CCv3 Fable-5 Deep Review — "Hone to Elegance" (2026-06-10)**
+- User decisions (locked): (1) **merge PRs #8/#9/#10 first* — review one unified main; (2) **whole-system scope, recent-weighted* (extra depth on the 145 commits since the 2026-05-16 memory-upgrade era); (3) deliver **report + ratified backlog + quick-wins executed* this arc (structural refactors are a later ratified arc).; Push **`fork`* (Rev4nchist), never `origin`. Never change BGE model/dim (`BAAI/bge-large-en-v1.5`, 1024).
+- Started: 2026-06-10
 
 ## Completed
 - [x] P1 — Bus-bias hybrid-recall lift: **KEEP ENABLED** — verified warm gate +7.3%/flat-hit (n=13, corpus 584); +33.6%/63->88% retired as a stale snapshot; tune focus-weighting deferred (2026-06-06)
@@ -179,15 +176,25 @@
 - Data note: use `count(*)` not `pg_stat` for usage calls (the latter mis-reported memory/PageIndex as empty). Live counts: archival_memory 569, pageindex_nodes 2418, file_claims 6720, sessions 1117.
 
 ## Recent Planning Sessions
+### 2026-06-10: CCv3 Fable-5 Deep Review — "Hone to Elegance" (2026-06-10)
+**Summary:** > Supersedes the session-9 execution plan that previously lived in this file (completed SUCCEEDED 2026-06-07; durable record: `docs/ccv3-session9-completion-2026-06-07.md` + ROADMAP).
+
+**Key Decisions:**
+- User decisions (locked): (1) **merge PRs #8/#9/#10 first* — review one unified main; (2) **whole-system scope, recent-weighted* (extra depth on the 145 commits since the 2026-05-16 memory-upgrade era); (3) deliver **report + ratified backlog + quick-wins executed* this arc (structural refactors are a later ratified arc).
+- Push **`fork`* (Rev4nchist), never `origin`. Never change BGE model/dim (`BAAI/bge-large-en-v1.5`, 1024).
+- The review is READ-ONLY: — no fixes during discovery/verification/synthesis. Fixes happen only in Phase 4 (quick wins) after ratification.
+- Windows-safe commands (array-arg spawns, `Remove-Item -LiteralPath`, no brace expansion). **Never run the full parallel vitest suite* (known hang on a Windows daemon/socket suite) — no test execution during the review at all.
+- Gates G4 (no parallel edits to memory files), G5 (WS-0.1 blocked), G6 (P3 archive cross-check) remain binding for the fix arc.
+
+**Files:** docs/ccv3-session9-completion-2026-06-07.md, .claude/hooks/src/*.ts, .claude/settings.json, .claude/docs/architecture/quick-ref/hook-catalog.md, docs/architecture/system-visualization/architecture.json, ~/.claude/plans/we-have-recently-done-refactored-storm.md, store_learning.py, architecture.json
+
+**Verification:** WF-0: harvest tables exist + row counts sane; exclusion manifest + inventories committed to the review dir.
+
 ### 2026-06-06: CCv3-Hardening — Session 9 (reconciliation + P1 bus-bias)
 **Key Decisions:**
 - Step 0 repo reconciliation DONE: herd-fix PR #8 opened; 7 logical reconciliation commits on `chore/session9-reconciliation` (PR #9); 4 junk stderr-artifact files deleted; `.codex/` mirror + `tools/PerfView.exe` gitignored; leading-# memory-eval doc renamed + inbound ref fixed.
 - P1 bus-bias hybrid-recall lift: **KEEP ENABLED** (user-ratified). Verified warm gate +7.3% top-score / flat 69% hit-rate (n=13, corpus 584); read-only PASS. The documented +33.6%/63->88% does NOT reproduce (stale snapshot; repr-only ~+14.5% matches the original +15.3%, diluted to +7.3% by the 5 STRONG cases). Deferred: tune focus-term weighting. Memory id 79da5d25.
 - Two live-hazard findings flagged for follow-up (out of this push's scope): (a) a `store_learning.py` invocation with unquoted shell metacharacters creates junk files under `opc/` (one regenerated mid-session); (b) the `post-plan-roadmap` hook clobbered this Current Focus with a foreign project's goal (Salesforce/FastMCP plan `abstract-coral`) — the cross-project contamination guard did not catch it; this entry restores the correct session-9 record.
-
-**Files:** ROADMAP.md, opc/scripts/core/store_learning.py, scripts/bus-quality-gate.mjs, .gitignore, docs/ (session-9 handoffs), ~/.claude/plans/we-have-been-working-starry-pony.md
-
-**Verification:** `node scripts/bus-quality-gate.mjs hybrid` (WARM, read-only PASS 584->584, KEEP ENABLED); store_learning 12/12 v1-gate tests green; clean `git status`.
 
 ### 2026-06-05: Planning Session
 ### 2026-06-04: Fix BGE embedding-daemon `ping_failed` → warm hybrid quality-gate re-run
@@ -199,10 +206,3 @@
 - Reproduce under load: fire several `recall_learnings.py` / direct `embed` calls concurrently while pinging, to
 
 ### 2026-06-03: Planning Session
-### 2026-06-02: CCv3 Hardening — Progress Review + Next Steps (2026-06-02)
-**Key Decisions:**
-- Phases 0–2 + Phase 3 crown jewel (agent-side memory recall, live + load-tested) — prior sessions.
-- Codex CLI repair — DONE this session: (`11f99ca`, `4febb8d`, `ab663ef`): CLI healthy (0.131.0, ChatGPT-subscription auth, exec verified, no API key); cross-model `/review` + `/premortem` restored; root-caused the `gpt-4.1` multi-agent crash → adversary uses `--disable multi_agent`, `explorer.toml` keeps interactive multi-agent working; docs reconciled.
-- WS-2 Phase A (context-bus substrate) — BUILT, reviewed, committed (`cb9c14a`): `session-bus-id.ts` + `context-bus.ts` (atomic single-writer, CAS-under-lock, `CCV3_BUS_OFF`, 50ms fail-open, busId path-traversal validation) + `intel-bus.ts` + boundary doc + emit-guard surface check. 78 vitest green. Cross-model `/review` found 3 issues, all fixed pre-commit (incl. a Codex-only path-traversal lift). **Substrate-only — wired to NO production consumer (that's Phase B).**
-- Reverse-sync clobber — root-caused + fixed (`4631b43`): two automatic active→repo triggers disabled (the `~/.claude` git post-commit hook + the `sync-to-repo` PostToolUse hook); reverse-sync is now manual-only + `sync-claude.sh` aborts on a dirty repo; documented in `git-sync-workflow.md`.
-- Regenerate `knowledge-tree.json`: (currently references `create-better-skills.bak` archive paths): `cd $CLAUDE_OPC_DIR && PYTHONPATH=. uv run python scripts/core/knowledge_tree.py --project continuous-claude --verbose`; validate with `scripts/core/tree_schema.py --validate`.
