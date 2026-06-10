@@ -1,0 +1,34 @@
+{
+  "unfiltered": {
+    "rows": 281,
+    "hit_rate_pct": 27.4,
+    "intent_pollution_pct": 24.6,
+    "polluted_count": 69,
+    "top_score_p25": 0,
+    "top_score_p50": 0,
+    "top_score_p75": 0.014868627936927935,
+    "by_source": {
+      "empty": 154,
+      "db": 127
+    },
+    "by_subagent_top": {
+      "main": 281
+    }
+  },
+  "filtered": {
+    "rows": 279,
+    "hit_rate_pct": 27.6,
+    "intent_pollution_pct": 24.7,
+    "polluted_count": 69,
+    "top_score_p25": 0,
+    "top_score_p50": 0,
+    "top_score_p75": 0.014887691065082831,
+    "by_source": {
+      "empty": 152,
+      "db": 127
+    },
+    "by_subagent_top": {
+      "main": 279
+    }
+  }
+}

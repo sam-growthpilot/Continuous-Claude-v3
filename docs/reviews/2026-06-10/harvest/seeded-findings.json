@@ -1,0 +1,83 @@
+[
+  {
+    "id": "SEED-01",
+    "title": "junk-creator: daily ~07:24 process invokes store_learning.py with unquoted shell metachars (5 artifacts to date)",
+    "severity": "S0",
+    "lead": "identical creation minute on consecutive days (06-06 07:24:49, 06-07 07:24:23) -> scheduled/logon task, NOT interactive. Check Task Scheduler + logon-time hooks."
+  },
+  {
+    "id": "SEED-02",
+    "title": "post-plan-roadmap cross-project contamination guard miss (foreign Salesforce goal written to ROADMAP 2026-06-06)",
+    "severity": "S0"
+  },
+  {
+    "id": "SEED-03",
+    "title": "dev-dep vulns in .claude/hooks (vitest UI critical, vite/rollup high) - pre-existing, NOT codegraph",
+    "severity": "S2"
+  },
+  {
+    "id": "SEED-04",
+    "title": "full parallel vitest run hangs on Windows daemon/socket suite",
+    "severity": "S2"
+  },
+  {
+    "id": "SEED-05",
+    "title": "~4 pre-existing failing test files + 1 worker crash",
+    "severity": "S2"
+  },
+  {
+    "id": "SEED-06",
+    "title": "stray scripts/.claude/logs artifact from facade test nested-cwd (quarantined)",
+    "severity": "S3"
+  },
+  {
+    "id": "SEED-07",
+    "title": "doubled continuous-claude/continuous-claude/.ralph/ path from relative -p arg",
+    "severity": "S3"
+  },
+  {
+    "id": "SEED-08",
+    "title": "warm hybrid recall latency 13-17s dominated by uv-run startup",
+    "severity": "S2"
+  },
+  {
+    "id": "SEED-09",
+    "title": "codegraph 3-4s/call Node+WASM startup tax (amortized by freshness cache)",
+    "severity": "S3"
+  },
+  {
+    "id": "SEED-10",
+    "title": "C.3 4-week telemetry watch deferred (not started)",
+    "severity": "S2"
+  },
+  {
+    "id": "SEED-11",
+    "title": "RULES.md enforcement-claim mismatch (P-docs, unspecified)",
+    "severity": "S3"
+  },
+  {
+    "id": "SEED-12",
+    "title": "WS-0.1 session-id consolidation deferred (G5: needs file_claims migration; 2 competing getSessionId schemes live)",
+    "severity": "S2"
+  },
+  {
+    "id": "SEED-13",
+    "title": "recall-intent pollution: <task-notification> XML blobs used as recall intents",
+    "severity": "S1"
+  },
+  {
+    "id": "SEED-14",
+    "title": "hook catalog (155 lines) covers fraction of 120 hooks - doc drift",
+    "severity": "S2"
+  },
+  {
+    "id": "SEED-15",
+    "title": "settings.json template gap: 18 active-only registrations incl package-install-guard; 1 repo-only (periodic-extract). New machine from template lacks the supply-chain guard",
+    "severity": "S1"
+  },
+  {
+    "id": "SEED-16",
+    "title": "store_learning Braintrust emit is a synchronous bounded(2s) HTTP call in the store hot path (CodeRabbit PR#9; candidate fire-and-forget)",
+    "severity": "S2"
+  }
+]

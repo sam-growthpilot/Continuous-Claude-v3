@@ -1,0 +1,4 @@
+opc/400` | 43 bytes | mtime 06/07/2026 07:24:23 | SHA256 1B0D237CC7903FA28FCE6C5C85F1EB9A6A07A4682FAA650428A0D74CE75F33D8
+scripts/.claude/logs/intel-bus.jsonl | 1689 bytes | SHA256 D6A59B4A4B9169DC264CFA06FFCA1EE10EBEC6CAB9245A947D0935D43966FB68
+
+ROOT-CAUSE LEAD (D5): junk files created at the SAME minute on consecutive days - Safety` 2026-06-06 07:24:49, 400` 2026-06-07 07:24:23. The junk-creator is a DAILY ~07:24 scheduled/logon process invoking store_learning.py with malformed quoting, NOT an interactive hook. Check Task Scheduler entries + SessionStart/logon-time hooks.
