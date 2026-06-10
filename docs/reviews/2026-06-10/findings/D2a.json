@@ -1,0 +1,436 @@
+{
+  "dimension": "D2a",
+  "findings": [
+    {
+      "id": "D2a-01",
+      "title": "navigator-safety AUTO-APPROVES destructive Bash commands: emits permissionDecision 'allow' on rm -rf / git push --force / DROP TABLE, bypassing the permission prompt it claims to reinforce",
+      "severity": "S1",
+      "confidence": "VERIFIED",
+      "evidence": [
+        {
+          "file": ".claude/hooks/src/navigator-safety.ts",
+          "lines": "175-181",
+          "quote": "      hookEventName: 'PreToolUse',\n      permissionDecision: 'allow',\n      permissionDecisionReason: warning,"
+        },
+        {
+          "file": ".claude/hooks/src/navigator-safety.ts",
+          "lines": "9",
+          "quote": " * Does NOT block - existing hooks (git-memory-check, etc.) handle blocking."
+        },
+        {
+          "file": ".claude/hooks/src/navigator-safety.ts",
+          "lines": "144",
+          "quote": "  lines.push('Ensure user has confirmed this operation.');"
+        }
+      ],
+      "proposed_class": "fix",
+      "leverage": "strategic",
+      "seed_ref": null,
+      "dedup_keys": [
+        ".claude/hooks/src/navigator-safety.ts",
+        "buildSafetyWarning",
+        "permissionDecision-allow-bypass"
+      ],
+      "causal_links": [
+        "D2a-12"
+      ],
+      "observe_how": "Per Claude Code PreToolUse semantics (and the repo's own schemas.md allow|deny|ask contract), an explicit 'allow' from any PreToolUse hook bypasses the permission system entirely — the user confirmation dialog that would normally gate an un-allowlisted `rm -rf`, `git reset --hard`, `git push --force`, or `DROP TABLE` is suppressed, and permissionDecisionReason on 'allow' is shown to the user, NOT to Claude. So the hook that exists to surface destructive-command rules 'for Claude's consideration' instead (a) never reaches Claude and (b) actively removes the human gate for exactly the dangerous commands it matches. It is registered live on matcher Bash in repo .claude/settings.json lines 100-108. Fix: drop the permissionDecision entirely and emit the warning via exit-0 stdout JSON with no decision (or switch to 'ask' for the high-risk patterns).",
+      "telemetry": "Reproduce: in a session where `rm -rf <dir>` is not allowlisted, observe no permission dialog appears because the hook returned allow."
+    },
+    {
+      "id": "D2a-02",
+      "title": "package-install-guard is bypassed by any compound command (cd X && npm install evil) — all regexes are start-anchored, contradicting the rule claim that it 'intercepts all package install commands'",
+      "severity": "S1",
+      "confidence": "VERIFIED",
+      "evidence": [
+        {
+          "file": ".claude/hooks/src/package-install-guard.ts",
+          "lines": "65-67",
+          "quote": "  { regex: /^pip\\s+install\\b/, ecosystem: 'pypi', skipTokens: 2 },\n  { regex: /^uv\\s+pip\\s+install\\b/, ecosystem: 'pypi', skipTokens: 3 },"
+        },
+        {
+          "file": ".claude/hooks/src/package-install-guard.ts",
+          "lines": "488-490",
+          "quote": "function stripEnvPrefix(command: string): string {\n  return command.replace(/^(\\s*[A-Za-z_][A-Za-z0-9_]*=[^\\s]*\\s+)*/, '');"
+        },
+        {
+          "file": ".claude/rules/package-install-safety.md",
+          "lines": "5",
+          "quote": "A PreToolUse:Bash hook (`package-install-guard`) intercepts all package install commands and runs a 4-layer security check before allowing execution."
+        }
+      ],
+      "proposed_class": "fix",
+      "leverage": "structural",
+      "seed_ref": "SEED-15",
+      "dedup_keys": [
+        ".claude/hooks/src/package-install-guard.ts",
+        "INSTALL_PATTERNS",
+        "isPackageInstallCommand"
+      ],
+      "causal_links": [
+        "D2a-03"
+      ],
+      "observe_how": "Every INSTALL_PATTERNS regex is anchored with ^ after stripEnvPrefix, so `cd .claude/hooks && npm install <pkg>`, `echo x; pip install <pkg>`, `bash -c \"pip install <pkg>\"`, or any pipeline/chained form falls through isPackageInstallCommand() -> outputContinue(). `cd <dir> && npm install` is one of the most common shapes Claude actually emits (this repo's own hook-dev workflow uses it), so the 4-layer supply-chain check is skipped in routine real usage while the rule doc asserts full coverage. Fix: split the command on shell separators (&&, ;, |, ||) and test each segment, as the typosquat/blocklist layers already operate per-package.",
+      "telemetry": "Grep session transcripts for Bash commands matching /&&\\s*(npm|pip|uv|pnpm|yarn)\\s+(install|add|i)\\b/ — each is an unguarded install."
+    },
+    {
+      "id": "D2a-03",
+      "title": "package-install-guard block reason is silently lost: deny JSON printed to stdout in a non-schema shape + process.exit(2), but exit-2 blocking reads stderr; advisory path also uses a PostToolUse-only field",
+      "severity": "S2",
+      "confidence": "VERIFIED",
+      "evidence": [
+        {
+          "file": ".claude/hooks/src/package-install-guard.ts",
+          "lines": "589-596",
+          "quote": "  const output = {\n    permissionDecision: 'deny',\n    reason,"
+        },
+        {
+          "file": ".claude/skills/hook-developer/references/schemas.md",
+          "lines": "42",
+          "quote": "**Exit code 2:** Blocks tool, stderr shown to Claude."
+        },
+        {
+          "file": ".claude/hooks/src/package-install-guard.ts",
+          "lines": "598-605",
+          "quote": "function outputAllowWithAdvisory(advisory: string): void {\n  const output = {\n    hookSpecificOutput: {\n      additionalContext: advisory,"
+        }
+      ],
+      "proposed_class": "fix",
+      "leverage": "quick-win",
+      "seed_ref": null,
+      "dedup_keys": [
+        ".claude/hooks/src/package-install-guard.ts",
+        "outputDeny",
+        "outputAllowWithAdvisory"
+      ],
+      "causal_links": [
+        "D2a-02"
+      ],
+      "observe_how": "outputDeny() puts permissionDecision/reason at the TOP level (the valid PreToolUse shape requires hookSpecificOutput.{hookEventName,permissionDecision,permissionDecisionReason}) and writes it to STDOUT, then exits 2. The exit-2 path blocks but feeds STDERR to Claude — which is empty — so the carefully built remediation text (typosquat suggestion, advisory ID, SKIP_PACKAGE_GUARD override hint) never reaches Claude; it just sees a generic hook block and may retry blind. The warn path's hookSpecificOutput.additionalContext (no hookEventName) is a PostToolUse field per the repo's own schemas.md, so HIGH-severity OSV advisories and <7d age warnings are likely dropped too. Fix: emit the standard PreToolUse deny JSON on stdout with exit 0, and write the reason to stderr if keeping exit 2.",
+      "telemetry": "Trigger a typosquat block (e.g. `pip install requets`) and inspect what Claude receives — the suggestion text is absent."
+    },
+    {
+      "id": "D2a-04",
+      "title": "test-before-done emits an unrecognized output shape ({ values: { system } }) — the advisory is silently dropped on every TaskUpdate; the hook is a registered no-op",
+      "severity": "S2",
+      "confidence": "VERIFIED",
+      "evidence": [
+        {
+          "file": ".claude/hooks/src/test-before-done.ts",
+          "lines": "94-99",
+          "quote": "export function buildWarningOutput(): WarningOutput {\n  return {\n    values: {"
+        },
+        {
+          "file": ".claude/hooks/src/test-before-done.ts",
+          "lines": "15",
+          "quote": " * Advisory only -- uses values.system message injection, no permissionDecision."
+        },
+        {
+          "file": ".claude/skills/hook-developer/references/schemas.md",
+          "lines": "27-39",
+          "quote": "  \"continue\": true,\n  \"stopReason\": \"string\",\n  \"systemMessage\": \"string\","
+        }
+      ],
+      "proposed_class": "fix",
+      "leverage": "quick-win",
+      "seed_ref": null,
+      "dedup_keys": [
+        ".claude/hooks/src/test-before-done.ts",
+        "buildWarningOutput",
+        "values.system"
+      ],
+      "causal_links": [],
+      "observe_how": "The repo's own PreToolUse output schema (schemas.md) defines hookSpecificOutput / continue / stopReason / systemMessage / suppressOutput — there is no `values.system` field anywhere in the contract, so Claude Code ignores the object. The hook IS registered (repo .claude/settings.json matcher TaskUpdate, line 126-133) and its state writer test-run-tracker exists and is registered, so the whole pipeline runs end-to-end and then throws the warning away. Net effect: the 'no completion claims without test evidence' guard documented in RULES.md has zero runtime teeth from this hook. One-line fix: rename `values.system` to top-level `systemMessage` (user-visible) or use hookSpecificOutput.permissionDecisionReason with 'ask'.",
+      "telemetry": "Mark any task completed without running tests — no warning appears in the session despite log.info firing in hook logs."
+    },
+    {
+      "id": "D2a-05",
+      "title": "plan-mode-approval-gate has a silent bypass: in --dangerously-skip-permissions sessions, transcript-resolution failure (missing/oversized transcript or no permissionMode entry) downgrades the intended 'deny' to 'ask', which the gate's own header documents is auto-allowed in bypass mode",
+      "severity": "S1",
+      "confidence": "VERIFIED",
+      "evidence": [
+        {
+          "file": ".claude/hooks/src/plan-mode-approval-gate.ts",
+          "lines": "11-14",
+          "quote": " * swallowed when the session was started with\n * `--dangerously-skip-permissions`: 187 ms after the gate's `ask`,\n * Claude Code's built-in PermissionRequest layer auto-allows"
+        },
+        {
+          "file": ".claude/hooks/src/plan-mode-approval-gate.ts",
+          "lines": "380-388",
+          "quote": "      try {\n        const resolved = resolveEffectivePermissionMode(projectDir, sessionId);\n        if (resolved) permissionMode = resolved;\n        else permissionMode = undefined;"
+        },
+        {
+          "file": ".claude/hooks/src/plan-mode-approval-gate.ts",
+          "lines": "289-293",
+          "quote": "    if (size === 0 || size > MAX_TRANSCRIPT_BYTES) return null;\n    const text = readFileSync(transcriptPath, 'utf-8');\n    return detectUnderlyingPermissionMode(text);"
+        }
+      ],
+      "proposed_class": "fix",
+      "leverage": "structural",
+      "seed_ref": null,
+      "dedup_keys": [
+        ".claude/hooks/src/plan-mode-approval-gate.ts",
+        "resolveEffectivePermissionMode",
+        "decideGate"
+      ],
+      "causal_links": [
+        "D2a-06",
+        "D2a-08"
+      ],
+      "observe_how": "When input.permission_mode reports 'plan' (the layered case the hook explicitly defends against), the underlying mode is recovered from the transcript. If that recovery returns null — transcript missing, size 0, size > 16MB (long sessions reach this), or no parseable non-plan permissionMode line — permissionMode becomes undefined and decideGate falls through to 'ask' (lines 115-121). In a bypass session 'ask' is auto-allowed per the hook's own empirical note, so the exact scenario the deny branch was built for silently re-opens for long-running bypass sessions. Secondary doc/code drift: comments claim an 8MB cap and 'backwards in 256KB chunks' (lines 184-186, 180) while the code uses a 16MB cap (line 142) and two full readFileSync passes (goal scan + mode scan) of the same transcript per ExitPlanMode. Fix: when rawPermissionMode === 'plan' and resolution returns null, deny (fail-closed) instead of ask.",
+      "telemetry": "Check hook logs for 'Forcing plan-mode approval dialog' entries with rawPermissionMode='plan' and permissionMode=undefined in bypass sessions."
+    },
+    {
+      "id": "D2a-06",
+      "title": "isRalphActive() has no TTL/staleness check — a stale .ralph/state.json with session.active=true permanently disables BOTH plan-mode-approval-gate and plan-to-ralph-enforcer for that project",
+      "severity": "S1",
+      "confidence": "VERIFIED",
+      "evidence": [
+        {
+          "file": ".claude/hooks/src/shared/state-schema.ts",
+          "lines": "187-191",
+          "quote": "  const unified = readRalphUnifiedState(projectDir);\n  if (unified?.session?.active) {\n    return { active: true, storyId: unified.story_id, source: 'unified' };"
+        },
+        {
+          "file": ".claude/hooks/src/plan-mode-approval-gate.ts",
+          "lines": "100",
+          "quote": "  if (params.ralphActive) return { action: 'allow' };"
+        },
+        {
+          "file": ".claude/hooks/src/plan-to-ralph-enforcer.ts",
+          "lines": "74-77",
+          "quote": "  // Plan approved + Ralph active -> allow (agents edit via delegation)\n  if (ralphActive) {\n    return { block: false };"
+        }
+      ],
+      "proposed_class": "fix",
+      "leverage": "structural",
+      "seed_ref": "SEED-07",
+      "dedup_keys": [
+        ".claude/hooks/src/shared/state-schema.ts",
+        "isRalphActive",
+        "readRalphUnifiedState",
+        ".ralph/state.json"
+      ],
+      "causal_links": [
+        "D2a-05"
+      ],
+      "observe_how": "RalphSessionState carries last_activity ('epoch ms from Python') and ralph-delegation-enforcer even refreshes a heartbeat, but isRalphActive() never reads last_activity — only the boolean. If a Ralph run crashes or is killed without cleanup (this machine's MEMORY.md records exactly such a rogue multi-day Ralph loop), session.active stays true indefinitely and every plan-gate allow-branch fires forever: ExitPlanMode auto-allows with no dialog and post-plan code edits are never blocked. By contrast the sibling maestro-enforcer applies a 4h STATE_TTL — the asymmetry is the bug. SEED-07's doubled continuous-claude/continuous-claude/.ralph/ artifact shows stray .ralph dirs do occur in practice. Fix: treat active=true with last_activity older than ~4h as inactive.",
+      "telemetry": "ls .ralph/state.json mtime vs session.active across projects; any active=true older than a day is a live gate bypass."
+    },
+    {
+      "id": "D2a-07",
+      "title": "navigator-validate is dead enforcement: its only state writer (pageindex-navigator) was disabled/unregistered, so the task-mismatch branch can never fire; the remaining haiku branch duplicates no-haiku-enforcer and emits its warning on the wrong channel",
+      "severity": "S2",
+      "confidence": "VERIFIED",
+      "evidence": [
+        {
+          "file": ".claude/hooks/src/shared/navigator-state.ts",
+          "lines": "175-177",
+          "quote": "  return {\n    sessionId,\n    detectedTaskType: 'UNKNOWN',"
+        },
+        {
+          "file": ".claude/rules/code-intel-boundaries.md",
+          "lines": "33",
+          "quote": "The per-prompt `pageindex-navigator` hook was disabled 2026-06-01 (Item 6 — telemetry showed 0/16 query-hits at 1.8–15.8s/prompt)."
+        },
+        {
+          "file": ".claude/hooks/src/navigator-validate.ts",
+          "lines": "117-122",
+          "quote": "    // Output warning but allow (soft enforcement)\n    const output: PreToolUseOutput = {\n      hookSpecificOutput: {"
+        }
+      ],
+      "proposed_class": "delete",
+      "leverage": "quick-win",
+      "seed_ref": null,
+      "dedup_keys": [
+        ".claude/hooks/src/navigator-validate.ts",
+        ".claude/hooks/src/shared/navigator-state.ts",
+        "loadState",
+        "detectedTaskType"
+      ],
+      "causal_links": [
+        "D2a-01"
+      ],
+      "observe_how": "Grep confirms only two importers of shared/navigator-state.ts: navigator-validate (reader) and pageindex-navigator (the sole saveState writer for this state) — and pageindex-navigator appears in NEITHER repo nor active settings.json. With no writer, loadState() always returns the default detectedTaskType 'UNKNOWN', and isAgentValidForTask() returns true for UNKNOWN (navigator-state.ts line 226), so the mismatch warning is unreachable. The haiku check duplicates no-haiku-enforcer, which runs on the same Agent matcher and hard-DENIES — making the soft warning moot. Meanwhile the hook still runs on every Agent spawn and, when it does emit, uses permissionDecision 'allow' (same auto-approve channel problem as D2a-01). Telemetry context: 30/36 agents never in agent-recall suggests this validation layer provides no observed value. Delete the registration, or repoint the reader at a live task-type source.",
+      "telemetry": "Confirm %TEMP%/claude-navigator/ contains no files newer than 2026-06-01."
+    },
+    {
+      "id": "D2a-08",
+      "title": "Repo .claude/settings.json lacks registrations for plan-mode-approval-gate and package-install-guard — both gates exist only in active ~/.claude/settings.json (new instance for SEED-15: plan-mode-approval-gate)",
+      "severity": "S2",
+      "confidence": "VERIFIED",
+      "evidence": [
+        {
+          "file": ".claude/settings.json",
+          "lines": "100-108",
+          "quote": "        \"matcher\": \"Bash\",\n        \"hooks\": [\n          {\n            \"type\": \"command\",\n            \"command\": \"node C:/Users/david.hayes/.claude/hooks/dist/navigator-safety.mjs\","
+        },
+        {
+          "file": ".claude/hooks/src/plan-mode-approval-gate.ts",
+          "lines": "3-6",
+          "quote": " * Plan Mode Approval Gate\n *\n * PreToolUse hook on ExitPlanMode. Forces approval before ExitPlanMode\n * runs."
+        }
+      ],
+      "proposed_class": "fix",
+      "leverage": "quick-win",
+      "seed_ref": "SEED-15",
+      "dedup_keys": [
+        ".claude/settings.json",
+        "plan-mode-approval-gate",
+        "package-install-guard",
+        "registration-drift"
+      ],
+      "causal_links": [
+        "D2a-05"
+      ],
+      "observe_how": "Grep of repo .claude/settings.json finds ZERO occurrences of 'package-install-guard' or 'plan-mode-approval-gate' (the repo's Bash matcher group carries only navigator-safety; there is no ExitPlanMode matcher group at all), while the active ~/.claude/settings.json registers both (Bash matcher for the install guard, ExitPlanMode matcher for the gate). SEED-15 already covers the template gap for package-install-guard; the NEW evidence here is (a) plan-mode-approval-gate is in the same active-only bucket, and (b) the drift is in the checked-in .claude/settings.json itself, not just settings.json.template — so a repo-driven rebuild or new machine ships with neither the supply-chain guard nor the plan-approval gate. Also note the active package-install-guard entry has no timeout field (falls back to the 60s default while making up to 2 network calls x 5s per package).",
+      "telemetry": "Diff hooks registered in .claude/settings.json vs ~/.claude/settings.json (the 18 active-only set from harvest)."
+    },
+    {
+      "id": "D2a-09",
+      "title": "agent-model-guard validates agent existence ONLY against ~/.claude/agents — project-level .claude/agents/ and plugin-provided agents are denied as nonexistent (fail-closed against valid spawns)",
+      "severity": "S2",
+      "confidence": "VERIFIED",
+      "evidence": [
+        {
+          "file": ".claude/hooks/src/agent-model-guard.ts",
+          "lines": "30",
+          "quote": "const AGENTS_DIR = join(homedir(), '.claude', 'agents');"
+        },
+        {
+          "file": ".claude/hooks/src/agent-model-guard.ts",
+          "lines": "142-146",
+          "quote": "  const agentFile = join(AGENTS_DIR, `${agentType}.md`);\n  if (existsSync(agentFile)) {\n    outputContinue();\n    return;\n  }"
+        },
+        {
+          "file": ".claude/hooks/src/agent-model-guard.ts",
+          "lines": "32-39",
+          "quote": "const BUILTIN_AGENTS = new Set([\n  'Bash',\n  'general-purpose',"
+        }
+      ],
+      "proposed_class": "fix",
+      "leverage": "quick-win",
+      "seed_ref": null,
+      "dedup_keys": [
+        ".claude/hooks/src/agent-model-guard.ts",
+        "AGENTS_DIR",
+        "BUILTIN_AGENTS"
+      ],
+      "causal_links": [],
+      "observe_how": "Claude Code resolves subagent types from project-level <project>/.claude/agents/ and from plugin caches in addition to ~/.claude/agents/, but the guard's lookup is hardcoded to homedir. In continuous-claude the sync script masks this (repo agents mirror to ~/.claude/agents), but any other project carrying local-only agents, or any plugin-defined agent type, gets a hard DENY for an agent the harness could actually spawn. The hardcoded BUILTIN_AGENTS set is a second fragile allowlist — a new builtin type added by a Claude Code release is denied until someone edits this file. Note also the file is misnamed: despite 'model-guard' it does existence validation only (the model guard is no-haiku-enforcer); the header was already retitled 'Agent Existence Validation Hook'. Fix: also probe CLAUDE_PROJECT_DIR/.claude/agents, and fail open (warn) rather than deny on unknown types.",
+      "telemetry": "Search hook logs for 'not found at' deny messages naming agents that exist in a project's .claude/agents/."
+    },
+    {
+      "id": "D2a-10",
+      "title": "acquireLockSync busy-waits with a synchronous 100% CPU spin loop (up to 5s) and creates/deletes a .lock file even for pure reads on the per-Edit/Write and per-Agent hot paths",
+      "severity": "S3",
+      "confidence": "VERIFIED",
+      "evidence": [
+        {
+          "file": ".claude/hooks/src/shared/atomic-write.ts",
+          "lines": "98-100",
+          "quote": "        // Busy wait (synchronous context — no setTimeout available)\n        const waitUntil = Date.now() + LOCK_RETRY_MS;\n        while (Date.now() < waitUntil) { /* spin */ }"
+        },
+        {
+          "file": ".claude/hooks/src/shared/atomic-write.ts",
+          "lines": "286-289",
+          "quote": "export function readStateWithLock(filePath: string): string | null {\n  if (!existsSync(filePath)) return null;\n\n  const locked = acquireLockSync(filePath, 2000); // Shorter timeout for reads"
+        }
+      ],
+      "proposed_class": "simplify",
+      "leverage": "quick-win",
+      "seed_ref": null,
+      "dedup_keys": [
+        ".claude/hooks/src/shared/atomic-write.ts",
+        "acquireLockSync",
+        "readStateWithLock"
+      ],
+      "causal_links": [],
+      "observe_how": "plan-to-ralph-enforcer calls readStateWithLock on EVERY Edit/Write and maestro-enforcer on every Agent spawn; each read acquires an exclusive lock (write+unlink of a .lock file in %TEMP%) and, under contention, pegs a core in a Date.now() spin for up to 2-5s. Payoff: use Atomics.wait on a SharedArrayBuffer or simply read without the lock (atomic rename writes already guarantee readers never see partial JSON — the read lock adds no correctness).",
+      "telemetry": "Process Monitor on %TEMP% claude-*.json.lock create/delete churn per Edit."
+    },
+    {
+      "id": "D2a-11",
+      "title": "no-haiku-enforcer (and navigator-validate) only block the exact string 'haiku' — full model ids like 'claude-haiku-4-5' pass the deny check",
+      "severity": "S3",
+      "confidence": "VERIFIED",
+      "evidence": [
+        {
+          "file": ".claude/hooks/src/no-haiku-enforcer.ts",
+          "lines": "50",
+          "quote": "  if ((tool !== 'Agent' && tool !== 'Task') || model?.toLowerCase() !== 'haiku') {"
+        },
+        {
+          "file": ".claude/hooks/src/navigator-validate.ts",
+          "lines": "112",
+          "quote": "  if (model?.toLowerCase() === 'haiku') {"
+        }
+      ],
+      "proposed_class": "fix",
+      "leverage": "quick-win",
+      "seed_ref": null,
+      "dedup_keys": [
+        ".claude/hooks/src/no-haiku-enforcer.ts",
+        "no-haiku",
+        "model-haiku-exact-match"
+      ],
+      "causal_links": [
+        "D2a-07"
+      ],
+      "observe_how": "The no-haiku rule is absolute ('never set model: haiku — no exceptions') but the Agent tool accepts full model ids; `model: 'claude-haiku-4-5'` (or any dated haiku id) sails through both checks. Payoff: one-line change to `.includes('haiku')` closes the gap.",
+      "telemetry": "Spawn a Task with model 'claude-haiku-4-5' and observe no deny."
+    },
+    {
+      "id": "D2a-12",
+      "title": "Dead code across three enforcers: maestro-enforcer's writeState/clearState never called; ralph-delegation-enforcer imports isCodeFile/isAllowedConfigFile unused; navigator-safety's queryRuleContext + PageIndex client never invoked",
+      "severity": "S3",
+      "confidence": "VERIFIED",
+      "evidence": [
+        {
+          "file": ".claude/hooks/src/maestro-enforcer.ts",
+          "lines": "74-85",
+          "quote": "function writeState(state: MaestroState, sessionId?: string): void {\n  const stateFile = getStateFile(sessionId);"
+        },
+        {
+          "file": ".claude/hooks/src/ralph-delegation-enforcer.ts",
+          "lines": "18",
+          "quote": "import { isCodeFile, isAllowedConfigFile } from './shared/file-classification.js';"
+        },
+        {
+          "file": ".claude/hooks/src/navigator-safety.ts",
+          "lines": "109-111",
+          "quote": "function queryRuleContext(ruleQuery: string): string | null {\n  const results = queryPageIndex(ruleQuery, null, {\n    maxResults: 1,"
+        }
+      ],
+      "proposed_class": "delete",
+      "leverage": "quick-win",
+      "seed_ref": null,
+      "dedup_keys": [
+        ".claude/hooks/src/maestro-enforcer.ts",
+        ".claude/hooks/src/ralph-delegation-enforcer.ts",
+        ".claude/hooks/src/navigator-safety.ts",
+        "writeState",
+        "queryRuleContext"
+      ],
+      "causal_links": [
+        "D2a-01"
+      ],
+      "observe_how": "None of these symbols are referenced by their hooks' main() paths (verified by reading each file end-to-end): maestro-enforcer is read-only at runtime yet carries write/clear helpers (and an unused writeFileSync import); ralph-delegation-enforcer's soft-enforcement rewrite orphaned the file-classification imports (isTestCommand at least carries a 'kept for future use' note); navigator-safety bundles the PageIndex client into its dist for a function with zero call sites. Payoff: deleting removes misleading 'this hook writes maestro state / classifies files / queries PageIndex' surface for future readers and shrinks the per-call bundle.",
+      "telemetry": "tldr dead .claude/hooks/src/ confirms zero callers for each symbol."
+    }
+  ],
+  "coverage_manifest": [
+    "agent-model-guard.ts — FINDING D2a-09: existence check hardcoded to ~/.claude/agents denies valid project-level/plugin agents; fragile hardcoded BUILTIN_AGENTS allowlist; misnamed (does existence validation, not model guarding). Otherwise: malformed stdin fails open, Levenshtein suggestions correct, deny claim matches behavior. Registered (repo settings, matcher Agent).",
+    "no-haiku-enforcer.ts — mostly CLEAN: correct fail-open stdin handling, deny shape valid, claim matches behavior. FINDING D2a-11: exact-string 'haiku' match lets full haiku model ids through. Registered (repo settings, matcher Agent).",
+    "maestro-enforcer.ts — CLEAN core: phase logic matches RULES.md, fail-open on all errors, schema-validated state with 4h TTL, session-isolated paths. FINDING D2a-12 (dead writeState/clearState). Minor un-filed: legacy <1h state-file fallback in getStatePathWithMigration can cross sessions during migration window; TTL-expiry unlink has a benign TOCTOU.",
+    "ralph-delegation-enforcer.ts — CLEAN: soft-enforcement (log-only, always allow) exactly matches the documented 2026-04-23 decision in RULES.md; fail-open; heartbeat python spawnSync is debounced to 5min and capped at 3s. FINDING D2a-12 (unused file-classification imports). Registered (repo settings, matcher Edit|Write|Bash).",
+    "plan-to-ralph-enforcer.ts — decision table VERIFIED correct vs plan-to-ralph-enforcement.md (allow/allow/allow/deny rows all match), fail-open everywhere, project-scoped state with writer/reader pair consistency confirmed against plan-exit-tracker.ts. Weakened by FINDING D2a-06 (stale Ralph state opens the gate); Bash-heredoc/NotebookEdit writes uncovered by design (documented allow-list).",
+    "package-install-guard.ts — FINDINGS D2a-02 (compound-command bypass vs 'intercepts all installs' claim), D2a-03 (deny reason lost: non-schema stdout JSON + exit 2 with empty stderr; advisory channel invalid). Parser itself (tokenizer, flag skipping, scoped-npm/pip version parsing) verified sound; network checks fail open with 5s timeouts. Registration: active-only (SEED-15, D2a-08).",
+    "plan-mode-approval-gate.ts — FINDING D2a-05 (ask-swallow bypass when transcript resolution nulls in bypass mode; 8MB/256KB-chunk comments vs 16MB whole-file double read). Otherwise the most defensively built of the 11: pure decision fn, explicit override ordering, fail-closed goal detection. Registration: active-only (D2a-08), absent from repo settings.",
+    "code-intel-enforcer.ts — CLEAN: default OFF via CCV3_FACADE_MODE, never denies, exact structural Grep match only, ReDoS-safe pattern, fail-open on parse errors, no disk/state access. Blocking claim ('NEVER denies') matches behavior. Registered (repo settings, matcher Grep|Agent).",
+    "test-before-done.ts — FINDING D2a-04: invalid { values: { system } } output shape means the advisory is never delivered; registered no-op on every TaskUpdate. State-reading side (session-id sanitization, 5-min threshold, fail-open) is correct and its writer test-run-tracker is registered.",
+    "navigator-safety.ts — FINDING D2a-01 (S1): permissionDecision 'allow' auto-approves matched destructive commands, suppressing the user permission dialog and sending the warning to the wrong audience; FINDING D2a-12 (dead PageIndex path). Pattern set also over-matches (\\brm\\s catches 'npm rm') but that only widens the auto-approve. Malformed stdin fails open via main().catch.",
+    "navigator-validate.ts — FINDING D2a-07: dead enforcement (state writer pageindex-navigator unregistered since 2026-06-01 → mismatch branch unreachable; haiku branch redundant with no-haiku-enforcer's deny; emits via the same 'allow' channel as D2a-01). Malformed stdin fails open via main().catch. Registered (repo settings, matcher Agent)."
+  ],
+  "notes": "Method: read all 11 hook sources end-to-end plus their load-bearing shared modules (file-classification, session-isolation, state-schema, atomic-write, output, navigator-state, project-id) and the plan-exit-tracker writer; cross-checked registrations in repo .claude/settings.json vs active ~/.claude/settings.json; validated output shapes against the repo's own .claude/skills/hook-developer/references/schemas.md. Fail-open vs fail-closed posture is consistently fail-open across all 11 (appropriate for advisory hooks; D2a-05 identifies the one spot where fail-open inverts a security gate's purpose). Windows-path handling is broadly sound: file-classification's forward-slash-only patterns (\\\\.ralph\\\\/, tasks\\\\/) would miss backslash paths but are masked by extension fallbacks (.json$/.md$); getProjectId does not lowercase/realpath (unlike the bus-id convention), so drive-letter casing differences between writer and reader could silently null plan-approved state — low risk since both sides read the same CLAUDE_PROJECT_DIR within a session, noted but not filed. State-file races are well-handled via atomic rename + lock (D2a-10 covers the spin-wait cost, not a correctness issue). The 'Agent' matcher naming was verified current (commit d8d7343 'Task→Agent rename'), and hooks accept both names defensively. S3 cap respected (3 of 5 used). No edits, no tests executed, no excluded paths cited."
+}

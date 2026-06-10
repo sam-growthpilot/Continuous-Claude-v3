@@ -1,0 +1,41 @@
+{
+  "run_id": "wf_e98a7be2-106",
+  "review_sha": "86b8f60",
+  "agents_run": 32,
+  "completed": [
+    "D1a",
+    "D1b",
+    "D2a",
+    "D2b",
+    "D2c",
+    "D2d",
+    "D2e",
+    "D2f",
+    "D2g",
+    "D3a",
+    "D3b",
+    "D3c",
+    "D4a",
+    "D4b",
+    "D5a"
+  ],
+  "failed_spend_limit": [
+    "D5b security:injection-surfaces",
+    "D6a perf:per-prompt-cost",
+    "D6b perf:startup-taxes",
+    "D7a lean:unregistered-hooks",
+    "D7b lean:skills",
+    "D7c lean:agents+rules",
+    "D7d lean:scripts+duplication",
+    "D8a drift:rules-vs-code",
+    "D8b drift:docs-vs-code",
+    "D8c drift:skills-vs-behavior",
+    "D9 telemetry:interpretation",
+    "D10a trace:prompt-journey",
+    "D10b trace:edit-commit-journey",
+    "D10c trace:agent-spawn-journey",
+    "critics x3",
+    "gap-fill (never ran)"
+  ],
+  "resume": "Re-run failed dimensions as a NEW workflow (same briefs, script saved in session workflow dir) once the spend limit is raised/reset. Then critics + gap-fill + WF-2."
+}

@@ -1,0 +1,523 @@
+{
+  "dimension": "D2b",
+  "findings": [
+    {
+      "id": "D2b-01",
+      "title": "Matcher split-brain: 5 Task-router hooks registered under matcher \"Agent\" while the live subagent tool matches \"Task\" — explore-to-scout, task-router, ralph-template-inject, pre-tool-knowledge, tldr-context-inject are dead registrations",
+      "severity": "S1",
+      "confidence": "VERIFIED",
+      "evidence": [
+        {
+          "file": ".claude/settings.json",
+          "lines": "21,30",
+          "quote": "        \"matcher\": \"Agent\","
+        },
+        {
+          "file": ".claude/settings.json",
+          "lines": "30",
+          "quote": "            \"command\": \"node C:/Users/david.hayes/.claude/hooks/dist/explore-to-scout.mjs\","
+        },
+        {
+          "file": ".claude/logs/agent-recall.jsonl",
+          "lines": "last row",
+          "quote": "\"results_count\":0,\"kept_after_floor\":0,\"top_score\":0,\"timestamp\":\"2026-06-10T15:22:10.534Z\"}"
+        }
+      ],
+      "proposed_class": "fix",
+      "leverage": "structural",
+      "seed_ref": null,
+      "dedup_keys": [
+        ".claude/settings.json",
+        ".claude/hooks/src/explore-to-scout.ts",
+        ".claude/hooks/src/task-router.ts",
+        ".claude/hooks/src/ralph-template-inject.ts",
+        ".claude/hooks/src/pre-tool-knowledge.ts",
+        ".claude/hooks/src/tldr-context-inject.ts",
+        "matcher-Agent-vs-Task"
+      ],
+      "causal_links": [
+        "D2b-02 (one of its three kill shots)",
+        "D2b-08 (renders its infinite loop latent)"
+      ],
+      "observe_how": "agent-recall-injector is registered with matcher \"Task\" (active ~/.claude/settings.json) and wrote a row TODAY (2026-06-10T15:22) — proving the live spawn tool matches \"Task\". \"Agent\" as a regex cannot match \"Task\", so the 5-hook cohort never fires unless the harness aliases names. Decisive probe: spawn Task(subagent_type=\"Explore\") — if it is NOT denied, explore-to-scout is dead. agent-recall.jsonl already shows 8 \"Explore\" spawn attempts logged, none visibly converted to scout.",
+      "telemetry": "agent-recall.jsonl: 78 rows incl. subagent_type Explore:8 — Explore spawns flow through the Task-matched hook while the Explore-blocking hook sits on the Agent matcher"
+    },
+    {
+      "id": "D2b-02",
+      "title": "ralph-template-inject is dead code three independent ways: gates on nonexistent `data.event` field, emits unsupported `modifiedInput` key, and sits on the dead \"Agent\" matcher — its advertised Maestro-template guarantee silently never happens",
+      "severity": "S1",
+      "confidence": "VERIFIED",
+      "evidence": [
+        {
+          "file": ".claude/hooks/src/ralph-template-inject.ts",
+          "lines": "129",
+          "quote": "        if (data.event !== 'PreToolUse' || (data.tool_name !== 'Agent' && data.tool_name !== 'Task')) {"
+        },
+        {
+          "file": ".claude/hooks/src/ralph-template-inject.ts",
+          "lines": "150",
+          "quote": "                modifiedInput: { prompt: modifiedPrompt },"
+        },
+        {
+          "file": ".claude/skills/hook-developer/references/schemas.md",
+          "lines": "33",
+          "quote": "    \"updatedInput\": {}"
+        }
+      ],
+      "proposed_class": "delete",
+      "leverage": "quick-win",
+      "seed_ref": null,
+      "dedup_keys": [
+        ".claude/hooks/src/ralph-template-inject.ts",
+        "shouldInjectTemplates",
+        "buildInjectedPrompt",
+        "modifiedInput"
+      ],
+      "causal_links": [
+        "caused-by D2b-01 (dead matcher is kill shot #3)"
+      ],
+      "observe_how": "Hook input carries `hook_event_name` (see tldr-context-inject.ts:30 interface and schemas.md), never `event` — so `data.event` is always undefined and the hook unconditionally prints {result:'allow'}. Even if reached, `modifiedInput` is not the documented key (`updatedInput` per the repo's own schema), and explore-to-scout.ts:6 header states \"Claude Code does NOT support modifiedInput\". The hook header claims it prevents \"the common failure mode where templates are forgotten\" — a decision-driving false claim.",
+      "telemetry": "No fire evidence anywhere; sibling hook explore-to-scout.ts header documents the modifiedInput non-support"
+    },
+    {
+      "id": "D2b-03",
+      "title": "agent-recall-injector (DELICATE prior-regression file): 0-for-78 lifetime memory yield — every fire since 2026-05-16 logged results_count:0; root cause is extractIntent passing the entire multi-KB Task prompt as the recall query plus a 3.5s recall budget that uv-run startup alone consumes",
+      "severity": "S1",
+      "confidence": "VERIFIED",
+      "evidence": [
+        {
+          "file": ".claude/hooks/src/agent-recall-injector.ts",
+          "lines": "57,332",
+          "quote": "const RECALL_TIMEOUT_MS = 3500;"
+        },
+        {
+          "file": ".claude/hooks/src/shared/intent-extractor.ts",
+          "lines": "71-74",
+          "quote": "  if (intent.length < 5) {\n    return extractKeywords(prompt);\n  }\n  return intent;"
+        },
+        {
+          "file": ".claude/logs/agent-recall.jsonl",
+          "lines": "all 78 rows",
+          "quote": "\"results_count\":0,\"kept_after_floor\":0,\"top_score\":0,\"timestamp\":\"2026-06-10T15:22:10.534Z\"}"
+        }
+      ],
+      "proposed_class": "fix",
+      "leverage": "strategic",
+      "seed_ref": "SEED-13",
+      "dedup_keys": [
+        ".claude/hooks/src/agent-recall-injector.ts",
+        ".claude/hooks/src/shared/intent-extractor.ts",
+        "extractIntent",
+        "defaultRecall",
+        "RECALL_TIMEOUT_MS"
+      ],
+      "causal_links": [
+        "same root-cause class as SEED-13 (extractIntent passthrough pollutes recall intents)",
+        "amplified by SEED-08 (uv-run startup dominates the 3.5s budget)",
+        "D2b-04 (even the 17 focus-block injections depend on undocumented PreToolUse additionalContext)"
+      ],
+      "observe_how": "node -e over .claude/logs/agent-recall.jsonl: 78 rows, withResults=0, kept_after_floor>0 = 0, avg intent length 2617 chars, max 8826 (full '## Mode\\ncode\\n\\n## Scope...' prompts stored verbatim as both `intent` and `recall_query`). extractIntent only strips leading meta-phrases, so any structured agent prompt passes through whole; the FTS query on an 8KB blob returns nothing or exceeds spawnSync's 3.5s SIGKILL. The sanitization assembly (memory-sanitize.ts, bus-focus.ts: control-strip, allowlist, 60-char term cap, data-only wrapper) is the best-built injection path in this cohort — but it has never had recall content to deliver. Fragility notes for this delicate file: isDirectInvocation guard (lines 526-534) silently disables main() if the bundle is ever renamed; the jsonl row duplicates the full prompt in two fields (log bloat).",
+      "telemetry": "intel-bus.jsonl agent_recall_bus_read: 48 rows, injected_true=17, all 17 from focus_count>0 (bus focus blocks) — zero from memory recall. SUMMARY.md: 'agent-recall: 78 rows; agents never appearing: 30/36'"
+    },
+    {
+      "id": "D2b-04",
+      "title": "Four injector hooks deliver their entire payload via PreToolUse `additionalContext`, a field the repo's own hooks schema does NOT define for PreToolUse — if the live harness ignores it, every context injection in this dimension is a silent no-op",
+      "severity": "S1",
+      "confidence": "INFERRED",
+      "evidence": [
+        {
+          "file": ".claude/skills/hook-developer/references/schemas.md",
+          "lines": "29-33",
+          "quote": "  \"hookSpecificOutput\": {\n    \"hookEventName\": \"PreToolUse\",\n    \"permissionDecision\": \"allow|deny|ask\","
+        },
+        {
+          "file": ".claude/hooks/src/agent-recall-injector.ts",
+          "lines": "440-442",
+          "quote": "    hookSpecificOutput: {\n      hookEventName: 'PreToolUse',\n      additionalContext,"
+        },
+        {
+          "file": ".claude/hooks/src/task-router.ts",
+          "lines": "165-168",
+          "quote": "    hookSpecificOutput: {\n      hookEventName: 'PreToolUse',\n      permissionDecision: 'allow',\n      additionalContext: message"
+        }
+      ],
+      "proposed_class": "investigate",
+      "leverage": "structural",
+      "seed_ref": null,
+      "dedup_keys": [
+        "additionalContext-on-PreToolUse",
+        ".claude/hooks/src/task-router.ts",
+        ".claude/hooks/src/pre-tool-knowledge.ts",
+        ".claude/hooks/src/pre-plan-memory.ts",
+        ".claude/hooks/src/agent-recall-injector.ts"
+      ],
+      "causal_links": [
+        "gates whether D2b-03's 17 focus-block injections ever reached an agent",
+        "affects D2b-11 payload delivery"
+      ],
+      "observe_how": "schemas.md documents additionalContext only for PostToolUse (L78), UserPromptSubmit (L114) and SessionStart; PreToolUse output lists permissionDecision/permissionDecisionReason/updatedInput only. The repo's own hook-dev-lifecycle rule states 'Context injection: PostToolUse additionalContext is the reliable inject pattern'. Probe: spawn a Task while the bus has fresh focus_symbols and check whether the SESSION FOCUS block appears in the subagent transcript; or check the installed Claude Code version's hooks reference. pre-tool-knowledge additionally omits permissionDecision entirely and uses top-level {result:'continue'} (not a documented field).",
+      "telemetry": "No injection-receipt telemetry exists — injected=true in intel-bus only records that the hook EMITTED a block, not that the model received it"
+    },
+    {
+      "id": "D2b-05",
+      "title": "smart-search-router writes its Grep-context handshake to hardcoded POSIX '/tmp/claude-search-context' — on Windows this silently creates and grows C:\\tmp\\claude-search-context at the drive root (hundreds of per-session JSON files since January, no cleanup path)",
+      "severity": "S0",
+      "confidence": "VERIFIED",
+      "evidence": [
+        {
+          "file": ".claude/hooks/src/smart-search-router.ts",
+          "lines": "46",
+          "quote": "const CONTEXT_DIR = '/tmp/claude-search-context';"
+        },
+        {
+          "file": ".claude/hooks/src/tldr-read-enforcer.ts",
+          "lines": "28-29",
+          "quote": "const CONTEXT_DIR = '/tmp/claude-search-context';\nconst CONTEXT_MAX_AGE_MS = 30000; // 30 seconds - context expires after this"
+        }
+      ],
+      "proposed_class": "fix",
+      "leverage": "quick-win",
+      "seed_ref": null,
+      "dedup_keys": [
+        ".claude/hooks/src/smart-search-router.ts",
+        ".claude/hooks/src/tldr-read-enforcer.ts",
+        "CONTEXT_DIR",
+        "C:/tmp/claude-search-context"
+      ],
+      "causal_links": [
+        "the tldr-read-enforcer cross-file context feature only works via this junk dir (reader uses the same constant)",
+        "D2b-10 lives in the same file"
+      ],
+      "observe_how": "Observed live: C:\\tmp\\claude-search-context\\ contains hundreds of <session-uuid>.json files dated 2026-01-26 through 2026-06-06 (ls confirmed). Node resolves '/tmp/...' against the current drive on win32. The 30s staleness check is read-side only — nothing ever deletes files, so every session that runs a Grep adds a permanent file outside any project. Fix: os.tmpdir() + periodic cleanup, or scope under ~/.claude/cache.",
+      "telemetry": "Direct artifact count at C:\\tmp\\claude-search-context (Jan 26 -> Jun 6 accumulation, ~hundreds of files)"
+    },
+    {
+      "id": "D2b-06",
+      "title": "smart-search-router (LIVE on every Grep) hard-DENIES legitimate searches: any 3+-word pattern is classified 'semantic' and denied even when no semantic index exists, and two deny messages instruct the model to use Task(subagent_type=\"Explore\") — the exact spawn the system elsewhere bans",
+      "severity": "S1",
+      "confidence": "VERIFIED",
+      "evidence": [
+        {
+          "file": ".claude/hooks/src/smart-search-router.ts",
+          "lines": "397-399",
+          "quote": "  // 3+ words without code indicators → likely semantic\n  if (words.length >= 3) {\n    return 'semantic';"
+        },
+        {
+          "file": ".claude/hooks/src/smart-search-router.ts",
+          "lines": "556",
+          "quote": "- \\`Task(subagent_type=\"Explore\", prompt=\"${pattern}\")\\` - agent exploration`;"
+        },
+        {
+          "file": ".claude/hooks/src/smart-search-router.ts",
+          "lines": "591-594",
+          "quote": "    hookSpecificOutput: {\n      hookEventName: 'PreToolUse',\n      permissionDecision: 'deny',\n      permissionDecisionReason: reason"
+        }
+      ],
+      "proposed_class": "fix",
+      "leverage": "structural",
+      "seed_ref": null,
+      "dedup_keys": [
+        ".claude/hooks/src/smart-search-router.ts",
+        "classifyQuery",
+        "tldrSemantic",
+        "permissionDecision-deny-Grep"
+      ],
+      "causal_links": [
+        "contradicts explore-to-scout's purpose (and today Explore is NOT blocked per D2b-01, so the bad suggestion is followable)",
+        "amplified by D2b-07 (PowerShell-per-daemon-query latency has no real timeout cap)"
+      ],
+      "observe_how": "Grep for an exact multi-word string (e.g. an error message \"database is locked error\") → classifyQuery returns 'semantic' → deny fires even on the no_index/daemon_unavailable/no-results branches (all four reason branches end in the same deny at L590-597). Structural queries are also denied with a hardcoded `--lang python` ast-grep suggestion regardless of project language (getAstGrepSuggestion L407-423). Each intercepted Grep also pays up to 6 sequential queryDaemonSync calls, each spawning a fresh PowerShell process on Windows (daemon-client.ts L570-585).",
+      "telemetry": "This very review session: literal single-token Greps passed (allow path); multi-word patterns would have been denied. trackHookActivitySync routes counts to the TLDR daemon (not file-inspectable here)"
+    },
+    {
+      "id": "D2b-07",
+      "title": "Hook timeout unit error across all registrations: values are millisecond-scale (3000-60000) but the settings field is SECONDS per the repo's own schema — 'timeout: 30000' on smart-search-router/tldr-read-enforcer is ~8.3 hours, so no hook in this cohort has an effective hang cap",
+      "severity": "S1",
+      "confidence": "INFERRED",
+      "evidence": [
+        {
+          "file": ".claude/settings.json",
+          "lines": "76",
+          "quote": "            \"timeout\": 30000"
+        },
+        {
+          "file": ".claude/skills/hook-developer/references/schemas.md",
+          "lines": "338",
+          "quote": "            \"timeout\": 60"
+        },
+        {
+          "file": ".claude/settings.json",
+          "lines": "16",
+          "quote": "            \"timeout\": 5000"
+        }
+      ],
+      "proposed_class": "fix",
+      "leverage": "structural",
+      "seed_ref": null,
+      "dedup_keys": [
+        ".claude/settings.json",
+        "hook-timeout-units",
+        "schemas.md-timeout-60"
+      ],
+      "causal_links": [
+        "turns D2b-08's latent infinite loop into an unbounded session hang if ever revived",
+        "removes the intended cap on D2b-06 daemon stalls and D2b-09 DB stalls"
+      ],
+      "observe_how": "All 76 active registrations use 3000/5000/10000/15000/20000/30000/35000/60000 — exactly the numbers you'd write for ms — while the repo's own hook-developer SKILL.md (L101) and schemas.md (L338) registration examples use \"timeout\": 60 (seconds, matching official Claude Code docs). Verify: register a test hook with `sleep 10` and timeout: 5 vs 5000 and observe which is killed. If the harness clamps to a max, document the clamp; otherwise mass-convert values to seconds.",
+      "telemetry": "Timeout value distribution across active settings: {3000:7, 5000:37, 10000:20, 15000:5, 20000:1, 30000:4, 35000:1, 60000:1, none:5} — not a single value plausibly intended as seconds"
+    },
+    {
+      "id": "D2b-08",
+      "title": "tldr-context-inject is unreachable under EITHER tool name (matcher \"Agent\" + internal `tool_name !== 'Task'` gate reject each other's world) and carries a latent Windows infinite loop in findProjectRoot plus fabricated 'line 10' PDG slices",
+      "severity": "S2",
+      "confidence": "VERIFIED",
+      "evidence": [
+        {
+          "file": ".claude/hooks/src/tldr-context-inject.ts",
+          "lines": "420",
+          "quote": "  if (input.tool_name !== 'Task') {"
+        },
+        {
+          "file": ".claude/hooks/src/tldr-context-inject.ts",
+          "lines": "402",
+          "quote": "  while (current !== '/') {"
+        },
+        {
+          "file": ".claude/hooks/src/tldr-context-inject.ts",
+          "lines": "331",
+          "quote": "          const targetLine = lineNumber || 10;  // Default to line 10 if no line specified"
+        }
+      ],
+      "proposed_class": "delete",
+      "leverage": "quick-win",
+      "seed_ref": null,
+      "dedup_keys": [
+        ".claude/hooks/src/tldr-context-inject.ts",
+        "findProjectRoot",
+        "FUNCTION_PATTERNS",
+        "tldr-context-inject-unreachable"
+      ],
+      "causal_links": [
+        "caused-by D2b-01 (dead matcher)",
+        "hang amplitude set by D2b-07 (no real timeout)"
+      ],
+      "observe_how": "If tool is named 'Task': matcher \"Agent\" never fires. If tool is named 'Agent': the hook runs but L420 immediately prints '{}' because tool_name is 'Agent' not 'Task'. Net: the hook can never inject — registered dead weight executed-or-skipped on every spawn. Latent hazards if revived: path.win32.dirname('C:\\\\')==='C:\\\\' so the `while (current !== '/')` loop never terminates when no project marker exists above cwd; PDG slices are fabricated at line 10 when no line is mentioned; the catch-all extractor regex /[`\"']?([a-z][a-z0-9_]{2,})[`\"']?/g (L130) treats nearly any English word as a code symbol (same pollution class as SEED-13). It also emits `updatedInput` to rewrite the agent prompt — the only hook using the documented modify key, but pointless while unreachable.",
+      "telemetry": "No fire evidence; uses daemon `track` channel only on the success path which is unreachable"
+    },
+    {
+      "id": "D2b-09",
+      "title": "file-claims (LIVE on every Edit/Write in every project) spawns 2-3 fresh `uv run python` + asyncpg processes per edit with CREATE TABLE IF NOT EXISTS in the read path, and a DB error in isSessionActive silently converts an ACTIVE peer's lock into a takeover",
+      "severity": "S2",
+      "confidence": "VERIFIED",
+      "evidence": [
+        {
+          "file": ".claude/hooks/src/shared/db-utils-pg.ts",
+          "lines": "68",
+          "quote": "    const result = spawnSync('uv', ['run', 'python', '-c', wrappedCode, ...args], {"
+        },
+        {
+          "file": ".claude/hooks/src/shared/db-utils-pg.ts",
+          "lines": "574-576",
+          "quote": "  if (!result.success) {\n    // On error, assume not active (allow edit)\n    return false;"
+        },
+        {
+          "file": ".claude/hooks/src/shared/db-utils-pg.ts",
+          "lines": "540",
+          "quote": "pg_url = os.environ.get('CONTINUOUS_CLAUDE_DB_URL') or os.environ.get('DATABASE_URL', 'postgresql://claude:claude_dev@localhost:5434/continuous_claude')"
+        }
+      ],
+      "proposed_class": "fix",
+      "leverage": "structural",
+      "seed_ref": "SEED-08",
+      "dedup_keys": [
+        ".claude/hooks/src/file-claims.ts",
+        ".claude/hooks/src/shared/db-utils-pg.ts",
+        "checkFileClaim",
+        "claimFile",
+        "isSessionActive",
+        "runPgQuery"
+      ],
+      "causal_links": [
+        "SEED-08 (uv-run startup dominates each spawn)",
+        "SEED-12 (getSessionId scheme split feeds the claim identity)",
+        "D2b-13 (project+user dual registration would double the spawns if not deduped)"
+      ],
+      "observe_how": "file-claims.ts main(): checkFileClaim (1 uv+python+asyncpg spawn, which re-runs CREATE TABLE IF NOT EXISTS on every read, db-utils-pg.ts L613-621) + claimFile (2nd spawn) on every Edit/Write; conflict path adds isSessionActive (3rd spawn). Per SEED-08, uv-run startup is the dominant cost — call it 0.5-2s per spawn, so 1-4s tax per edit. Correctness: on ANY isSessionActive failure (DB down, 3s timeout) it returns false -> file-claims.ts L80-82 'Other session is stale - take over the claim' steals the lock from a genuinely active session — the exact conflict the hook exists to block. Latent landmine: the Python-side default URL in isSessionActive says port 5434 while checkFileClaim/claimFile say 5432 (dead today because runPgQuery always injects CONTINUOUS_CLAUDE_DB_URL, but the first refactor that drops that env hits it). Also TOCTOU: check-then-claim is non-atomic across two processes.",
+      "telemetry": "SEED-08: warm uv-run latency 13-17s on recall path corroborates the startup tax; runPgQuery timeout is 3000ms per spawn (db-utils-pg.ts L71)"
+    },
+    {
+      "id": "D2b-10",
+      "title": "smart-search-router ripgrepFallback builds a shell command by string-interpolating the model/content-influenced Grep pattern with only `\"` and `$` escaped — cmd.exe metacharacters and bash backticks survive (injection), and the `2>/dev/null` redirect is invalid on cmd.exe so the fallback is broken on Windows anyway",
+      "severity": "S1",
+      "confidence": "VERIFIED",
+      "evidence": [
+        {
+          "file": ".claude/hooks/src/smart-search-router.ts",
+          "lines": "100-102",
+          "quote": "    const escaped = pattern.replace(/\"/g, '\\\\\"').replace(/\\$/g, '\\\\$');\n    const result = execSync(\n      `rg \"${escaped}\" \"${projectDir}\" --type py --line-number --max-count 10 2>/dev/null`,"
+        }
+      ],
+      "proposed_class": "fix",
+      "leverage": "quick-win",
+      "seed_ref": null,
+      "dedup_keys": [
+        ".claude/hooks/src/smart-search-router.ts",
+        "ripgrepFallback",
+        "execSync-pattern-injection"
+      ],
+      "causal_links": [
+        "reachable from lookupSymbol/tldrSearch on every intercepted Grep whenever the daemon is indexing/unavailable",
+        "same file as D2b-05/D2b-06"
+      ],
+      "observe_how": "A Grep pattern like `x\" & calc & \"` breaks out of the double quotes under cmd.exe; `%PATH%` expands inside quotes; under a bash shell backticks execute. The pattern is attacker-influenceable via prompt injection in repo content ('grep for <payload>'). Replace with spawnSync('rg', [pattern, dir, ...]) array args and drop the /dev/null redirect (use stdio:'pipe'). Note the same file's Windows daemon path interpolates the JSON query into a powershell -Command string (daemon-client.ts L570-585) with only single-quote doubling — fragile, same fix class.",
+      "telemetry": "Fallback triggers whenever daemon response has indexing/unavailable status — i.e., on first Grep in any un-indexed project"
+    },
+    {
+      "id": "D2b-11",
+      "title": "pre-plan-memory fires a hardcoded generic recall query ('planning architecture decisions approach design') via execSync with a 5s cap on every plan-mode entry — given 13-17s warm recall latency it near-certainly never injects, leaving only a flat ~5-6s latency tax",
+      "severity": "S2",
+      "confidence": "VERIFIED",
+      "evidence": [
+        {
+          "file": ".claude/hooks/src/pre-plan-memory.ts",
+          "lines": "68-69",
+          "quote": "      ? `cd /d \"${opcDir}\" && set PYTHONPATH=. && uv run python scripts/core/recall_learnings.py ` +\n        `--query \"planning architecture decisions approach design\" --k 5 --text-only`"
+        },
+        {
+          "file": ".claude/hooks/src/pre-plan-memory.ts",
+          "lines": "73-75",
+          "quote": "    const result = execSync(cmd, {\n      encoding: 'utf-8',\n      timeout: 5000,"
+        },
+        {
+          "file": ".claude/hooks/src/pre-plan-memory.ts",
+          "lines": "84-85",
+          "quote": "        decision: 'allow',\n        message: '🧠 Relevant past planning found',"
+        }
+      ],
+      "proposed_class": "fix",
+      "leverage": "quick-win",
+      "seed_ref": "SEED-08",
+      "dedup_keys": [
+        ".claude/hooks/src/pre-plan-memory.ts",
+        "pre-plan-memory-static-query",
+        "EnterPlanMode"
+      ],
+      "causal_links": [
+        "SEED-08 (uv recall latency >> 5s budget)",
+        "D2b-04 (payload rides undocumented PreToolUse additionalContext, without hookEventName)",
+        "D2b-07 (registered 'timeout: 5000' is 5000s, so the internal execSync 5s is the only real bound)"
+      ],
+      "observe_how": "Even when it does beat the 5s execSync timeout, the query is the same static string every time — it can only ever inject the same ~1500-char generic blob regardless of what is being planned (no prompt-derived intent). Output contract is also off-spec: top-level `decision:'allow'` is not a documented value ('approve'|'block' are legacy; PreToolUse wants permissionDecision) and hookSpecificOutput omits hookEventName. No telemetry log exists for this hook, so its 0-yield is unobservable today — add a jsonl fire log like agent-recall's before deciding keep/delete.",
+      "telemetry": "None exists (no log file); SEED-08 recorded 13-17s warm hybrid recall, dominated by uv startup that --text-only also pays"
+    },
+    {
+      "id": "D2b-12",
+      "title": "tldr-read-enforcer deny message tells the model 'To read full file anyway, use: Read <basename>' — but a retried Read of the same non-test file is denied again (only offset/limit bypasses), and explicit limit>=100 or offset:0 are also denied, creating a deny-retry friction loop",
+      "severity": "S2",
+      "confidence": "VERIFIED",
+      "evidence": [
+        {
+          "file": ".claude/hooks/src/tldr-read-enforcer.ts",
+          "lines": "389",
+          "quote": "  if (input.tool_input.offset || (input.tool_input.limit && input.tool_input.limit < 100)) {"
+        },
+        {
+          "file": ".claude/hooks/src/tldr-read-enforcer.ts",
+          "lines": "484-485",
+          "quote": "To read specific lines, use: Read with offset/limit\nTo read full file anyway, use: Read ${basename(filePath)} (test files bypass this)`,"
+        }
+      ],
+      "proposed_class": "fix",
+      "leverage": "quick-win",
+      "seed_ref": null,
+      "dedup_keys": [
+        ".claude/hooks/src/tldr-read-enforcer.ts",
+        "isAllowedFile",
+        "chooseTldrMode",
+        "deny-retry-loop"
+      ],
+      "causal_links": [
+        "consumes the C:\\tmp handshake from D2b-05",
+        "subject to D2b-07 (30000 'ms' timeout is really ~8.3h)"
+      ],
+      "observe_how": "Read any >3000-byte code file outside the allowlist while the TLDR daemon is up: deny with TLDR context. Follow the message's own advice ('Read <basename>') → denied again identically; a defensive `limit: 200` is also denied (only limit<100 passes); `offset: 0` is falsy so an explicit start-of-file windowed read is denied too. The model burns a round-trip per misleading instruction. Fix: honor any explicit limit/offset, and make the bypass instruction match the actual bypass.",
+      "telemetry": "trackHookActivitySync('tldr-read-enforcer', reads_intercepted) goes to the daemon; not file-inspectable, instrument before tuning"
+    },
+    {
+      "id": "D2b-13",
+      "title": "Dual-source hook registration: the project .claude/settings.json re-registers 9 of these 10 hooks with byte-identical commands as the active user settings, and the two copies have already drifted (agent-recall-injector exists only in user settings) — double-execution risk plus a second source of truth",
+      "severity": "S2",
+      "confidence": "INFERRED",
+      "evidence": [
+        {
+          "file": ".claude/settings.json",
+          "lines": "75-76",
+          "quote": "            \"command\": \"node C:/Users/david.hayes/.claude/hooks/dist/smart-search-router.mjs\",\n            \"timeout\": 30000"
+        },
+        {
+          "file": ".claude/settings.json",
+          "lines": "120-121",
+          "quote": "            \"command\": \"node C:/Users/david.hayes/.claude/hooks/dist/file-claims.mjs\",\n            \"timeout\": 10000"
+        }
+      ],
+      "proposed_class": "investigate",
+      "leverage": "structural",
+      "seed_ref": "SEED-15",
+      "dedup_keys": [
+        ".claude/settings.json",
+        "dual-registration",
+        "agent-recall-injector-active-only"
+      ],
+      "causal_links": [
+        "SEED-15 (settings-template/registration drift family)",
+        "would double D2b-09's per-edit uv spawns and D2b-06's per-Grep daemon calls inside continuous-claude if the harness does not dedupe identical commands"
+      ],
+      "observe_how": "Runtime check confirmed ~/.claude/settings.json and repo .claude/settings.json carry the same 9 PreToolUse entries (same node command, same matcher, same timeout); agent-recall-injector (matcher \"Task\") is registered ONLY in the user file — drift in the newest hook. Claude Code merges hooks from all settings scopes; whether it dedupes byte-identical commands must be verified (count hook processes for one Grep inside this repo vs another project). Also note the repo project file hardcodes the absolute C:/Users/david.hayes path, so it is dead weight on any other machine cloning the repo.",
+      "telemetry": "Registration diff: 9/10 duplicated, 1/10 user-scope-only (verified by parsing both files)"
+    },
+    {
+      "id": "D2b-14",
+      "title": "pre-tool-knowledge IMPLEMENTATION_TRIGGERS are substring-matched ('add' hits 'address', 'create' hits 'recreated') so virtually every agent prompt qualifies — one-line payoff: word-boundary matching prevents boilerplate project-context injection on every spawn if this hook is ever revived",
+      "severity": "S3",
+      "confidence": "VERIFIED",
+      "evidence": [
+        {
+          "file": ".claude/hooks/src/pre-tool-knowledge.ts",
+          "lines": "50-52",
+          "quote": "const IMPLEMENTATION_TRIGGERS = [\n  'implement', 'create', 'add', 'build', 'write',\n  'develop', 'make', 'fix', 'update', 'refactor',"
+        },
+        {
+          "file": ".claude/hooks/src/pre-tool-knowledge.ts",
+          "lines": "72-73",
+          "quote": "  for (const trigger of IMPLEMENTATION_TRIGGERS) {\n    if (taskPrompt.includes(trigger) || subagentType.includes(trigger)) {"
+        }
+      ],
+      "proposed_class": "simplify",
+      "leverage": "quick-win",
+      "seed_ref": null,
+      "dedup_keys": [
+        ".claude/hooks/src/pre-tool-knowledge.ts",
+        "IMPLEMENTATION_TRIGGERS",
+        "isImplementationTask"
+      ],
+      "causal_links": [
+        "currently moot because of D2b-01 (dead matcher) and D2b-04 (undocumented injection field)"
+      ],
+      "observe_how": "isImplementationTask uses String.includes over lowercase prompt: 'add' matches inside 'address'/'additive', 'make' inside 'remake', 'fix' inside 'prefix' — effectively any non-trivial prompt triggers, then the hook injects package.json deps, README excerpt and directory listing as fallback context. Convert to \\b-bounded regex and dedupe with the knowledge-tree skill before re-registering.",
+      "telemetry": "n/a — hook currently dead (D2b-01)"
+    }
+  ],
+  "coverage_manifest": [
+    "pre-plan-memory.ts — DEFECTIVE (live, EnterPlanMode matcher): static generic recall query + 5s execSync vs 13-17s warm recall = near-certain zero yield, flat latency tax per plan entry; off-spec output shape (D2b-11, D2b-04, D2b-07)",
+    "explore-to-scout.ts — CODE CLEAN, REGISTRATION DEAD: correct deny contract, but matcher \"Agent\" never matches the live Task spawn tool; Explore-blocking silently unenforced — 8 Explore spawns observed in agent-recall.jsonl (D2b-01)",
+    "task-router.ts — CODE MOSTLY CLEAN, DEAD + CONTRACT-RISK: suggestion-only logic is sound and scoped to generic agents, but it never fires (matcher \"Agent\") and its payload rides undocumented PreToolUse additionalContext (D2b-01, D2b-04)",
+    "ralph-template-inject.ts — DEAD THREE WAYS: gates on nonexistent `event` field, emits unsupported `modifiedInput`, sits on dead matcher; advertised Maestro template guarantee is a decision-driving false claim — recommend delete or full rewrite (D2b-02)",
+    "pre-tool-knowledge.ts — DEAD + OVERBROAD: never fires (matcher \"Agent\"); substring triggers would inject boilerplate on nearly every spawn if revived; outputs undocumented {result:'continue'} without permissionDecision (D2b-01, D2b-04, D2b-14)",
+    "tldr-context-inject.ts — UNREACHABLE EITHER WAY: matcher \"Agent\" vs internal tool_name!=='Task' gate are mutually exclusive; latent Windows infinite loop in findProjectRoot and fabricated line-10 PDG slices; recommend delete (D2b-08, D2b-01, D2b-07)",
+    "smart-search-router.ts — LIVE AND HARMFUL: S0 junk store at C:\\tmp\\claude-search-context (hundreds of files since Jan), shell-injectable + Windows-broken rg fallback, hard-denies 3+-word literal Greps even with no semantic index, deny text recommends the banned Explore spawn and hardcodes --lang python (D2b-05, D2b-06, D2b-10)",
+    "tldr-read-enforcer.ts — LIVE, FRICTION: deny copy misleads retries (re-Read denied again; limit>=100 and offset:0 denied); allowlist itself is sensible; consumes the C:\\tmp handshake (D2b-12, D2b-05, D2b-07)",
+    "file-claims.ts — LIVE, EXPENSIVE + FAIL-OPEN HOLE: 2-3 uv+python+asyncpg spawns per Edit/Write with CREATE TABLE in the read path; DB error in isSessionActive silently steals an active session's lock; latent 5434/5432 port mismatch; TOCTOU check-then-claim (D2b-09, D2b-13)",
+    "agent-recall-injector.ts — DELICATE FILE, BEST-BUILT ASSEMBLY BUT ZERO MEMORY YIELD: sanitize/cap/wrap pipeline (memory-sanitize, bus-focus) is exemplary and fail-open everywhere, yet 78/78 fires returned 0 results since 2026-05-16 (full-prompt recall queries + 3.5s budget); only deliveries ever were 17 bus focus blocks whose receipt depends on unverified PreToolUse additionalContext; fragile isDirectInvocation filename guard; registered only in user settings (drift) (D2b-03, D2b-04, D2b-13)"
+  ],
+  "notes": "Tool-name evidence chain for D2b-01: agent-recall-injector is the only one of the 10 registered under matcher \"Task\" (active ~/.claude/settings.json, checked read-only) and it wrote an agent-recall.jsonl row during this very review session (2026-06-10T15:22, session b478f78e), proving the live subagent spawn tool matches \"Task\". The five matcher-\"Agent\" hooks therefore cannot fire unless the harness internally aliases Agent<->Task — the one caveat; the decisive probe (spawn Explore, see if denied) is in D2b-01.observe_how. Net effect for D2b as a dimension: of 10 PreToolUse router/injector hooks, 5 are dead registrations, 1 is unreachable under either tool name, 1 (agent-recall) has 0/78 lifetime memory yield, and the 3 that demonstrably act (smart-search-router, tldr-read-enforcer, file-claims) each carry a live defect (S0 junk dir + injection + over-denial; misleading deny copy; per-edit uv spawn tax + fail-open lock takeover). Injection-assembly quality is sharply bimodal: agent-recall's path (sanitizeMemoryContent control-strip/HTML-encode/cap + bus-focus allowlist + data-only wrapper) is the only sanitized one; pre-plan-memory injects raw recall output (1500-char cap only), ralph-template-inject would inject whole template files, pre-tool-knowledge injects raw README/package.json excerpts — none hostile today only because their delivery paths are dead. Active-settings facts (timeouts, matchers, agent-recall-injector presence) come from read-only inspection of C:/Users/david.hayes/.claude/settings.json, which mirrors the repo's .claude/settings.json for the 9 duplicated entries quoted as evidence."
+}

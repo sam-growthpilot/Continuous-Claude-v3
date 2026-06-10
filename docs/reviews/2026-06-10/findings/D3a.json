@@ -1,0 +1,224 @@
+{
+  "dimension": "D3a",
+  "findings": [
+    {
+      "id": "D3a-01",
+      "title": "Quoting-hazard root cause: 3 hook callers shell out to store_learning.py with bash-style escaping that is wrong for the cmd.exe shell execSync uses on Windows (un-escaped & | < > ^ % backtick) — junk-creator / injection class",
+      "severity": "S1",
+      "confidence": "VERIFIED",
+      "seed_ref": "SEED-01",
+      "leverage": "structural",
+      "proposed_class": "fix",
+      "dedup_keys": [
+        "agent-error-capture.ts:storeLearning",
+        "hook-error-pipeline.ts:storeErrorAsLearning",
+        "user-confirmation-detector.ts:storeUserConfirmedLearning",
+        "user-confirmation-detector.ts:storeVictoryFromConfirmation",
+        "store_learning.py"
+      ],
+      "causal_links": [
+        "SEED-01"
+      ],
+      "telemetry": "Count store_learning.py invocations whose argv after shell-split does not contain '--content'; grep TEMP for files whose names are command fragments (e.g. 'opc/400`'). corr-null 60.7% may partly be mangled stores.",
+      "observe_how": "Feed errorContext / user prompt containing & | ^ % > ` into the hook and watch the spawned cmd.exe split the command.",
+      "evidence": [
+        {
+          "file": ".claude/hooks/src/agent-error-capture.ts",
+          "lines": "172-184",
+          "quote": "const escapedContent = content.replace(/\"/g, '\\\\\"').replace(/\\n/g, '\\\\n');\n...\n      `cd \"${opcDir}\" && uv run python scripts/core/store_learning.py ` +\n...\n      `--content \"${escapedContent}\" ` +"
+        },
+        {
+          "file": ".claude/hooks/src/hook-error-pipeline.ts",
+          "lines": "98-107",
+          "quote": "const escapedContent = content\n      .replace(/\"/g, '\\\\\"')\n      .replace(/\\n/g, '\\\\n')\n...\n      `--content \"${escapedContent}\" ` +"
+        },
+        {
+          "file": ".claude/hooks/src/user-confirmation-detector.ts",
+          "lines": "126-137",
+          "quote": "const escapedContent = content.slice(0, 1000).replace(/\"/g, '\\\\\"');\n  const cmd = `uv run python ${script} --session-id \"${sessionId}\" --type USER_PREFERENCE --content \"${escapedContent}\" ...`;\n...\n      shell: true"
+        }
+      ]
+    },
+    {
+      "id": "D3a-06",
+      "title": "Caller-safety inventory (SEED-01 completeness): 3 UNSAFE string-interpolation shell-outs vs 4 SAFE array-arg spawns vs 2 doc-only non-callers",
+      "severity": "S2",
+      "confidence": "VERIFIED",
+      "seed_ref": "SEED-01",
+      "leverage": "quick-win",
+      "proposed_class": "fix",
+      "dedup_keys": [
+        "browser-learning-extractor.ts",
+        "periodic-extract.ts",
+        "smarter-everyday.ts",
+        "post-plan-roadmap.ts",
+        "post-learning-prompt.ts",
+        "ralph-monitor.ts"
+      ],
+      "causal_links": [
+        "D3a-01",
+        "SEED-01"
+      ],
+      "telemetry": "n/a (static inventory)",
+      "observe_how": "Read each call site; spawn(uv,[array]) with no shell:true is injection-safe; execSync(`...${x}...`) is not.",
+      "evidence": [
+        {
+          "file": ".claude/hooks/src/browser-learning-extractor.ts",
+          "lines": "445-452",
+          "quote": "const args = [\n    'run', 'python', 'scripts/core/store_learning.py',\n    '--session-id', sessionId,"
+        },
+        {
+          "file": ".claude/hooks/src/periodic-extract.ts",
+          "lines": "190-203",
+          "quote": "const child = spawn('uv', [\n      'run', 'python', 'scripts/core/store_learning.py',\n...\n      env: { ...process.env, PYTHONPATH: '.' },"
+        },
+        {
+          "file": ".claude/hooks/src/post-learning-prompt.ts",
+          "lines": "118-118",
+          "quote": "return 'Multiple file edits detected. ... `/remember` or use store_learning.py';"
+        }
+      ]
+    },
+    {
+      "id": "D3a-05",
+      "title": "Dead pipeline: agent-error-capture builds content starting with \"Agent '\" which is the FIRST entry in store_learning.py NOISE_PREFIXES — every store it attempts is gate-rejected before embedding; the hook still logs 'Stored failure learning'",
+      "severity": "S2",
+      "confidence": "VERIFIED",
+      "seed_ref": null,
+      "leverage": "structural",
+      "proposed_class": "fix",
+      "dedup_keys": [
+        "agent-error-capture.ts:content",
+        "store_learning.py:NOISE_PREFIXES",
+        "store_learning.py:validate_learning_quality"
+      ],
+      "causal_links": [],
+      "telemetry": "SELECT count(*) FROM archival_memory WHERE tags @> '{agent_failure}'; expect ~0 despite hook firing. 30/36 agents never in agent-recall (SUMMARY) is consistent with agent-failure learnings never persisting.",
+      "observe_how": "Run agent-error-capture on any failure; store_learning returns {skipped:true, reason:'noise_prefix: Agent ''} at gate step 1.",
+      "evidence": [
+        {
+          "file": ".claude/hooks/src/agent-error-capture.ts",
+          "lines": "144-144",
+          "quote": "const content = `Agent '${agentType}' error: ${errorContext}`;"
+        },
+        {
+          "file": "opc/scripts/core/store_learning.py",
+          "lines": "167-168",
+          "quote": "NOISE_PREFIXES = [\n    \"Agent '\",           # agent failure dumps"
+        },
+        {
+          "file": "opc/scripts/core/store_learning.py",
+          "lines": "337-341",
+          "quote": "for prefix in NOISE_PREFIXES:\n        if stripped.startswith(prefix):\n            reason = f\"noise_prefix: {prefix}\"\n...\n            return {\"passes\": False, \"reason\": reason}"
+        }
+      ]
+    },
+    {
+      "id": "D3a-04",
+      "title": "classify_scope uses substring `kw in combined` over GLOBAL_KEYWORDS containing short/common tokens ('go','git','agent') — 'good'/'category'/'management' false-trigger GLOBAL, mis-scoping PROJECT learnings into the cross-project GLOBAL recall surface",
+      "severity": "S2",
+      "confidence": "VERIFIED",
+      "seed_ref": null,
+      "leverage": "structural",
+      "proposed_class": "fix",
+      "dedup_keys": [
+        "store_learning.py:classify_scope",
+        "store_learning.py:GLOBAL_KEYWORDS"
+      ],
+      "causal_links": [],
+      "telemetry": "Sample archival_memory rows with scope=GLOBAL; count those whose content has no genuine cross-project token but matched 'go'/'git'/'agent' substrings. Relates to intent-pollution 24.6% / recall hit-rate 27.4%.",
+      "observe_how": "classify_scope('the good agent management page') -> 'go' in 'good', 'agent' in 'agent'/'management' => global_score>=2 => GLOBAL.",
+      "evidence": [
+        {
+          "file": "opc/scripts/core/store_learning.py",
+          "lines": "82-83",
+          "quote": "\"python\", \"typescript\", \"javascript\", \"rust\", \"go\",\n    \"async\", \"await\", \"promise\", \"generator\", \"decorator\","
+        },
+        {
+          "file": "opc/scripts/core/store_learning.py",
+          "lines": "141-145",
+          "quote": "global_score = sum(1 for kw in GLOBAL_KEYWORDS if kw in combined)\n    project_score = sum(1 for kw in PROJECT_KEYWORDS if kw in combined)\n\n    if global_score > project_score and global_score >= 2:\n        return \"GLOBAL\""
+        }
+      ]
+    },
+    {
+      "id": "D3a-03",
+      "title": "_emit_store_quality_score is a synchronous timeout=2.0s HTTP POST invoked on EVERY gate outcome (incl. noise/too_short rejections), inside validate_learning_quality on the store hot path",
+      "severity": "S2",
+      "confidence": "VERIFIED",
+      "seed_ref": "SEED-16",
+      "leverage": "quick-win",
+      "proposed_class": "simplify",
+      "dedup_keys": [
+        "store_learning.py:_emit_store_quality_score",
+        "store_learning.py:validate_learning_quality"
+      ],
+      "causal_links": [
+        "SEED-16"
+      ],
+      "telemetry": "When TRACE_TO_BRAINTRUST=true + the 3 BRAINTRUST_* env vars set, time a rejected-noise store; up to 2s blocking before the rejection returns. Count call sites: 6 emit calls (4 reject paths + 2 pass paths).",
+      "observe_how": "Set the 4 env guards, store a 5-char fragment; gate rejects at step 3 but still blocks on the feedback POST first.",
+      "evidence": [
+        {
+          "file": "opc/scripts/core/store_learning.py",
+          "lines": "269-277",
+          "quote": "requests.post(\n                f\"{api_url}/v1/project_logs/{project_id}/feedback\",\n                json=payload,\n...\n                timeout=2.0,\n            )"
+        },
+        {
+          "file": "opc/scripts/core/store_learning.py",
+          "lines": "354-356",
+          "quote": "reason = f\"too_short ({len(stripped)}<{min_len})\"\n        _emit_store_quality_score(False, reason, learning_type, content_len, session_id)\n        return {\"passes\": False, \"reason\": reason}"
+        }
+      ]
+    },
+    {
+      "id": "D3a-02",
+      "title": "Silent store failures: dedup-search errors and all backend/embedding exceptions are swallowed; detached spawn callers use stdio:'ignore', so a failed store returns success-shaped or unseen — no telemetry that a learning was lost",
+      "severity": "S2",
+      "confidence": "VERIFIED",
+      "seed_ref": null,
+      "leverage": "structural",
+      "proposed_class": "investigate",
+      "dedup_keys": [
+        "store_learning.py:store_learning_v2",
+        "periodic-extract.ts",
+        "smarter-everyday.ts",
+        "post-plan-roadmap.ts"
+      ],
+      "causal_links": [],
+      "telemetry": "Compare count of store_learning spawns (hook logs) vs archival_memory inserts/24h (system_health already surfaces 'No learnings stored in 24h'). Gap = silent losses. Relates recall hit-rate 27.4%.",
+      "observe_how": "Kill DATABASE_URL mid-session; store_learning_v2 returns {success:false,error:...} but detached spawn (stdio:'ignore') discards it; dedup search failure path just `pass`es and double-stores.",
+      "evidence": [
+        {
+          "file": "opc/scripts/core/store_learning.py",
+          "lines": "538-540",
+          "quote": "except Exception:\n            # If search fails, proceed with storing (don't block on dedup errors)\n            pass"
+        },
+        {
+          "file": "opc/scripts/core/store_learning.py",
+          "lines": "579-580",
+          "quote": "except Exception as e:\n        return {\"success\": False, \"error\": str(e)}"
+        },
+        {
+          "file": ".claude/hooks/src/periodic-extract.ts",
+          "lines": "198-204",
+          "quote": "], {\n      cwd: opcDir,\n      detached: true,\n      stdio: 'ignore',"
+        }
+      ]
+    }
+  ],
+  "coverage_manifest": [
+    "store_learning.py L0 quality gate (validate_learning_quality): logic sound (noise-prefix-first ordering, min-length, newline/repetition heuristics) — but emits synchronous HTTP on every outcome (D3a-03) and the 'Agent '' NOISE prefix collides with agent-error-capture content (D3a-05)",
+    "_emit_store_quality_score (SEED-16): VERIFIED synchronous timeout=2.0s POST on all 6 gate paths incl. rejections — D3a-03, seed_ref SEED-16",
+    "dedup at 0.85 (DEDUP_THRESHOLD, search_vector_for_dedup): threshold/scoping logic correct; search-error path silently swallowed → possible duplicate inserts (D3a-02)",
+    "scope tagging (classify_scope): substring `kw in combined` over short tokens 'go'/'git'/'agent' false-classifies PROJECT learnings as GLOBAL → cross-project recall contamination (D3a-04)",
+    "callers grep (.claude/hooks/src): enumerated — 3 UNSAFE execSync interpolations (agent-error-capture, hook-error-pipeline, user-confirmation-detector x2), 4 SAFE array spawns (browser-learning-extractor, periodic-extract, smarter-everyday, post-plan-roadmap), 2 doc-only (post-learning-prompt, ralph-monitor) — D3a-01, D3a-06",
+    "callers grep (opc/*.py): incremental_extract/backfill/supersede/index_handoff/project_memory/lazy_memory import as module (Python calls, safe); health_check.py uses _run_python_script([array]) (safe) — CLEAN",
+    "callers grep (.claude/skills): SKILL.md docs only, no live shell-out — CLEAN",
+    "SEED-01 quoting hazard: root-caused — bash-style \\\" escaping wrong for cmd.exe that execSync spawns on Windows; metachars &|<>^%backtick un-escaped; content embeds arbitrary agent-error/user-prompt text → D3a-01 (S1)",
+    "embedding-write path (EmbeddingService provider='local' → LocalEmbeddingProvider BGE-large 1024-dim, in-process via sentence-transformers; get_embedder() singleton): NO daemon socket in this path — model loads in-process per `uv run python` invocation (latency/RSS cost, relates SEED-08); no corruption found; dim/model NOT flagged per instructions — CLEAN re corruption",
+    "BGE daemon interaction: store_learning.py does not contend with codegraph's BGE daemon (separate process); in-process load only — CLEAN",
+    "malformed-content corruption: gate rejects malformed-as-noise before embedding; real corruption risk is the SHELL layer (D3a-01), not the Python parser which uses argparse safely once args arrive intact"
+  ],
+  "notes": "Frozen-SHA note: working tree at review time is clean (HEAD 8723034); the `opc/400\\`` artifact shown in the session-start git snapshot was NOT present when I checked (git status --porcelain empty; find found nothing) — I did not re-assert its existence. The quoting-hazard ROOT CAUSE (D3a-01) is VERIFIED in code regardless; the `400\\`` filename is exactly the signature of a command split on an unescaped metachar (`... 400` fragment redirected to a file), consistent with SEED-01's 5 logged artifacts. Severity rationale: D3a-01 marked S1 (wrong hot-path behavior + injection surface) augmenting parent SEED-01 (S0 junk-creator); user-confirmation-detector is the worst leg (shell:true + raw user prompt + only escapes double-quotes, not even newlines). D3a-05 is the highest-leverage NEW finding: agent-error-capture's entire output is unconditionally gate-rejected (content always starts with 'Agent ''), so that hook persists nothing while logging success — likely contributor to the 30/36 agents-never-in-agent-recall telemetry. The Grep tool was hook-intercepted into semantic/AST search mid-review (returned 'No semantic matches' for literal patterns); I fell back to targeted read-only Bash grep and chunked Reads — all quotes copied verbatim from the files."
+}

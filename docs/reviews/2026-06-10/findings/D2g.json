@@ -1,0 +1,462 @@
+{
+  "dimension": "D2g",
+  "findings": [
+    {
+      "id": "D2g-01",
+      "title": "settings.json.template still registers deliberately-disabled hooks (sync-to-repo clobber amplifier, pageindex-navigator, neutralized auto-build) — new-machine bootstrap resurrects them",
+      "severity": "S1",
+      "confidence": "VERIFIED",
+      "evidence": [
+        {
+          "file": ".claude/settings.json.template",
+          "lines": "419",
+          "quote": "\"command\": \"node {{CLAUDE_HOME}}/hooks/dist/sync-to-repo.mjs\","
+        },
+        {
+          "file": ".claude/rules/git-sync-workflow.md",
+          "lines": "21-24",
+          "quote": "**Unregistered** from active + repo `settings.json`. Source retained (unused)."
+        },
+        {
+          "file": ".claude/settings.json.template",
+          "lines": "175",
+          "quote": "\"command\": \"node {{CLAUDE_HOME}}/hooks/dist/pageindex-navigator.mjs\","
+        }
+      ],
+      "proposed_class": "fix",
+      "leverage": "quick-win",
+      "seed_ref": "SEED-15",
+      "dedup_keys": [
+        ".claude/settings.json.template",
+        ".claude/hooks/src/sync-to-repo.ts",
+        ".claude/hooks/src/pageindex-navigator.ts",
+        ".claude/hooks/src/auto-build.ts"
+      ],
+      "causal_links": [
+        "SEED-15 covers active-only entries MISSING from template; this is the inverse: template-only STALE entries. D2g-08 deletion of auto-build src must be sequenced after removing template line 439."
+      ],
+      "observe_how": "wizard.py renders settings.json from the template on a fresh machine; the rendered config re-enables sync-to-repo — the exact PostToolUse reverse-sync hook root-cause-disabled 2026-06-01 for clobbering uncommitted repo edits (git-sync-workflow.md) — plus pageindex-navigator (disabled 2026-06-01 for 0/16 query-hits per code-intel-boundaries.md) and auto-build.mjs (source header says NEUTRALIZED no-op). Template lines 175, 419, 439.",
+      "telemetry": "registrations-diff shows all three in src_but_never_registered_active; grep confirms template=1 for exactly auto-build, pageindex-navigator, sync-to-repo (plus periodic-extract which is also repo-registered)."
+    },
+    {
+      "id": "D2g-02",
+      "title": "permission-auto-allow auto-approves EVERY PermissionRequest except AskUserQuestion/ExitPlanMode — the OS-level permission dialog gate is effectively disabled system-wide in normal mode",
+      "severity": "S1",
+      "confidence": "VERIFIED",
+      "evidence": [
+        {
+          "file": ".claude/hooks/src/permission-auto-allow.ts",
+          "lines": "1",
+          "quote": "// Auto-allow PermissionRequest EXCEPT for AskUserQuestion and ExitPlanMode."
+        },
+        {
+          "file": ".claude/hooks/src/permission-auto-allow.ts",
+          "lines": "39-41",
+          "quote": "  if (input.tool_name === 'AskUserQuestion' || input.tool_name === 'ExitPlanMode') {\n    process.stdout.write('{}');\n    return;"
+        },
+        {
+          "file": ".claude/hooks/src/permission-auto-allow.ts",
+          "lines": "44",
+          "quote": "  emitAllow();"
+        }
+      ],
+      "proposed_class": "investigate",
+      "leverage": "strategic",
+      "seed_ref": "SEED-15",
+      "dedup_keys": [
+        ".claude/hooks/src/permission-auto-allow.ts",
+        "emitAllow",
+        "PermissionRequest"
+      ],
+      "causal_links": [
+        "Registered ACTIVE-only (absent from repo settings.json and template) — same registration-drift class as SEED-15. Interacts with plan-to-ralph-enforcement.md's 'The dialog *is* the gate' premise: this hook removes the dialog for everything except the two excluded tools."
+      ],
+      "observe_how": "Hook is registered only in ~/.claude/settings.json (line ~600). Any destructive Bash/Write/MCP call that would normally raise a permission dialog is silently allowed; the destructive-commands.md safety rules become purely model-side conventions with no harness backstop. Deliberate (.claude/ sensitive-file workaround for v2.1.78+ per comment), but it converts normal mode into near-bypass mode and is undocumented outside the source comment.",
+      "telemetry": "No allow/deny audit log is written by the hook — zero observability on what it auto-approved."
+    },
+    {
+      "id": "D2g-03",
+      "title": "pre-compact-continuity generateAutoSummary reads two data feeds no registered hook writes, and its line parser splits Windows paths on ':' (drive letter bug) — ~95 lines of dead-feed code with a latent corruption bug",
+      "severity": "S2",
+      "confidence": "VERIFIED",
+      "evidence": [
+        {
+          "file": ".claude/hooks/src/pre-compact-continuity.ts",
+          "lines": "189-191",
+          "quote": "          const parts = line.split(':');\n          // filepath is second part, remove project dir prefix\n          return parts[1]?.replace(projectDir + '/', '') || '';"
+        },
+        {
+          "file": ".claude/hooks/post_tool_use_tracker.py",
+          "lines": "162-164",
+          "quote": "    timestamp = int(time.time())\n    with open(log_file, \"a\") as f:\n        f.write(f\"{timestamp}:{file_path}:{repo}\\n\")"
+        },
+        {
+          "file": ".claude/hooks/src/pre-compact-continuity.ts",
+          "lines": "198-199",
+          "quote": "  const gitClaudeDir = path.join(projectDir, '.git', 'claude', 'branches');\n  let buildAttempts = { passed: 0, failed: 0 };"
+        }
+      ],
+      "proposed_class": "simplify",
+      "leverage": "structural",
+      "seed_ref": null,
+      "dedup_keys": [
+        ".claude/hooks/src/pre-compact-continuity.ts",
+        "generateAutoSummary",
+        ".claude/hooks/post_tool_use_tracker.py",
+        "edited-files.log",
+        "attempts.jsonl"
+      ],
+      "causal_links": [
+        "Feeds are written only by the legacy unregistered post_tool_use_tracker.py (edited-files.log) and by nothing at all for .git/claude/branches/*/attempts.jsonl (zero writers in hooks/src). Hook itself (auto-handoff generation via transcript-parser) is live and registered; only generateAutoSummary is dead."
+      ],
+      "observe_how": "grep shows edited-files.log written only by post_tool_use_tracker.py, which appears in no settings.json (repo, template, or active); build_pass/build_fail appears only in this reader. If the feed were ever re-enabled on Windows, format {epoch}:{C:\\path}:{repo} split(':') yields parts[1]='C', so the ledger would receive 'Files changed: C' junk appended into CONTINUITY_CLAUDE-*.md.",
+      "telemetry": "generateAutoSummary returns null today (both feeds empty), so ledger auto-append silently never happens — the 'brief summary to ledger for visibility' feature is inert."
+    },
+    {
+      "id": "D2g-04",
+      "title": "session-outcome emits its outcome-marking reminder via SessionEnd 'message' — a channel the repo's own hook contract documents as void — and hardcodes default outcome PARTIAL_PLUS so the handoff reminder always fires",
+      "severity": "S2",
+      "confidence": "INFERRED",
+      "evidence": [
+        {
+          "file": ".claude/hooks/src/session-outcome.ts",
+          "lines": "170",
+          "quote": "  let outcome = 'PARTIAL_PLUS';"
+        },
+        {
+          "file": ".claude/hooks/src/session-outcome.ts",
+          "lines": "176-179",
+          "quote": "  const output: HookOutput = {\n    result: \"continue\",\n    message: buildOutcomeMessage(sessionName, handoffName, outcome)\n  };"
+        },
+        {
+          "file": ".claude/rules/hook-dev-lifecycle.md",
+          "lines": "16-22",
+          "quote": "| SessionEnd | Session closes | `{}` |"
+        }
+      ],
+      "proposed_class": "investigate",
+      "leverage": "structural",
+      "seed_ref": null,
+      "dedup_keys": [
+        ".claude/hooks/src/session-outcome.ts",
+        "buildOutcomeMessage",
+        "needsHandoffReminder"
+      ],
+      "causal_links": [
+        "RULES.md 'Handoff Discipline [H:9]: Session-end hooks monitor and prompt for outcome marking' rests on this hook; if SessionEnd stdout is discarded (per the repo's own output-contract table), the enforcement claim is decision-driving but unsatisfied. Related to memory-recall outcome-labeling gap (27.4% hit-rate context)."
+      ],
+      "observe_how": "Hook logic verified by reading the file: it composes a multi-line terminal message including an sqlite3 command and (because outcome defaults to PARTIAL_PLUS when the temp state file is absent — the common case) always appends the HANDOFF REMINDER block. Whether Claude Code renders SessionEnd 'message' is INFERRED from the repo's own contract doc; verify with a live session-end probe.",
+      "telemetry": "No log row records whether the reminder was ever surfaced or acted on; artifact_mark.py outcome rows would show near-zero usage if the channel is dead."
+    },
+    {
+      "id": "D2g-05",
+      "title": "session-end-extract shells out via execSync with string-interpolated sessionId/projectDir (quoting/injection fragility) and blocks SessionEnd up to 10s on a synchronous uv-python gate",
+      "severity": "S2",
+      "confidence": "VERIFIED",
+      "evidence": [
+        {
+          "file": ".claude/hooks/src/session-end-extract.ts",
+          "lines": "63-65",
+          "quote": "    const result = execSync(\n      `cd \"${opcDir}\" && uv run python scripts/core/lazy_memory.py check --session-id \"${sessionId}\" --project \"${projectDir}\" --min-turns ${MIN_TURNS} --json`,\n      { encoding: 'utf-8', timeout: 10000, stdio: ['pipe', 'pipe', 'pipe'] }"
+        }
+      ],
+      "proposed_class": "fix",
+      "leverage": "quick-win",
+      "seed_ref": "SEED-01",
+      "dedup_keys": [
+        ".claude/hooks/src/session-end-extract.ts",
+        "shouldExtract",
+        "execSync"
+      ],
+      "causal_links": [
+        "Same unquoted/interpolated-shell-metachar failure family as SEED-01 (junk-creator invoking store_learning.py with unquoted metachars). Sibling functions in the SAME file (extractWithDedup, extractLearningsLegacy) already use spawn with array args — the safe pattern exists 20 lines below."
+      ],
+      "observe_how": "A projectDir containing $(...) or backticks (or `&` on Windows cmd) is interpolated raw into the shell string. Values normally come from CLAUDE_PROJECT_DIR/cwd so exploitation is low, but the warm-recall latency seed (SEED-08, uv startup 13-17s) means this sync gate can routinely eat its full 10s timeout at every session end before falling through to 'assume extract'.",
+      "telemetry": "On timeout the catch returns true ('extract anyway'), so the gate adds latency without ever preventing extraction when uv is slow — pure cost."
+    },
+    {
+      "id": "D2g-06",
+      "title": "Four stale dead duplicate libs in hooks/src/lib/ (daemon-client, skill-router, skill-validation-prompt, transcript-parser) — zero importers, diverged from the live top-level copies",
+      "severity": "S2",
+      "confidence": "VERIFIED",
+      "evidence": [
+        {
+          "file": ".claude/hooks/src/skill-activation-prompt.ts",
+          "lines": "20",
+          "quote": "import { buildEnhancedLookupResult } from './skill-router.js';"
+        },
+        {
+          "file": ".claude/hooks/src/pre-compact-continuity.ts",
+          "lines": "3",
+          "quote": "import { parseTranscript, generateAutoHandoff } from './transcript-parser.js';"
+        },
+        {
+          "file": ".claude/hooks/src/lib/skill-router.ts",
+          "lines": "10",
+          "quote": " *   import { route } from './skill-router.js';"
+        }
+      ],
+      "proposed_class": "delete",
+      "leverage": "quick-win",
+      "seed_ref": null,
+      "dedup_keys": [
+        ".claude/hooks/src/lib/daemon-client.ts",
+        ".claude/hooks/src/lib/skill-router.ts",
+        ".claude/hooks/src/lib/skill-validation-prompt.ts",
+        ".claude/hooks/src/lib/transcript-parser.ts"
+      ],
+      "causal_links": [
+        "Drift trap feeding the 'later agent regenerated whole file from stale context' regression class (hook-dev-lifecycle.md failure table): an agent grepping for skill-router may edit the dead lib/ copy. Inverse of D2g-07 (live libs at top level)."
+      ],
+      "observe_how": "cmp shows all four lib/ copies differ from top-level (lib larger: 1044 vs 981, 900 vs 802, 350 vs 295, 443 vs 370 lines); git log dates lib copies 2026-04-29/30 vs top-level 2026-05-18; repo-wide grep finds zero non-test imports of any lib/ copy (only lib/run-command.ts and lib/hook-trace.ts are referenced).",
+      "telemetry": "~2,700 lines of dead duplicated TypeScript."
+    },
+    {
+      "id": "D2g-07",
+      "title": "Live shared libs misplaced as top-level entrypoints: daemon-client, transcript-parser, skill-router, skill-validation-prompt are imported by REGISTERED hooks but sit in src/*.ts, so they appear in the never-registered list and esbuild emits each as a never-executed dist entrypoint",
+      "severity": "S2",
+      "confidence": "VERIFIED",
+      "evidence": [
+        {
+          "file": ".claude/hooks/package.json",
+          "lines": "8",
+          "quote": "\"build\": \"node node_modules/esbuild/bin/esbuild src/*.ts --bundle --platform=node --format=esm --outdir=dist --out-extension:.js=.mjs --external:better-sqlite3\","
+        },
+        {
+          "file": ".claude/hooks/src/arch-context-inject.ts",
+          "lines": "12",
+          "quote": "import { queryDaemonSync, trackHookActivitySync } from './daemon-client.js';"
+        },
+        {
+          "file": ".claude/hooks/src/skill-activation-prompt.ts",
+          "lines": "17",
+          "quote": "} from './skill-validation-prompt.js';"
+        }
+      ],
+      "proposed_class": "simplify",
+      "leverage": "structural",
+      "seed_ref": null,
+      "dedup_keys": [
+        ".claude/hooks/src/daemon-client.ts",
+        ".claude/hooks/src/transcript-parser.ts",
+        ".claude/hooks/src/skill-router.ts",
+        ".claude/hooks/src/skill-validation-prompt.ts",
+        "queryDaemonSync"
+      ],
+      "causal_links": [
+        "Directly corrects the telemetry claim '35/111 hook srcs never registered': 4 of the 35 are LIVE library code (deleting them breaks registered hooks: post-edit-diagnostics, smart-search-router, tldr-context-inject, tldr-read-enforcer, pre-compact-continuity, skill-activation-prompt). Must be excluded from the D2g-08 deletion backlog. Move to lib/ after deleting the stale lib/ duplicates (D2g-06)."
+      ],
+      "observe_how": "daemon-client is imported by 11 sibling hooks (several registered active); transcript-parser by registered pre-compact-continuity; skill-router + skill-validation-prompt by registered skill-activation-prompt. The src/*.ts build glob also bundles each as its own dist/*.mjs that no settings.json ever invokes.",
+      "telemetry": "True dead count in the never-registered-35 is 26 prototypes + 1 neutralized + 4 latent-config items, not 35."
+    },
+    {
+      "id": "D2g-08",
+      "title": "26 SAFE-dead unregistered hook prototypes in hooks/src — no registration in active runtime, repo settings.json, or template; no imports from any non-test source; deletable as a batch",
+      "severity": "S2",
+      "confidence": "VERIFIED",
+      "evidence": [
+        {
+          "file": ".claude/hooks/src/compiler-in-the-loop.ts",
+          "lines": "2-4",
+          "quote": " * Compiler-in-the-Loop Hook\n *\n * PostToolUse handler for .lean files:"
+        },
+        {
+          "file": ".claude/hooks/src/auto-build.ts",
+          "lines": "2",
+          "quote": " * Auto-Build Hook (NEUTRALIZED)"
+        },
+        {
+          "file": ".claude/hooks/src/auto-build.ts",
+          "lines": "12-13",
+          "quote": " * It never triggers a build. The hook remains registered in settings.json\n * but is a no-op; deregistration is deferred to Phase 2."
+        }
+      ],
+      "proposed_class": "delete",
+      "leverage": "structural",
+      "seed_ref": null,
+      "dedup_keys": [
+        "arch-context-inject.ts",
+        "browser-learning-extractor.ts",
+        "code-field-protocol.ts",
+        "compiler-in-the-loop.ts",
+        "compiler-in-the-loop-stop.ts",
+        "dashboard-reporter.ts",
+        "edit-context-inject.ts",
+        "git-memory-check.ts",
+        "handoff-index.ts",
+        "hook-error-pipeline.ts",
+        "impact-refactor.ts",
+        "import-error-detector.ts",
+        "path-rules.ts",
+        "plan-mode-discovery.ts",
+        "post-edit-notify.ts",
+        "post-learning-prompt.ts",
+        "prd-task-template-enforcer.ts",
+        "pre-tool-use-broadcast.ts",
+        "react-perf-context.ts",
+        "session-end-cleanup.ts",
+        "session-start-dead-code.ts",
+        "session-start-parallel.ts",
+        "signature-helper.ts",
+        "skill-install-registrar.ts",
+        "test-build.ts",
+        "typescript-preflight.ts"
+      ],
+      "causal_links": [
+        "EXCLUDED from this list (NOT safe-dead): daemon-client/transcript-parser/skill-router/skill-validation-prompt (live libs, D2g-07); periodic-extract (registered in repo settings.json + template, SEED-15's repo-only item); sync-to-repo + pageindex-navigator + auto-build (template registrations must be removed first, D2g-01); diagnostics (deliberate CLI utility 'node dist/diagnostics.mjs', not a hook). Orphan tests to delete with: __tests__/dashboard-reporter.test.ts; auto-build's _register/_test scripts in D2g-10. auto-build.ts header's 'remains registered in settings.json' is itself a stale false claim — it is registered nowhere active."
+      ],
+      "observe_how": "Three-way verification: (1) grep of each name against .claude/settings.json (repo) and .claude/settings.json.template = 0 hits for all 26; (2) registrations-diff src_but_never_registered_active includes all; (3) repo-wide import grep finds no non-test importer of any of the 26; (4) reference scan of scripts/, skills/, agents/ finds only doc/visualization mentions. Family note: arch/edit-context-inject, impact-refactor, post-edit-notify, session-start-dead-code, signature-helper are the dead TLDR-daemon context-injection generation; compiler-in-the-loop(-stop) target .lean files — Lean is not in this stack.",
+      "telemetry": "All 26 are bundled by esbuild on every `npm run build` into dist entrypoints that never execute — pure build time and dist weight; they also inflate the hook-catalog drift (SEED-14)."
+    },
+    {
+      "id": "D2g-09",
+      "title": "Dead handoff-index hook is the sole consumer of the better-sqlite3 runtime dependency and the build's only --external flag; its live sibling's docstring falsely presents it as a running complement",
+      "severity": "S2",
+      "confidence": "VERIFIED",
+      "evidence": [
+        {
+          "file": ".claude/hooks/src/handoff-index.ts",
+          "lines": "1-4",
+          "quote": "import * as fs from 'fs';\nimport * as path from 'path';\nimport { spawn, execSync } from 'child_process';\nimport Database from 'better-sqlite3';"
+        },
+        {
+          "file": ".claude/hooks/package.json",
+          "lines": "20-22",
+          "quote": "    \"dependencies\": {\n        \"better-sqlite3\": \"^12.5.0\"\n    }"
+        },
+        {
+          "file": ".claude/hooks/src/session-end-handoff-indexer.ts",
+          "lines": "10-11",
+          "quote": " * transcript itself) and ``handoff-index`` (the PostToolUse hook that writes a\n * filesystem JSON sidecar for each handoff)."
+        }
+      ],
+      "proposed_class": "delete",
+      "leverage": "structural",
+      "seed_ref": null,
+      "dedup_keys": [
+        ".claude/hooks/src/handoff-index.ts",
+        "better-sqlite3",
+        ".claude/hooks/package.json"
+      ],
+      "causal_links": [
+        "Member of D2g-08's deletion list, broken out because removal also drops the package's only runtime dependency (native module, per-platform rebuild cost) and simplifies the esbuild command. The artifact-index context.db that session-outcome checks is alternatively maintained by opc/scripts/core/artifact_index.py, so the Python path survives deletion."
+      ],
+      "observe_how": "grep: handoff-index.ts is the only non-test file importing better-sqlite3; it is registered in no settings file. The session-end-handoff-indexer docstring describes it in present tense as the PostToolUse companion — a false-companion claim that misleads maintenance.",
+      "telemetry": "better-sqlite3 ^12.5.0 native dep installed and rebuilt on every npm install solely for code that never runs."
+    },
+    {
+      "id": "D2g-10",
+      "title": "Committed junk in hooks/src: two 39-byte tmpclaude-*-cwd temp files (git-tracked since commit ef00c22), one-line test-build.ts, and three _register/_test-auto-build .cjs one-off scripts",
+      "severity": "S2",
+      "confidence": "VERIFIED",
+      "evidence": [
+        {
+          "file": ".claude/hooks/src/tmpclaude-681c-cwd",
+          "lines": "1",
+          "quote": "/c/Users/david.hayes/.claude/hooks/src"
+        },
+        {
+          "file": ".claude/hooks/src/test-build.ts",
+          "lines": "1",
+          "quote": "console.log('test');"
+        },
+        {
+          "file": ".claude/hooks/src/_register-auto-build.cjs",
+          "lines": "1-2",
+          "quote": "const fs = require('fs');\nconst p = 'C:/Users/david.hayes/.claude/settings.json';"
+        }
+      ],
+      "proposed_class": "delete",
+      "leverage": "quick-win",
+      "seed_ref": "SEED-06",
+      "dedup_keys": [
+        ".claude/hooks/src/tmpclaude-681c-cwd",
+        ".claude/hooks/src/tmpclaude-9453-cwd",
+        ".claude/hooks/src/test-build.ts",
+        ".claude/hooks/src/_register-auto-build.cjs",
+        ".claude/hooks/src/_test-auto-build.cjs",
+        ".claude/hooks/src/_test-auto-build-e2e.cjs"
+      ],
+      "causal_links": [
+        "New instance of the junk-artifact family (SEED-06 stray scripts/.claude/logs, SEED-07 doubled path) — but these are COMMITTED to git, not just stray on disk. test-build.ts is also counted in D2g-08's 26. _register-auto-build.cjs hardcodes the machine-specific active settings path, so it is also non-portable."
+      ],
+      "observe_how": "git ls-files confirms both tmpclaude-*-cwd files are tracked (added in ef00c22, content is a single cwd path — mktemp-style debris); test-build.ts compiles to a dist bundle whose entire behavior is printing 'test'.",
+      "telemetry": "Six junk files in the production hook source tree; tmpclaude pattern suggests a script that writes cwd-probe temp files into whatever directory it runs from — worth confirming the writer is gone."
+    },
+    {
+      "id": "D2g-11",
+      "title": "session-end-handoff-indexer ships a dead fallback path with a doubled directory segment (~/.claude/scripts/core/core/index_handoffs.py) — verified absent on disk",
+      "severity": "S3",
+      "confidence": "VERIFIED",
+      "evidence": [
+        {
+          "file": ".claude/hooks/src/session-end-handoff-indexer.ts",
+          "lines": "121-123",
+          "quote": " * location for repo-level work) but fall back to the active install at\n * ``~/.claude/scripts/core/core/index_handoffs.py`` so the hook still\n * works after a forward sync."
+        },
+        {
+          "file": ".claude/hooks/src/session-end-handoff-indexer.ts",
+          "lines": "131-135",
+          "quote": "      '.claude',\n      'scripts',\n      'core',"
+        }
+      ],
+      "proposed_class": "fix",
+      "leverage": "quick-win",
+      "seed_ref": "SEED-07",
+      "dedup_keys": [
+        ".claude/hooks/src/session-end-handoff-indexer.ts",
+        "resolveIndexerScript"
+      ],
+      "causal_links": [
+        "Same doubled-path-segment family as SEED-07 (continuous-claude/continuous-claude/.ralph). Harmless today because the primary opc/scripts/core/index_handoffs.py exists, but if CLAUDE_OPC_DIR ever points wrong the 'fallback' silently never fires and handoff indexing stops (fail-open skip with reason=indexer_script_missing)."
+      ],
+      "observe_how": "ls confirms primary exists and C:/Users/david.hayes/.claude/scripts/core/core/index_handoffs.py does not. One-line payoff: fixing 'core','core' to 'core' makes the fallback real instead of decorative.",
+      "telemetry": ".claude/logs/handoff-indexer.log would show skip reason=indexer_script_missing if the primary path ever breaks."
+    }
+  ],
+  "coverage_manifest": [
+    "P1 maestro-cleanup (SessionEnd): CLEAN — archives incomplete maestro/ralph state to ~/.claude/recovery before unlink, session-isolated paths via getStatePathWithMigration, 24h stale sweep, fail-open. Registered repo+template+active. No findings.",
+    "P1 session-end-extract (SessionEnd): FINDING D2g-05 — string-interpolated execSync gate (injection/quoting fragility, up to 10s sync block, timeout falls through to 'extract anyway'); extraction itself is correctly fire-and-forget spawn with array args.",
+    "P1 session-outcome (SessionEnd): FINDING D2g-04 — outcome reminder emitted on SessionEnd 'message' channel the repo's own contract docs as {}; default outcome hardcoded PARTIAL_PLUS so reminder branch always fires; RULES.md H:9 enforcement claim likely unsatisfied (INFERRED on rendering).",
+    "P1 session-end-handoff-indexer (SessionEnd): mostly clean (well-factored DI/pure-helper design, fail-open, idempotent) — FINDING D2g-11 dead core/core fallback; active-only registration gap is SEED-15 class (registered active line 366, absent repo+template).",
+    "P1 pre-compact-extract (PreCompact): CLEAN with minor note — 5-min cooldown stamp uses read-modify-write of extraction-state.json that the spawned incremental_extract.py also rewrites (cooldown can be clobbered; fail-open, low impact). Registered everywhere.",
+    "P1 pre-compact-continuity (PreCompact): FINDING D2g-03 — generateAutoSummary dead feeds (edited-files.log written only by unregistered legacy post_tool_use_tracker.py; attempts.jsonl has zero writers) + latent Windows ':'-split drive-letter bug; live auto-handoff path via transcript-parser is sound; minor: main().catch(console.error) emits no fail-open JSON.",
+    "P1 permission-auto-allow (PermissionRequest): FINDING D2g-02 — auto-allows all permission requests except AskUserQuestion/ExitPlanMode; active-only registration (SEED-15 class); no audit logging.",
+    "P2 arch-context-inject: SAFE-dead — daemon-era PreToolUse prototype; 0 registrations (active/repo/template), 0 importers (D2g-08).",
+    "P2 auto-build: NEUTRALIZED no-op source + stale header claiming it 'remains registered'; TEMPLATE-ONLY registration (line 439) — remove template entry first (D2g-01), then delete src + _register/_test .cjs scripts (D2g-10).",
+    "P2 browser-learning-extractor: SAFE-dead — 0 registrations, 0 importers (D2g-08).",
+    "P2 code-field-protocol: SAFE-dead — UserPromptSubmit code-gen detector prototype; 0 registrations, 0 importers (D2g-08).",
+    "P2 compiler-in-the-loop-stop: SAFE-dead — Lean-specific Stop hook; Lean not in stack; 0 registrations, 0 importers (D2g-08).",
+    "P2 compiler-in-the-loop: SAFE-dead — Lean-specific PostToolUse; 0 registrations, 0 importers (D2g-08).",
+    "P2 daemon-client: LIB-CODE, NOT dead — shared TLDR daemon client imported by 11 hooks incl. registered post-edit-diagnostics/smart-search-router/tldr-context-inject/tldr-read-enforcer; misplaced at top level (D2g-07); stale lib/ duplicate is dead (D2g-06).",
+    "P2 dashboard-reporter: SAFE-dead prototype — POSTs to local dashboard API; 0 registrations, 0 non-test importers; delete with orphan __tests__/dashboard-reporter.test.ts (D2g-08).",
+    "P2 diagnostics: NOT a hook — deliberate CLI dashboard utility (node dist/diagnostics.mjs per its own usage docstring); intentionally unregistered; keep or relocate out of hook entrypoint glob; not deletion-backlog.",
+    "P2 edit-context-inject: SAFE-dead — daemon-era pre-edit context injection; 0 registrations, 0 importers (D2g-08).",
+    "P2 git-memory-check: SAFE-dead — PreToolUse:Bash git-memory prototype; 0 registrations, 0 importers (D2g-08).",
+    "P2 handoff-index: SAFE-dead AND sole consumer of better-sqlite3 runtime dep + only --external in build; sibling docstring falsely presents it as live companion (D2g-09).",
+    "P2 hook-error-pipeline: dead LIB prototype — designed as wrapWithErrorCapture utility module but ZERO importers; SAFE-dead (D2g-08).",
+    "P2 impact-refactor: SAFE-dead — daemon-era UserPromptSubmit impact analysis; 0 registrations, 0 importers (D2g-08).",
+    "P2 import-error-detector: SAFE-dead — Python import-error detector prototype; 0 registrations, 0 importers (D2g-08).",
+    "P2 pageindex-navigator: LATENT-resurrection — deliberately disabled 2026-06-01 (0/16 query-hits telemetry per code-intel-boundaries.md) but STILL registered in settings.json.template line 175 (D2g-01); archive/delete src after template fix.",
+    "P2 path-rules: SAFE-dead — path-based rule injection prototype; 0 registrations, 0 importers (D2g-08).",
+    "P2 periodic-extract: NOT safe-dead — registered in repo settings.json AND template but not active (= SEED-15's named repo-only item); decide register-active vs remove both config entries before touching source.",
+    "P2 plan-mode-discovery: SAFE-dead — 0 registrations, 0 importers (D2g-08).",
+    "P2 post-edit-notify: SAFE-dead — daemon-era dirty-count notifier; 0 registrations, 0 importers (D2g-08).",
+    "P2 post-learning-prompt: SAFE-dead — learning-store reminder prototype; 0 registrations, 0 importers (D2g-08).",
+    "P2 prd-task-template-enforcer: SAFE-dead — ai-dev-tasks template enforcer; 0 registrations, 0 importers (D2g-08).",
+    "P2 pre-tool-use-broadcast: SAFE-dead — cross-terminal broadcast prototype; 0 registrations, 0 importers (D2g-08).",
+    "P2 react-perf-context: SAFE-dead — .tsx read context injector; 0 registrations, 0 importers (D2g-08).",
+    "P2 session-end-cleanup: SAFE-dead — braintrust-extractor SessionEnd prototype (lock-file logic); 0 registrations, 0 importers (D2g-08); note: braintrust session capture therefore does NOT fire at SessionEnd via this path.",
+    "P2 session-start-dead-code: SAFE-dead — daemon-era tldr-dead on startup; 0 registrations, 0 importers (D2g-08).",
+    "P2 session-start-parallel: SAFE-dead — parallel startup orchestrator prototype; 0 registrations, 0 importers, spawns nothing referenced by config (D2g-08).",
+    "P2 signature-helper: SAFE-dead — daemon-era signature injection; 0 registrations, 0 importers (D2g-08).",
+    "P2 skill-install-registrar: SAFE-dead — npx skills add detector; 0 registrations, 0 importers (vet-skill skill mentions are doc-only) (D2g-08).",
+    "P2 skill-router: LIB-CODE, NOT dead — imported by registered skill-activation-prompt (buildEnhancedLookupResult); also a CLI; misplaced at top level (D2g-07); dead stale lib/ duplicate (D2g-06).",
+    "P2 skill-validation-prompt: LIB-CODE, NOT dead — imported by registered skill-activation-prompt; misplaced at top level (D2g-07); dead stale lib/ duplicate (D2g-06).",
+    "P2 sync-to-repo: NOT safe-dead YET — source deliberately retained-unused per git-sync-workflow.md root-cause fix, but settings.json.template line 419 STILL registers it; template resurrection re-enables the clobber amplifier on new machines (D2g-01, S1). Remove template entry, then source is deletable.",
+    "P2 test-build: SAFE-dead JUNK — entire file is console.log('test') (D2g-08, D2g-10).",
+    "P2 transcript-parser: LIB-CODE, NOT dead — parseTranscript/generateAutoHandoff imported by registered pre-compact-continuity; misplaced at top level (D2g-07); dead stale lib/ duplicate (D2g-06).",
+    "P2 typescript-preflight: SAFE-dead — tsc+qlty post-edit prototype superseded by active post-edit-diagnostics; 0 registrations, 0 importers (D2g-08)."
+  ],
+  "notes": "Method: read all 7 Part-1 hooks in full; for the 35 never-registered srcs ran a 3-way registration check (repo .claude/settings.json, .claude/settings.json.template, active ~/.claude/settings.json) plus repo-wide import grep (non-test) plus a scripts/skills/agents reference scan. Headline corrections to the telemetry: of the '35 never-registered', 4 are LIVE shared libs (deleting them breaks 6+ registered hooks), 1 is a deliberate CLI utility, 4 are latent-config items requiring settings/template edits first (periodic-extract, sync-to-repo, pageindex-navigator, auto-build), and 26 are SAFE-dead. Highest-risk item: settings.json.template still registers sync-to-repo, the reverse-sync hook root-cause-disabled on 2026-06-01 for clobbering repo edits — a fresh-machine bootstrap resurrects it (D2g-01). Evidence files cited are all inside the repo working tree; registrations-diff.json and active settings were used for verification only (described in observe_how), never as evidence quotes, per the exclusion rules. No state was modified; no tests were run."
+}

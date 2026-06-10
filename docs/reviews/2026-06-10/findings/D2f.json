@@ -1,0 +1,427 @@
+{
+  "dimension": "D2f",
+  "findings": [
+    {
+      "id": "D2F-01",
+      "title": "roadmap-reconcile emits nonstandard `{values:{system}}` output — contradiction report is silently dropped, the whole hook is dead weight on every session open",
+      "severity": "S1",
+      "confidence": "VERIFIED",
+      "evidence": [
+        {
+          "file": ".claude/hooks/src/roadmap-reconcile.ts",
+          "lines": "462-466",
+          "quote": "  return {\n    values: {\n      system: message,"
+        },
+        {
+          "file": ".claude/rules/hook-dev-lifecycle.md",
+          "lines": "20",
+          "quote": "| SessionStart | Session begins | `{ hookSpecificOutput: { additionalContext: \"...\" } }` |"
+        }
+      ],
+      "proposed_class": "fix",
+      "leverage": "quick-win",
+      "seed_ref": null,
+      "dedup_keys": [
+        ".claude/hooks/src/roadmap-reconcile.ts",
+        "reconcile",
+        "values.system"
+      ],
+      "causal_links": [
+        "D2F-08 becomes user-visible noise once this output path is fixed"
+      ],
+      "observe_how": "Run `echo '{\"session_id\":\"x\",\"source\":\"startup\"}' | node ~/.claude/hooks/dist/roadmap-reconcile.mjs` in a repo with 2+ contradictions; the stdout JSON has neither hookSpecificOutput nor systemMessage, so Claude Code injects nothing.",
+      "telemetry": "No ROADMAP-reconciliation message has ever appeared in session-start context despite the hook running every session (it ran ~0.3-0.5s incl. a git subprocess each time)."
+    },
+    {
+      "id": "D2F-02",
+      "title": "session-start-continuity inline memory recall: spawnSync `uv run` with 5s timeout, but uv-run cold start alone exceeds it — burns ~5s every startup/clear/compact, near-always returns nothing, and can blow continuity's own 10s hook timeout",
+      "severity": "S1",
+      "confidence": "VERIFIED",
+      "evidence": [
+        {
+          "file": ".claude/hooks/src/session-start-continuity.ts",
+          "lines": "392-394",
+          "quote": "      const proc = spawnSync('uv', [\n        'run', 'python', 'scripts/core/recall_learnings.py',\n        '--query', queryText, '--k', '3', '--text-only'"
+        },
+        {
+          "file": ".claude/hooks/src/session-start-continuity.ts",
+          "lines": "396-399",
+          "quote": "        cwd: opcDir,\n        encoding: 'utf-8',\n        timeout: 5000,"
+        },
+        {
+          "file": ".claude/settings.json",
+          "lines": "226-228",
+          "quote": "            \"command\": \"node C:/Users/david.hayes/.claude/hooks/dist/session-start-continuity.mjs\",\n            \"timeout\": 10000"
+        }
+      ],
+      "proposed_class": "fix",
+      "leverage": "structural",
+      "seed_ref": "SEED-08",
+      "dedup_keys": [
+        ".claude/hooks/src/session-start-continuity.ts",
+        "buildUnifiedContext",
+        "recall_learnings.py"
+      ],
+      "causal_links": [
+        "SEED-08 (uv-run startup dominates recall latency)",
+        "contributes to memory-recall hit-rate 27.4% — session-start recall almost never lands",
+        "if the 5s burn plus handoff scanning exceeds 10s on clear/compact, ALL continuity context is lost"
+      ],
+      "observe_how": "Time `uv run python scripts/core/recall_learnings.py --query x --k 3 --text-only` from $CLAUDE_OPC_DIR (SEED-08 measured 13-17s warm for hybrid; startup dominates even --text-only); compare against the 5000ms spawnSync cap — the child is killed and `proc.stdout` is empty.",
+      "telemetry": "Sessions with a bold ROADMAP Current Focus pay ~5s per startup/clear/compact; '## Relevant Memories' section essentially never appears in injected context."
+    },
+    {
+      "id": "D2F-03",
+      "title": "Cross-project contamination guard bypass: buildUnifiedContext re-extracts ROADMAP Current Focus WITHOUT the isContentRelevantToProject check and uses it as the memory-recall query and injected context — the guard only covers the main-path extraction",
+      "severity": "S1",
+      "confidence": "VERIFIED",
+      "evidence": [
+        {
+          "file": ".claude/hooks/src/session-start-continuity.ts",
+          "lines": "633-636",
+          "quote": "            const identity = getProjectIdentity(projectDir);\n            const relevance = isContentRelevantToProject(roadmapCurrentFocus, identity);\n            if (!relevance.relevant) {"
+        },
+        {
+          "file": ".claude/hooks/src/session-start-continuity.ts",
+          "lines": "327-329",
+          "quote": "      const currentMatch = roadmap.match(/## Current Focus\\n([\\s\\S]*?)(?=\\n## |$)/);\n      if (currentMatch) {\n        sections.push(`## ROADMAP - Current Focus\\n${currentMatch[1].trim().substring(0, 500)}`);"
+        },
+        {
+          "file": ".claude/hooks/src/session-start-continuity.ts",
+          "lines": "385-386",
+          "quote": "  const currentGoalMatch = sections[0]?.match(/\\*\\*([^*]+)\\*\\*/);\n  const currentGoal = currentGoalMatch ? currentGoalMatch[1] : '';"
+        }
+      ],
+      "proposed_class": "fix",
+      "leverage": "quick-win",
+      "seed_ref": "SEED-02",
+      "dedup_keys": [
+        ".claude/hooks/src/session-start-continuity.ts",
+        "buildUnifiedContext",
+        "isContentRelevantToProject",
+        "project-relevance"
+      ],
+      "causal_links": [
+        "SEED-02 (foreign Salesforce goal written to ROADMAP 2026-06-06): when ROADMAP is contaminated, the read-side guard zeroes roadmapContext but the unguarded buildUnifiedContext copy still injects the foreign focus AND drives recall with it"
+      ],
+      "observe_how": "Put a foreign-project bold goal in ROADMAP Current Focus; main path logs 'ROADMAP focus appears contaminated' and suppresses it, yet injected context still contains '## ROADMAP - Current Focus' from buildUnifiedContext and the recall query is the foreign goal.",
+      "telemetry": "Same contamination class as SEED-02 but on the read/inject side; also pollutes recall-intent quality (intent-pollution 24.6%)."
+    },
+    {
+      "id": "D2F-04",
+      "title": "Session-start chain spawns >=5 separate `uv run python` cold starts (+2 PowerShell, ~10 Node) per session open — the uv startup tax is paid five times for what are mostly status probes",
+      "severity": "S2",
+      "confidence": "VERIFIED",
+      "evidence": [
+        {
+          "file": ".claude/hooks/src/shared/db-utils-pg.ts",
+          "lines": "68-71",
+          "quote": "    const result = spawnSync('uv', ['run', 'python', '-c', wrappedCode, ...args], {\n      encoding: 'utf-8',\n      maxBuffer: 1024 * 1024,\n      timeout: 3000,  // 3 second timeout (reduced for faster startup)"
+        },
+        {
+          "file": ".claude/hooks/src/session-start-init-check.ts",
+          "lines": "98-100",
+          "quote": "    execSync(\n      `cd \"${opcDir}\" && uv run python scripts/core/lazy_tree.py regenerate --project \"${projectDir}\"`,\n      { encoding: 'utf-8', timeout: 10000, stdio: ['pipe', 'pipe', 'pipe'] }"
+        },
+        {
+          "file": ".claude/hooks/src/session-start-context-loaders.ts",
+          "lines": "45-49",
+          "quote": "  const result = await runCommand(\n    'tree-daemon',\n    'powershell',"
+        }
+      ],
+      "proposed_class": "simplify",
+      "leverage": "structural",
+      "seed_ref": "SEED-08",
+      "dedup_keys": [
+        ".claude/hooks/src/shared/db-utils-pg.ts",
+        "runPgQuery",
+        ".claude/hooks/src/session-start-init-check.ts",
+        "generateTree",
+        ".claude/hooks/src/session-start-context-loaders.ts",
+        ".claude/hooks/src/session-start-memory-loaders.ts"
+      ],
+      "causal_links": [
+        "SEED-08",
+        "D2F-02",
+        "D2F-05",
+        "D2F-06",
+        "D2F-07"
+      ],
+      "observe_how": "Trace process creation during one session open (Process Monitor / Sysmon): session-register x2 uv, continuity recall x1 uv, init-check tree regen x1 uv, tree-daemon status x1 uv, memory-daemon status x1 uv. Even with hooks running in parallel (Claude Code docs), 5 concurrent uv+Python interpreter starts contend on CPU/disk and the gate is the slowest one.",
+      "telemetry": "Estimated session-open gate ~6-10s typical (parallel; worst 30s via docker timeout); if serialized, summed budget is ~18-35s. uv interpreter startup is the shared root cause."
+    },
+    {
+      "id": "D2F-05",
+      "title": "session-start-init-check TREE_MAX_AGE_SECONDS=300 means the knowledge tree is 'stale' on virtually every startup — a <=10s uv-run tree regeneration fires almost every session open",
+      "severity": "S2",
+      "confidence": "VERIFIED",
+      "evidence": [
+        {
+          "file": ".claude/hooks/src/session-start-init-check.ts",
+          "lines": "49",
+          "quote": "const TREE_MAX_AGE_SECONDS = 300; // 5 minutes"
+        },
+        {
+          "file": ".claude/hooks/src/session-start-init-check.ts",
+          "lines": "366-368",
+          "quote": "  if (!status.tree || isTreeStale(projectDir)) {\n    if (hasCodeFiles(projectDir)) {\n      console.error('[*] Generating knowledge tree...');"
+        }
+      ],
+      "proposed_class": "simplify",
+      "leverage": "quick-win",
+      "seed_ref": null,
+      "dedup_keys": [
+        ".claude/hooks/src/session-start-init-check.ts",
+        "TREE_MAX_AGE_SECONDS",
+        "isTreeStale",
+        "generateTree"
+      ],
+      "causal_links": [
+        "D2F-04"
+      ],
+      "observe_how": "Check mtime of .claude/knowledge-tree.json before/after two session starts >5 min apart — it regenerates both times even with zero code changes. The `_stale` marker from tree-invalidate already exists as the precise invalidation channel; the 300s mtime fallback makes it redundant and hot.",
+      "telemetry": "Adds ~3-10s (uv + python + project scan) to nearly every startup in any project with code files; the tree-invalidate hook already marks staleness on actual edits."
+    },
+    {
+      "id": "D2F-06",
+      "title": "session-register: two sequential uv-run Postgres round-trips (3s cap each) per session; registration silently no-ops if uv cold start exceeds 3s, and the COORDINATION_SESSION_ID env export is dead across processes",
+      "severity": "S2",
+      "confidence": "VERIFIED",
+      "evidence": [
+        {
+          "file": ".claude/hooks/src/session-register.ts",
+          "lines": "53-56",
+          "quote": "  const registerResult = registerSession(sessionId, project, '');\n\n  // Get other active sessions\n  const sessionsResult = getActiveSessions(project);"
+        },
+        {
+          "file": ".claude/hooks/src/session-register.ts",
+          "lines": "39",
+          "quote": "  process.env.COORDINATION_SESSION_ID = sessionId;"
+        },
+        {
+          "file": ".claude/hooks/src/shared/db-utils-pg.ts",
+          "lines": "71",
+          "quote": "      timeout: 3000,  // 3 second timeout (reduced for faster startup)"
+        }
+      ],
+      "proposed_class": "fix",
+      "leverage": "structural",
+      "seed_ref": "SEED-12",
+      "dedup_keys": [
+        ".claude/hooks/src/session-register.ts",
+        "registerSession",
+        "getActiveSessions",
+        "COORDINATION_SESSION_ID",
+        "runPgQuery"
+      ],
+      "causal_links": [
+        "D2F-04",
+        "SEED-12 (two competing getSessionId schemes — this hook is the writer of the file-based one)"
+      ],
+      "observe_how": "Time `uv run python -c \"print('ok')\"` from opc dir; if cold start >3s, spawnSync kills the child, registerResult.success is false, and the hook still prints the awareness banner claiming MULTI-SESSION COORDINATION ACTIVE. The env assignment at line 39 only mutates this hook's own process; sibling hooks each run as fresh processes — the writeSessionId() file is the only real channel.",
+      "telemetry": "Cross-check sessions table: count of session-start events vs rows actually upserted reveals the silent-failure rate. Costs ~4-6s of the session-open budget either way."
+    },
+    {
+      "id": "D2F-07",
+      "title": "context-loaders + memory-loaders each pay PowerShell startup plus a full `uv run python ... status` probe (~3-7s each) just to ask 'is the daemon running'; the .ps1 scripts they invoke exist only in ~/.claude, not in the repo",
+      "severity": "S2",
+      "confidence": "VERIFIED",
+      "evidence": [
+        {
+          "file": ".claude/hooks/src/session-start-context-loaders.ts",
+          "lines": "46-48",
+          "quote": "    'powershell',\n    ['-ExecutionPolicy', 'Bypass', '-File', `${hooksDir}/session-start-tree-daemon.ps1`],\n    stdinContent,"
+        },
+        {
+          "file": ".claude/hooks/src/session-start-memory-loaders.ts",
+          "lines": "43-47",
+          "quote": "  const result = await runCommand(\n    'memory-daemon',\n    'powershell',"
+        },
+        {
+          "file": ".claude/hooks/src/lib/run-command.ts",
+          "lines": "29-33",
+          "quote": "  return new Promise((resolve) => {\n    const proc = spawn(command, args, {\n      timeout: timeoutMs,"
+        }
+      ],
+      "proposed_class": "simplify",
+      "leverage": "structural",
+      "seed_ref": "SEED-15",
+      "dedup_keys": [
+        ".claude/hooks/src/session-start-context-loaders.ts",
+        ".claude/hooks/src/session-start-memory-loaders.ts",
+        ".claude/hooks/src/lib/run-command.ts",
+        "session-start-tree-daemon.ps1",
+        "session-start-memory-daemon.ps1"
+      ],
+      "causal_links": [
+        "D2F-04",
+        "SEED-15 (these two hooks are among the active-only registrations; the .ps1 payloads are additionally absent from the repo tree, so a template-built machine spawns PowerShell against a missing file every session)"
+      ],
+      "observe_how": "ls .claude/hooks/*.ps1 in the repo shows only persist-project-dir.ps1 — session-start-tree-daemon.ps1 and session-start-memory-daemon.ps1 live solely in ~/.claude/hooks/. The active tree-daemon.ps1 runs `uv run python scripts/core/tree_daemon.py --status` and memory-daemon.ps1 runs `uv run python scripts/core/memory_daemon.py status` (plus a 500ms sleep) on EVERY session open, even when both daemons are already up; awaited with 20s/15s hook timeouts. A PID-file/port liveness check in Node would cost milliseconds.",
+      "telemetry": "~6-14s of combined parallel-lane work per session open for a pair of yes/no liveness answers. Note: knowledge-tree-health.md states 'There is no persistent watcher daemon' while this hook starts tree_daemon.py --background — doc/behavior contradiction worth resolving in the same pass."
+    },
+    {
+      "id": "D2F-08",
+      "title": "roadmap-reconcile validateMilestones checks completed milestones against only the last 10 commits — any milestone older than 10 commits is flagged 'no matching commit', a latent false-contradiction generator",
+      "severity": "S2",
+      "confidence": "VERIFIED",
+      "evidence": [
+        {
+          "file": ".claude/hooks/src/roadmap-reconcile.ts",
+          "lines": "417",
+          "quote": "    gitLog = execSync('git log --oneline -10', {"
+        },
+        {
+          "file": ".claude/hooks/src/roadmap-reconcile.ts",
+          "lines": "334-335",
+          "quote": "    if (matchCount < threshold) {\n      issues.push(`Completed milestone \"${milestone.title}\" has no matching commit in recent git log`);"
+        }
+      ],
+      "proposed_class": "fix",
+      "leverage": "quick-win",
+      "seed_ref": null,
+      "dedup_keys": [
+        ".claude/hooks/src/roadmap-reconcile.ts",
+        "validateMilestones",
+        "git log --oneline -10"
+      ],
+      "causal_links": [
+        "currently masked by D2F-01 (output dropped); fixing D2F-01 without fixing this floods session-start context with false 'milestone has no matching commit' claims on any mature ROADMAP"
+      ],
+      "observe_how": "Run reconcile() against this repo's ROADMAP.md (dozens of [x] milestones, 10-commit window): nearly every completed milestone older than the last 10 commits is flagged. The 2-issue floor at line 454 is trivially exceeded.",
+      "telemetry": "Would inject decision-driving false claims ('completed work has no commit evidence') into every session once the output schema is fixed."
+    },
+    {
+      "id": "D2F-09",
+      "title": "session-start-docker: isDockerAvailable() runs execSync('docker info') with NO timeout — a wedged Docker Desktop engine pins the hook until its 30s registration timeout on every session open",
+      "severity": "S2",
+      "confidence": "VERIFIED",
+      "evidence": [
+        {
+          "file": ".claude/hooks/src/session-start-docker.ts",
+          "lines": "35-38",
+          "quote": "function isDockerAvailable(): boolean {\n  try {\n    execSync('docker info', { stdio: 'pipe' });\n    return true;"
+        },
+        {
+          "file": ".claude/settings.json",
+          "lines": "216-218",
+          "quote": "            \"command\": \"node C:/Users/david.hayes/.claude/hooks/dist/session-start-docker.mjs\",\n            \"timeout\": 30000"
+        }
+      ],
+      "proposed_class": "fix",
+      "leverage": "quick-win",
+      "seed_ref": null,
+      "dedup_keys": [
+        ".claude/hooks/src/session-start-docker.ts",
+        "isDockerAvailable",
+        "execSync docker info"
+      ],
+      "causal_links": [],
+      "observe_how": "Every other execSync in this file passes a timeout (e.g. line 83 timeout: 10000, line 113 timeout: 3000); only the availability probe omits it. With Docker Desktop in its half-started state, `docker info` blocks for tens of seconds and the hook holds the session-open gate to the full 30s. Happy path still costs two docker CLI calls (~0.5-1.5s).",
+      "telemetry": "Reproducible by pausing Docker Desktop engine and starting a session: session open stalls ~30s before SQLite-fallback message."
+    },
+    {
+      "id": "D2F-10",
+      "title": "session-start-continuity injects ROADMAP Current Focus twice on clear/compact (main-path roadmapContext + buildUnifiedContext copy) and reads ROADMAP.md up to three times per run",
+      "severity": "S2",
+      "confidence": "VERIFIED",
+      "evidence": [
+        {
+          "file": ".claude/hooks/src/session-start-continuity.ts",
+          "lines": "665-668",
+          "quote": "            if (roadmapContext) {\n              additionalContext = `${roadmapContext}\\n\\n---\\n\\n`;\n            }"
+        },
+        {
+          "file": ".claude/hooks/src/session-start-continuity.ts",
+          "lines": "705-709",
+          "quote": "          if (unifiedContext && unifiedContext.trim().length > 50) {\n            if (additionalContext) {\n              additionalContext = unifiedContext + '\\n\\n---\\n\\n' + additionalContext;"
+        }
+      ],
+      "proposed_class": "simplify",
+      "leverage": "quick-win",
+      "seed_ref": null,
+      "dedup_keys": [
+        ".claude/hooks/src/session-start-continuity.ts",
+        "buildUnifiedContext",
+        "roadmapContext",
+        "ROADMAP.md double-read"
+      ],
+      "causal_links": [
+        "D2F-03 (same duplicated extraction is the guard-bypass path)"
+      ],
+      "observe_how": "Trigger a clear/compact in a project with ROADMAP Current Focus and a fresh handoff: injected additionalContext contains '## ROADMAP - Current Focus' from buildUnifiedContext (prepended) AND from roadmapContext (in the handoff block) — duplicated tokens in every post-compact context window.",
+      "telemetry": "Token waste in the highest-leverage injection point (post-compact context); also duplicate fs reads of ROADMAP.md at lines 324 and 621."
+    },
+    {
+      "id": "D2F-11",
+      "title": "hook-health-monitor emits hook_health_ratio with spanId falling back to the Claude session UUID — feedback likely attaches to a nonexistent Braintrust span (consistent with corr-null 60.7%); active registration also omits a timeout",
+      "severity": "S3",
+      "confidence": "INFERRED",
+      "evidence": [
+        {
+          "file": ".claude/hooks/src/hook-health-monitor.ts",
+          "lines": "318-320",
+          "quote": "      const spanId = (process.env.BRAINTRUST_SESSION_ID || '').trim()\n        || (input.session_id || '');\n      const payload = buildHookHealthRatioPayload({ results, spanId });"
+        },
+        {
+          "file": ".claude/hooks/src/shared/braintrust-score.ts",
+          "lines": "200-202",
+          "quote": "    const entry: FeedbackEntry = {\n      id: opts.spanId,\n      scores: opts.scores,"
+        }
+      ],
+      "proposed_class": "investigate",
+      "leverage": "quick-win",
+      "seed_ref": null,
+      "dedup_keys": [
+        ".claude/hooks/src/hook-health-monitor.ts",
+        "buildHookHealthRatioPayload",
+        "BRAINTRUST_SESSION_ID fallback",
+        "emitBraintrustScore"
+      ],
+      "causal_links": [
+        "candidate contributor to corr-null 60.7% from harvest SUMMARY"
+      ],
+      "observe_how": "BRAINTRUST_SESSION_ID is an env var that hook child processes rarely inherit from the tracer; the fallback input.session_id is the Claude Code session UUID, not a Braintrust span id. Query Braintrust feedback rows for hook_health_ratio and check whether their ids resolve to real spans. Payoff: one-line fix re-points a daily emitted score at the right span. Also: hook-health-monitor is registered active-only (SEED-15 class) and without a timeout field, so it gets the long default while awaiting up to two 2s-bounded HTTP calls (resolveProjectId + feedback POST).",
+      "telemetry": "corr-null 60.7%; hook itself is cheap (~0.3s fs scan + <=4s bounded network when tracing enabled)."
+    },
+    {
+      "id": "D2F-12",
+      "title": "session-start-intel-prune is a whole Node process for a few stat/unlink calls — fold into an existing SessionStart hook to drop one spawn (~100-200ms) per session open",
+      "severity": "S3",
+      "confidence": "VERIFIED",
+      "evidence": [
+        {
+          "file": ".claude/hooks/src/session-start-intel-prune.ts",
+          "lines": "18-21",
+          "quote": "export function runPrune(projectDir?: string): void {\n  if (process.env.CCV3_BUS_OFF === '1') return;\n  pruneIntelBus(projectDir ? { projectDir } : {});\n}"
+        }
+      ],
+      "proposed_class": "simplify",
+      "leverage": "quick-win",
+      "seed_ref": null,
+      "dedup_keys": [
+        ".claude/hooks/src/session-start-intel-prune.ts",
+        "runPrune",
+        "pruneIntelBus"
+      ],
+      "causal_links": [
+        "D2F-04 (process-count reduction)"
+      ],
+      "observe_how": "The hook body is ~40 lines wrapping a single fail-open library call; payoff is one fewer node startup in the 11-process session-open chain. Otherwise the hook is correct and clean.",
+      "telemetry": "~100-200ms node startup per session for <50ms of actual work."
+    }
+  ],
+  "coverage_manifest": [
+    "session-start-docker.ts — MOSTLY SOUND. Happy path ~0.5-1.5s (docker info + docker ps); async health-wait is well bounded (10s cap, 2 retries). One hazard: untimed execSync('docker info') can pin session open to the full 30s hook timeout when the engine is wedged (D2F-09).",
+    "session-register.ts — ISSUES. ~3-6s: two sequential `uv run python -c` Postgres round-trips at 3s cap each (D2F-06, D2F-04); registration silently no-ops at timeout while the awareness banner still claims coordination is active; COORDINATION_SESSION_ID env export is dead cross-process (file write is the real channel).",
+    "session-start-continuity.ts — WORST OFFENDER. ~5-6s typical on startup with a ROADMAP goal: inline spawnSync recall with 5s timeout < uv cold start burns 5s for nothing and can blow the hook's own 10s budget on clear/compact (D2F-02); contamination guard bypass via unguarded buildUnifiedContext duplicate extraction (D2F-03, seed SEED-02); duplicate ROADMAP Current Focus injection + triple ROADMAP read (D2F-10). Handoff-dir scanning itself is cheap (<100ms).",
+    "session-start-init-check.ts — ISSUE. Startup-only (good), but TREE_MAX_AGE_SECONDS=300 makes the knowledge tree stale on virtually every startup, firing a <=10s uv-run regeneration nearly every session (D2F-05); stack-detection/skill scans are cheap (<100ms). Cross-project '.claude' path guard present.",
+    "session-start-recovery.ts — CLEAN. Pure-fs recovery scan + Ralph unified-state read, <0.2s incl. node startup; 24h self-cleanup; false-banner guard documented and present.",
+    "roadmap-reconcile.ts — BROKEN OUTPUT. ~0.3-0.5s/session (git log subprocess + fs), but emits nonstandard {values:{system}} so the contradiction report never reaches the model (D2F-01); milestone validation against only 10 commits is a latent false-positive generator once output is fixed (D2F-08).",
+    "session-start-context-loaders.ts — EXPENSIVE PROBE. ~3-7s: PowerShell startup + `uv run tree_daemon.py --status` every session even when daemon already runs; awaited with 15s internal / 20s hook timeout; invoked .ps1 exists only in ~/.claude, not the repo (D2F-07, seed SEED-15). Registered active-only.",
+    "session-start-memory-loaders.ts — EXPENSIVE PROBE. ~3-7s: same powershell+uv status pattern plus an unconditional 500ms sleep on daemon start (D2F-07). Registered active-only.",
+    "session-start-intel-prune.ts — CLEAN, FOLD CANDIDATE. Correct, fail-open, kill-switched; ~0.1-0.2s, dominated by node startup for <50ms of work (D2F-12).",
+    "hook-health-monitor.ts — MOSTLY CLEAN. ~0.3s settings parse + per-hook stat pairs; up to ~4s bounded network when tracing enabled (two 2s-capped fetches). spanId fallback to Claude session UUID likely orphans the hook_health_ratio feedback (D2F-11); registered active-only and without an explicit timeout."
+  ],
+  "notes": "Latency budget context: active ~/.claude/settings.json registers 11 SessionStart commands (the 8 in the repo settings.json plus context-loaders/memory-loaders/hook-health-monitor — the delta is SEED-15). Per Claude Code docs hooks in an event run in parallel, so the session-open gate is the slowest hook, estimated 6-10s typical (continuity 5s recall burn / init-check tree regen / daemon probes), worst-case 30s (docker). If execution were serial the summed budget would be ~18-35s. The shared structural root cause is SEED-08's uv-run interpreter startup tax, paid >=5 times per session open (D2F-04). braintrust_hooks.py session_start was outside this dimension's assigned list and was not reviewed. All evidence quotes are from repo working-tree files at SHA 86b8f60 except the two daemon .ps1 scripts, which exist only in ~/.claude/hooks/ (their absence from the repo is itself part of finding D2F-07)."
+}

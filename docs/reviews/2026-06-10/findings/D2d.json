@@ -1,0 +1,530 @@
+{
+  "dimension": "D2d",
+  "findings": [
+    {
+      "id": "D2d-01",
+      "title": "SEED-02 root cause: contamination guard is a negative allowlist of REGISTERED sibling projects — unregistered foreign work (Salesforce/FastMCP) is invisible, and the 'claude' identity keyword makes the fallback structurally unable to protect a project named continuous-claude",
+      "severity": "S0",
+      "confidence": "VERIFIED",
+      "seed_ref": "SEED-02",
+      "leverage": "strategic",
+      "proposed_class": "fix",
+      "dedup_keys": [
+        ".claude/hooks/src/shared/project-relevance.ts",
+        "isContentRelevantToProject",
+        "getProjectIdentity",
+        ".claude/hooks/src/post-plan-roadmap.ts"
+      ],
+      "causal_links": [
+        "D2d-02 (selection layer that fed the guard the foreign plan)",
+        "caused SEED-02"
+      ],
+      "evidence": [
+        {
+          "file": ".claude/hooks/src/shared/project-relevance.ts",
+          "lines": "136-138",
+          "quote": "    // Does the content mention this other project?\n    if (!contentLower.includes(otherLower)) {\n      continue;"
+        },
+        {
+          "file": ".claude/hooks/src/shared/project-relevance.ts",
+          "lines": "152-154",
+          "quote": "        // Skip very short keywords that would false-positive\n        if (kw.length < 3) continue;\n        if (contentLower.includes(kw)) {"
+        },
+        {
+          "file": ".claude/hooks/src/shared/project-relevance.ts",
+          "lines": "61",
+          "quote": "  const dirKeywords = dirName.toLowerCase().split(/[-_\\s]+/).filter(w => w.length > 1);"
+        },
+        {
+          "file": ".claude/project-registry.json",
+          "lines": "5",
+          "quote": "      \"name\": \"continuous-claude\","
+        },
+        {
+          "file": "ROADMAP.md",
+          "lines": "197",
+          "quote": "the `post-plan-roadmap` hook clobbered this Current Focus with a foreign project's goal (Salesforce/FastMCP plan `abstract-coral`) — the cross-project contamination guard did not catch it"
+        }
+      ],
+      "observe_how": "Verified event reconstruction: ~/.claude/plans/we-have-been-working-abstract-coral.md mtime = 2026-06-05 19:55:49 -0500 (= 2026-06-06T00:55 UTC), which matches the contaminated entry's UTC-stamped date '### 2026-06-06: Harden the Alpha...' and 'Started: 2026-06-06' (post-plan-roadmap.ts:587 uses toISOString UTC date). The clobber fired ~19:55 local on 06-05 (foreign plan freshly written, so the 10-min staleness guard passed it LEGITIMATELY); contaminated ROADMAP was committed unnoticed in 137ec87 (06-06 08:34) and restored in 8201551 (09:59). The guard missed for two independent reasons, both verified: (1) isContentRelevantToProject only flags content that names another REGISTERED project — the registry holds only continuous-claude/NorthStar/Fourth Connect/agent-factory/ECG/LinkMap, so a Salesforce/FastMCP plan (7x 'salesforce', 0 registry names) hits the fail-open 'no cross-project signals' path; (2) even if a salesforce project WERE registered, the abstract-coral plan contains 'claude' 3x (CLAUDE.md, ~/.claude/plans path), and 'claude' is an identity keyword of continuous-claude (dirName split), so contentLower.includes('claude') would set thisProjectMentioned=true and pass it anyway. Any plan authored under Claude Code mentions 'claude' — the keyword fallback can never protect this repo. Fix direction: positive relevance check against THIS project (not a sibling allowlist), word-boundary matching, and excluding ecosystem-universal tokens ('claude','continuous') from identity keywords.",
+      "telemetry": "1 confirmed S0 contamination event (2026-06-06); same fail-open path returns 'relevant' for every unregistered-foreign plan, so recurrence probability is high whenever foreign work is planned from this repo's cwd"
+    },
+    {
+      "id": "D2d-02",
+      "title": "post-plan-roadmap plan selection reads newest-mtime .md from the machine-global shared ~/.claude/plans pool and ignores the firing event's own tool_input.plan; the tool_output/tool_result fallback uses non-canonical field names",
+      "severity": "S1",
+      "confidence": "VERIFIED",
+      "seed_ref": "SEED-02",
+      "leverage": "structural",
+      "proposed_class": "fix",
+      "dedup_keys": [
+        ".claude/hooks/src/post-plan-roadmap.ts",
+        "planDir",
+        "hasPlanFiles",
+        "tool_output"
+      ],
+      "causal_links": [
+        "feeds D2d-01 (gave the guard the foreign plan content)",
+        "D2d-12 (field-name drift instance)"
+      ],
+      "evidence": [
+        {
+          "file": ".claude/hooks/src/post-plan-roadmap.ts",
+          "lines": "517-519",
+          "quote": "  const planDir = hasPlanFiles(planDirNested) ? planDirNested :\n                  hasPlanFiles(planDirDirect) ? planDirDirect :\n                  hasPlanFiles(userPlanDir) ? userPlanDir : planDirNested;"
+        },
+        {
+          "file": ".claude/hooks/src/post-plan-roadmap.ts",
+          "lines": "550-552",
+          "quote": "  const toolOutput = data.tool_output || data.tool_result || '';\n  if (!planContent && toolOutput) {\n    planContent = toolOutput;"
+        },
+        {
+          "file": ".claude/hooks/src/plan-exit-premortem-prompt.ts",
+          "lines": "57",
+          "quote": "  const candidates = [toolInput.planPath, toolInput.plan_path, toolInput.path, toolInput.plan];"
+        },
+        {
+          "file": ".claude/hooks/src/post-plan-roadmap.ts",
+          "lines": "608-610",
+          "quote": "  const existingToday = sections.sessions.findIndex(s => s.date === today);\n  if (existingToday >= 0) {\n    sections.sessions[existingToday] = newSession;"
+        }
+      ],
+      "observe_how": "This repo has NO local .claude/plans or ./plans (verified by ls), so planDir always resolves to the global ~/.claude/plans — a directory shared by ALL projects' sessions (verified: it contains both this repo's starry-pony plan and the foreign abstract-coral plan). Selection is newest-mtime-within-10-min with zero session/plan binding, so a concurrent terminal planning another project can win the race and have ITS plan recorded into this repo's ROADMAP — the 10-minute 'staleness' window defends against old files, not against fresh foreign ones (the actual threat in SEED-02). The authoritative content — tool_input.plan, the plan markdown of the very ExitPlanMode that fired the hook (its existence proven by sibling hook plan-exit-premortem-prompt reading toolInput.plan) — is never consulted; the only non-disk fallback reads data.tool_output/data.tool_result, neither of which is the canonical PostToolUse field (shared/types.ts declares tool_response). Bonus amplifier: sessions are keyed by UTC date and same-day entries are REPLACED, so a foreign plan landing on the same UTC date silently overwrites the legit session record (exactly what 8201551 had to restore).",
+      "telemetry": "8 plan files currently in the shared global pool from multiple projects; any two sessions exiting plan mode within 10 minutes of each other are in the race window"
+    },
+    {
+      "id": "D2d-03",
+      "title": "epistemic-reminder is dead code in production: reads input.tool (canonical field is tool_name) so the Grep match never fires — yet claim-verification.md tells every session the hook 'injects warnings after Grep results'",
+      "severity": "S1",
+      "confidence": "VERIFIED",
+      "seed_ref": null,
+      "leverage": "quick-win",
+      "proposed_class": "fix",
+      "dedup_keys": [
+        ".claude/hooks/src/epistemic-reminder.ts",
+        "input.tool",
+        ".claude/rules/claim-verification.md"
+      ],
+      "causal_links": [
+        "D2d-12 (field-name drift instance)"
+      ],
+      "evidence": [
+        {
+          "file": ".claude/hooks/src/epistemic-reminder.ts",
+          "lines": "44-47",
+          "quote": "  const tool = input.tool;\n\n  // Only add reminder for Grep results (Read results are more reliable)\n  if (tool !== 'Grep') {"
+        },
+        {
+          "file": ".claude/hooks/src/shared/types.ts",
+          "lines": "37-39",
+          "quote": "export interface PostToolUseInput {\n  session_id: string;\n  tool_name: string;"
+        },
+        {
+          "file": ".claude/rules/claim-verification.md",
+          "lines": "60-61",
+          "quote": "The `epistemic-reminder` hook injects warnings after Grep results. Follow them."
+        },
+        {
+          "file": ".claude/hooks/src/epistemic-reminder.ts",
+          "lines": "67-69",
+          "quote": "    hookSpecificOutput: {\n      hookEventName: 'PostToolUse',\n      systemPromptSuffix: reminder,"
+        }
+      ],
+      "observe_how": "Registered live with matcher Grep|Read (verified in ~/.claude/settings.json), so it spawns a node process on EVERY Grep and Read, then always prints '{}' because input.tool is undefined (Claude Code sends tool_name; every other hook in src/ uses tool_name). Even if the field matched, the output uses systemPromptSuffix — not the additionalContext field the repo's own hook-dev-lifecycle rule documents as 'the reliable inject pattern'. Double-dead, plus a decision-driving false claim in a rule loaded into every session's context. Fix is two field renames, or delete the hook and the rule's enforcement sentence.",
+      "telemetry": "Fires on every Grep/Read tool call session-wide; injected reminders delivered: 0"
+    },
+    {
+      "id": "D2d-04",
+      "title": "ralph-monitor is dead code: gates on data.event !== 'PostToolUse' but the harness sends hook_event_name (and it reads tool_result, not tool_response) — exits instantly on every Bash call it spawns for",
+      "severity": "S1",
+      "confidence": "VERIFIED",
+      "seed_ref": null,
+      "leverage": "quick-win",
+      "proposed_class": "fix",
+      "dedup_keys": [
+        ".claude/hooks/src/ralph-monitor.ts",
+        "data.event",
+        "tool_result"
+      ],
+      "causal_links": [
+        "D2d-12 (field-name drift instance)",
+        "D2d-05 (the compensating Task-side monitor is also field-broken — Ralph hook-side state updates are entirely dead)"
+      ],
+      "evidence": [
+        {
+          "file": ".claude/hooks/src/ralph-monitor.ts",
+          "lines": "233",
+          "quote": "        if (data.event !== 'PostToolUse' || data.tool_name !== 'Bash') {"
+        },
+        {
+          "file": ".claude/hooks/src/ralph-monitor.ts",
+          "lines": "239-240",
+          "quote": "        const stdout = data.tool_result?.stdout || '';\n        const stderr = data.tool_result?.stderr || '';"
+        },
+        {
+          "file": ".claude/hooks/src/ralph-monitor.ts",
+          "lines": "9",
+          "quote": " * This creates the feedback loop from Ralph containers back to Maestro orchestration."
+        }
+      ],
+      "observe_how": "Registered live on PostToolUse matcher=Bash (verified in ~/.claude/settings.json). The harness input carries hook_event_name (the convention 8+ sibling hooks in src/ use — arch-context-inject, memory-awareness, compiler-in-the-loop, etc.); 'event' is never present, so the guard at line 233 makes the hook exit(0) on every single invocation before any signal parsing. Even with that fixed, stdout/stderr are read from tool_result while the canonical field is tool_response (shared/types.ts). Net effect: the documented 'feedback loop from Ralph containers back to Maestro' has never functioned; the hook is pure per-Bash-call process-spawn overhead. Fix the two field names or delete and rely on ralph-task-monitor (after D2d-05 is fixed).",
+      "telemetry": "One wasted node spawn per Bash tool call session-wide; Ralph signals processed: 0"
+    },
+    {
+      "id": "D2d-05",
+      "title": "ralph-task-monitor never sees agent output in production: reads input.tool_result.{stdout,content,text} while the harness delivers tool_response — resultText is always empty and all three detection tiers are unreachable",
+      "severity": "S1",
+      "confidence": "VERIFIED",
+      "seed_ref": null,
+      "leverage": "quick-win",
+      "proposed_class": "fix",
+      "dedup_keys": [
+        ".claude/hooks/src/ralph-task-monitor.ts",
+        "tool_result",
+        "resultText"
+      ],
+      "causal_links": [
+        "D2d-12 (field-name drift instance)",
+        "with D2d-04, both Ralph hook-side task-state updaters are dead — explains reliance on manual ralph-checkpoint/state edits"
+      ],
+      "evidence": [
+        {
+          "file": ".claude/hooks/src/ralph-task-monitor.ts",
+          "lines": "322-324",
+          "quote": "  const resultText = input.tool_result?.stdout\n    || input.tool_result?.content\n    || input.tool_result?.text"
+        },
+        {
+          "file": ".claude/hooks/src/ralph-task-monitor.ts",
+          "lines": "327",
+          "quote": "  if (!resultText) return;"
+        },
+        {
+          "file": ".claude/hooks/src/agent-error-capture.ts",
+          "lines": "217",
+          "quote": "    const responseStr = responseToString(input.tool_response);"
+        }
+      ],
+      "observe_how": "Same event, same matcher (PostToolUse matcher=Agent, verified registered): sibling hook agent-error-capture reads input.tool_response; ralph-task-monitor reads input.tool_result. Both cannot be right. shared/types.ts declares tool_response as the canonical PostToolUseInput field. With tool_result absent, resultText is '' and the hook returns at line 327 before structured-JSON/XML/pattern detection or any Braintrust agent_task_success emit — so during live Ralph runs, agent completions never auto-update .ralph/state.json from the Task path. Unit tests pass because they feed tool_result directly (test-only contract). Observe by running a Ralph session and checking that no 'RALPH TASK MONITOR:' additionalContext ever appears after Task completions.",
+      "telemetry": "agent_task_success Braintrust emits from this hook: effectively 0 in production; corr-null 60.7% and 30/36 agents never in agent-recall are consistent with Task-side PostToolUse consumers not seeing payloads"
+    },
+    {
+      "id": "D2d-06",
+      "title": "agent-error-capture (and hook-error-pipeline) shell out to store_learning.py via execSync string concatenation with only quote/newline escaping — on Windows cmd.exe, error content containing \\\" or metachars breaks quoting; this is the junk-file creation mechanism family of SEED-01",
+      "severity": "S1",
+      "confidence": "VERIFIED",
+      "seed_ref": "SEED-01",
+      "leverage": "structural",
+      "proposed_class": "fix",
+      "dedup_keys": [
+        ".claude/hooks/src/agent-error-capture.ts",
+        ".claude/hooks/src/hook-error-pipeline.ts",
+        "execSync",
+        "storeLearning"
+      ],
+      "causal_links": [
+        "candidate mechanism for SEED-01 junk artifacts",
+        "D2d-07 (over-broad triggers raise how often hostile content reaches this shell path)"
+      ],
+      "evidence": [
+        {
+          "file": ".claude/hooks/src/agent-error-capture.ts",
+          "lines": "172",
+          "quote": "    const escapedContent = content.replace(/\"/g, '\\\\\"').replace(/\\n/g, '\\\\n');"
+        },
+        {
+          "file": ".claude/hooks/src/agent-error-capture.ts",
+          "lines": "176-178",
+          "quote": "    execSync(\n      `cd \"${opcDir}\" && uv run python scripts/core/store_learning.py ` +\n      `--session-id \"${sessionId}\" ` +"
+        },
+        {
+          "file": ".claude/hooks/src/hook-error-pipeline.ts",
+          "lines": "103-104",
+          "quote": "    execSync(\n      `cd \"${opcDir}\" && uv run python scripts/core/store_learning.py ` +"
+        },
+        {
+          "file": ".claude/hooks/src/post-plan-roadmap.ts",
+          "lines": "459-460",
+          "quote": "    const child = spawn('uv', ['run', 'python', 'scripts/core/store_learning.py',\n      '--session-id', sessionId,"
+        }
+      ],
+      "observe_how": "The content fed to --content is raw agent error output (stack traces, code snippets) which routinely contains \", >, &, |, ^ and %. Escaping handles only \" and newline; on Windows, execSync runs via cmd.exe where backslash-escaped quotes do not reliably keep cmd's own quote state — a \" in content toggles quoting and any following > or & becomes live redirection/chaining, creating stray files in cwd (opcDir = opc/) — matching the SEED-01 artifact location ('junk files under opc/', also recorded at ROADMAP.md:197 finding (a)). The codebase already has the safe pattern in the SAME file family: post-plan-roadmap, smarter-everyday, periodic-extract and browser-learning-extractor all use spawn with an args ARRAY (no shell). Fix: convert agent-error-capture.ts:176 and hook-error-pipeline.ts:103 to spawnSync('uv', [args...]). Note: SEED-01's daily ~07:24 writer still needs the Task-Scheduler probe — these two hooks are event-driven, so they are the mechanism family, not necessarily the scheduled invoker.",
+      "telemetry": "SEED-01 reports 5 junk artifacts to date; ROADMAP.md:197 records one regenerated mid-session on 2026-06-06"
+    },
+    {
+      "id": "D2d-07",
+      "title": "agent-error-capture stores FAILED_APPROACH memories on /\\berror\\b/ alone — successful agent runs that merely mention 'error' ('0 errors', 'error handling') are recorded as failures, polluting archival_memory recall; store is also a synchronous execSync (up to 10s) in the Task hot path",
+      "severity": "S2",
+      "confidence": "VERIFIED",
+      "seed_ref": null,
+      "leverage": "quick-win",
+      "proposed_class": "fix",
+      "dedup_keys": [
+        ".claude/hooks/src/agent-error-capture.ts",
+        "ERROR_PATTERNS",
+        "hasErrorPattern"
+      ],
+      "causal_links": [
+        "contributes to memory-recall hit-rate 27.4% (false FAILED_APPROACH entries dilute recall)",
+        "D2d-06 (each false trigger also exercises the unsafe shell path)"
+      ],
+      "evidence": [
+        {
+          "file": ".claude/hooks/src/agent-error-capture.ts",
+          "lines": "40-42",
+          "quote": "const ERROR_PATTERNS = [\n  /\\berror\\b/i,\n  /\\bfailed\\b/i,"
+        },
+        {
+          "file": ".claude/hooks/src/agent-error-capture.ts",
+          "lines": "223-224",
+          "quote": "    if (hasError) {\n      // Only store on actual error patterns (TypeError, ENOENT, etc.)"
+        },
+        {
+          "file": ".claude/hooks/src/agent-error-capture.ts",
+          "lines": "184",
+          "quote": "      { encoding: 'utf-8', timeout: 10000, stdio: ['pipe', 'pipe', 'pipe'] }"
+        }
+      ],
+      "observe_how": "The comment at line 223 claims storage happens 'only on actual error patterns (TypeError, ENOENT, etc.)' but ERROR_PATTERNS leads with bare /\\berror\\b/i, /\\bfailed\\b/i, /\\bfailure\\b/i, /\\btimeout\\b/i — words present in most healthy agent reports ('all tests passed, 0 errors', 'added error handling'). The G3 quality scorer drops NOISE (<3) but BORDERLINE (3-4) passes, so plausible-looking false failures land tagged agent_failure/FAILED_APPROACH. Query archival_memory for tags LIKE '%agent_failure%' and sample: entries quoting success summaries confirm. Separately, the store is execSync with a 10s ceiling inside PostToolUse:Agent — every false positive adds seconds of blocking latency after agent completion (cf. SEED-16's same store-hot-path pattern). Fix: drop the bare error/failed/failure/timeout words (keep stack-trace and errno patterns), and use detached spawn like post-plan-roadmap does.",
+      "telemetry": "memory-recall hit-rate 27.4%; every Task completion whose text contains 'error' pays the scorer + possible 10s execSync"
+    },
+    {
+      "id": "D2d-08",
+      "title": "agent-verification delivers its entire output (the verification warning) via the legacy top-level 'message' field that the repo's own types/docs mark deprecated — warnings likely never reach Claude, making the hook decorative",
+      "severity": "S2",
+      "confidence": "VERIFIED",
+      "seed_ref": null,
+      "leverage": "quick-win",
+      "proposed_class": "fix",
+      "dedup_keys": [
+        ".claude/hooks/src/agent-verification.ts",
+        "outputWithMessage",
+        "LegacyHookOutput"
+      ],
+      "causal_links": [
+        "D2d-12 (output-contract drift sibling)"
+      ],
+      "evidence": [
+        {
+          "file": ".claude/hooks/src/agent-verification.ts",
+          "lines": "91-93",
+          "quote": "function outputWithMessage(message?: string): void {\n  if (message) {\n    console.log(JSON.stringify({ message }));"
+        },
+        {
+          "file": ".claude/hooks/src/shared/types.ts",
+          "lines": "71-73",
+          "quote": "/**\n * Legacy hook output format (deprecated but still used by some hooks).\n * Prefer PreToolUseHookOutput for new hooks."
+        },
+        {
+          "file": ".claude/rules/hook-dev-lifecycle.md",
+          "lines": "62",
+          "quote": "- Context injection: `PostToolUse additionalContext` is the reliable inject pattern"
+        }
+      ],
+      "observe_how": "The hook's sole purpose is injecting '⚠️ AGENT VERIFICATION WARNING' context after suspicious agent claims, but it never uses hookSpecificOutput.additionalContext — only { message }, which shared/types.ts labels legacy/deprecated and hook-dev-lifecycle.md contrasts with the 'reliable inject pattern'. Sibling hooks on the same event (ralph-task-monitor, post-plan-roadmap) all wrap context in hookSpecificOutput.additionalContext. Secondary nit: the existsSync check at lines 146-151 tests bare filenames ('!file.includes(\"/\")') relative to the hook process cwd, generating false 'files that don't exist' warnings for valid relative paths — low-stakes only because the channel is dead. Observe: trigger a kraken/spark response claiming completion without files and check that no warning appears in context. Fix: route warnings through additionalContext (one-function change).",
+      "telemetry": "Registered on PostToolUse matcher=Agent; warning deliveries observable in transcripts: none expected via legacy field"
+    },
+    {
+      "id": "D2d-09",
+      "title": "prd-roadmap-sync marks the CURRENT ROADMAP goal complete whenever ANY fully-checked tasks-*.md is written — titleToComplete falls back to roadmap.current.title with no check that the tasks file relates to the current goal; section matching is first-word substring",
+      "severity": "S1",
+      "confidence": "VERIFIED",
+      "seed_ref": null,
+      "leverage": "structural",
+      "proposed_class": "fix",
+      "dedup_keys": [
+        ".claude/hooks/src/prd-roadmap-sync.ts",
+        "handleTasksChange",
+        "moveToCompleted",
+        "titleToComplete"
+      ],
+      "causal_links": [
+        "same unguarded-ROADMAP-write family that roadmap-completion already had to neuter (its lines 150-152 document the prior clobber)"
+      ],
+      "evidence": [
+        {
+          "file": ".claude/hooks/src/prd-roadmap-sync.ts",
+          "lines": "497-499",
+          "quote": "  if (progress.isComplete) {\n    // Move to completed\n    const titleToComplete = roadmap.current?.title || progress.featureName;"
+        },
+        {
+          "file": ".claude/hooks/src/prd-roadmap-sync.ts",
+          "lines": "335",
+          "quote": "      if (stripped.startsWith('**') && stripped.toLowerCase().includes(title.toLowerCase().split(' ')[0])) {"
+        },
+        {
+          "file": ".claude/hooks/src/roadmap-completion.ts",
+          "lines": "150-152",
+          "quote": "  // ADVISORY ONLY — never writes. (Previously: unconditional updateRoadmapContent +\n  // promoteNextPlanned + fs.writeFileSync, which clobbered manual edits and falsely\n  // advanced Current Focus on every unrelated task completion.)"
+        },
+        {
+          "file": ".claude/hooks/src/prd-roadmap-sync.ts",
+          "lines": "519-521",
+          "quote": "  if (updated !== roadmapContent) {\n    fs.writeFileSync(roadmapPath, updated);\n  }"
+        }
+      ],
+      "observe_how": "Write any tasks-foo.md inside the project with all checkboxes ticked: handleTasksChange computes isComplete=true and calls moveToCompleted(roadmapContent, roadmap.current?.title) — the CURRENT goal, even if 'foo' is unrelated to it — replacing Current Focus with the '_No current goal._' placeholder and appending a bogus '- [x]' line. moveToCompleted/promoteToCurrent/updateProgress all match sections by the FIRST WORD of the title via substring includes (line 335), so titles sharing a first word ('CCv3-Hardening ...') cross-match. roadmap-completion was already converted to advisory-only after exactly this clobbering failure mode (its own comment is the precedent), but prd-roadmap-sync retained the unconditional fs.writeFileSync path. Fix: require the tasks file's featureName to match the current goal before completing, or convert to advisory like roadmap-completion.",
+      "telemetry": "Registered live on Write|Edit; trigger frequency tied to ai-dev-tasks usage (tasks-*.md files)"
+    },
+    {
+      "id": "D2d-10",
+      "title": "git-commit-roadmap records commits into THIS project's ROADMAP without verifying the commit ran in this project — 'cd <other-repo> && git commit' (routine for ~/.claude quick fixes) writes a foreign repo's commit into the session project's Completed section",
+      "severity": "S1",
+      "confidence": "VERIFIED",
+      "seed_ref": null,
+      "leverage": "quick-win",
+      "proposed_class": "fix",
+      "dedup_keys": [
+        ".claude/hooks/src/git-commit-roadmap.ts",
+        "isGitCommitCommand",
+        "appendToCompleted"
+      ],
+      "causal_links": [
+        "second cross-project ROADMAP contamination vector alongside SEED-02/D2d-01 (different hook, same class)"
+      ],
+      "evidence": [
+        {
+          "file": ".claude/hooks/src/git-commit-roadmap.ts",
+          "lines": "61-63",
+          "quote": "function isGitCommitCommand(command: string): boolean {\n  const normalized = command.toLowerCase().trim();\n  return normalized.includes('git commit') && !normalized.includes('--amend');"
+        },
+        {
+          "file": ".claude/hooks/src/git-commit-roadmap.ts",
+          "lines": "265-266",
+          "quote": "  const projectDir = process.env.CLAUDE_PROJECT_DIR || process.cwd();\n  const roadmapPath = findRoadmapPath(projectDir);"
+        },
+        {
+          "file": ".claude/hooks/src/git-commit-roadmap.ts",
+          "lines": "285",
+          "quote": "  fs.writeFileSync(roadmapPath, updated);"
+        }
+      ],
+      "observe_how": "The Bash command string is only checked for the substring 'git commit'; nothing inspects a leading 'cd <path> &&' or compares the commit's repo to CLAUDE_PROJECT_DIR. The git-sync workflow in this environment explicitly commits in OTHER directories from a session ('cd ~/continuous-claude && git commit' from any project, ~/.claude quick fixes) — each such feat:/fix: commit appends a '- [x]' entry to the CURRENT session project's ROADMAP Completed with today's date and the foreign hash. Reproduce: from a session in project A, run cd ../project-B && git commit -m 'feat: x' and read project A's ROADMAP. Fix: parse a leading cd target (or run git -C check) and skip when the commit repo differs from projectDir.",
+      "telemetry": "Registered live on PostToolUse:Bash; cross-repo commits are a documented routine pattern in git-sync-workflow.md"
+    },
+    {
+      "id": "D2d-11",
+      "title": "smarter-everyday reads Bash output as tool_response.output ONLY — if the harness delivers stdout/stderr, test success/failure is never detected, the state machine dead-ends in TESTING, and the entire 'victory library' silently captures nothing",
+      "severity": "S2",
+      "confidence": "VERIFIED",
+      "seed_ref": null,
+      "leverage": "quick-win",
+      "proposed_class": "fix",
+      "dedup_keys": [
+        ".claude/hooks/src/smarter-everyday.ts",
+        "processTransition",
+        "toolResponse.output"
+      ],
+      "causal_links": [
+        "D2d-12 (Bash-payload field drift instance)",
+        "if dead, contributes to low WORKING_SOLUTION density behind memory-recall hit-rate 27.4%"
+      ],
+      "evidence": [
+        {
+          "file": ".claude/hooks/src/smarter-everyday.ts",
+          "lines": "304",
+          "quote": "      const output = String((toolResponse as { output?: string })?.output || '');"
+        },
+        {
+          "file": ".claude/hooks/src/git-commit-roadmap.ts",
+          "lines": "228-230",
+          "quote": "  } else if (data.tool_response && typeof (data.tool_response as any).output === 'string') {\n    response = (data.tool_response as any).output;\n  } else if (data.tool_response && typeof (data.tool_response as any).stdout === 'string') {"
+        },
+        {
+          "file": ".claude/hooks/src/smarter-everyday.ts",
+          "lines": "306-307",
+          "quote": "      if (newState.state === 'ATTEMPTING') {\n        newState.state = 'TESTING';"
+        },
+        {
+          "file": ".claude/hooks/src/smarter-everyday.ts",
+          "lines": "24",
+          "quote": " * State file: .claude/smarter-everyday-state.json"
+        }
+      ],
+      "observe_how": "Sibling hook git-commit-roadmap defends against BOTH Bash payload shapes (.output then .stdout); smarter-everyday and roadmap-completion's handleBashOutput read .output only. If the runtime delivers {stdout,stderr}, output is '' so isTestSuccess/isTestFailure both return false; the machine transitions ATTEMPTING→TESTING and TESTING has no outbound transitions anywhere in processTransition (CANDIDATE is only reachable from ATTEMPTING with detected success), so no victory is ever stored. Cheap observation: query archival_memory for tags LIKE '%victory%' — zero rows since deployment confirms the dead-end; any rows disconfirm. Also doc drift: header says state lives at .claude/smarter-everyday-state.json but getStateFilePath returns getSessionStatePath('smarter-everyday') (temp dir). Fix: read output || stdout (+stderr) like git-commit-roadmap, and add a TESTING fallback transition.",
+      "telemetry": "Registered on Edit|Write|Bash|TaskUpdate (4-tool matcher = high fire rate) — full state-file read/write cycle per event even while the victory path may be unreachable"
+    },
+    {
+      "id": "D2d-12",
+      "title": "Structural: PostToolUse input/output contract drift across the 13 hooks — five competing field spellings (tool vs tool_name, event vs hook_event_name, tool_result vs tool_response vs tool_output, .output vs .stdout, message vs additionalContext) with no shared input normalizer; 4+ hooks silently dead or degraded as a result",
+      "severity": "S1",
+      "confidence": "VERIFIED",
+      "seed_ref": null,
+      "leverage": "structural",
+      "proposed_class": "simplify",
+      "dedup_keys": [
+        ".claude/hooks/src/shared/types.ts",
+        "PostToolUseInput",
+        "readStdin",
+        "input-normalizer"
+      ],
+      "causal_links": [
+        "parent of D2d-03 (tool), D2d-04 (event/tool_result), D2d-05 (tool_result), D2d-08 (message), D2d-11 (.output); partial parent of D2d-02 (tool_output)"
+      ],
+      "evidence": [
+        {
+          "file": ".claude/hooks/src/shared/types.ts",
+          "lines": "37-42",
+          "quote": "export interface PostToolUseInput {\n  session_id: string;\n  tool_name: string;"
+        },
+        {
+          "file": ".claude/hooks/src/ralph-task-monitor.ts",
+          "lines": "32",
+          "quote": "  tool_result?: {"
+        },
+        {
+          "file": ".claude/hooks/src/post-plan-roadmap.ts",
+          "lines": "26-27",
+          "quote": "  tool_output?: string;\n  tool_result?: string;"
+        },
+        {
+          "file": ".claude/hooks/src/epistemic-reminder.ts",
+          "lines": "11",
+          "quote": "  tool?: string;"
+        }
+      ],
+      "observe_how": "shared/types.ts already defines the canonical PostToolUseInput (tool_name + tool_response), yet each hook re-declares its own ad-hoc input interface, and the wrong spellings type-check fine because the fields are optional. Concretely broken today: epistemic-reminder (tool), ralph-monitor (event + tool_result), ralph-task-monitor (tool_result), post-plan-roadmap (tool_output/tool_result fallback), smarter-everyday + roadmap-completion (.output-only Bash payload), agent-verification (message-only output). One shared parseHookInput()/bashOutputOf() helper in shared/ (mirroring the existing atomic-write/session-isolation helpers) plus deleting per-hook input interfaces eliminates the whole bug class and makes the 35/111-unregistered audit meaningful (a registered hook would actually run). Leverage: this is why several hooks pass their unit tests (tests feed the hook's own invented shape) while being dead in production.",
+      "telemetry": "4 hooks verified dead/degraded by this class in D2d alone; 111 hook srcs share the copy-paste input pattern"
+    },
+    {
+      "id": "D2d-13",
+      "title": "prd-roadmap-sync path containment uses startsWith prefix comparison — sibling dirs sharing the prefix (continuous-claude-x) bypass the guard; one-line path.relative fix",
+      "severity": "S3",
+      "confidence": "VERIFIED",
+      "seed_ref": null,
+      "leverage": "quick-win",
+      "proposed_class": "fix",
+      "dedup_keys": [
+        ".claude/hooks/src/prd-roadmap-sync.ts",
+        "handlePRDChange",
+        "startsWith"
+      ],
+      "causal_links": [
+        "D2d-09 (same hook's write path makes the weak guard matter)"
+      ],
+      "evidence": [
+        {
+          "file": ".claude/hooks/src/prd-roadmap-sync.ts",
+          "lines": "411",
+          "quote": "  if (!path.resolve(filePath).startsWith(path.resolve(projectDir))) {"
+        }
+      ],
+      "observe_how": "Payoff: replacing with a path.relative(projectDir, filePath) '..'-check closes both the sibling-prefix bypass (C:\\...\\continuous-claude-evil passes for projectDir C:\\...\\continuous-claude) and Windows drive-letter case mismatch false rejections — the same bug class the Codex adversary caught in the Phase A bus code."
+    }
+  ],
+  "coverage_manifest": [
+    "agent-error-capture: FLAWED — cmd.exe execSync string-built store_learning with quote-only escaping (SEED-01 mechanism family, D2d-06) + over-broad /\\berror\\b/ stores false FAILED_APPROACH memories with sync 10s execSync in hot path (D2d-07)",
+    "agent-verification: FLAWED — entire warning output rides the deprecated top-level 'message' field, never additionalContext; hook is effectively decorative (D2d-08); minor false-warning existsSync on bare filenames",
+    "ralph-task-monitor: BROKEN-IN-PROD — reads tool_result instead of canonical tool_response, resultText always empty, all 3 detection tiers + Braintrust emit unreachable; tests pass because they feed tool_result (D2d-05)",
+    "epistemic-reminder: DEAD — reads input.tool (canonical tool_name) so Grep never matches; output uses non-standard systemPromptSuffix; claim-verification.md falsely claims it enforces (D2d-03)",
+    "post-plan-roadmap: SEED-02 ROOT CAUSE — (a) selection: newest-mtime .md from machine-global shared ~/.claude/plans, ignores the firing event's tool_input.plan, non-canonical tool_output fallback, same-UTC-day session replacement amplifier (D2d-02); (b) guard miss: isContentRelevantToProject is a negative allowlist of REGISTERED projects (Salesforce/FastMCP unregistered → fail-open 'no cross-project signals'), and identity keyword 'claude' (from dirName continuous-claude) substring-matches nearly any Claude-Code plan so the fallback can never protect this repo — verified against abstract-coral content (3x 'claude', 7x 'salesforce') and mtime/UTC-date correlation (D2d-01, S0)",
+    "plan-exit-tracker: CLEAN — correct tool_name check, project+session-scoped state path, atomic write, fail-open",
+    "plan-exit-premortem-prompt: CLEAN code — correct field usage (toolInput.plan) and additionalContext output; registration is active-only (repo settings.json lacks it) which is SEED-15's template gap, not a new finding",
+    "roadmap-completion: MOSTLY CLEAN — now advisory-only after its documented clobbering past; residual drift: Bash handler reads tool_response.output only and replies via legacy 'message' (instances folded into D2d-12)",
+    "git-commit-roadmap: FLAWED — no check that the commit ran in projectDir; 'cd <other-repo> && git commit' writes foreign commits into this project's ROADMAP Completed — second cross-project contamination vector (D2d-10); otherwise the most defensive tool_response handling of the set",
+    "ralph-monitor: DEAD — gates on data.event (harness sends hook_event_name) and reads tool_result; exits instantly on every Bash call it spawns for; the documented Ralph→Maestro feedback loop has never functioned (D2d-04)",
+    "test-run-tracker: CLEAN — correct fields, session-scoped temp state, fail-open; no findings",
+    "smarter-everyday: DEGRADED — Bash payload read as .output only so test success/failure may never be detected and the state machine dead-ends in TESTING (victory library silently empty, D2d-11); header doc-drift on state-file location; store path itself is the SAFE spawn-array pattern",
+    "prd-roadmap-sync: FLAWED — any fully-checked tasks-*.md completes the CURRENT goal regardless of relatedness via roadmap.current?.title fallback + first-word substring matching (D2d-09); startsWith prefix containment (D2d-13, S3)"
+  ],
+  "notes": "All 13 assigned hooks read in full at the frozen working tree; registration cross-checked in both repo and active settings.json (all 13 registered live; plan-exit-premortem-prompt active-only = SEED-15 instance). SEED-02 prize delivered with timestamped reconstruction: foreign plan abstract-coral written to the shared global ~/.claude/plans at 2026-06-05 19:55:49 -0500; hook fired in a continuous-claude-cwd session within the 10-min freshness window (so the staleness guard passed it legitimately — it defends the wrong threat); UTC date stamping explains the '2026-06-06' labels; contamination committed unnoticed in 137ec87 (06-06 08:34) and restored in 8201551 (09:59). Guard missed for two independent verified reasons: registry-negative-allowlist (Salesforce/FastMCP not registered) and 'claude'-keyword poisoning (the fallback can never protect a project literally named continuous-claude). Read-only constraint honored: no test execution, no writes; one Glob timed out and was replaced with targeted Reads. Structural through-line for the dimension: 4 of 13 hooks are dead or degraded purely from PostToolUse field-name drift (D2d-12) — a shared input normalizer in hooks/src/shared/ is the highest-leverage single fix."
+}
