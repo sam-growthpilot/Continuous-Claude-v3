@@ -259,14 +259,32 @@ function extractIntent(prompt) {
 }
 
 // src/shared/embedding-client.ts
-import { existsSync as existsSync3, mkdirSync as mkdirSync2, readFileSync as readFileSync2, unlinkSync, writeFileSync as writeFileSync2 } from "fs";
-import { spawn } from "child_process";
+import {
+  closeSync,
+  existsSync as existsSync3,
+  mkdirSync as mkdirSync2,
+  openSync,
+  readFileSync as readFileSync2,
+  statSync,
+  unlinkSync,
+  writeSync
+} from "fs";
+import { spawn, execFileSync } from "child_process";
 import { homedir } from "os";
 import { join as join3, resolve } from "path";
 import * as net from "net";
 var RUN_DIR = join3(homedir(), ".claude", "run");
-var DAEMON_INFO_PATH = join3(RUN_DIR, "ccv3-embedding.json");
+function _runDir() {
+  return process.env.CCV3_EMBEDDING_RUN_DIR || RUN_DIR;
+}
+function _daemonInfoPath() {
+  return join3(_runDir(), "ccv3-embedding.json");
+}
+var DAEMON_INFO_PATH = _daemonInfoPath();
 var SPAWN_LOCK_PATH = join3(RUN_DIR, "ccv3-embedding-spawn.lock");
+function _spawnLockPath() {
+  return join3(_runDir(), "ccv3-embedding-spawn.lock");
+}
 var SPAWN_LOCK_TTL_MS = 6e4;
 var FRAME_SIZE_CAP_BYTES = 100 * 1024 * 1024;
 var DEFAULT_PING_TIMEOUT_MS = 1500;
@@ -443,61 +461,104 @@ function resolveRepoRoot() {
   }
   return null;
 }
-var _spawnAttempted = false;
-function _readSpawnLock() {
+var _uvPathCache = void 0;
+function resolveUvPath() {
+  if (_uvPathCache !== void 0) return _uvPathCache;
+  const isWin = process.platform === "win32";
+  const resolved = _probeUvPath(isWin);
+  _uvPathCache = resolved;
+  return resolved;
+}
+function _probeUvPath(isWin) {
+  const envOverride = process.env.CCV3_UV_PATH;
+  if (envOverride && existsSync3(envOverride)) {
+    return resolve(envOverride);
+  }
   try {
-    if (!existsSync3(SPAWN_LOCK_PATH)) return null;
-    const raw = readFileSync2(SPAWN_LOCK_PATH, "utf-8");
-    const obj = JSON.parse(raw);
-    if (typeof obj !== "object" || obj === null || typeof obj.pid !== "number" || typeof obj.started_at !== "number") {
-      return null;
+    const finder = isWin ? "where" : "which";
+    const out = execFileSync(finder, ["uv"], {
+      windowsHide: true,
+      timeout: 2e3,
+      encoding: "utf-8"
+    });
+    const parsed = _parseWhereOutput(String(out));
+    if (parsed) return parsed;
+  } catch {
+  }
+  const home = homedir();
+  const candidates = isWin ? [
+    join3(home, ".local", "bin", "uv.exe"),
+    join3(home, ".cargo", "bin", "uv.exe")
+  ] : [
+    join3(home, ".local", "bin", "uv"),
+    join3(home, ".cargo", "bin", "uv")
+  ];
+  for (const c of candidates) {
+    if (existsSync3(c)) return c;
+  }
+  return null;
+}
+function _parseWhereOutput(out) {
+  const lines = out.split(/\r?\n/).map((l) => l.trim()).filter((l) => l.length > 0).filter((l) => existsSync3(l));
+  if (lines.length === 0) return null;
+  const exe = lines.find((l) => l.toLowerCase().endsWith("uv.exe"));
+  return exe ?? lines[0];
+}
+function _logLauncher(msg) {
+  try {
+    const logDir = join3(homedir(), ".claude", "logs");
+    mkdirSync2(logDir, { recursive: true });
+    const logFile = join3(logDir, "embedding-daemon-launcher.log");
+    const line = `[${(/* @__PURE__ */ new Date()).toISOString()}] ${msg}
+`;
+    const fd = openSync(logFile, "a");
+    try {
+      writeSync(fd, line);
+    } finally {
+      closeSync(fd);
     }
-    return obj;
-  } catch {
-    return null;
-  }
-}
-function _writeSpawnLock() {
-  try {
-    mkdirSync2(RUN_DIR, { recursive: true });
-    const data = JSON.stringify({ pid: process.pid, started_at: Math.floor(Date.now() / 1e3) });
-    writeFileSync2(SPAWN_LOCK_PATH, data);
   } catch {
   }
 }
+var _spawnAttempted = false;
 function ensureDaemonRunning() {
+  if (process.env.CCV3_EMBEDDING_NO_SPAWN === "1") return;
   if (_spawnAttempted) return;
   _spawnAttempted = true;
   const info = readDaemonInfo();
   if (info && isDaemonAlive(info)) return;
-  const lock = _readSpawnLock();
-  if (lock !== null) {
-    const ageMs = Date.now() - lock.started_at * 1e3;
-    if (ageMs < SPAWN_LOCK_TTL_MS) {
-      return;
-    }
-  }
-  _writeSpawnLock();
   const repoRoot = resolveRepoRoot();
   if (!repoRoot) {
-    console.error(
-      "[embedding-client] cannot locate repo root; daemon will not be spawned"
+    _logLauncher(
+      "embedding-client: repo root not resolvable; skipping spawn"
     );
+    return;
+  }
+  const uvPath = resolveUvPath();
+  if (!uvPath) {
+    _logLauncher(
+      "embedding-client: uv not resolvable; skipping spawn (scheduled task will start daemon at next logon)"
+    );
+    return;
+  }
+  const lockPath = _spawnLockPath();
+  let acquired = false;
+  try {
+    acquired = _acquireSpawnLock(lockPath);
+  } catch {
+    return;
+  }
+  if (!acquired) {
     return;
   }
   try {
     const child = spawn(
-      "uv",
+      uvPath,
       ["run", "--project", "opc", "python", "opc/scripts/core/embedding_daemon.py", "--daemon"],
       {
         cwd: repoRoot,
         detached: true,
         stdio: "ignore",
-        // shell: true is needed on Windows for `uv` (a .exe shim) to
-        // resolve via PATH from a detached spawn -- without it, ENOENT.
-        shell: process.platform === "win32",
-        // Suppress the cmd.exe console window on Windows. Without this,
-        // shell:true causes a visible cmd window for every daemon spawn.
         windowsHide: true
       }
     );
@@ -508,9 +569,59 @@ function ensureDaemonRunning() {
     });
     child.unref();
   } catch (err) {
+    try {
+      unlinkSync(lockPath);
+    } catch {
+    }
     console.error(
       `[embedding-client] daemon spawn failed: ${err?.message ?? err}`
     );
+  }
+}
+function _acquireSpawnLock(lockPath) {
+  mkdirSync2(_runDir(), { recursive: true });
+  const payload = JSON.stringify({
+    pid: process.pid,
+    started_at: Math.floor(Date.now() / 1e3)
+  });
+  const tryCreate = () => {
+    const fd = openSync(lockPath, "wx");
+    try {
+      writeSync(fd, payload);
+    } finally {
+      closeSync(fd);
+    }
+    return true;
+  };
+  try {
+    return tryCreate();
+  } catch (err) {
+    if (err?.code !== "EEXIST") throw err;
+  }
+  let ageMs;
+  try {
+    const st = statSync(lockPath);
+    ageMs = Date.now() - st.mtimeMs;
+  } catch {
+    try {
+      return tryCreate();
+    } catch (err2) {
+      if (err2?.code === "EEXIST") return false;
+      throw err2;
+    }
+  }
+  if (ageMs < SPAWN_LOCK_TTL_MS) {
+    return false;
+  }
+  try {
+    unlinkSync(lockPath);
+  } catch {
+  }
+  try {
+    return tryCreate();
+  } catch (err3) {
+    if (err3?.code === "EEXIST") return false;
+    throw err3;
   }
 }
 
@@ -644,7 +755,7 @@ import { createHash } from "node:crypto";
 import { realpathSync } from "node:fs";
 
 // src/shared/session-id.ts
-import { mkdirSync as mkdirSync3, readFileSync as readFileSync3, writeFileSync as writeFileSync3 } from "fs";
+import { mkdirSync as mkdirSync3, readFileSync as readFileSync3, writeFileSync as writeFileSync2 } from "fs";
 import { homedir as homedir2 } from "os";
 import { join as join4 } from "path";
 var SESSION_ID_FILENAME = ".coordination-session-id";
@@ -718,7 +829,7 @@ function getBusId(opts = {}) {
 }
 
 // src/shared/logger.ts
-import { appendFileSync, existsSync as existsSync4, mkdirSync as mkdirSync4, statSync, renameSync } from "fs";
+import { appendFileSync, existsSync as existsSync4, mkdirSync as mkdirSync4, statSync as statSync2, renameSync } from "fs";
 import { join as join5 } from "path";
 import { homedir as homedir3 } from "os";
 var LOG_DIR = join5(homedir3(), ".claude", "logs");
@@ -742,7 +853,7 @@ function ensureLogDir() {
 function rotateIfNeeded() {
   try {
     if (existsSync4(LOG_FILE)) {
-      const stat = statSync(LOG_FILE);
+      const stat = statSync2(LOG_FILE);
       if (stat.size > MAX_LOG_SIZE) {
         const rotated = LOG_FILE + ".1";
         renameSync(LOG_FILE, rotated);
@@ -792,7 +903,7 @@ function createLogger(hookName) {
 var log = createLogger("atomic-write");
 
 // src/shared/intel-bus.ts
-import { appendFileSync as appendFileSync2, existsSync as existsSync5, mkdirSync as mkdirSync5, renameSync as renameSync2, statSync as statSync2, unlinkSync as unlinkSync2 } from "node:fs";
+import { appendFileSync as appendFileSync2, existsSync as existsSync5, mkdirSync as mkdirSync5, renameSync as renameSync2, statSync as statSync3, unlinkSync as unlinkSync2 } from "node:fs";
 import { dirname, join as join6 } from "node:path";
 var MAX_LINE_BYTES = 4096;
 var MAX_INTEL_BUS_BYTES = 2e6;
@@ -906,7 +1017,7 @@ function defaultAppend(path2, line) {
 }
 function defaultSize(path2) {
   if (!existsSync5(path2)) return 0;
-  return statSync2(path2).size;
+  return statSync3(path2).size;
 }
 function resolveMaxBytes() {
   const raw = process.env.CCV3_INTEL_BUS_MAX_BYTES;

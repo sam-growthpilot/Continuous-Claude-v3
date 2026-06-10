@@ -29,8 +29,17 @@
  * code -- only conventions.
  */
 
-import { existsSync, mkdirSync, readFileSync, unlinkSync, writeFileSync } from 'fs';
-import { spawn } from 'child_process';
+import {
+  closeSync,
+  existsSync,
+  mkdirSync,
+  openSync,
+  readFileSync,
+  statSync,
+  unlinkSync,
+  writeSync,
+} from 'fs';
+import { spawn, execFileSync } from 'child_process';
 import { homedir } from 'os';
 import { join, resolve } from 'path';
 import * as net from 'net';
@@ -54,8 +63,32 @@ import * as net from 'net';
  */
 const RUN_DIR = join(homedir(), '.claude', 'run');
 
+/**
+ * Test seam: when set, ``CCV3_EMBEDDING_RUN_DIR`` overrides the canonical
+ * RUN_DIR for the rendezvous + lockfile paths. This lets the fork-based
+ * cross-process mutex test point N child processes at a shared temp dir
+ * with no live daemon. Read at CALL TIME (not module-init) so a forked
+ * child that sets the env before requiring the module is honored.
+ *
+ * Production never sets this — RUN_DIR (homedir-based) is the only path
+ * that matters in the real hook pipeline.
+ */
+function _runDir(): string {
+  return process.env.CCV3_EMBEDDING_RUN_DIR || RUN_DIR;
+}
+
 /** Discovery file path. Daemon writes this AFTER warmup. */
-const DAEMON_INFO_PATH = join(RUN_DIR, 'ccv3-embedding.json');
+function _daemonInfoPath(): string {
+  return join(_runDir(), 'ccv3-embedding.json');
+}
+
+/**
+ * Module-init snapshot of the discovery path. Used by the public surface
+ * (readDaemonInfo etc.) which has no test-override requirement. The
+ * spawn-mutex code uses ``_daemonInfoPath()`` / ``_spawnLockPath()`` so it
+ * honors the test env override.
+ */
+const DAEMON_INFO_PATH = _daemonInfoPath();
 
 /**
  * Cross-process spawn mutex lockfile. Written before we fire the daemon
@@ -70,6 +103,11 @@ const DAEMON_INFO_PATH = join(RUN_DIR, 'ccv3-embedding.json');
  * tracking spawn success/failure across processes.
  */
 const SPAWN_LOCK_PATH = join(RUN_DIR, 'ccv3-embedding-spawn.lock');
+
+/** Test-overridable spawn lock path (honors CCV3_EMBEDDING_RUN_DIR). */
+function _spawnLockPath(): string {
+  return join(_runDir(), 'ccv3-embedding-spawn.lock');
+}
 
 /** How long (ms) a spawn lockfile stays valid before we treat it as stale. */
 const SPAWN_LOCK_TTL_MS = 60_000;
@@ -519,6 +557,138 @@ function resolveRepoRoot(): string | null {
 }
 
 /**
+ * Module-level cache for the resolved uv path.
+ *
+ * ``undefined`` = not yet probed; ``null`` = probed and not found (cached so
+ * we don't re-run the ``where``/``which`` probe on every hook call); a string
+ * = the resolved absolute path. Resettable via ``__test.resetUvPathCache``.
+ */
+let _uvPathCache: string | null | undefined = undefined;
+
+/**
+ * Resolve the absolute path to the ``uv`` executable. Returns ``null`` if it
+ * cannot be located.
+ *
+ * Why this exists: ``uv`` is installed as a PATH shim. A bare
+ * ``spawn('uv', ..., { detached: true })`` ENOENTs from a detached process
+ * on Windows, so the old code used ``shell: true`` — which launches
+ * ``cmd.exe /c uv ...`` and flashes a visible console window per spawn (the
+ * thundering-herd symptom). Resolving uv to an absolute path lets us spawn
+ * with no shell and ``windowsHide: true`` — the same approach the proven
+ * scripts/start-embedding-daemon.ps1 launcher uses
+ * (UseShellExecute=$false + CreateNoWindow=$true).
+ *
+ * Resolution order:
+ *   (a) ``$CCV3_UV_PATH`` env override, if it points at an existing file.
+ *   (b) ``where uv`` (win32) / ``which uv`` (POSIX) — parsed carefully
+ *       because ``where`` returns MULTIPLE CRLF-separated lines and may list
+ *       a ``.cmd`` shim before the real ``uv.exe``; we prefer ``uv.exe``.
+ *   (c) Common install locations: ``%USERPROFILE%\.local\bin\uv.exe`` and
+ *       the cargo bin ``~/.cargo/bin/uv.exe`` (``uv`` on POSIX).
+ */
+function resolveUvPath(): string | null {
+  if (_uvPathCache !== undefined) return _uvPathCache;
+
+  const isWin = process.platform === 'win32';
+  const resolved = _probeUvPath(isWin);
+  _uvPathCache = resolved;
+  return resolved;
+}
+
+/**
+ * Pure-ish probe used by resolveUvPath (split out for cache control and to
+ * keep the cache logic trivially testable).
+ */
+function _probeUvPath(isWin: boolean): string | null {
+  // (a) Explicit env override.
+  const envOverride = process.env.CCV3_UV_PATH;
+  if (envOverride && existsSync(envOverride)) {
+    return resolve(envOverride);
+  }
+
+  // (b) where/which lookup.
+  try {
+    const finder = isWin ? 'where' : 'which';
+    const out = execFileSync(finder, ['uv'], {
+      windowsHide: true,
+      timeout: 2000,
+      encoding: 'utf-8',
+    });
+    const parsed = _parseWhereOutput(String(out));
+    if (parsed) return parsed;
+  } catch {
+    /* not found on PATH — fall through to known locations */
+  }
+
+  // (c) Common install locations.
+  const home = homedir();
+  const candidates = isWin
+    ? [
+        join(home, '.local', 'bin', 'uv.exe'),
+        join(home, '.cargo', 'bin', 'uv.exe'),
+      ]
+    : [
+        join(home, '.local', 'bin', 'uv'),
+        join(home, '.cargo', 'bin', 'uv'),
+      ];
+  for (const c of candidates) {
+    if (existsSync(c)) return c;
+  }
+
+  return null;
+}
+
+/**
+ * Parse the multi-line output of ``where uv`` (or ``which uv``).
+ *
+ * ``where`` on Windows returns one path per line with CRLF line endings and
+ * can list a ``.cmd``/``.bat`` shim before the real ``uv.exe``. We split on
+ * any newline form, trim, drop blanks, keep only paths that exist on disk,
+ * then PREFER one ending in ``uv.exe`` over a ``.cmd``/``.bat`` shim. Falls
+ * back to the first existing candidate if none ends in ``uv.exe``.
+ *
+ * Returns null if no candidate line resolves to an existing file.
+ */
+function _parseWhereOutput(out: string): string | null {
+  const lines = out
+    .split(/\r?\n/)
+    .map((l) => l.trim())
+    .filter((l) => l.length > 0)
+    .filter((l) => existsSync(l));
+  if (lines.length === 0) return null;
+  const exe = lines.find((l) => l.toLowerCase().endsWith('uv.exe'));
+  return exe ?? lines[0];
+}
+
+/**
+ * Append a durable line to ~/.claude/logs/embedding-daemon-launcher.log so
+ * spawn-skip decisions (no uv, no repo root) leave a forensic trail. Mirrors
+ * the launcher log the PowerShell scheduled task writes. Best-effort: never
+ * throws (the hook budget is too tight to risk a logging failure).
+ *
+ * ASCII only in the message — the launcher log is read on Windows where a
+ * stray non-ASCII byte under cp1252 can corrupt the file.
+ */
+function _logLauncher(msg: string): void {
+  try {
+    const logDir = join(homedir(), '.claude', 'logs');
+    mkdirSync(logDir, { recursive: true });
+    const logFile = join(logDir, 'embedding-daemon-launcher.log');
+    const line = `[${new Date().toISOString()}] ${msg}\n`;
+    // appendFileSync via writeSync-on-append fd keeps the import surface small;
+    // openSync with 'a' is the append mode.
+    const fd = openSync(logFile, 'a');
+    try {
+      writeSync(fd, line);
+    } finally {
+      closeSync(fd);
+    }
+  } catch {
+    /* best-effort logging — never let a log write break the hook */
+  }
+}
+
+/**
  * Single-process guard for the spawn helper. If another hook call already
  * triggered a spawn in this Node process, we don't try again. The Python
  * daemon itself is idempotent across processes (the port is already in
@@ -529,43 +699,6 @@ function resolveRepoRoot(): string | null {
  * is the SPAWN_LOCK_PATH filesystem lockfile — see ensureDaemonRunning().
  */
 let _spawnAttempted = false;
-
-/**
- * Read the spawn lockfile. Returns the parsed contents or null if missing,
- * unreadable, or malformed.
- */
-function _readSpawnLock(): { pid: number; started_at: number } | null {
-  try {
-    if (!existsSync(SPAWN_LOCK_PATH)) return null;
-    const raw = readFileSync(SPAWN_LOCK_PATH, 'utf-8');
-    const obj = JSON.parse(raw);
-    if (
-      typeof obj !== 'object' ||
-      obj === null ||
-      typeof obj.pid !== 'number' ||
-      typeof obj.started_at !== 'number'
-    ) {
-      return null;
-    }
-    return obj as { pid: number; started_at: number };
-  } catch {
-    return null;
-  }
-}
-
-/**
- * Write the spawn lockfile with the current pid + epoch-seconds timestamp.
- * Best-effort: failures are silently ignored (we proceed to spawn regardless).
- */
-function _writeSpawnLock(): void {
-  try {
-    mkdirSync(RUN_DIR, { recursive: true });
-    const data = JSON.stringify({ pid: process.pid, started_at: Math.floor(Date.now() / 1000) });
-    writeFileSync(SPAWN_LOCK_PATH, data);
-  } catch {
-    /* best-effort — if we can't write the lock, spawn anyway */
-  }
-}
 
 /**
  * Fire-and-forget: spawn the embedding daemon detached, if it isn't
@@ -582,76 +715,182 @@ function _writeSpawnLock(): void {
  *
  * Cross-process spawn mutex: every hook invocation is a separate Node
  * subprocess, so the module-level _spawnAttempted flag always starts
- * false. With 2+ Claude sessions open, every prompt would race to spawn.
- * We use a filesystem lockfile (SPAWN_LOCK_PATH) as the cross-process
- * mutex: if the lockfile exists and is <60s old, another process is
- * already handling the spawn and we skip.
+ * false. With 2+ Claude sessions open (or a burst of prompts), every
+ * prompt would race to spawn — the "thundering herd" (2026-06-05: 40+
+ * cmd.exe -> uv -> python trees in ~10s). The fix is an ATOMIC filesystem
+ * lock: openSync(path, 'wx') is create-or-fail at the OS level, so only
+ * ONE of N racing processes wins the create — the rest see EEXIST and bail.
+ * This replaces the old read-check-then-write guard, which was a TOCTOU
+ * race (all N read the stale lock, all N passed, all N spawned).
  */
 export function ensureDaemonRunning(): void {
+  // Step 0: kill-switch. Tests/CI set CCV3_EMBEDDING_NO_SPAWN=1 so this hook
+  // NEVER launches a real model-loading daemon. Without it, a herd of cmd.exe
+  // windows appears during `npm test`: memory-awareness.test.ts spawns the REAL
+  // built hook with a fake HOME, and resolveRepoRoot() walks process.argv[1] up
+  // to the REAL repo's opc/ (HOME/CLAUDE_PROJECT_DIR don't gate it), so every
+  // test case launches a real `uv run embedding_daemon.py --daemon`
+  // (2026-06-05). Production leaves this unset — no behavior change.
+  if (process.env.CCV3_EMBEDDING_NO_SPAWN === '1') return;
+
   // Step 1: fast-path — already attempted in this Node process.
   if (_spawnAttempted) return;
   _spawnAttempted = true;
 
-  // Step 2: bail if a healthy daemon is already running.
+  // Step 2: bail if a healthy daemon is already running (PID-alive, not a
+  // ping gate — a transient ping miss must not trigger a respawn).
   const info = readDaemonInfo();
   if (info && isDaemonAlive(info)) return;
 
-  // Step 3: cross-process mutex — check the lockfile.
-  const lock = _readSpawnLock();
-  if (lock !== null) {
-    const ageMs = Date.now() - lock.started_at * 1000;
-    if (ageMs < SPAWN_LOCK_TTL_MS) {
-      // Another process wrote a fresh lockfile — it's handling the spawn.
-      // Skip to avoid a parallel spawn race.
-      return;
-    }
-    // Lockfile is stale (>60s). The previous spawner either failed or the
-    // daemon is still loading. Fall through and try again.
-  }
-
-  // Step 4: write our lockfile before spawning.
-  _writeSpawnLock();
-
+  // Step 3: pre-validate BEFORE acquiring the lock (mitigation F4). Resolving
+  // repoRoot + uvPath first means that if either is missing we return WITHOUT
+  // writing a lock — a lock we couldn't act on would suppress retries for the
+  // full 60s TTL for no reason.
   const repoRoot = resolveRepoRoot();
   if (!repoRoot) {
-    console.error(
-      '[embedding-client] cannot locate repo root; daemon will not be spawned',
+    _logLauncher(
+      'embedding-client: repo root not resolvable; skipping spawn',
+    );
+    return;
+  }
+  const uvPath = resolveUvPath();
+  if (!uvPath) {
+    // F3: no silent shell fallback. Skip the spawn and leave a durable trail.
+    // The scheduled-task PowerShell launcher will start the daemon at next
+    // logon, so this is a degraded-but-safe state, not a hard failure.
+    _logLauncher(
+      'embedding-client: uv not resolvable; skipping spawn (scheduled task will start daemon at next logon)',
     );
     return;
   }
 
+  // Step 4: atomic acquire (replaces read-check-write). openSync(..., 'wx')
+  // creates the file or throws EEXIST — atomic at the OS layer.
+  const lockPath = _spawnLockPath();
+  let acquired = false;
   try {
-    // ``uv run --project opc python <script> --daemon`` resolves the
-    // sentence-transformers + torch deps from opc/.venv. ``stdio: ignore``
-    // detaches the daemon's stdout/stderr so the parent doesn't block on
-    // pipe writes. ``unref()`` lets the parent process exit without
-    // waiting for the daemon -- which is exactly what we want for a hook
-    // call.
+    acquired = _acquireSpawnLock(lockPath);
+  } catch {
+    // Any unexpected lock error: fail open by NOT spawning (we can't prove we
+    // hold the mutex, so spawning could re-create the herd). The 60s TTL +
+    // next hook fire will retry. Never throw into the hook.
+    return;
+  }
+  if (!acquired) {
+    // Another process owns the spawn (fresh lock) or won the stale-reclaim.
+    return;
+  }
+
+  // Step 5: spawn with NO shell. uv resolved to an absolute path means a
+  // detached spawn no longer ENOENTs, so we can drop shell:true (which on
+  // Windows launched cmd.exe and flashed a console window per spawn — the
+  // herd symptom). windowsHide:true + no shell mirrors the proven
+  // scripts/start-embedding-daemon.ps1 launcher (UseShellExecute=$false +
+  // CreateNoWindow=$true). uv with cwd=repoRoot resolves `--project opc`.
+  try {
     const child = spawn(
-      'uv',
+      uvPath,
       ['run', '--project', 'opc', 'python', 'opc/scripts/core/embedding_daemon.py', '--daemon'],
       {
         cwd: repoRoot,
         detached: true,
         stdio: 'ignore',
-        // shell: true is needed on Windows for `uv` (a .exe shim) to
-        // resolve via PATH from a detached spawn -- without it, ENOENT.
-        shell: process.platform === 'win32',
-        // Suppress the cmd.exe console window on Windows. Without this,
-        // shell:true causes a visible cmd window for every daemon spawn.
         windowsHide: true,
       },
     );
     child.on('error', (err) => {
+      // F6/T2 (accepted risk): we do NOT unlink the lock from this async error
+      // path. By the time 'error' fires, a newer spawner may already hold a
+      // fresh lock with the same path; deleting it would re-open the herd
+      // window. The 60s TTL self-heals this bounded (<=60s) window instead.
       console.error(
         `[embedding-client] daemon spawn error: ${err.message ?? err}`,
       );
     });
     child.unref();
   } catch (err: any) {
+    // F4: synchronous spawn failure (e.g. uv path went away between probe and
+    // spawn). Unlink the lock best-effort so the NEXT hook retries immediately
+    // rather than waiting out the 60s TTL.
+    try {
+      unlinkSync(lockPath);
+    } catch {
+      /* tolerate ENOENT / permission — TTL self-heals */
+    }
     console.error(
       `[embedding-client] daemon spawn failed: ${err?.message ?? err}`,
     );
+  }
+}
+
+/**
+ * Atomically acquire the spawn lock. Returns ``true`` if THIS process won the
+ * spawn (caller should proceed to spawn), ``false`` if another process owns
+ * it (caller should bail).
+ *
+ *   * openSync(path, 'wx') — atomic create-or-fail. On success we own the lock.
+ *   * EEXIST — a lock already exists. Stat it: if younger than the TTL, another
+ *     process owns it (return false). If stale, unlink (best-effort) and retry
+ *     the wx open ONCE. If the retry also EEXISTs, someone else won the
+ *     reclaim race (return false).
+ *
+ * Throws only on truly unexpected fs errors — the caller fails open on throw.
+ */
+function _acquireSpawnLock(lockPath: string): boolean {
+  mkdirSync(_runDir(), { recursive: true });
+  const payload = JSON.stringify({
+    pid: process.pid,
+    started_at: Math.floor(Date.now() / 1000),
+  });
+
+  const tryCreate = (): boolean => {
+    const fd = openSync(lockPath, 'wx');
+    try {
+      writeSync(fd, payload);
+    } finally {
+      closeSync(fd);
+    }
+    return true;
+  };
+
+  try {
+    return tryCreate();
+  } catch (err: any) {
+    if (err?.code !== 'EEXIST') throw err;
+  }
+
+  // Lock exists — is it stale?
+  let ageMs: number;
+  try {
+    const st = statSync(lockPath);
+    ageMs = Date.now() - st.mtimeMs;
+  } catch {
+    // Lock vanished between open and stat (another process reclaimed/removed
+    // it). Retry the create once.
+    try {
+      return tryCreate();
+    } catch (err2: any) {
+      if (err2?.code === 'EEXIST') return false;
+      throw err2;
+    }
+  }
+
+  if (ageMs < SPAWN_LOCK_TTL_MS) {
+    // Fresh lock — another process owns the spawn.
+    return false;
+  }
+
+  // Stale lock — reclaim it. Unlink best-effort, then retry create ONCE.
+  try {
+    unlinkSync(lockPath);
+  } catch {
+    /* tolerate ENOENT — another process may have just removed it */
+  }
+  try {
+    return tryCreate();
+  } catch (err3: any) {
+    if (err3?.code === 'EEXIST') return false; // someone else won the reclaim
+    throw err3;
   }
 }
 
@@ -676,4 +915,18 @@ export const __test = {
   resetSpawnAttempted: () => {
     _spawnAttempted = false;
   },
+  // --- herd-fix seams ---
+  /** Env-overridable spawn lock path (honors CCV3_EMBEDDING_RUN_DIR). */
+  spawnLockPath: _spawnLockPath,
+  /** Env-overridable discovery path (honors CCV3_EMBEDDING_RUN_DIR). */
+  daemonInfoPath: _daemonInfoPath,
+  /** uv resolution + the multi-line `where` parser, exposed for unit tests. */
+  resolveUvPath,
+  parseWhereOutput: _parseWhereOutput,
+  /** Reset the cached uv path so a test can re-probe with a fresh env. */
+  resetUvPathCache: () => {
+    _uvPathCache = undefined;
+  },
+  /** Direct access to the atomic lock acquirer for stale-reclaim tests. */
+  acquireSpawnLock: _acquireSpawnLock,
 };
