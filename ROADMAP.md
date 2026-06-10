@@ -1,13 +1,17 @@
 # Project Roadmap
 
 ## Current Focus
-**Bus-bias hybrid-recall lift — does it earn its keep? (investigation)**
-- Embedding-daemon warmth bug is FIXED + MERGED (PR #7 `3a398236`): root cause was a Node-vs-Python TMPDIR/TEMP discovery-path mismatch, now anchored to `~/.claude/run/`. Daemon warm (~200ms) + persisted via scheduled task `CCv3-Embedding-Daemon`.
-- OPEN QUESTION: the warm hybrid quality gate showed **+7.0% top-score / FLAT 69%→69% hit-rate**, NOT the documented +33.6% / 63→88%. Verdict held KEEP ENABLED but the bias benefit is modest. Trace the +33.6% provenance (corpus drift 574→576? case set? mislabeled-cold baseline?) and decide keep / tune / roll back.
-- Full handoff: `docs/ccv3-session7-handoff-2026-06-04.md`. Push `fork` never `origin`. Do NOT change BGE model/dim (1024).
-- Started: 2026-06-04
+**CCv3-Hardening — Session 9: through Phase C (codegraph)**
+- Orientation: `docs/ccv3-session9-kickoff-2026-06-05.md`; execution plan: `~/.claude/plans/we-have-been-working-starry-pony.md` (premortem-hardened).
+- Finish line: repo reconciliation -> P1 bus-bias decision -> WS-0/WS-1 loose ends -> build+wire codegraph behind `/code-intel`. Phase C.5/D/E explicitly out of scope.
+- Status (2026-06-06): Step 0 reconciliation DONE (herd-fix PR #8 open; chore reconciliation PR #9 open). P1 bus-bias = **KEEP ENABLED** (verified warm gate +7.3%/flat-hit, n=13/corpus-584; the documented +33.6%/63->88% does NOT reproduce — retired as a stale snapshot). NEXT: WS-0/WS-1 loose ends, then Phase C.
+- Constraints: push `fork` never `origin`; do NOT change BGE model/dim (1024). Gates G5 (blocks WS-0.1) and G6 (before P3) binding.
+- Started: 2026-06-05
 
 ## Completed
+- [x] P1 — Bus-bias hybrid-recall lift: **KEEP ENABLED** — verified warm gate +7.3%/flat-hit (n=13, corpus 584); +33.6%/63->88% retired as a stale snapshot; tune focus-weighting deferred (2026-06-06)
+- [x] fix(memory): stop test suite from spawning real embedding daemons (herd source #2) (2026-06-05) `c1b110d`
+- [x] fix(memory): herd-proof embedding-daemon spawn — atomic lock + no-shell Windows spawn (2026-06-05) `ea1b03c`
 - [x] fix(memory): address CodeRabbit findings on PR #7 (2026-06-04) `d996d7f`
 - [x] docs(ws2): flip B.4b deferred -> DONE; record warm hybrid-gate re-run (2026-06-04) `72cee99`
 - [x] fix(memory): canonical daemon discovery path -- end TMPDIR/TEMP rendezvous mismatch (2026-06-04) `032f940`
@@ -155,7 +159,7 @@
 - [x] Eliminate Excessive Permission Prompts for Autonomous Agent Tasks (2026-04-02)
 
 ## Planned
-- [ ] P1 — Bus-bias lift investigation: warm gate gave +7.0%/flat-hit, not the documented +33.6%/63→88%. Trace provenance, decide keep/tune/roll back the hybrid bias (high priority)
+- [ ] CCv3-Hardening — Session 9: through Phase C (codegraph) (high priority)
 - [ ] P2 — Verify embedding daemon survives a REAL reboot (scheduled task only ad-hoc-verified; Codex flagged job-object detach). After next restart confirm `~/.claude/run/ccv3-embedding.json` appears <60s + warm recall (medium priority)
 - [ ] P2 — Ops: full parallel `vitest run` hangs on a pre-existing Windows daemon/socket suite — add a hard per-test timeout (medium priority)
 - [ ] P3 — Ops: async post-commit forward-sync race leaves active hook dist stale — hash-verify + `cp` after every hook commit until root-fixed (low priority)
@@ -175,6 +179,17 @@
 - Data note: use `count(*)` not `pg_stat` for usage calls (the latter mis-reported memory/PageIndex as empty). Live counts: archival_memory 569, pageindex_nodes 2418, file_claims 6720, sessions 1117.
 
 ## Recent Planning Sessions
+### 2026-06-06: CCv3-Hardening — Session 9 (reconciliation + P1 bus-bias)
+**Key Decisions:**
+- Step 0 repo reconciliation DONE: herd-fix PR #8 opened; 7 logical reconciliation commits on `chore/session9-reconciliation` (PR #9); 4 junk stderr-artifact files deleted; `.codex/` mirror + `tools/PerfView.exe` gitignored; leading-# memory-eval doc renamed + inbound ref fixed.
+- P1 bus-bias hybrid-recall lift: **KEEP ENABLED** (user-ratified). Verified warm gate +7.3% top-score / flat 69% hit-rate (n=13, corpus 584); read-only PASS. The documented +33.6%/63->88% does NOT reproduce (stale snapshot; repr-only ~+14.5% matches the original +15.3%, diluted to +7.3% by the 5 STRONG cases). Deferred: tune focus-term weighting. Memory id 79da5d25.
+- Two live-hazard findings flagged for follow-up (out of this push's scope): (a) a `store_learning.py` invocation with unquoted shell metacharacters creates junk files under `opc/` (one regenerated mid-session); (b) the `post-plan-roadmap` hook clobbered this Current Focus with a foreign project's goal (Salesforce/FastMCP plan `abstract-coral`) — the cross-project contamination guard did not catch it; this entry restores the correct session-9 record.
+
+**Files:** ROADMAP.md, opc/scripts/core/store_learning.py, scripts/bus-quality-gate.mjs, .gitignore, docs/ (session-9 handoffs), ~/.claude/plans/we-have-been-working-starry-pony.md
+
+**Verification:** `node scripts/bus-quality-gate.mjs hybrid` (WARM, read-only PASS 584->584, KEEP ENABLED); store_learning 12/12 v1-gate tests green; clean `git status`.
+
+### 2026-06-05: Planning Session
 ### 2026-06-04: Fix BGE embedding-daemon `ping_failed` → warm hybrid quality-gate re-run
 **Key Decisions:**
 - Branch off `main`: `feature/embedding-daemon-ping-fix`. Push target is `fork`, never `origin`.
@@ -182,8 +197,6 @@
 - Run the reproduce one-liner (from `$CLAUDE_OPC_DIR`):
 - Single-shot ping in isolation (expect to SUCCEED, proving the daemon is fine when idle):
 - Reproduce under load: fire several `recall_learnings.py` / direct `embed` calls concurrently while pinging, to
-
-**Files:** embedding-client.ts, recall_learnings.py, opc/tests/unit/test_embedding_daemon_guard.py, ~/.claude/logs/embedding-daemon-launcher.log, docs/ccv3-ws2-phaseB-plan-2026-06-02.md, opc/scripts/core/embedding_daemon.py, opc/scripts/core/recall_learnings.py, cd opc && PYTHONPATH=. uv run pytest tests/unit/test_embedding_daemon_guard.py tests/unit/test_embedding_daemon_lock.py
 
 ### 2026-06-03: Planning Session
 ### 2026-06-02: CCv3 Hardening — Progress Review + Next Steps (2026-06-02)
@@ -193,12 +206,3 @@
 - WS-2 Phase A (context-bus substrate) — BUILT, reviewed, committed (`cb9c14a`): `session-bus-id.ts` + `context-bus.ts` (atomic single-writer, CAS-under-lock, `CCV3_BUS_OFF`, 50ms fail-open, busId path-traversal validation) + `intel-bus.ts` + boundary doc + emit-guard surface check. 78 vitest green. Cross-model `/review` found 3 issues, all fixed pre-commit (incl. a Codex-only path-traversal lift). **Substrate-only — wired to NO production consumer (that's Phase B).**
 - Reverse-sync clobber — root-caused + fixed (`4631b43`): two automatic active→repo triggers disabled (the `~/.claude` git post-commit hook + the `sync-to-repo` PostToolUse hook); reverse-sync is now manual-only + `sync-claude.sh` aborts on a dirty repo; documented in `git-sync-workflow.md`.
 - Regenerate `knowledge-tree.json`: (currently references `create-better-skills.bak` archive paths): `cd $CLAUDE_OPC_DIR && PYTHONPATH=. uv run python scripts/core/knowledge_tree.py --project continuous-claude --verbose`; validate with `scripts/core/tree_schema.py --validate`.
-
-### 2026-05-31: Planning Session
-### 2026-05-30: Preserve hand-written ROADMAP notes across planning, and surface them at session start
-**Key Decisions:**
-- `session-start-continuity.ts` `buildUnifiedContext` (line ~302) surfaces only
-- Chosen approach (user-selected): *Preserve all unmanaged content. post-plan
-- Add an exported, pure function:
-- In `main()`, change `const newContent = generateRoadmap(sections);` (line ~530)
-- Contract / caveat:: the 4 managed sections are auto-regenerated, so durable
