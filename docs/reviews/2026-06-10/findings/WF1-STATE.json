@@ -1,41 +1,50 @@
 {
-  "run_id": "wf_e98a7be2-106",
   "review_sha": "86b8f60",
-  "agents_run": 32,
-  "completed": [
-    "D1a",
-    "D1b",
-    "D2a",
-    "D2b",
-    "D2c",
-    "D2d",
-    "D2e",
-    "D2f",
-    "D2g",
-    "D3a",
-    "D3b",
-    "D3c",
-    "D4a",
-    "D4b",
-    "D5a"
+  "runs": [
+    {
+      "run_id": "wf_e98a7be2-106",
+      "outcome": "partial — monthly spend limit",
+      "agents_run": 32,
+      "completed": ["D1a", "D1b", "D2a", "D2b", "D2c", "D2d", "D2e", "D2f", "D2g", "D3a", "D3b", "D3c", "D4a", "D4b", "D5a"]
+    },
+    {
+      "run_id": "wc46k5ue0",
+      "outcome": "partial — server-side rate limiting (transient, not spend limit)",
+      "agents_run": 21,
+      "subagent_tokens": 6401039,
+      "duration_min": 161,
+      "completed": ["D6a", "D6b", "D7a", "D7c", "D10b", "critics x3 (CRITICS.json)", "gap-fill GAP1-GAP4"]
+    }
   ],
-  "failed_spend_limit": [
+  "completed_total": [
+    "D1a", "D1b",
+    "D2a", "D2b", "D2c", "D2d", "D2e", "D2f", "D2g",
+    "D3a", "D3b", "D3c",
+    "D4a", "D4b",
+    "D5a",
+    "D6a", "D6b",
+    "D7a", "D7c",
+    "D10b",
+    "GAP1", "GAP2", "GAP3", "GAP4",
+    "CRITICS"
+  ],
+  "still_missing": [
     "D5b security:injection-surfaces",
-    "D6a perf:per-prompt-cost",
-    "D6b perf:startup-taxes",
-    "D7a lean:unregistered-hooks",
     "D7b lean:skills",
-    "D7c lean:agents+rules",
     "D7d lean:scripts+duplication",
     "D8a drift:rules-vs-code",
     "D8b drift:docs-vs-code",
     "D8c drift:skills-vs-behavior",
     "D9 telemetry:interpretation",
     "D10a trace:prompt-journey",
-    "D10b trace:edit-commit-journey",
-    "D10c trace:agent-spawn-journey",
-    "critics x3",
-    "gap-fill (never ran)"
+    "D10c trace:agent-spawn-journey"
   ],
-  "resume": "Re-run failed dimensions as a NEW workflow (same briefs, script saved in session workflow dir) once the spend limit is raised/reset. Then critics + gap-fill + WF-2."
+  "missing_risk_note": "D5b (security/injection) overlaps WF-3's MANDATORY Codex security pass over all shell-flow surfaces, and D5a already root-caused the junk-creator class — but D5b should still re-run before claiming D5 coverage. D8 (claims-vs-reality, all 3 readers) and D9 (telemetry interpretation) are entirely missing — coverage manifests for those dimensions CANNOT be marked complete.",
+  "tally_on_disk": {
+    "dimension_files": 25,
+    "total_findings": 196,
+    "severity": { "S0": 4, "S1": 60, "S2": 92, "S3": 36, "unset": 4 }
+  },
+  "interim_actions": "See INTERIM-ACTIONS.md — D2a-01 (navigator-safety S1) deregistered 2026-06-10 under user authorization, commit eae979e.",
+  "resume": "Re-run the 9 still-missing agents as a NEW smaller workflow with LOWER concurrency (rate-limit pressure was the killer; ~4-5 concurrent max). Then WF-1 is complete and WF-2 (adversarial verification) launches over all findings on disk."
 }

@@ -1,0 +1,159 @@
+{
+  "dimension": "GAP3",
+  "findings": [
+    {
+      "id": "GAP3-01",
+      "title": "permission-auto-allow hook auto-approves EVERY tool call (all Bash/Edit/Write/WebFetch) except 2 named tools, suppressing the user permission prompt system-wide -- active-only, no source-of-truth representation",
+      "severity": "S1",
+      "confidence": "VERIFIED",
+      "proposed_class": "fix",
+      "seed_ref": "SEED-15",
+      "leverage": "structural",
+      "observe_how": "Start a session in normal (non-bypass) mode; run a Bash command that would normally prompt (e.g. rm of a tracked file). With this hook active the prompt never appears and the tool runs. Disabling it restores the prompt.",
+      "telemetry": "mcp-activity-tracker / PermissionRequest hook-exec logs; or diff active ~/.claude/settings.json PermissionRequest block against repo .claude/settings.json (repo has 0).",
+      "dedup_keys": [
+        ".claude/hooks/src/permission-auto-allow.ts",
+        "~/.claude/settings.json#PermissionRequest",
+        "emitAllow",
+        "permission-auto-allow.mjs"
+      ],
+      "causal_links": [
+        "D2a-01"
+      ],
+      "evidence": [
+        {
+          "file": ".claude/hooks/src/permission-auto-allow.ts",
+          "lines": "39-45",
+          "quote": "if (input.tool_name === 'AskUserQuestion' || input.tool_name === 'ExitPlanMode') {\n    process.stdout.write('{}');\n    return;\n  }\n  emitAllow();"
+        },
+        {
+          "file": ".claude/hooks/src/permission-auto-allow.ts",
+          "lines": "20-26",
+          "quote": "function emitAllow(): void {\n  process.stdout.write(JSON.stringify({\n    hookSpecificOutput: {\n      hookEventName: 'PermissionRequest',\n      decision: { behavior: 'allow' },"
+        },
+        {
+          "file": "~/.claude/settings.json",
+          "lines": "585-595",
+          "quote": "\"PermissionRequest\": [\n  { \"hooks\": [ { \"type\": \"command\",\n    \"command\": \"node C:/Users/david.hayes/.claude/hooks/dist/permission-auto-allow.mjs\",\n    \"timeout\": 5000 } ] } ]   (matcher: undefined -> fires for ALL tools)"
+        }
+      ]
+    },
+    {
+      "id": "GAP3-02",
+      "title": "permission-auto-allow is registered ONLY in active ~/.claude/settings.json -- absent from tracked repo .claude/settings.json (0 PermissionRequest entries) and from .claude/settings.json.template -- so the auditable source-of-truth shows a gated permission posture while the live machine auto-approves everything",
+      "severity": "S1",
+      "confidence": "VERIFIED",
+      "proposed_class": "document",
+      "seed_ref": "SEED-15",
+      "leverage": "structural",
+      "observe_how": "grep -c PermissionRequest on repo .claude/settings.json (=0) and .claude/settings.json.template (=0) vs active (=1). The src .claude/hooks/src/permission-auto-allow.ts IS git-tracked but never wired in any tracked settings file.",
+      "telemetry": "registrations-diff.json active_only_vs_repo array already lists permission-auto-allow; a settings-source 3-way diff would surface it.",
+      "dedup_keys": [
+        ".claude/settings.json",
+        ".claude/settings.json.template",
+        "~/.claude/settings.json",
+        "permission-auto-allow",
+        "active_only_vs_repo"
+      ],
+      "causal_links": [
+        "GAP3-01"
+      ],
+      "evidence": [
+        {
+          "file": ".claude/settings.json",
+          "lines": "n/a",
+          "quote": "grep -c 'PermissionRequest' .claude/settings.json  ->  0   (repo source-of-truth has NO PermissionRequest registration)"
+        },
+        {
+          "file": ".claude/settings.json.template",
+          "lines": "n/a",
+          "quote": "grep -c 'permission-auto-allow|PermissionRequest' .claude/settings.json.template  ->  0   (bootstrap template omits it)"
+        },
+        {
+          "file": "docs/reviews/2026-06-10/harvest/registrations-diff.json",
+          "lines": "44-63",
+          "quote": "\"active_only_vs_repo\": [ ... \"package-install-guard\", ... \"permission-auto-allow\" ]"
+        }
+      ]
+    },
+    {
+      "id": "GAP3-03",
+      "title": "Three-way settings drift: 18 hook registrations live in active but absent from tracked repo settings -- including the supply-chain guard package-install-guard AND the permission-system defeat permission-auto-allow; conversely the bootstrap template still registers navigator-safety (the D2a-01 safety-inversion hook) which INTERIM-ACTIONS deregistered from active+repo but NOT from the template",
+      "severity": "S1",
+      "confidence": "VERIFIED",
+      "proposed_class": "fix",
+      "seed_ref": "SEED-15",
+      "leverage": "strategic",
+      "observe_how": "Bootstrap a fresh machine from .claude/settings.json.template: it would (a) register navigator-safety -> re-introduce the destructive-command auto-'allow' inversion (D2a-01), (b) lack package-install-guard -> no supply-chain interception, (c) lack permission-auto-allow. None of the three settings sources agree.",
+      "telemetry": "Count dist/ refs: template=62, repo=58, active=75 (no two agree). Unique-hook-name set diff between the three.",
+      "dedup_keys": [
+        ".claude/settings.json",
+        ".claude/settings.json.template",
+        "~/.claude/settings.json",
+        "navigator-safety",
+        "package-install-guard",
+        "settings-drift"
+      ],
+      "causal_links": [
+        "D2a-01",
+        "GAP3-02"
+      ],
+      "evidence": [
+        {
+          "file": ".claude/settings.json.template",
+          "lines": "n/a",
+          "quote": "template-only-vs-active unique hooks = navigator-safety, pageindex-navigator, sync-to-repo, auto-build, periodic-extract  (template still wires navigator-safety = the D2a-01 inverted-safety hook)"
+        },
+        {
+          "file": "~/.claude/settings.json",
+          "lines": "n/a",
+          "quote": "active-only-vs-repo (18): package-install-guard, plan-mode-approval-gate, agent-recall-injector, ... , permission-auto-allow"
+        },
+        {
+          "file": "docs/reviews/2026-06-10/findings/INTERIM-ACTIONS.md",
+          "lines": "26-36",
+          "quote": "Removed the navigator-safety registration from repo .claude/settings.json AND active ~/.claude/settings.json ... Source file ... is RETAINED on disk for the Phase 4 fix arc."
+        }
+      ]
+    },
+    {
+      "id": "GAP3-04",
+      "title": "COVERAGE (clean): codex-adversary agent passes the untrusted diff/plan to `codex exec` via a quoted heredoc + stdin redirect (no shell expansion, no argv interpolation) -- not a shell-injection surface; matches its documented --disable multi_agent and -o clean-capture fixes",
+      "severity": "S3",
+      "confidence": "VERIFIED",
+      "proposed_class": "document",
+      "seed_ref": null,
+      "leverage": "quick-win",
+      "observe_how": "Read .claude/agents/codex-adversary.md Step 5-6; the diff goes into PROMPT_FILE via `cat > FILE <<'PROMPT_EOF'` (single-quoted delimiter = literal) and is fed as `- < $PROMPT_FILE`. No interpolation of review content into a shell word. Payoff: removes codex-adversary from the D5b injection-surface backlog.",
+      "telemetry": "n/a (structural review verdict)",
+      "dedup_keys": [
+        ".claude/agents/codex-adversary.md",
+        "PROMPT_EOF",
+        "codex exec"
+      ],
+      "causal_links": [],
+      "evidence": [
+        {
+          "file": ".claude/agents/codex-adversary.md",
+          "lines": "146-149",
+          "quote": "PROMPT_FILE=\"$(mktemp -t codex-adv-XXXXXX.txt)\"\ncat > \"$PROMPT_FILE\" <<'PROMPT_EOF'\n<the full prompt from Step 4>\nPROMPT_EOF"
+        },
+        {
+          "file": ".claude/agents/codex-adversary.md",
+          "lines": "180-184",
+          "quote": "--disable multi_agent \\\n  -C \"$CLAUDE_PROJECT_DIR\" \\\n  -o \"$FINAL_MSG_FILE\" \\\n  - < \"$PROMPT_FILE\""
+        }
+      ]
+    }
+  ],
+  "coverage_manifest": [
+    "D5b security:injection-surfaces (PARTIAL) -- audited the highest-risk live injection surface: permission-auto-allow PermissionRequest hook = a system-wide permission-prompt defeat (GAP3-01, S1, NEW root cause, not in any prior D*.json). Also cleared codex-adversary's codex exec path as NOT injectable (GAP3-04, quoted-heredoc+stdin). code-intel.mjs facade spawn calls use array-arg spawnSync with no shell:true (lines 252/276/380) = clean (overlaps D4a/D4b, not re-claimed).",
+    "D7c lean:agents+rules (CLEAN on sampled set) -- all 36 agent .md files have valid frontmatter starting at byte 0; zero `model: haiku` violations (only ref is agent-factory.md:101 instructing to FIX haiku, not using it). codex-adversary agent matches its codex-adversarial.md rule contract exactly (--disable multi_agent at line 180, -o clean-capture at 182). No agent-vs-rule drift found in spot sample.",
+    "D7d lean:scripts (CLEAN on sampled set) -- sync-claude.sh has the documented reverse-sync uncommitted-changes abort guard (lines 56-72); sync-to-active.sh correctly excludes hooks/src (line 37) and SYNC_DIRS matches sync-known-gaps.md. No drift between sync scripts and their governing rules.",
+    "D8a/D8b/D8c drift (PARTIAL) -- health-check SKILL.md references scripts/health_check.py run from $CLAUDE_OPC_DIR; VERIFIED it resolves (opc/scripts/health_check.py exists, $CLAUDE_OPC_DIR=.../opc) = NO drift. memory/recall/remember/supersede skills' opc/scripts/core/*.py references all resolve = NO drift. settings template-vs-repo-vs-active is the one real drift (GAP3-02/03).",
+    "D8b drift:settings-sources (NEW) -- three settings sources disagree (template 62 / repo 58 / active 75 dist refs); 18 active-only registrations incl package-install-guard + permission-auto-allow absent from tracked repo source-of-truth; template re-wires the deregistered navigator-safety. GAP3-02 (S1) + GAP3-03 (S1).",
+    "D5b/D7b skills surface (LIGHT sample only) -- verified script-reference integrity for health-check + the 5 memory skills (all resolve). The ~105 never-mentioned skills (fourth-*, landing-page-*, ui-ux, next-*) were NOT individually audited for trigger-collision or dead-reference -- remains genuinely un-covered; recommend WF-3 still gate on a full D7b skills pass.",
+    "SEED cross-links -- GAP3-01/02/03 extend SEED-15 (template registration gap) with the security-critical specifics; GAP3-01 cross-links D2a-01 (navigator-safety): the navigator deregistration's claimed effect ('destructive commands flow through NORMAL permission prompt') is itself defeated by permission-auto-allow in normal mode -- there is no prompt to flow through."
+  ],
+  "notes": "Scope honesty: This gap-fill is DEPTH-over-breadth. The brief flags ~85% skills / ~69% rules+agents / ALL scripts / ALL drift / ALL trace as zero-verdict. I could not give all of that a real verdict in one pass without superficial name-dropping (the exact failure the brief warns against). I instead drilled the single highest-impact un-audited slice (D5b injection-surfaces) and found one load-bearing S1 (permission-auto-allow) that no hook-source dimension could have caught because it lives in the active settings registration, not in a hook's logic that D2a-g audited. Then I spot-cleared adjacent slices (agents frontmatter/haiku, sync scripts, codex-adversary injection path, skill script-refs) to give synthesis real CLEAN verdicts rather than 'unknown'.\n\nTHE KILLER FINDING (GAP3-01): permission-auto-allow makes the ENTIRE permission system a no-op on the live machine in normal mode. It emits decision.behavior:'allow' for every tool except AskUserQuestion/ExitPlanMode, with no matcher. This is the same safety-inversion CLASS as D2a-01 (navigator-safety) but with maximal blast radius (all tools, not just destructive Bash patterns). It also retroactively undermines the INTERIM-ACTIONS narrative: deregistering navigator-safety was said to be 'strictly safer -- destructive commands now flow through Claude Code's NORMAL permission prompt.' With permission-auto-allow live, that prompt does not exist in normal mode. The deregistration changed nothing for the destructive-command case. The 5 `.claude/rules/*` files that say 'ALWAYS confirm first' (railway/sentry/neon/kusto/linear) plus destructive-commands.md are model-side conventions only; the one HARD enforcement layer (PermissionRequest) is globally set to allow.\n\nWHY active-only matters (GAP3-02): the hook src IS git-tracked (ships in repo) but is wired in ZERO tracked settings files -- so a code reviewer reading the repo source-of-truth sees a normal gated posture and would never know the live machine auto-approves everything. That's a decision-driving false impression baked into the repo's auditable surface. Whoever added it did so by hand-editing ~/.claude/settings.json (which sync-to-active.sh intentionally never touches), leaving no record in version control.\n\nREMAINING GAP (be honest in synthesis): the bulk skills audit (D7b over the fourth-*/landing-page-*/ui-ux/next-* families, ~105 skills) and the trace-journey dimensions (D10a-c) and full rules-vs-code drift (D8a) are STILL un-covered. My sample says the slices I touched are healthy, but that is not a clean bill for the whole non-hook surface. WF-3 should still re-run D7b + D10a-c before claiming whole-system coverage; the brief's core thesis (a hook-only audit must not be presented as a whole-system review) stands and my findings do not retire it."
+}

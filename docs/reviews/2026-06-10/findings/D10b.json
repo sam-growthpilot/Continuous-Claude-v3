@@ -1,0 +1,266 @@
+{
+  "dimension": "D10b",
+  "findings": [
+    {
+      "id": "D10b-01",
+      "title": "Build staleness defense is procedural, not structural: nothing in the edit->commit->sync chain ever runs `npm run build`; precommit guard only checks a dist .mjs was co-staged, with no src->dist content link",
+      "severity": "S1",
+      "confidence": "VERIFIED",
+      "proposed_class": "document",
+      "leverage": "structural",
+      "observe_how": "Edit a hook .ts, run `npm run build` to regen ALL dist (esbuild bundles shared/*.ts into every entrypoint), but `git add` only ONE unrelated dist .mjs alongside the .ts -> precommit-build-guard passes (exit 0) -> forward-sync copies the STALE .mjs of the actually-edited hook into ~/.claude/hooks/dist/ -> active hook runs old code. Reproduce by staging src+a stale/unrelated dist and confirming the guard allows it.",
+      "telemetry": "Add a build-stamp manifest: build writes sha256 of every src/*.ts into dist/.build-manifest.json; the precommit guard recomputes and compares. A drift = block. Today nothing detects 'staged .mjs does not correspond to staged .ts'.",
+      "evidence": [
+        {
+          "file": ".claude/hooks/src/../../../scripts/precommit-build-guard.sh",
+          "lines": "13-16",
+          "quote": "#   - staged .claude/hooks/src/**/*.ts (excluding __tests__/ and *.d.ts) AND no staged\n#     .claude/hooks/dist/*.mjs                                              -> BLOCK (exit 1)\n#   - same src staged WITH >=1 staged .claude/hooks/dist/*.mjs              -> ALLOW (exit 0)"
+        },
+        {
+          "file": "scripts/precommit-build-guard.sh",
+          "lines": "23-26",
+          "quote": "#   - Coarse satisfaction: any staged dist .mjs satisfies the check; it does NOT verify the\n#     staged .mjs actually corresponds to the staged .ts. Staging an unrelated dist tweak\n#     alongside a fresh src change would pass. Closing this would need a build-stamp manifest"
+        },
+        {
+          "file": "scripts/precommit-build-guard.sh",
+          "lines": "7-9",
+          "quote": "# Contract (STATIC staleness check -- deliberately does NOT run `npm run build`):\n#   `npm run build` HANGS in a git-hook shell on Windows (documented in .git/hooks/post-commit,"
+        },
+        {
+          "file": "scripts/sync-to-active.sh",
+          "lines": "195",
+          "quote": "# Build step removed (CCv3 WS-0.3 structural fix): dist is pre-built in the repo and copied to active by the hooks/dist block above. No build-from-active-src."
+        }
+      ],
+      "dedup_keys": [
+        "scripts/precommit-build-guard.sh",
+        "scripts/sync-to-active.sh",
+        "npm run build",
+        "build-stamp manifest"
+      ],
+      "causal_links": [
+        "SEED-15"
+      ],
+      "seed_ref": null
+    },
+    {
+      "id": "D10b-02",
+      "title": "Post-commit forward-sync runs detached in the background with NO lock; nothing waits for it -> dist-staleness window: active ~/.claude/hooks/dist/*.mjs can lag the just-committed repo dist for the sync's duration, and concurrent commits race the same cp targets",
+      "severity": "S1",
+      "confidence": "VERIFIED",
+      "proposed_class": "investigate",
+      "leverage": "structural",
+      "observe_how": "Two terminals each `git commit` a hook change within the same ~few-second window (each sync cp-loops hundreds of files with no mutex). Both run `sync-to-active.sh` concurrently writing the SAME ~/.claude/hooks/dist/*.mjs and ~/.claude/settings.json (jq merge via mktemp+mv). Observe interleaved/torn writes. Also: a hook firing in any session DURING the background sync reads a half-copied dist dir.",
+      "telemetry": "Wrap the cp+verify body of sync-to-active.sh in an flock (or mkdir-based lock) on ~/.claude/.sync.lock so overlapping forward-syncs serialize; emit a 'sync_skipped_locked' / 'sync_overlap' counter to confirm how often concurrency actually occurs in multi-terminal use.",
+      "evidence": [
+        {
+          "file": ".git/hooks/post-commit",
+          "lines": "9-12",
+          "quote": "if [[ -f \"$SYNC_SCRIPT\" ]]; then\n    echo \"Syncing to ~/.claude (background)...\"\n    bash \"$SYNC_SCRIPT\" --skip-build &\nfi"
+        },
+        {
+          "file": "scripts/sync-to-active.sh",
+          "lines": "128-143",
+          "quote": "# Sync hooks/dist/*.mjs (built hook bundles)\nDIST_SRC=\"$REPO_CLAUDE/hooks/dist\"\nDIST_DST=\"$ACTIVE_CLAUDE/hooks/dist\"\nif [[ -d \"$DIST_SRC\" ]]; then\n    $DRY_RUN || mkdir -p \"$DIST_DST\"\n    for src_file in \"$DIST_SRC\"/*.mjs; do"
+        },
+        {
+          "file": "scripts/sync-to-active.sh",
+          "lines": "5-13",
+          "quote": "set -e\n\nSCRIPT_DIR=\"$( cd \"$( dirname \"$0\" )\" && pwd )\"\nREPO_ROOT=\"$(dirname \"$SCRIPT_DIR\")\""
+        }
+      ],
+      "dedup_keys": [
+        ".git/hooks/post-commit",
+        "scripts/sync-to-active.sh",
+        "background sync",
+        "no flock"
+      ],
+      "causal_links": [
+        "D10b-01",
+        "D10b-03"
+      ],
+      "seed_ref": null
+    },
+    {
+      "id": "D10b-03",
+      "title": "The only dist-staleness detector (session-start-init-check) is advisory-only, fires at NEXT SessionStart, checks the wrong target (repo dist DIR-mtime, never active ~/.claude dist), and uses a coarse dir-mtime comparison that an in-place cp can defeat on Windows",
+      "severity": "S2",
+      "confidence": "VERIFIED",
+      "proposed_class": "fix",
+      "leverage": "structural",
+      "observe_how": "Read the freshness block: it gates on `projectDir.includes('continuous-claude')` and stats `.claude/hooks/dist` (the REPO dir), comparing each src .ts mtime to the dist DIRECTORY mtime. It never inspects ~/.claude/hooks/dist (what actually runs). It only pushes a `maintenanceWarnings` string; it never blocks and never rebuilds. So a stale dist that ran the entire session surfaces only as text at the next session start, in the repo project only.",
+      "telemetry": "Compare per-file: for each src X.ts, stat the corresponding dist X.mjs (not the dir); and run the check against ACTIVE ~/.claude/hooks/dist, not the repo. Better: a SessionStart that rebuilds-or-blocks rather than printing a warning the model may ignore.",
+      "evidence": [
+        {
+          "file": ".claude/hooks/src/session-start-init-check.ts",
+          "lines": "456-462",
+          "quote": "// Check hook build freshness (CCv3 repo only)\n  if (projectDir.includes('continuous-claude')) {\n    const hookSrcDir = path.join(projectDir, '.claude', 'hooks', 'src');\n    const hookDistDir = path.join(projectDir, '.claude', 'hooks', 'dist');\n    ...\n        const distMtime = fs.statSync(hookDistDir).mtimeMs;"
+        },
+        {
+          "file": ".claude/hooks/src/session-start-init-check.ts",
+          "lines": "463-472",
+          "quote": "const staleFiles = fs.readdirSync(hookSrcDir)\n          .filter(f => f.endsWith('.ts'))\n          .filter(f => {\n              return fs.statSync(path.join(hookSrcDir, f)).mtimeMs > distMtime;\n          ...\n          maintenanceWarnings.push(`[!] Hook dist/ is stale -- ${staleFiles.length} source files newer than dist."
+        }
+      ],
+      "dedup_keys": [
+        ".claude/hooks/src/session-start-init-check.ts",
+        "hook dist freshness",
+        "dir-mtime",
+        "maintenanceWarnings"
+      ],
+      "causal_links": [
+        "D10b-01",
+        "D10b-02"
+      ],
+      "seed_ref": null
+    },
+    {
+      "id": "D10b-04",
+      "title": "architecture-stats-sync fires a DETACHED background `sync-architecture-stats.mjs --apply` on every watched commit, rewriting tracked architecture.json AFTER the commit -> perpetual post-commit working-tree dirt (the `M architecture.json` in this session's git status)",
+      "severity": "S2",
+      "confidence": "VERIFIED",
+      "proposed_class": "investigate",
+      "leverage": "quick-win",
+      "observe_how": "Hook is PostToolUse:Bash; on a commit touching .claude/{hooks,agents,skills}/ or scripts/ it spawns detached `node scripts/sync-architecture-stats.mjs --apply` which writes docs/architecture/system-visualization/architecture.json. Because it runs AFTER the commit, the regenerated file is left uncommitted. The review's own session `git status` opened with `M docs/architecture/system-visualization/architecture.json`; architecture-stats-sync.log confirms it fired ('done: stats synced.').",
+      "telemetry": "Count how often `git status` is non-clean solely due to architecture.json after a commit. Either (a) make the sync part of pre-commit so it lands in the same commit, or (b) gitignore the generated artifact and regenerate on demand.",
+      "evidence": [
+        {
+          "file": ".claude/hooks/src/architecture-stats-sync.ts",
+          "lines": "144-160",
+          "quote": "function fireBackgroundSync(repoRoot: string): void {\n    ...\n    const scriptPath = path.join(repoRoot, 'scripts', 'sync-architecture-stats.mjs');\n    const child = spawn('node', [scriptPath, '--apply'], {\n      cwd: repoRoot,\n      detached: true,\n      stdio: ['ignore', out, err],\n    });\n    child.unref();"
+        },
+        {
+          "file": ".claude/hooks/src/architecture-stats-sync.ts",
+          "lines": "4-9",
+          "quote": "* Detects successful `git commit` operations and, if the most recent commit\n * touched files under `.claude/(hooks|agents|skills)/` or `scripts/`, fires\n * `scripts/sync-architecture-stats.mjs --apply` in the background\n * (fire-and-forget; never blocks the user)."
+        },
+        {
+          "file": ".claude/logs/architecture-stats-sync.log",
+          "lines": "tail",
+          "quote": "done: stats synced."
+        }
+      ],
+      "dedup_keys": [
+        ".claude/hooks/src/architecture-stats-sync.ts",
+        "sync-architecture-stats.mjs",
+        "architecture.json",
+        "post-commit dirt"
+      ],
+      "causal_links": [],
+      "seed_ref": null
+    },
+    {
+      "id": "D10b-05",
+      "title": "architecture-stats-sync is registered in ACTIVE ~/.claude/settings.json but NOT in repo .claude/settings.json -> a new machine bootstrapping from the repo template silently loses this commit-chain hook (same class as SEED-15)",
+      "severity": "S2",
+      "confidence": "VERIFIED",
+      "proposed_class": "fix",
+      "leverage": "structural",
+      "observe_how": "Grep both settings.json: repo's has no architecture-stats-sync entry; active ~/.claude/settings.json registers `node ~/.claude/hooks/dist/architecture-stats-sync.mjs` on PostToolUse:Bash (and it has fired -- 55KB log). Per sync-known-gaps.md settings.json is intentionally NOT synced, so the repo template is the new-machine source of truth and it omits this hook. The hook .ts + dist .mjs exist in the repo (dead until hand-registered).",
+      "telemetry": "Reconcile the active vs repo settings.json hook registration sets; the delta IS the new-machine gap. This is the same root cause SEED-15 found for package-install-guard et al.",
+      "evidence": [
+        {
+          "file": ".claude/settings.json",
+          "lines": "n/a",
+          "quote": "architecture-stats-sync NOT registered in repo settings.json (grep over s.hooks found zero matches), while active ~/.claude/settings.json has: PostToolUse | Bash | node ~/.claude/hooks/dist/architecture-stats-sync.mjs"
+        },
+        {
+          "file": ".claude/rules/sync-known-gaps.md",
+          "lines": "n/a",
+          "quote": "| `settings.json` | NO | Intentional -- local config | Manual copy (risky) |"
+        }
+      ],
+      "dedup_keys": [
+        ".claude/settings.json",
+        "architecture-stats-sync",
+        "new-machine registration gap"
+      ],
+      "causal_links": [
+        "SEED-15"
+      ],
+      "seed_ref": "SEED-15"
+    },
+    {
+      "id": "D10b-06",
+      "title": "On a single `git commit` of a hook edit, THREE write-side actors fire with no ordering/exclusion: background forward-sync (active dir), git-commit-roadmap (non-atomic RMW of ROADMAP.md), architecture-stats-sync (detached writer of architecture.json) -- each a separate unguarded fs.writeFileSync/cp into a shared file",
+      "severity": "S2",
+      "confidence": "VERIFIED",
+      "proposed_class": "document",
+      "leverage": "structural",
+      "observe_how": "git-commit-roadmap does fs.readFileSync(ROADMAP) then fs.writeFileSync(ROADMAP) with no lock; under two concurrent commits (multi-terminal, both editing the same repo) the second clobbers the first's roadmap append. This is the same single-writer-violation class as SEED-02's roadmap contamination. The three actors write disjoint files this run, so no direct corruption today, but the pattern (full-file RMW, no lock, fire-on-every-commit) is the recurrence vector the May-2026 history warns about.",
+      "telemetry": "Wrap ROADMAP.md and architecture.json writes in the same lock the forward-sync needs (D10b-02). Track concurrent-commit collisions via a write-attempt log keyed by file+pid.",
+      "evidence": [
+        {
+          "file": ".claude/hooks/src/git-commit-roadmap.ts",
+          "lines": "283-285",
+          "quote": "  const updated = appendToCompleted(content, entry);\n\n  fs.writeFileSync(roadmapPath, updated);"
+        },
+        {
+          "file": ".claude/hooks/src/git-commit-roadmap.ts",
+          "lines": "5-6",
+          "quote": " * PostToolUse:Bash - Detects successful git commits and updates ROADMAP.md"
+        },
+        {
+          "file": ".claude/rules/git-sync-workflow.md",
+          "lines": "n/a",
+          "quote": "two *automatic* reverse-sync triggers used to race the background forward-sync and **clobber fresh repo edits with stale active copies**"
+        }
+      ],
+      "dedup_keys": [
+        ".claude/hooks/src/git-commit-roadmap.ts",
+        "ROADMAP.md",
+        "non-atomic write",
+        "single-writer"
+      ],
+      "causal_links": [
+        "SEED-02",
+        "D10b-02"
+      ],
+      "seed_ref": "SEED-02"
+    },
+    {
+      "id": "D10b-07",
+      "title": "git-auto-commit (PostToolUse:Write|Edit) does `git add -A` over ALL of ~/.claude including dist files the background forward-sync is concurrently overwriting -> can snapshot a half-synced active dist into a safety commit",
+      "severity": "S3",
+      "confidence": "VERIFIED",
+      "proposed_class": "document",
+      "leverage": "quick-win",
+      "observe_how": "git-auto-commit only acts when the edited file is under ~/.claude (isInClaudeDir) -- so it is NOT in the repo-edit path -- but when a DIRECT ~/.claude edit triggers it, doCommit runs `git add -A` (stages everything in ~/.claude). If a forward-sync from a concurrent repo commit is mid-flight, the -A stages a partially-copied dist tree. Debounced to 10min so the window is narrow, but the `add -A` blast radius is wider than the file that triggered it. Payoff: scoping the add to the triggering path (or the debounce key) avoids snapshotting unrelated in-flight sync state.",
+      "telemetry": "Replace `git add -A` with staging only tracked changes relevant to the edit, or guard with the same sync lock (D10b-02).",
+      "evidence": [
+        {
+          "file": ".claude/hooks/src/git-auto-commit.ts",
+          "lines": "137-139",
+          "quote": "  try {\n    // Stage all changes (respects .gitignore)\n    execSync('git add -A', { cwd: CLAUDE_DIR, stdio: 'pipe' });"
+        },
+        {
+          "file": ".claude/hooks/src/git-auto-commit.ts",
+          "lines": "211-215",
+          "quote": "  // Check if file is in ~/.claude and tracked\n  if (!isInClaudeDir(filePath) || !isTrackedByGit(filePath)) {\n    console.log('{}');\n    return;\n  }"
+        }
+      ],
+      "dedup_keys": [
+        ".claude/hooks/src/git-auto-commit.ts",
+        "git add -A",
+        "~/.claude safety commit"
+      ],
+      "causal_links": [
+        "D10b-02"
+      ],
+      "seed_ref": null
+    }
+  ],
+  "coverage_manifest": [
+    "PreToolUse plan-to-ralph-enforcer (state gate): VERIFIED present, fail-open, blocks code-file Edit/Write post-plan unless Ralph active; not a build/sync concurrency actor -- no D10b finding (covered by plan-to-ralph-enforcement rule; out-of-slice for sync races).",
+    "Edit of hook .ts: triggers post-edit-diagnostics (PostToolUse) -- see below; triggers git-auto-commit ONLY if under ~/.claude (D10b-07).",
+    "post-edit-diagnostics (PostToolUse:Write|Edit, tsc spawn + bus write): VERIFIED -- spawns `tsc --noEmit` synchronously with 30s timeout (blocking advisory only, fail-open, never blocks tool); also fail-open mutateBus write of role `edited`. No corruption/race found here; tsc result is non-blocking text. No new finding.",
+    "bus-tool-populator (PostToolUse:Read|Grep): VERIFIED -- writes L2 bus via fail-open mutateBus, excludes dist/.git/node_modules; not in the commit write-path. No finding.",
+    "git commit -> precommit-build-guard.sh (pre-commit hook): VERIFIED -- STATIC check, never runs npm build, coarse src->dist coupling = procedural defense (D10b-01).",
+    "git commit -> git-commit-roadmap.mjs: VERIFIED -- non-atomic full-file RMW of ROADMAP.md, no lock (D10b-06).",
+    "git commit -> architecture-stats-sync.mjs: VERIFIED -- detached background writer of architecture.json leaving post-commit working-tree dirt (D10b-04); active-only registration gap (D10b-05).",
+    "git commit -> .git/hooks/post-commit -> sync-to-active.sh --skip-build &: VERIFIED -- backgrounded, no flock, copies active dist with no wait = staleness window + concurrent-cp race (D10b-02).",
+    "Dist-staleness detector: session-start-init-check.ts freshness block VERIFIED -- advisory-only, repo-dir-mtime, never active, next-session-only (D10b-03).",
+    "May-2026 regression defense structural-vs-procedural: VERIFIED -- reverse-sync now guarded (set -e + uncommitted-abort, procedural) but FORWARD sync on every commit has ZERO concurrency control; the build step is fully procedural (manual npm run build, no auto-build anywhere). Net: defense is PROCEDURAL, not structural (D10b-01/02/03 substantiate)."
+  ],
+  "notes": "Slice = D10b end-to-end edit-hook->commit chain (build/sync races, double-writes, ordering, May-2026 regression structural-vs-procedural). Bottom line: the May-2026 regression class is defended PROCEDURALLY, not structurally. The build itself is never automated anywhere in the chain (npm run build is manual; both git-hooks and sync-to-active.sh deliberately skip it because it hangs on Windows); the precommit guard only checks that SOME dist .mjs was co-staged with no src->dist content link (D10b-01); the forward-sync that propagates dist to the live ~/.claude runs detached in the background with no lock and nothing waits for it (D10b-02); and the sole staleness detector is an advisory SessionStart string that checks the wrong (repo, not active) dist dir with a coarse dir-mtime comparison (D10b-03). Reverse-sync was hardened after May-2026, but forward-sync -- the direction that actually ships code to the running hooks -- was not.\\n\\nCross-links to seeds: D10b-05 is the same root cause as SEED-15 (settings.json not synced -> new-machine registration gaps); D10b-06 is the same single-writer/non-atomic-RMW class as SEED-02 (roadmap contamination). D10b-04 (architecture.json post-commit dirt) directly explains the `M docs/architecture/system-visualization/architecture.json` present in this review session's opening git status.\\n\\nNot re-discovered (out of slice, already covered by prior dims): post-edit-diagnostics tsc 30s blocking spawn and bus mutateBus 200ms-cap behavior are noted as VERIFIED-benign in the coverage manifest, not raised as findings."
+}

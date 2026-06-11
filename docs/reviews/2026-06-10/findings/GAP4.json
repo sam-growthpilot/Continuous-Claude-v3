@@ -1,0 +1,148 @@
+{
+  "dimension": "GAP4",
+  "findings": [
+    {
+      "id": "GAP4-01",
+      "title": "smart-search-router (PreToolUse:Grep, registered-active) feeds the model's raw Grep `pattern` into an execSync cmd.exe shell-string (`rg \"${escaped}\"`), escaping only \" and $ — the cmd.exe danger set (& | > < ^ %VAR%) passes through. Fires on EVERY Grep whenever the TLDR daemon is down. D5a saw this site and punted it as 'minor'.",
+      "severity": "S1",
+      "confidence": "VERIFIED",
+      "seed_ref": null,
+      "proposed_class": "fix",
+      "leverage": "structural",
+      "dedup_keys": [
+        ".claude/hooks/src/smart-search-router.ts",
+        "ripgrepFallback",
+        "tldrSearch",
+        "lookupSymbol",
+        "extractTarget",
+        "execSync-cmd.exe"
+      ],
+      "causal_links": [
+        "extends D5a triage (D5a labeled smart-search-router.ts:101 'minor, bounded by timeout+2>/dev/null' — re-rated here as live S1 injection on the Grep hot path)",
+        "same model-controlled-pattern source as GAP4-02"
+      ],
+      "telemetry": "Stop the TLDR daemon (or run where it never started), issue a Grep whose pattern contains a cmd.exe metachar — e.g. pattern `foo & calc` or `x>poc.txt` — and observe the side-effect (file written / second command run). Count: on Windows `execSync` with no `shell` option uses %ComSpec% = cmd.exe; the escape regex at line 100 only handles \" and $. Also note `2>/dev/null` at line 102 is a no-op on cmd.exe (creates a literal file named 'null').",
+      "observe_how": "main() at line 447 reads `pattern = input.tool_input.pattern` (the model's Grep regex) and at line 455 calls extractTarget(pattern) UNCONDITIONALLY before any literal/early-return. extractTarget -> lookupSymbol(pattern) -> tldrSearch(`def ${pattern}`) / `class ${pattern}` / `${pattern} =`. tldrSearch tries the daemon first but falls through to ripgrepFallback(pattern) when the daemon is indexing/unavailable OR on ANY thrown error (catch, lines 89-92). ripgrepFallback builds `rg \"${escaped}\" \"${projectDir}\" --type py ... 2>/dev/null` with escaped = pattern.replace(/\"/g,'\\\\\"').replace(/\\$/g,'\\\\$') and runs it through execSync (cmd.exe). cmd.exe treats & | > < ^ and %VAR% as live metacharacters — none are escaped — so a Grep pattern containing them executes/redirects. Same remediation class as D5a-01/02/03: drop the shell-string, use spawnSync('rg', [escaped, projectDir, '--type','py',...], {shell:false}).",
+      "evidence": [
+        {
+          "file": ".claude/hooks/src/smart-search-router.ts",
+          "lines": "100-104",
+          "quote": "const escaped = pattern.replace(/\"/g, '\\\\\"').replace(/\\$/g, '\\\\$');\n    const result = execSync(\n      `rg \"${escaped}\" \"${projectDir}\" --type py --line-number --max-count 10 2>/dev/null`,\n      { encoding: 'utf-8', timeout: 3000 }\n    );"
+        },
+        {
+          "file": ".claude/hooks/src/smart-search-router.ts",
+          "lines": "447",
+          "quote": "const pattern = input.tool_input.pattern;"
+        },
+        {
+          "file": ".claude/hooks/src/smart-search-router.ts",
+          "lines": "197-198",
+          "quote": "  // Try function first (most common)\n  const funcResults = tldrSearch(`def ${pattern}`, projectDir);"
+        },
+        {
+          "file": ".claude/hooks/src/smart-search-router.ts",
+          "lines": "89-92",
+          "quote": "  } catch {\n    // Fall back to ripgrep on any error\n    return ripgrepFallback(pattern, projectDir);\n  }"
+        }
+      ]
+    },
+    {
+      "id": "GAP4-02",
+      "title": "daemon-client Windows TCP path double-shells the same model-controlled Grep pattern: query JSON (containing `pattern`) is interpolated into a PowerShell command, which is then wrapped in an execSync cmd.exe string (`powershell -Command \"...\"`). Inner PS escape covers ' only; outer cmd.exe escape covers \" only — % & ^ < > | reach cmd.exe live.",
+      "severity": "S1",
+      "confidence": "VERIFIED",
+      "seed_ref": null,
+      "proposed_class": "fix",
+      "leverage": "structural",
+      "dedup_keys": [
+        ".claude/hooks/src/daemon-client.ts",
+        "queryDaemonSync",
+        "psCommand",
+        "powershell-execSync",
+        "tcp-windows-path"
+      ],
+      "causal_links": [
+        "same model-controlled pattern as GAP4-01 (smart-search-router queryDaemonSync({cmd:'search',pattern}))",
+        "D5a flagged daemon-client.ts:582/589 as 'connInfo.path/psCommand, not user content' — that triage missed that `input` = JSON.stringify(query) carries the model's search `pattern`"
+      ],
+      "telemetry": "On Windows with the TLDR daemon reachable over TCP (connInfo.type==='tcp'), issue a Grep whose pattern contains a cmd.exe metachar (% ^ & < > |) and check for an injected effect through the outer `powershell -Command \"...\"` cmd.exe wrapper. The inner PS layer escapes ' -> '' (correct for PS), but the outer execSync only does psCommand.replace(/\"/g,'\\\\\"'); cmd.exe metachars in the pattern are untouched at the outer layer.",
+      "observe_how": "smart-search-router.ts:76 calls queryDaemonSync({ cmd: 'search', pattern }, projectDir) with the model's Grep pattern. In daemon-client.ts queryDaemonSync (line 544) sets input = JSON.stringify(query) (line 565) — the pattern is now inside `input`. On the Windows branch (connInfo.type==='tcp'), input is interpolated into psCommand via `$writer.WriteLine('${input.replace(/'/g, \"''\")}')` (line 575), and the whole psCommand is run via execSync(`powershell -Command \"${psCommand.replace(/\"/g,'\\\\\"')}\"`) (line 582). Two shells, two escape regexes, neither covering the cmd.exe metacharacter set the OUTER layer is exposed to. A pattern containing %FOO% / & / ^ / > is interpreted by the outer cmd.exe. Remediation: pass the daemon payload over a real socket (net.Socket) or via spawnSync('powershell', ['-Command', psScript], {shell:false}) so no cmd.exe wrap and no string interpolation of `input` into a -Command argument.",
+      "evidence": [
+        {
+          "file": ".claude/hooks/src/daemon-client.ts",
+          "lines": "575",
+          "quote": "        $writer.WriteLine('${input.replace(/'/g, \"''\")}')"
+        },
+        {
+          "file": ".claude/hooks/src/daemon-client.ts",
+          "lines": "582",
+          "quote": "      result = execSync(`powershell -Command \"${psCommand.replace(/\"/g, '\\\\\"')}\"`, {"
+        },
+        {
+          "file": ".claude/hooks/src/daemon-client.ts",
+          "lines": "565",
+          "quote": "    const input = JSON.stringify(query);"
+        },
+        {
+          "file": ".claude/hooks/src/smart-search-router.ts",
+          "lines": "76",
+          "quote": "    const response = queryDaemonSync({ cmd: 'search', pattern }, projectDir);"
+        }
+      ]
+    },
+    {
+      "id": "GAP4-03",
+      "title": "D5b 'security:injection-surfaces' is a TRUE unrun gap, NOT covered by D5a: D5a's own coverage_manifest scopes it to memory hot-path store/recall call-sites + opc/*.py shell=True + skills docs. The cross-cutting injection-surface enumeration (scripts/*.mjs, MCP tool-arg interpolation, and non-memory shell sinks like the Grep router) was never swept until this gap-fill — and it surfaced two live S1 sinks D5a had explicitly down-rated to 'lower-risk'.",
+      "severity": "S2",
+      "confidence": "VERIFIED",
+      "seed_ref": null,
+      "proposed_class": "document",
+      "leverage": "structural",
+      "dedup_keys": [
+        "docs/reviews/2026-06-10/findings/WF1-STATE.json",
+        "D5b-security-injection-surfaces",
+        "failed_spend_limit",
+        "scope-gap"
+      ],
+      "causal_links": [
+        "GAP4-01 (uncovered sink #1)",
+        "GAP4-02 (uncovered sink #2)",
+        "D5a coverage_manifest line 'smart-search-router.ts:101 ... minor' is exactly the under-rating GAP4-01 corrects"
+      ],
+      "telemetry": "WF1-STATE.json lists 'D5b security:injection-surfaces' under failed_spend_limit (never ran). D5a.json coverage_manifest enumerates only store_learning/recall_learnings callers, opc/*.py, and scheduled .bat/.ps1 — it never sweeps scripts/*.mjs shell:true sites or the Grep/daemon shell path. A reader skimming the WF1 manifest could wrongly conclude 'injection covered by D5a' and skip the D5b re-run.",
+      "observe_how": "Read D5a.json's coverage_manifest: it triages store_learning.py callers (agent-error-capture/hook-error-pipeline/user-confirmation-detector = the 3 S0/S1 it owns; periodic-extract/browser-learning-extractor/post-plan-roadmap/smarter-everyday = safe array form), recall_learnings.py callers in scripts/*.mjs (bus-quality-gate/code-intel/system-coherence-stress = array, clean), and opc/*.py shell=True (0 matches). It explicitly labels smart-search-router.ts:101 and daemon-client.ts:582/589 as 'lower-risk' / 'not user content' — both wrong (GAP4-01/02). The scripts/*.mjs shell:true sites swept here (system-coherence-stress.mjs x4, update-blocklist.mjs gh-api, backfill-intel-bus pure-IO, cdp.mjs npx array) are all CLEAN re: untrusted-input injection, and the memory-awareness RECALL hot path is a NOTABLE POSITIVE (spawnSync array args + sanitizeMemoryContent on DB-returned content, WS-0.2). Net: D5b's specific value — re-rating the two Grep/daemon sinks and clearing scripts/*.mjs + MCP-arg surfaces — required this run; the gap was real.",
+      "evidence": [
+        {
+          "file": "docs/reviews/2026-06-10/findings/WF1-STATE.json",
+          "lines": "23-24",
+          "quote": "  \"failed_spend_limit\": [\n    \"D5b security:injection-surfaces\","
+        },
+        {
+          "file": "docs/reviews/2026-06-10/findings/D5a.json",
+          "lines": "10",
+          "quote": "smart-search-router.ts:101 (rg query escapes only \\\"/$ not backtick - minor, bounded by timeout+2>/dev/null), daemon-client.ts:318/333/582/589 (connInfo.path/psCommand, not user content)"
+        },
+        {
+          "file": ".claude/hooks/src/memory-awareness.ts",
+          "lines": "212-225",
+          "quote": "    'run', 'python', 'scripts/core/recall_learnings.py',\n    '--query', searchTerm,"
+        },
+        {
+          "file": ".claude/hooks/src/memory-awareness.ts",
+          "lines": "690-692",
+          "quote": "    const safeIntent = sanitizeMemoryContent(intent, 200);"
+        }
+      ]
+    }
+  ],
+  "coverage_manifest": [
+    "GAP4 PRIMARY (the assigned gap): D5b 'security:injection-surfaces' CONFIRMED a true unrun gap, NOT subsumed by D5a. WF1-STATE.json puts it under failed_spend_limit (never ran). D5a's coverage_manifest is memory-hot-path-scoped (store_learning/recall callers + opc/*.py + skills docs) and explicitly down-rated the two sinks this run re-rates -> GAP4-03 (document the scope gap so the re-run keeps D5b in scope).",
+    "scripts/*.mjs injection sweep (the explicit D4b/D5a blind spot): READ all 10. update-blocklist.mjs:50 `gh api \"${url}\"` — url is template-built from hardcoded endpoint constants + integer page (line 45), NOT attacker-controlled; advisory feed flows only into JSON content via parseAdvisory, never a shell. CLEAN. system-coherence-stress.mjs (4x shell:true) — all static arg arrays ([vitest,run,...]/[uv,run,python,...]); canaryPrefix is harness-generated `stress-test-recall-leak-canary-${Date.now()}` (line 616), dockerPsql passes SQL via -c array arg. dev/stress harness, no untrusted free-text. CLEAN. backfill-intel-bus.mjs — pure file IO, no shell. CLEAN. cdp.mjs:449 — spawnSync('npx',[array]), no shell; lhUrl is a positional array element (theoretical D4b-09 option-injection only, manual dev CLI). CLEAN. sync-architecture-stats.mjs — git log static args. CLEAN.",
+    "Grep hot-path shell sink (NEW S1, was D5a 'minor'): smart-search-router.ts (PreToolUse:Grep, REGISTERED ACTIVE in settings.json) — model's tool_input.pattern -> extractTarget (unconditional, line 455) -> lookupSymbol -> tldrSearch(`def ${pattern}`) -> ripgrepFallback -> execSync(`rg \"${escaped}\"...`) on cmd.exe, escaping only \"/$ (omits & | > < ^ %VAR%), fallback fires whenever daemon down or on any throw -> GAP4-01.",
+    "Windows daemon shell sink (NEW S1, was D5a 'not user content'): daemon-client.ts queryDaemonSync — same model pattern via JSON.stringify(query)=input, interpolated into psCommand (line 575) then wrapped in execSync(`powershell -Command \"...\"`) cmd.exe string (line 582). Two escape layers (PS '' inner, cmd.exe \\\" outer), neither covers the outer cmd.exe metachar set -> GAP4-02. Confirmed live: smart-search-router.ts:76 passes {cmd:'search',pattern}; tcp branch is the Windows path.",
+    "MCP tool-arg interpolation surface (explicit D5a exclusion): swept 24 hooks-src files referencing tool_input/mcp__/mcpServers. No hook takes an MCP tool-arg and interpolates it into a shell beyond the Grep tool_input.pattern path already captured (GAP4-01/02). mcp-activity-tracker/package-install-guard/task-router etc. read tool_input for classification/logging only, no shell sink. CLEAN re: new injection.",
+    "Recall hot path (NOTABLE POSITIVE, D5a never reviewed it): memory-awareness.ts (UserPromptSubmit recall, 27.4%-hit surface) uses spawnSync('uv',[array],{...}) array args (lines 212-225) — user query is a --query array element, NO shell. DB-returned content is run through sanitizeMemoryContent (line 690, WS-0.2 prompt-injection defense). Correctly hardened; folded into GAP4-03 as the contrast that shows the store-side D5a sinks are not systemic.",
+    "Other recall/store shell-string callers re-verified (consistent with D5a, no new finding): pre-plan-memory.ts:68-70 (recall, interpolates only opcDir + hardcoded --query, env/path-derived, CLEAN), session-end-extract.ts:64 (sessionId=Claude UUID + projectDir=CLAUDE_PROJECT_DIR||cwd, path-derived, low-risk as D5a noted), handoff-index.ts:219 (fullPath = fs-discovered handoff path, path-derived, low-risk). All within D5a's existing 'lower-risk' triage; not re-raised. (Adjacent observation, OUT of injection scope: handoff-index.ts:216 path has a doubled `core/core` segment — path-correctness smell, SEED-07 family, not injection.)"
+  ],
+  "notes": "Read-only review at working tree (review SHA 86b8f60). No edits, no test execution, no state changes. All evidence read directly from live source (smart-search-router.ts, daemon-client.ts, memory-awareness.ts, the 10 scripts/*.mjs) and the two on-disk review artifacts D5a.json / WF1-STATE.json (cited as scope evidence, not as findings — they live under docs/reviews/ which is review-context, not a finding target).\n\nHEADLINE: D5b is a genuine gap. D5a was correctly scoped to the memory store/recall hot path and named the 3 real S0/S1 store-side sinks, but its manifest explicitly down-rated two OTHER model-controlled shell sinks — the Grep router's ripgrep fallback and the Windows daemon PowerShell path — to 'minor' / 'not user content'. Both are wrong on the Windows shell this repo actually runs (execSync -> cmd.exe per the repo's own windows-platform.md), and both carry the SAME model-controlled value (the Grep tool_input.pattern) into a shell with escaping that omits the cmd.exe danger set (& | > < ^ %VAR%). GAP4-01 fires on every Grep when the TLDR daemon is down; GAP4-02 is the daemon-reachable Windows path. These are the WF-1 'exploitable-injection' S1 class the D5b dimension was meant to enumerate.\n\nCLEARED (the other half of D5b's value): the scripts/*.mjs shell:true sites are all clean (static/harness-generated args, no untrusted free-text), the supply-chain update-blocklist gh-api url is constant-built, and the MCP tool-arg surface has no new shell sink. The memory-awareness RECALL path is a positive — array-arg spawn + DB-content sanitization — confirming the store-side D5a sinks are a specific-call-site bug class, not a systemic one. Recommendation: keep D5b in the re-run scope (do NOT treat as covered by D5a); fix GAP4-01/02 with the same spawnSync-array remediation D5a prescribes for the store-side trio, since all five share one root pattern: untrusted/model text interpolated into an execSync shell-string instead of passed as spawnSync array args."
+}

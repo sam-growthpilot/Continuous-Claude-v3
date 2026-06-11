@@ -1,0 +1,92 @@
+{
+  "dimension": "GAP1",
+  "findings": [
+    {
+      "id": "GAP1-01",
+      "title": "Hook-coverage 'complete' claim is TypeScript-only: 9 git-tracked Python hooks in .claude/hooks/*.py were never inventoried and never subject-lined — including braintrust_hooks.py, registered LIVE on 5 events in repo + active + template",
+      "severity": "S1",
+      "confidence": "VERIFIED",
+      "evidence": [
+        {
+          "file": ".claude/hooks/braintrust_hooks.py",
+          "lines": "1-9",
+          "quote": "\"\"\"Braintrust tracing hooks - Cross-platform Python port.\n\nReplaces the 5 bash hooks + common.sh:\n- session_start"
+        },
+        {
+          "file": ".claude/settings.json",
+          "lines": "196",
+          "quote": "\"command\": \"python C:/Users/david.hayes/.claude/hooks/braintrust_hooks.py user_prompt_submit\","
+        },
+        {
+          "file": ".claude/settings.json.template",
+          "lines": "210",
+          "quote": "\"command\": \"python {{CLAUDE_HOME}}/hooks/braintrust_hooks.py user_prompt_submit\","
+        }
+      ],
+      "proposed_class": "investigate",
+      "leverage": "structural",
+      "seed_ref": null,
+      "dedup_keys": [
+        ".claude/hooks/braintrust_hooks.py",
+        ".claude/hooks/post_tool_use_tracker.py",
+        ".claude/hooks/post-tool-use-tracker.py",
+        ".claude/hooks/session_start_continuity.py",
+        ".claude/hooks/pre_compact_continuity.py",
+        ".claude/hooks/hook_launcher.py",
+        ".claude/hooks/auto-handoff-stop.py",
+        ".claude/hooks/premortem-suggest.py",
+        ".claude/hooks/session-symbol-index.py"
+      ],
+      "causal_links": [
+        "Root-caused to harvest.mjs:36 — inventory-hooks.json is built from readdirSync('.claude/hooks/src').filter(f=>f.endsWith('.ts')), so the 111-hook denominator the GAP1 'complete' claim rests on is TypeScript-only by construction. The 5 braintrust_hooks.py registrations live in settings.json but not in srcBase (harvest.mjs:59), so the diff cannot see them.",
+        "Contradicts the GAP1 lead's framing that hooks are 'the one slice that is genuinely done' and its SUGGESTED action to WF-3 ('mark the hook-coverage axis CLOSED; no gap-fill agent needed for hooks'). Acting on that would leave a registered hot-path hook permanently un-reviewed.",
+        "D2g-03 already leaned on post_tool_use_tracker.py as the (dead-feed) writer behind pre-compact-continuity.ts's generateAutoSummary — i.e. a Python hook's behavior is load-bearing for a TS finding, yet the Python file itself carries no verdict."
+      ],
+      "observe_how": "Independently reproduced the GAP1 completeness check: across all 15 D*.json coverage_manifests, all 111 TS hooks ARE the subject of >=1 coverage line (240 lines total; 0 TS hooks unaccounted) — so the TS claim holds. But `ls .claude/hooks/*.py` returns 9 git-tracked files (confirmed via `git ls-files`); a substring scan of every finding shows braintrust_hooks appears only in D2c coverage BODY text (never a subject line) and 6 of the 9 (post-tool-use-tracker [hyphen], auto-handoff-stop, hook_launcher, premortem-suggest, session_start_continuity, session-symbol-index) appear in NO finding at all. `grep` of repo settings.json confirms braintrust_hooks.py is bound to 5 events (user_prompt_submit/session_start/session_end/stop/post_tool_use); the active ~/.claude/settings.json mirrors all 5; the template registers all 5. braintrust_hooks.py is 33,982 bytes and makes httpx network calls per event (hot path).",
+      "telemetry": "harvest.mjs's registrations-diff.json reports `registered_active_but_no_src: []` — falsely reassuring, because the no-src check is computed only over the TS srcBase and structurally cannot flag a registered .py command as un-sourced or un-reviewed. The only honest 'covered?' signal for Python hooks is absence from every coverage_manifest, which is what this finding measures."
+    },
+    {
+      "id": "GAP1-02",
+      "title": "Two diverging post-tool-use-tracker Python variants (underscore 8750B vs hyphen 12612B) both committed — duplication/ambiguity smell the TS-only review could not surface",
+      "severity": "S3",
+      "confidence": "VERIFIED",
+      "evidence": [
+        {
+          "file": ".claude/hooks/post_tool_use_tracker.py",
+          "lines": "162-164",
+          "quote": "    timestamp = int(time.time())\n    with open(log_file, \"a\") as f:\n        f.write(f\"{timestamp}:{file_path}:{repo}\\n\")"
+        },
+        {
+          "file": ".claude/hooks/post-tool-use-tracker.py",
+          "lines": "1",
+          "quote": "(present, 12612 bytes, git-tracked, differs from underscore variant per `diff -q`)"
+        }
+      ],
+      "proposed_class": "investigate",
+      "leverage": "quick-win",
+      "seed_ref": null,
+      "dedup_keys": [
+        ".claude/hooks/post_tool_use_tracker.py",
+        ".claude/hooks/post-tool-use-tracker.py"
+      ],
+      "causal_links": [
+        "Same dead-feed-writer family as D2g-03 (which cited the underscore variant as the sole writer of edited-files.log consumed by pre-compact-continuity.ts). With two diverging copies and neither registered in settings.json, a maintainer re-enabling the feed cannot tell which file is canonical — the exact drift trap hook-dev-lifecycle.md warns about, but in Python where no esbuild/test guards it.",
+        "Payoff: resolving which of the two is canonical (or deleting both with the dead feed) removes the ambiguity before someone wires the wrong one back into settings.json."
+      ],
+      "observe_how": "`ls -la .claude/hooks/*.py` shows both files; `git ls-files` confirms both tracked; `diff -q` reports they DIFFER. Neither name appears in any repo/active/template settings.json registration (grep = 0 command refs for post*tool*use*tracker). The underscore copy is the one D2g-03 traced as a dead-feed writer.",
+      "telemetry": "Neither variant is registered, so both produce nothing today; the cost is pure ambiguity + ~21KB of orphaned-but-tracked Python with one foot in a documented dead-feed path."
+    }
+  ],
+  "coverage_manifest": [
+    "GAP1 core claim (all 111 TS hook srcs subject-lined): VERIFIED TRUE — independent scan of all 15 D*.json coverage_manifests (240 lines) confirms every one of the 111 inventory-hooks.json entries is the subject of >=1 coverage line; 0 TS hooks lack a verdict.",
+    "GAP1 edge case permission-auto-allow (PermissionRequest): VERIFIED — real finding D2g-02 exists (auto-allows all except AskUserQuestion/ExitPlanMode); claim accurate.",
+    "GAP1 edge case template-only registrations: VERIFIED — auto-build:439, pageindex-navigator:175, sync-to-repo:419, periodic-extract:458 all confirmed at exact lines in settings.json.template; each subject-lined in D2g; D2g-01 finding accurate.",
+    "GAP1 denominator scope (the actual gap): FINDING GAP1-01 — the '111 hook srcs' = TypeScript only (harvest.mjs:36 .endsWith('.ts')); 9 git-tracked .py hooks excluded, incl. braintrust_hooks.py registered live on 5 events (repo+active+template) but never subject-lined. registrations-diff `registered_active_but_no_src:[]` is structurally blind to Python registrations.",
+    "Python hook braintrust_hooks.py: UN-REVIEWED — registered 5x, 34KB, per-event httpx network calls (hot path); appears only in D2c coverage BODY, never a subject line (GAP1-01).",
+    "Python hooks post-tool-use-tracker.py (hyphen) / auto-handoff-stop.py / hook_launcher.py / premortem-suggest.py / session_start_continuity.py / session-symbol-index.py: UN-REVIEWED — appear in NO finding at all (GAP1-01).",
+    "Python hooks post_tool_use_tracker.py (underscore) / pre_compact_continuity.py: referenced only as dead-feed context in D2g-03, never subject-lined; underscore+hyphen variants DIFFER and both committed (GAP1-02).",
+    "lib/hook-trace.ts and lib/run-command.ts: outside 111 inventory; referenced in finding BODIES (D2g/D2f) but not subject-lined — live libs, low risk, noted not escalated.",
+    "WF-3 SUGGESTED action ('mark hook-coverage axis CLOSED, no gap-fill needed'): REJECT as stated — correct for TS hooks, but closing the axis leaves the registered braintrust Python hook + 8 other .py hooks permanently un-reviewed. Axis should be marked CLOSED-FOR-TYPESCRIPT, OPEN-FOR-PYTHON."
+  ],
+  "notes": "Method: This was a meta-verification of the GAP1 'hooks are done' claim, not a fresh hook review. (1) Reproduced the completeness check programmatically — confirmed all 111 TS hooks in inventory-hooks.json are the subject of >=1 coverage_manifest line across the 15 prior dimensions, and verified the named edge cases (permission-auto-allow finding D2g-02; template-only lines 175/419/439/458). The TS half of the claim is genuinely TRUE. (2) Then probed the denominator itself: `ls .claude/hooks/*.py` + `git ls-files` revealed 9 git-tracked Python hook files entirely outside the inventory, root-caused to harvest.mjs:36 filtering `.endsWith('.ts')`. braintrust_hooks.py is the load-bearing case — registered on 5 events in repo settings.json (196/232/279/284/300), active settings, AND template (210/246/288/293/309), 34KB, network-calling on every event — yet it carries no subject verdict (only a D2c body mention). This makes the GAP1 lead's 'one slice that is genuinely done' and its WF-3 'mark CLOSED' suggestion a decision-driving over-claim (S1): trusting it closes review on a live hot-path hook. GAP1-02 is the secondary smell (two diverging committed post-tool-use-tracker variants, one already implicated in D2g-03's dead feed). READ-ONLY honored: no edits, no tests run, no state changes. All evidence quotes are from the repo working tree; registrations-diff.json/active settings used only for verification reasoning (observe_how/telemetry), never quoted as evidence, per exclusion rules. Cross-links: GAP1-01 -> D2g-03 (Python dead-feed writer load-bearing for a TS finding), D2g-01/SEED-15 (template registration drift family), GAP1-02 -> D2g-03."
+}
