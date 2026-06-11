@@ -1,0 +1,311 @@
+[
+  {
+    "id": "D7d-03",
+    "title": "Sync sprawl: 6 in-repo code paths for the single repo<->active sync relationship; the duplicated pairs have already drifted on a safety fix",
+    "severity": "S2",
+    "confidence": "VERIFIED",
+    "seed_ref": null,
+    "proposed_class": "simplify",
+    "leverage": "structural",
+    "evidence": [
+      {
+        "file": "scripts/sync-to-active.sh",
+        "lines": "38",
+        "quote": "SYNC_DIRS=\"rules agents skills scripts docs\""
+      },
+      {
+        "file": ".claude/scripts/sync-to-active.sh",
+        "lines": "8-9",
+        "quote": "# up two levels: .claude/scripts -> .claude -> repo root (this copy is one level deeper than scripts/sync-to-active.sh)\nREPO_ROOT=\"$(dirname \"$(dirname \"$SCRIPT_DIR\")\")\""
+      },
+      {
+        "file": "scripts/post-commit-hook.sh",
+        "lines": "8",
+        "quote": "SYNC_SCRIPT=\"$REPO_ROOT/scripts/sync-to-active.sh\""
+      },
+      {
+        "file": ".claude/hooks/src/sync-to-repo.ts",
+        "lines": "5-6",
+        "quote": " * PostToolUse hook that auto-syncs ~/.claude changes to continuous-claude repo.\n * Triggers when hooks, skills, rules, scripts, or agents are modified."
+      }
+    ],
+    "observe_how": "The 6 paths: (1) scripts/sync-to-active.sh (canonical forward, 271 ln); (2) .claude/scripts/sync-to-active.sh (272-ln near-duplicate; sole diff is the REPO_ROOT depth comment+line — and when forward-synced to ~/.claude/scripts its own dirname(dirname()) math degrades REPO_ROOT to $HOME, making REPO_CLAUDE=$HOME/.claude=ACTIVE_CLAUDE, i.e. a self-copy no-op); (3) scripts/sync-claude.sh (bidirectional, guarded, 140 ln); (4) .claude/scripts/sync-claude.sh (120-ln stale fork — see D7d-02); (5) scripts/post-commit-hook.sh (auto-invokes #1 on every commit); (6) .claude/hooks/src/sync-to-repo.ts (deliberately unregistered after the 2026-06-01 clobber incident but source retained, header still claims 'Registered for: PostToolUse:Write|Edit'). Every sync behavior change must land in 2+ copies; D7d-02 is the proof the double-landing already failed once (guard landed in #3, never in #4). Fix: delete the two .claude/scripts copies (the canonical pair under scripts/ is what docs and the post-commit hook reference) and either delete sync-to-repo.ts or correct its header.",
+    "telemetry": "git log -1 per copy: scripts/sync-claude.sh @2026-06-01 vs .claude/scripts/sync-claude.sh @2026-05-31 — drift measurable as divergent last-touch dates on supposed duplicates.",
+    "causal_links": [
+      "D7d-02"
+    ],
+    "dedup_keys": [
+      "scripts/sync-to-active.sh",
+      ".claude/scripts/sync-to-active.sh",
+      "scripts/sync-claude.sh",
+      ".claude/scripts/sync-claude.sh",
+      "scripts/post-commit-hook.sh",
+      ".claude/hooks/src/sync-to-repo.ts"
+    ],
+    "_dim": "D7d",
+    "cluster_id": "C006"
+  },
+  {
+    "id": "D7d-06",
+    "title": "11 git-tracked tmpclaude-*-cwd junk artifacts committed into .claude/scripts/ (9) and .claude/hooks/src/ (2), with no .gitignore pattern to stop recurrence",
+    "severity": "S2",
+    "confidence": "VERIFIED",
+    "seed_ref": "SEED-06",
+    "proposed_class": "delete",
+    "leverage": "quick-win",
+    "evidence": [
+      {
+        "file": ".claude/scripts/tmpclaude-0070-cwd",
+        "lines": "1",
+        "quote": "/c/Users/david.hayes/.claude/scripts"
+      }
+    ],
+    "observe_how": "git ls-files | grep tmpclaude -> 11 tracked files: .claude/hooks/src/tmpclaude-{681c,9453}-cwd and .claude/scripts/tmpclaude-{0070,0a6c,1fd7,2394,26d6,8ae4,a6eb,afb4,b3ea}-cwd. Each is a ~37-byte single-line cwd capture (Bash-tool working-directory temp files that leaked into source dirs and were swept up by bulk `git add` — e.g. ef00c22 added the scripts batch). Because .claude/scripts and the repo skills/rules dirs forward-sync, the junk also propagates to ~/.claude/ where directory scanners (Codex .agents mirror, skill scanners) enumerate it. grep tmpclaude .gitignore -> no match, so nothing prevents the next batch from being committed. This is a NEW committed-artifact instance of the SEED-06 stray-junk family (SEED-06 itself covers the untracked scripts/.claude/logs artifact). Fix: git rm the 11 files + add `tmpclaude-*` to .gitignore.",
+    "telemetry": "`git ls-files | grep -c tmpclaude` should be 0 after fix; recurrence detectable by the same count going non-zero.",
+    "causal_links": [
+      "SEED-06",
+      "SEED-01"
+    ],
+    "dedup_keys": [
+      "tmpclaude-cwd-artifacts",
+      ".claude/scripts/tmpclaude-0070-cwd",
+      ".claude/hooks/src/tmpclaude-681c-cwd",
+      ".gitignore:tmpclaude"
+    ],
+    "_dim": "D7d",
+    "cluster_id": "C006"
+  },
+  {
+    "id": "D8b-01",
+    "title": "SEED-14 quantified: hook catalog documents 62 of 76 registered hooks (~82%); 14 registered hooks invisible, incl. the entire PermissionRequest event class",
+    "severity": "S2",
+    "confidence": "VERIFIED",
+    "seed_ref": "SEED-14",
+    "leverage": "structural",
+    "proposed_class": "fix",
+    "evidence": [
+      {
+        "file": ".claude/docs/architecture/quick-ref/hook-catalog.md",
+        "lines": "1-3",
+        "quote": "Current registrations live in `~/.claude/settings.json`. For totals and per-event breakdown, see [hook-audit-2026-04.md](../../hook-audit-2026-04.md)."
+      },
+      {
+        "file": "docs/reviews/2026-06-10/harvest/SUMMARY.md",
+        "lines": "4",
+        "quote": "Registrations (ACTIVE=runtime truth): 81 entries -> 76 unique hooks; registered-but-no-src: 0; src-never-registered: 35"
+      }
+    ],
+    "observe_how": "Extracted hook script names from active ~/.claude/settings.json (80 entries / 76 unique at freeze incl. navigator-safety) and diffed against the catalog's 71 rows (67 unique names). Missing from catalog: permission-auto-allow (whole PermissionRequest section absent), architecture-stats-sync, bus-tool-populator, bus-session-populator, linear-branch-context, sentry-deploy-release, sentry-error-context, agent-recall-injector, code-intel-enforcer, plan-mode-approval-gate, session-end-handoff-indexer, session-start-context-loaders, session-start-intel-prune, session-start-memory-loaders (14). Catalog-only rows not registered: sync-to-repo, auto-build, periodic-extract (3) + pageindex-navigator (correctly annotated disabled).",
+    "telemetry": "harvest: 81 entries -> 76 unique registered; 35/111 srcs never registered",
+    "dedup_keys": [
+      ".claude/docs/architecture/quick-ref/hook-catalog.md",
+      "hook-catalog-coverage",
+      "permission-auto-allow",
+      "session-start-context-loaders",
+      "bus-tool-populator"
+    ],
+    "causal_links": [
+      "SEED-14",
+      "harvest:src-never-registered-35"
+    ],
+    "_dim": "D8b",
+    "cluster_id": "C006"
+  },
+  {
+    "id": "D8b-06",
+    "title": "architecture-stats-sync auto-sync is partial by design: patches stats fields only, leaving prose counts stale — architecture.json now contradicts itself inside a single auto-refreshed file (31 vs 36 agents, ~90/90+ vs 111 hooks, 145+ vs 134 skills)",
+    "severity": "S2",
+    "confidence": "VERIFIED",
+    "seed_ref": null,
+    "leverage": "structural",
+    "proposed_class": "simplify",
+    "evidence": [
+      {
+        "file": "docs/architecture/system-visualization/architecture.json",
+        "lines": "5",
+        "quote": "It adds persistent semantic memory, 31 specialized agents, ~90 lifecycle hooks, 145+ skills,"
+      },
+      {
+        "file": "docs/architecture/system-visualization/architecture.json",
+        "lines": "21,241,406,434",
+        "quote": "\"totalHooks\": 111,"
+      },
+      {
+        "file": "scripts/sync-architecture-stats.mjs",
+        "lines": "179-180",
+        "quote": "  hooksNode.stats.totalHooks = newHookCount;\n  agentsNode.stats.totalAgents = newAgentCount;"
+      }
+    ],
+    "observe_how": "meta.lastVerified=2026-06-10 (sync ran today) yet meta.description says '31 specialized agents, ~90 lifecycle hooks, 145+ skills' while meta.stats in the SAME object says {totalHooks:111, totalAgents:36, totalSkills:134}; hooks node summary '90+ TypeScript hooks' (line 241), agents node '31 specialized sub-agents in 8 categories' (line 434), skills node '145+ pre-written workflow playbooks' (line 406) all contradict their own stats. Second-order: totalHooks=111 counts src FILES — 35 never-registered — so even the synced number overstates live 'lifecycle hooks' (76) by ~46%; hooks.stats {events:7, blockingHooks:5} are never recomputed. Simplify: strip hardcoded counts from prose (point at stats) or extend the sync to patch summaries, and count registrations not src files.",
+    "dedup_keys": [
+      "docs/architecture/system-visualization/architecture.json",
+      "scripts/sync-architecture-stats.mjs",
+      ".claude/hooks/src/architecture-stats-sync.ts",
+      "totalHooks",
+      "totalAgents"
+    ],
+    "causal_links": [
+      "D8b-05",
+      "harvest:src-never-registered-35"
+    ],
+    "_dim": "D8b",
+    "cluster_id": "C006"
+  },
+  {
+    "id": "D8b-07",
+    "title": "architecture.json hooks node claims hooks fire on SubagentStop (0 registered) and omits PermissionRequest (1 registered) — wrong lifecycle-event list in the flagship visualization",
+    "severity": "S2",
+    "confidence": "VERIFIED",
+    "seed_ref": null,
+    "leverage": "quick-win",
+    "proposed_class": "fix",
+    "evidence": [
+      {
+        "file": "docs/architecture/system-visualization/architecture.json",
+        "lines": "242",
+        "quote": "Hooks fire on SessionStart, UserPromptSubmit, PreToolUse, PostToolUse, PreCompact, SubagentStop, and SessionEnd."
+      }
+    ],
+    "observe_how": "grep -c SubagentStop ~/.claude/settings.json = 0; the only 'SubagentStop' references in hooks/src are unregistered patterns/ library files and shared types. Meanwhile PermissionRequest IS a registered event (permission-auto-allow.mjs) and is missing from the list. Notably code-intel-boundaries.md relies on 'a downstream SubagentStop writer' to apply codegraph bus proposals — this doc claim masks that no such registered hook exists.",
+    "dedup_keys": [
+      "docs/architecture/system-visualization/architecture.json:242",
+      "SubagentStop",
+      "PermissionRequest",
+      "permission-auto-allow"
+    ],
+    "causal_links": [
+      "D8b-06"
+    ],
+    "_dim": "D8b",
+    "cluster_id": "C006"
+  },
+  {
+    "id": "D10a-03",
+    "title": "UserPromptSubmit ordering is load-bearing but unenforced and self-contradictorily documented: memory-awareness's bus read (staleness window + busTurn telemetry) depends on bus-session-populator's turn bump landing first, guaranteed only by array position; repo doc claims in-order execution, context-bus header claims 'hook ordering irrelevant', upstream documents parallel execution",
+    "severity": "S2",
+    "confidence": "VERIFIED",
+    "proposed_class": "investigate",
+    "leverage": "structural",
+    "seed_ref": null,
+    "evidence": [
+      {
+        "file": ".claude/settings.json",
+        "lines": "161, 166",
+        "quote": "\"command\": \"node C:/Users/david.hayes/.claude/hooks/dist/bus-session-populator.mjs\","
+      },
+      {
+        "file": ".claude/hooks/src/memory-awareness.ts",
+        "lines": "545-547",
+        "quote": "const bus = readBus();\n    busId = typeof bus.bus_id === 'string' ? bus.bus_id : 'unknown';\n    busTurn = typeof bus.current_turn === 'number' ? bus.current_turn : 0;"
+      },
+      {
+        "file": ".claude/hooks/src/shared/bus-focus.ts",
+        "lines": "52-54",
+        "quote": "// age in [-1, MAX] is fresh. The lower bound (-1) tolerates a same-turn write\n  // that landed just after the turn bump, but REJECTS a far-future turn_added so a\n  // poisoned / clock-skewed bus can't pin a term as \"fresh\" forever (B.3b Codex#2)."
+      },
+      {
+        "file": ".claude/hooks/src/shared/context-bus.ts",
+        "lines": "39-41",
+        "quote": "* Re-read-on-every-call (design doc section 4.4): readBus re-reads disk EVERY\n * call -- there is no module-level cache. This makes hook ordering irrelevant\n * and survives compaction (the first reader after a compact pays a fresh disk"
+      },
+      {
+        "file": "docs/hooks/README.md",
+        "lines": "240-242",
+        "quote": "### Hook Ordering\n\nHooks execute in the order listed. For PreToolUse, if any hook returns `deny`, subsequent hooks are skipped."
+      }
+    ],
+    "observe_how": "What is verified from code: memory-awareness computes focus staleness and logs current_turn from a bus read whose correctness requires bus-session-populator's bumpTurn (bus-session-populator.ts:82-85) to have committed first; the staleness design (isFresh, -1 tolerance) explicitly handles write-AFTER-bump but not read-BEFORE-bump within the same event. The ONLY thing producing that order is array position in settings.json (lines 161 before 166) — no test, lint, comment, or registration guard pins it, and the repo's two written claims contradict each other (README 'execute in the order listed' vs context-bus 'makes hook ordering irrelevant'). Upstream Claude Code documentation states matching hooks for an event run in parallel; if that is the real runtime behavior, the read races the bump: the freshness window nondeterministically widens by one turn (an age-4 item passes as age-3) and the intel-bus current_turn field flickers between N-1 and N for the same turn, corrupting turn-aligned analysis of the B.3b quality-gate telemetry. The D10a-02 pair (memory-awareness emit vs Python braintrust handler) is 'safe' under the same unverified serial assumption. Observe: add a per-hook monotonic timestamp to intel-bus rows from both hooks for 20 prompts and check whether populator's write always precedes memory-awareness's read; then either codify the guarantee in docs/hooks/README.md with a registration-order test, or make memory-awareness self-sufficient (bump-if-unbumped, or read the turn after its own mutateBus round-trip).",
+    "telemetry": "intel-bus memory_awareness_bus_read rows: current_turn vs the bus file's post-turn value for the same prompt",
+    "dedup_keys": [
+      ".claude/hooks/src/bus-session-populator.ts:bumpTurn",
+      ".claude/hooks/src/memory-awareness.ts:readBus",
+      ".claude/hooks/src/shared/bus-focus.ts:isFresh",
+      "docs/hooks/README.md:hook-ordering"
+    ],
+    "causal_links": [
+      "D6a-01 (the serial 13-spawn observation is the empirical counterpoint to upstream's parallel claim — resolving this finding resolves that ambiguity too)",
+      "D10a-02 (same unenforced-ordering root)",
+      "D4a-02 (a 200ms lock-capped populator write that DROPS leaves the turn un-bumped for the whole turn — same widened-window effect even under serial order)"
+    ],
+    "_dim": "D10a",
+    "cluster_id": "C003"
+  },
+  {
+    "id": "D10a-04",
+    "title": "Synthetic <task-notification> prompts bump the bus turn counter: turn inflation from background-task noise expires the genuine working set (BUS_STALENESS_MAX_AGE=3), silently disabling recall bias and SESSION FOCUS injection exactly in background-heavy sessions — live consumer blast radius beyond D4a-09's intent stamping",
+    "severity": "S2",
+    "confidence": "VERIFIED",
+    "proposed_class": "fix",
+    "leverage": "quick-win",
+    "seed_ref": "SEED-13",
+    "evidence": [
+      {
+        "file": ".claude/hooks/src/bus-session-populator.ts",
+        "lines": "14-16",
+        "quote": "* A skipped turn does NOT touch the bus (no turn bump, no intent write) -- the\n * counter only advances on real, recall-worthy prompts, matching what the\n * recall path actually fires on."
+      },
+      {
+        "file": ".claude/hooks/src/bus-session-populator.ts",
+        "lines": "82-85",
+        "quote": "mutateBus(undefined, (b) => {\n      bumpTurn(b);\n      setIntent(b, intent);\n    });"
+      },
+      {
+        "file": ".claude/hooks/src/shared/bus-focus.ts",
+        "lines": "29",
+        "quote": "export const BUS_STALENESS_MAX_AGE = 3;"
+      },
+      {
+        "file": ".claude/cache/session/s-mq8noedj-8d40fb04dee1/context.json",
+        "lines": "3, 265",
+        "quote": "\"current_intent\": \"&lt;task-notification&gt;\\n&lt;task-id&gt;wc46k5ue0&lt;/task-id&gt;\\n&lt;tool-use-id&gt;toolu_01LGYnmZy6igBdzBS9BFRHEz&lt;/tool-use-id&gt;\\n&lt;output-file&gt;...(truncated)\","
+      }
+    ],
+    "observe_how": "shouldSeed (lines 58-64) filters only subagent/length/slash — a <task-notification> blob is >15 chars and not a slash command, so it both stamps the intent (D4a-09, S3, no live consumer) AND bumps current_turn, which DOES have a live consumer: extractBusFocus ages every focus term by current_turn - turn_added against the 3-turn window on every memory-awareness fire. Four consecutive background-task notifications (run_in_background completions arrive as UPS prompts; 74 such recall fires in .claude/logs/memory-recall.jsonl) expire the entire working set assembled by bus-tool-populator — the SESSION FOCUS block stops injecting and hybrid-recall query bias drops to zero precisely in the sessions that use background tasks most. The header's stated invariant ('counter only advances on real, recall-worthy prompts') is broken in production: live bus s-mq8noedj-8d40fb04dee1 reached turn 3 with a notification as its current_intent. Fix point is the same synthetic-prompt filter as SEED-13/D2c-01, but it MUST gate the bumpTurn call too, not just intent/recall.",
+    "telemetry": "74 rows in .claude/logs/memory-recall.jsonl with intent starting '<task-notification>'; harvest SUMMARY intent-pollution 24.6%",
+    "dedup_keys": [
+      ".claude/hooks/src/bus-session-populator.ts:shouldSeed",
+      ".claude/hooks/src/bus-session-populator.ts:bumpTurn",
+      ".claude/hooks/src/shared/bus-focus.ts:BUS_STALENESS_MAX_AGE",
+      "<task-notification>:turn-inflation"
+    ],
+    "causal_links": [
+      "instance-of SEED-13; same fix chokepoint as D2c-01",
+      "extends D4a-09 (intent stamping, S3/no consumer) with the live-consumer turn-inflation consequence",
+      "degrades the B.3b recall-bias win (+15% top-score) that gated the focus-term feature"
+    ],
+    "_dim": "D10a",
+    "cluster_id": "C003"
+  },
+  {
+    "id": "D4a-09",
+    "title": "Bus current_intent inherits the recall-intent pollution path: bus-session-populator stamps the raw (sanitized, 120-char) prompt as intent with only length/slash/subagent guards — <task-notification> XML blobs become the session intent (new instance of SEED-13)",
+    "severity": "S3",
+    "confidence": "VERIFIED",
+    "proposed_class": "fix",
+    "leverage": "quick-win",
+    "seed_ref": "SEED-13",
+    "evidence": [
+      {
+        "file": ".claude/hooks/src/bus-session-populator.ts",
+        "lines": "59-63",
+        "quote": "  if (process.env.CLAUDE_AGENT_ID) return false;\n  if (typeof prompt !== 'string') return false;\n  if (prompt.length < MIN_PROMPT_LEN) return false;\n  if (prompt.trim().startsWith('/')) return false;"
+      },
+      {
+        "file": ".claude/hooks/src/bus-session-populator.ts",
+        "lines": "77",
+        "quote": "    const intent = sanitizeMemoryContent(input.prompt as string, INTENT_CAP);"
+      }
+    ],
+    "observe_how": "Payoff: whatever filter lands for SEED-13 (rejecting <task-notification>/system-injected blobs as recall intents) must also be applied in shouldSeed/setIntent here, or the bus's current_intent (surfaced by `/code-intel bus` and any future intent consumer) carries the same pollution. The guards intentionally mirror memory-awareness, so the two will drift if fixed in only one place.",
+    "telemetry": "harvest SUMMARY intent-pollution 24.6%",
+    "dedup_keys": [
+      ".claude/hooks/src/bus-session-populator.ts:shouldSeed",
+      ".claude/hooks/src/bus-session-populator.ts:setIntent"
+    ],
+    "causal_links": [
+      "instance-of SEED-13"
+    ],
+    "_dim": "D4a",
+    "cluster_id": "C003"
+  }
+]

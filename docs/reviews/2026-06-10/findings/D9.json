@@ -1,0 +1,209 @@
+{
+  "dimension": "D9",
+  "findings": [
+    {
+      "id": "D9-01",
+      "title": "Memory-recall 27.4% hit rate decomposed: intent-pollution fix alone caps the surface at ~36% best-case — floor math + corpus are the co-dominant miss cause; and 100% of recall benefit accrues to 'main' (zero sub-agent rows in 281), so the agent layer is fully memory-blind",
+      "severity": "S1",
+      "confidence": "VERIFIED",
+      "evidence": [
+        {
+          "file": "docs/reviews/2026-06-10/harvest/table-memory-recall.json",
+          "lines": "3-5",
+          "quote": "    \"rows\": 281,\n    \"hit_rate_pct\": 27.4,\n    \"intent_pollution_pct\": 24.6,"
+        },
+        {
+          "file": "docs/reviews/2026-06-10/harvest/table-memory-recall.json",
+          "lines": "14-16",
+          "quote": "    \"by_subagent_top\": {\n      \"main\": 281\n    }"
+        },
+        {
+          "file": "docs/reviews/2026-06-10/harvest/table-memory-recall.json",
+          "lines": "8-9",
+          "quote": "    \"top_score_p50\": 0,\n    \"top_score_p75\": 0.014868627936927935,"
+        },
+        {
+          "file": ".claude/rules/agent-memory-recall.md",
+          "lines": "9-10",
+          "quote": "Before starting implementation tasks, agents (kraken, architect, phoenix,\nspark) should check the archival memory for relevant prior learnings."
+        }
+      ],
+      "proposed_class": "fix",
+      "leverage": "strategic",
+      "seed_ref": "SEED-13",
+      "dedup_keys": [
+        "table-memory-recall.json:hit_rate_pct",
+        "table-memory-recall.json:by_subagent_top",
+        ".claude/hooks/src/memory-awareness.ts:hit-rate-interpretation"
+      ],
+      "causal_links": [
+        "D3b-01",
+        "D3b-05",
+        "D3b-08",
+        "D2b-03",
+        "SEED-13",
+        "SEED-08"
+      ],
+      "telemetry": "281 rows; hit 27.4% (~77 hits); pollution 24.6% (69 rows); by_source empty 154 / db 127 (zero 'local' rows — corroborates D3b-03/06 dead local arm); p50 top_score=0; by_subagent: main 281/281",
+      "observe_how": "Deterministic arithmetic on the harvest table: even if all 69 polluted rows are misses, best-case clean hit rate = 77/(281-69) = 36.3% — so intent sanitization alone recovers <=9pp of the 72.6% miss rate; the remaining ~135 clean-intent misses sit with the HYBRID_FLOOR math (D3b-01/08) and corpus coverage. p50 top_score=0 means the MEDIAN per-prompt recall surfaces nothing scoreable. Confirm post-fix by re-running the harvest split: hit rate among non-polluted rows vs polluted rows, and watch for any non-'main' by_subagent entry (today there are none, despite agent-memory-recall.md mandating agent recall)."
+    },
+    {
+      "id": "D9-02",
+      "title": "Intel-bus is a monologue, not a multi-agent bus: all 318 live rows have agent=null (zero sub-agent attribution ever recorded), and corr-null 60.7% means rows cannot be joined into request flows — the §9 cohesion metrics and per-agent C.5 evidence are uncomputable from this log",
+      "severity": "S1",
+      "confidence": "VERIFIED",
+      "evidence": [
+        {
+          "file": "docs/reviews/2026-06-10/harvest/table-intel-bus.json",
+          "lines": "64-66",
+          "quote": "    \"by_agent\": {\n      \"null\": 318\n    },"
+        },
+        {
+          "file": "docs/reviews/2026-06-10/harvest/table-intel-bus.json",
+          "lines": "67-68",
+          "quote": "    \"correlation_null_pct\": 60.7,\n    \"codegraph_rows\": 37"
+        },
+        {
+          "file": "docs/reviews/2026-06-10/harvest/table-intel-bus.json",
+          "lines": "30-34",
+          "quote": "  \"by_agent\": {\n    \"main\": 222,\n    \"codex-adversary\": 4,\n    \"null\": 318\n  },"
+        }
+      ],
+      "proposed_class": "fix",
+      "leverage": "structural",
+      "seed_ref": null,
+      "dedup_keys": [
+        "table-intel-bus.json:by_agent",
+        "table-intel-bus.json:correlation_null_pct",
+        ".claude/hooks/src/shared/intel-bus.ts:agent-attribution"
+      ],
+      "causal_links": [
+        "D1A-001",
+        "D4a-01",
+        "D4a-03",
+        "D4a-05",
+        "D2b-03"
+      ],
+      "telemetry": "live window: 318 rows over 7 distinct days, by_agent {null:318}; bus plumbing = 193 rows (bus_write 67 + agent_recall_bus_read 48 + memory_awareness_bus_read 42 + bus_read_latency 34 + bus_write_dropped 2); lifetime non-null agents are only 'main' (222, all memory_recall) and codex-adversary (4)",
+      "observe_how": "The arithmetic closes exactly: live null-specialist count (193) equals the sum of the five bus-plumbing query types, so every live row is either facade plumbing or a specialist call with NO agent identity attached. Combined with D4a-01 (correlation_id structurally inert — 60.7% null and the rest unjoinable), there is no way to answer 'which agent benefited from the bus' — the question C.5 and the §9 weekly digest exist to answer. Verify by grepping the live emitters in .claude/hooks/src/ and scripts/code-intel.mjs for any code path that sets an agent/subagent field on intel-bus rows; confirm absence, then add attribution at the SubagentStop/Task boundary before starting the C.3 watch (SEED-10), or the 4-week watch will collect 4 more weeks of unjoinable rows."
+    },
+    {
+      "id": "D9-03",
+      "title": "Codegraph in-facade routing share is 45.7% (37 of 81 eligible queries) — the other 44 fell back to TLDR despite codegraph being 'LIVE'; on the only measurable axis, adoption is at barely half the >=80% C.5 gate, and the gate's true denominator (facade-vs-bypass) has zero data",
+      "severity": "S2",
+      "confidence": "VERIFIED",
+      "evidence": [
+        {
+          "file": "docs/reviews/2026-06-10/harvest/table-intel-bus.json",
+          "lines": "44-49",
+          "quote": "      \"null\": 193,\n      \"context-bus\": 21,\n      \"tldr\": 43,"
+        },
+        {
+          "file": "docs/reviews/2026-06-10/harvest/table-intel-bus.json",
+          "lines": "52-60",
+          "quote": "      \"bus_write\": 67,\n      \"find-symbol\": 53,"
+        },
+        {
+          "file": "docs/ccv3-session9-kickoff-2026-06-05.md",
+          "lines": "118",
+          "quote": "**C.5** (flip `CCV3_FACADE_MODE=deny`) is **gated** on intel-bus showing **≥80% facade-route adoption** + bypass→0"
+        }
+      ],
+      "proposed_class": "investigate",
+      "leverage": "structural",
+      "seed_ref": "SEED-10",
+      "dedup_keys": [
+        "table-intel-bus.json:codegraph_rows",
+        "scripts/code-intel.mjs:codegraph-fallback-share",
+        "C.5-adoption-gate"
+      ],
+      "causal_links": [
+        "D1A-004",
+        "D1b-01",
+        "SEED-10",
+        "SEED-09"
+      ],
+      "telemetry": "live window: codegraph-eligible queries = find-symbol 53 + who-calls 25 + code-context 3 = 81; specialists: codegraph 35 + codegraph-fused 2 = 37 vs tldr 43 + tldr-fused 1 = 44 (37+44=81, exact accounting) -> 45.7% codegraph share; only 7 distinct live days",
+      "observe_how": "Every live tldr row is a fallback for a codegraph-eligible query (no cfg/dfg/slice/dead/diagnostics query types appear in the live window), so the 54% fallback rate is not TLDR doing its own job — it is the kill-switch-order path (CCV3_KILLSWITCH -> CCV3_CODEGRAPH_OFF -> binary-absent -> TLDR) firing on more than half of calls. Investigate WHICH leg fires: instrument the fallback branch in scripts/code-intel.mjs to log the fallback reason (env flag vs binary-absent vs missing .codegraph DB in the query cwd) to intel-bus, then re-measure. Separately, the C.5 gate as written (facade-route adoption vs bypass) remains unmeasurable per D1b-01 — 37 codegraph rows over 7 days cannot evidence an 80% gate whose denominator is never logged."
+    },
+    {
+      "id": "D9-04",
+      "title": "Agent-recall telemetry shows the working agent fleet is ~8 of 36: 30 agents (incl. oracle, debug-agent, sleuth, architect, phoenix, arbiter — the agents the rules route to) have NEVER hit the recall surface; activity is dominated by the review pipeline (codex-adversary+critic+plan-reviewer = 39/78 = 50%), and banned 'Explore' appears 8 times",
+      "severity": "S2",
+      "confidence": "VERIFIED",
+      "evidence": [
+        {
+          "file": "docs/reviews/2026-06-10/harvest/table-agent-recall.json",
+          "lines": "2-5",
+          "quote": "  \"rows\": 78,\n  \"by_subagent\": {\n    \"codex-adversary\": 23,\n    \"scout\": 16,"
+        },
+        {
+          "file": "docs/reviews/2026-06-10/harvest/table-agent-recall.json",
+          "lines": "8-9",
+          "quote": "    \"Explore\": 8,\n    \"plan-reviewer\": 4,"
+        },
+        {
+          "file": ".claude/rules/use-scout-not-explore.md",
+          "lines": "3",
+          "quote": "For codebase exploration tasks, use `scout` (Sonnet) instead of `Explore` (Haiku)."
+        }
+      ],
+      "proposed_class": "simplify",
+      "leverage": "structural",
+      "seed_ref": null,
+      "dedup_keys": [
+        "table-agent-recall.json:agents_never_appearing",
+        ".claude/agents:fleet-pruning",
+        "use-scout-not-explore:Explore-violation"
+      ],
+      "causal_links": [
+        "D2b-03",
+        "D9-01"
+      ],
+      "telemetry": "78 rows: codex-adversary 23, scout 16, kraken 12, critic 12, Explore 8, plan-reviewer 4, Plan 2, spark 1; agents_never_appearing = 30/36 (incl. all debug/research/deploy/orchestration agents)",
+      "observe_how": "Two readings, both actionable: (1) if the 30 absent agents are never spawned, the 36-agent inventory advertised in CLAUDE.md/agent docs is ~78% dead weight — maintenance cost (model-selection rules, validation hooks, docs) with no usage; cross-check by grepping Task-tool spawn telemetry (Braintrust traces) for any spawn of the 30 names over the same window. (2) If they ARE spawned but never reach agent-recall-injector, the injector's matcher misses them (consistent with D2b-01 Agent/Task matcher split-brain). Either way the surface is double-dead: per D2b-03 the injector yielded 0 memories in all 78 fires that DID happen. The 8 'Explore' rows are a live violation of use-scout-not-explore.md observable directly in telemetry — a cheap compliance probe for any future rules-adherence check. Recommend: prune or archive never-used agents, or fix injector coverage, before investing further in per-agent memory."
+    },
+    {
+      "id": "D9-05",
+      "title": "Codex-lift telemetry inverts the review pipeline's assumed hierarchy (codex_only 77 > claude_only 49, overlap only 14/140) — the single cross-model pass out-finds the multi-agent Claude review arm, the 'both-flag = high-confidence' synthesis rule almost never has material (1.4 findings/run), and the log tracks raw counts with no accepted/rejected disposition, so the designed ROI decision cannot actually be made from it",
+      "severity": "S2",
+      "confidence": "VERIFIED",
+      "evidence": [
+        {
+          "file": "docs/reviews/2026-06-10/harvest/table-codex-pageindex.json",
+          "lines": "4-6",
+          "quote": "    \"total_claude_only\": 49,\n    \"total_codex_only\": 77,\n    \"total_both\": 14"
+        },
+        {
+          "file": ".claude/rules/codex-adversarial.md",
+          "lines": "87",
+          "quote": "The `codex_only` count IS the cross-model lift — if it's consistently zero, the Codex pass isn't earning its quota cost and should be reconsidered."
+        },
+        {
+          "file": ".claude/rules/codex-adversarial.md",
+          "lines": "83",
+          "quote": "Findings that BOTH critic and codex-adversary flag are high-confidence - the cross-model lift is exactly the findings only one side catches."
+        }
+      ],
+      "proposed_class": "investigate",
+      "leverage": "quick-win",
+      "seed_ref": null,
+      "dedup_keys": [
+        "table-codex-pageindex.json:codex_lift",
+        ".claude/logs/codex-lift.jsonl:schema-disposition",
+        ".claude/rules/codex-adversarial.md:roi-metric"
+      ],
+      "causal_links": [],
+      "telemetry": "10 runs: claude_only 49, codex_only 77, both 14 (overlap = 10% of 140 distinct findings; both averages 1.4/run)",
+      "observe_how": "The rule's own kill-criterion (codex_only consistently zero) is decisively NOT met — Codex earns its quota on this metric. But the inverse comparison is the real signal: a single gpt-5.5 pass produces 57% more unique findings than the parallel Opus critic+plan-reviewer arm. Three non-exclusive explanations the current schema cannot distinguish: Claude reviewers under-detect; finding granularity/dedup differs per source (one side splits, the other merges); or Codex over-reports unvalidated noise. Fix is one schema field: extend the codex-lift.jsonl row (emitted by /review and /premortem per codex-adversarial.md §Telemetry) with per-source accepted/rejected disposition recorded at synthesis time, then ROI = accepted-codex_only per quota-dollar becomes computable. Until then, treat 77-vs-49 as a precision-unknown count, not a verdict that the Claude review arm is redundant."
+    }
+  ],
+  "coverage_manifest": [
+    "(a) memory-recall table: INTERPRETED — 27.4% hit serves 'main' exclusively (281/281); pollution-only fix caps surface at ~36% best-case, floor math (D3b-01/08) + corpus are co-dominant; zero 'local'-sourced rows corroborates D3b-03/06 dead local arm -> D9-01",
+    "(b) intel-bus table: INTERPRETED — bus is an agent-null monologue (318/318 live rows unattributed; lifetime non-null = main 222 + codex-adversary 4), corr-null 60.7% makes §9 cohesion metrics and per-agent C.5 evidence uncomputable (cross-linked D1A-001, D4a-01/03) -> D9-02; codegraph 37 rows = 45.7% in-facade share (37/81 eligible, exact accounting vs tldr 44 fallbacks), NOT on track for the >=80% C.5 gate, whose true bypass denominator has zero data (D1b-01) -> D9-03",
+    "(c) agent-recall table: INTERPRETED — 30/36 agents never appear (incl. every debug/research/deploy agent the rules route to); live fleet ~8, 50% of activity is the review pipeline; 8 rows from rule-banned 'Explore'; surface double-dead with D2b-03's 0-for-78 yield -> D9-04",
+    "(d) codex-lift table: INTERPRETED — codex_only 77 vs claude_only 49, both 14: cross-model lift confirmed by the rule's own metric, but ratio inverts the pipeline's hierarchy and the log lacks accepted/rejected disposition, so the designed ROI decision is not computable from it -> D9-05",
+    "pageindex (16 rows, table-codex-pageindex.json): NO NEW FINDING — near-dead pillar already covered by D1a/D7a/GAP1 and the 2026-06-01 hook-disable operational note; duplicating would violate dedup"
+  ],
+  "notes": "D9 is a telemetry-interpretation dimension: per the brief, evidence necessarily cites the assigned harvest tables (docs/reviews/2026-06-10/harvest/table-*.json + SUMMARY.md) as the telemetry source — the docs/reviews exclusion is understood to bar findings ABOUT review artifacts, not the assigned interpretation evidence. Each finding pairs the table quote with at least one non-excluded repo source quote (.claude/rules/*, docs/ccv3-*) grounding the mechanism or the contract being measured against. Key verifiable arithmetic: (1) memory-recall pollution bound — 77 hits / (281-69) clean rows = 36.3% ceiling; (2) intel-bus live accounting closes exactly — null specialist 193 = sum of 5 bus-plumbing query types, and codegraph 37 + tldr 44 = 81 = find-symbol 53 + who-calls 25 + code-context 3, proving every live tldr row is a codegraph fallback; (3) codex overlap 14/140 = 10%. No raw jsonl was loaded (tables + SUMMARY only, per instructions). No S3 findings emitted (cap untouched). Read-only throughout; no test execution."
+}

@@ -1,0 +1,261 @@
+{
+  "dimension": "D8a",
+  "findings": [
+    {
+      "id": "D8a-01",
+      "title": "RULES.md Maestro Mode [C:10] claims agents are BLOCKED by maestro-enforcer until interview completes — but the hook is registered only under the dead 'Agent' matcher (repo, active, AND template), so the C:10 blocking guarantee never fires in production",
+      "severity": "S1",
+      "confidence": "VERIFIED",
+      "seed_ref": "SEED-11",
+      "evidence": [
+        {
+          "file": ".claude/templates/RULES.md.template",
+          "lines": "218-222",
+          "quote": "When Maestro is active, agents are BLOCKED until interview phase completes.\n- Phases: recon -> interview -> approval -> execute\n- Skipping interview = blocked by `maestro-enforcer` hook"
+        },
+        {
+          "file": ".claude/settings.json",
+          "lines": "21,55",
+          "quote": "\"matcher\": \"Agent\",\n... \"command\": \"node C:/Users/david.hayes/.claude/hooks/dist/maestro-enforcer.mjs\","
+        },
+        {
+          "file": ".claude/hooks/src/maestro-enforcer.ts",
+          "lines": "131-132",
+          "quote": "// Only process Agent/Task tool calls\n    if (input.tool_name !== 'Agent' && input.tool_name !== 'Task') {"
+        }
+      ],
+      "causal_links": [
+        "D2b-01",
+        "D2b-13"
+      ],
+      "proposed_class": "fix",
+      "observe_how": "Activate Maestro state, attempt a subagent spawn before 'interview complete' — no deny fires; or check hook logs for zero maestro-enforcer PreToolUse activations despite live Maestro sessions.",
+      "telemetry": "D2b-01 verified the live subagent tool matches 'Task' (Task-matched agent-recall-injector has 78 logged fires; Agent-matched hooks have none). maestro-enforcer.ts:132 already accepts both tool names internally, so the registration matcher is the single point of failure — a one-word matcher fix ('Agent' -> 'Task' or 'Agent|Task') in repo settings.json, active settings.json, and settings.json.template restores the documented C:10 gate.",
+      "leverage": "quick-win",
+      "dedup_keys": [
+        ".claude/hooks/src/maestro-enforcer.ts",
+        ".claude/templates/RULES.md.template:Maestro-Mode",
+        ".claude/settings.json:maestro-enforcer",
+        "matcher-Agent-vs-Task"
+      ]
+    },
+    {
+      "id": "D8a-02",
+      "title": "hook-auto-execute.md tells Claude to execute, without asking, ANY bash command found in a PreToolUse deny reason ('The hook already authorized the redirect') — but the named redirects are dead (Agent-matcher split-brain, no hook emits the cited 'Routing to' pattern), and the live denier whose messages this rule auto-executes is smart-search-router, whose suggestions include the banned Explore spawn and a Windows-broken rg fallback",
+      "severity": "S1",
+      "confidence": "VERIFIED",
+      "seed_ref": null,
+      "evidence": [
+        {
+          "file": ".claude/rules/hook-auto-execute.md",
+          "lines": "3",
+          "quote": "When a PreToolUse hook blocks with `permissionDecision: deny` and the reason contains a bash command, **immediately execute that command via Bash** without asking."
+        },
+        {
+          "file": ".claude/rules/hook-auto-execute.md",
+          "lines": "16-18",
+          "quote": "Run `<command>` via Bash immediately. These are pre-authorized infrastructure redirects (Task→Agentica, Grep→AST-grep, etc).\n\nDo NOT ask user permission. The hook already authorized the redirect."
+        },
+        {
+          "file": ".claude/hooks/src/smart-search-router.ts",
+          "lines": "508-509,547",
+          "quote": "permissionDecision: 'deny',\n        permissionDecisionReason: reason\n... ```bash"
+        }
+      ],
+      "causal_links": [
+        "D2b-01",
+        "D2b-06",
+        "D2b-10",
+        "GAP4-01",
+        "GAP3-01"
+      ],
+      "proposed_class": "fix",
+      "observe_how": "grep -rn 'Routing to' .claude/hooks/src/*.ts returns zero hits (the rule's trigger pattern exists in no hook source); trigger any Grep deny from smart-search-router and watch the rule instruct unconditional execution of its embedded ```bash block.",
+      "telemetry": "The rule is always-in-context (loaded from .claude/rules/ every session). It converts hook deny text into a trusted no-confirmation command-execution channel, directly contradicting destructive-commands.md's confirm-first regime, and stacks with permission-auto-allow (GAP3-01) which suppresses the OS-level prompt. The 'pre-authorized' premise is false: no Agentica redirect hook is registered and the deny reasons it would auto-run today come from a hook D2b-06/D2b-10 found emitting banned-spawn instructions and an injection-prone broken fallback. Fix: scope the rule to an explicit allowlist of redirect commands, or delete it.",
+      "leverage": "structural",
+      "dedup_keys": [
+        ".claude/rules/hook-auto-execute.md",
+        "deny-reason-auto-execute",
+        ".claude/hooks/src/smart-search-router.ts:deny-command"
+      ]
+    },
+    {
+      "id": "D8a-03",
+      "title": "sync-known-gaps.md AND manual-sync.md both claim hooks/src/*.ts auto-syncs repo->active — but sync-to-active.sh deliberately EXCLUDES hooks/src ('copying src stomps mtimes and breaks hook-dist-freshness'); the two always-in-context sync tables describe the pre-ddc0641 world",
+      "severity": "S2",
+      "confidence": "VERIFIED",
+      "seed_ref": null,
+      "evidence": [
+        {
+          "file": ".claude/rules/sync-known-gaps.md",
+          "lines": "7",
+          "quote": "| `hooks/src/*.ts` | Yes | Post-commit hook copies | N/A |"
+        },
+        {
+          "file": ".claude/rules/manual-sync.md",
+          "lines": "33",
+          "quote": "| hooks/src/ | ✓ |"
+        },
+        {
+          "file": "scripts/sync-to-active.sh",
+          "lines": "37-38",
+          "quote": "# hooks/src excluded: dist/*.mjs is what runs; copying src stomps mtimes and breaks hook-dist-freshness.\nSYNC_DIRS=\"rules agents skills scripts docs\""
+        }
+      ],
+      "causal_links": [
+        "D10b-01",
+        "D10b-03"
+      ],
+      "proposed_class": "fix",
+      "observe_how": "Edit any .claude/hooks/src/*.ts in the repo, commit, then diff against ~/.claude/hooks/src/ — the active copy never updates; only hooks/dist/*.mjs is copied (sync-to-active.sh:128-141).",
+      "telemetry": "Both rule files load into every session's context. A session debugging an active hook per these tables reads ~/.claude/hooks/src expecting repo parity (it can be arbitrarily stale), or skips a manual step believing src auto-syncs. The remaining table rows (hooks/dist, scripts/ralph, templates/ralph, docs) were verified TRUE against sync-to-active.sh:128-190, so this is a two-row doc fix, not a script change.",
+      "leverage": "quick-win",
+      "dedup_keys": [
+        ".claude/rules/sync-known-gaps.md:hooks-src-row",
+        ".claude/rules/manual-sync.md:hooks-src-row",
+        "scripts/sync-to-active.sh:SYNC_DIRS"
+      ]
+    },
+    {
+      "id": "D8a-04",
+      "title": "plan-to-ralph-enforcement.md asserts 'there is no separate hook-enforced approval step in plan mode' and 'The dialog *is* the gate' — stale on the live machine, where plan-mode-approval-gate IS registered on PreToolUse:ExitPlanMode (active-only); the rule is the canonical doc for deciding whether bypass mode is safe for plan workflows and no longer describes reality",
+      "severity": "S2",
+      "confidence": "VERIFIED",
+      "seed_ref": null,
+      "evidence": [
+        {
+          "file": ".claude/rules/plan-to-ralph-enforcement.md",
+          "lines": "40",
+          "quote": "**That dialog is the user-approval gate** — there is no separate hook-enforced approval step in plan mode."
+        },
+        {
+          "file": ".claude/rules/plan-to-ralph-enforcement.md",
+          "lines": "53",
+          "quote": "**Recommendation:** for plan-mode workflows where the human-approval step matters, run without bypass. The dialog *is* the gate."
+        },
+        {
+          "file": "docs/reviews/2026-06-10/harvest/registrations-active.json",
+          "lines": "93-96",
+          "quote": "\"event\": \"PreToolUse\",\n    \"matcher\": \"ExitPlanMode\",\n    \"command\": \"node C:/Users/david.hayes/.claude/hooks/dist/plan-mode-approval-gate.mjs\""
+        }
+      ],
+      "causal_links": [
+        "D2a-05",
+        "D2a-08"
+      ],
+      "proposed_class": "document",
+      "observe_how": "Compare the rule's 'Bypass-Permissions Interaction' table against active ~/.claude/settings.json: plan-mode-approval-gate fires on every ExitPlanMode, which the rule says cannot exist. D2a-05 documents the gate's own bypass-mode downgrade bug — the rule should describe both.",
+      "telemetry": "Three-way split: the rule says no hook gate exists; the active machine runs one; the repo/template don't register it (D2a-08, SEED-15 class). Update the rule to name plan-mode-approval-gate, its D2a-05 silent-downgrade caveat, and the registration drift — otherwise the bypass-mode safety recommendation is reasoned from a false premise in every session.",
+      "leverage": "quick-win",
+      "dedup_keys": [
+        ".claude/rules/plan-to-ralph-enforcement.md:bypass-section",
+        ".claude/hooks/src/plan-mode-approval-gate.ts",
+        "plan-mode-approval-gate-registration"
+      ]
+    },
+    {
+      "id": "D8a-05",
+      "title": "new-machine-setup.md Quick Start commands fail at step 2: 'cd ~/continuous-claude && python wizard.py' (wizard.py is at opc/scripts/setup/wizard.py, run via `uv run python -m scripts.setup.wizard` per BOOTSTRAP.md) and 'bash verify-setup.sh' (actual: scripts/verify-setup.sh); component table lists root-level templates that live under .claude/",
+      "severity": "S2",
+      "confidence": "VERIFIED",
+      "seed_ref": null,
+      "evidence": [
+        {
+          "file": ".claude/rules/new-machine-setup.md",
+          "lines": "25-27",
+          "quote": "1. Clone the repo: `git clone <repo-url> ~/continuous-claude`\n2. Run the wizard: `cd ~/continuous-claude && python wizard.py`\n3. Verify: `bash verify-setup.sh`"
+        },
+        {
+          "file": "BOOTSTRAP.md",
+          "lines": "17-22",
+          "quote": "git clone https://github.com/parcadei/Continuous-Claude-v3.git continuous-claude\ncd continuous-claude/opc\nuv run python -m scripts.setup.wizard"
+        }
+      ],
+      "causal_links": [
+        "D2g-01",
+        "GAP3-03"
+      ],
+      "proposed_class": "fix",
+      "observe_how": "Run the rule's step 2 verbatim from repo root: `python wizard.py` -> 'can't open file ... wizard.py: No such file or directory' (verified absent via ls; actual paths via git ls-files: opc/scripts/setup/wizard.py, scripts/verify-setup.sh, .claude/templates/RULES.md.template).",
+      "telemetry": "This rule is in every session's context as THE new-machine pointer; BOOTSTRAP.md (the doc it defers to) has the correct flow, so the fix is aligning four paths in the rule. Note the deeper bootstrap problem is what the wizard installs (D2g-01: template resurrects disabled hooks; GAP3-03/SEED-15: template lacks package-install-guard and permission posture) — fixing the command paths makes users reach that flawed template faster, so cross-link on remediation.",
+      "leverage": "quick-win",
+      "dedup_keys": [
+        ".claude/rules/new-machine-setup.md:quick-start",
+        "wizard.py-path",
+        "verify-setup.sh-path"
+      ]
+    },
+    {
+      "id": "D8a-06",
+      "title": "opencli-first.md tells Claude to use Claude-in-Chrome for interactive browser tasks while browser-automation.md marks claude-in-chrome DEPRECATED at [C:10] in the same always-loaded rule set",
+      "severity": "S3",
+      "confidence": "VERIFIED",
+      "seed_ref": null,
+      "evidence": [
+        {
+          "file": ".claude/rules/opencli-first.md",
+          "lines": "23",
+          "quote": "- Interactive browser tasks: Claude-in-Chrome"
+        },
+        {
+          "file": ".claude/rules/browser-automation.md",
+          "lines": "42-43",
+          "quote": "- `claude-in-chrome` (tabs_context_mcp, read_page, computer, form_input) -- DEPRECATED\n- Do NOT use these for new browser tasks"
+        }
+      ],
+      "causal_links": [],
+      "proposed_class": "fix",
+      "observe_how": "Both rules load into every session; a browser-task routing decision reads contradictory instructions depending on which rule it anchors on.",
+      "telemetry": "One-line payoff: replacing two Claude-in-Chrome mentions in opencli-first.md with '@playwright/mcp' removes a direct C:10 contradiction from the always-in-context rule set.",
+      "leverage": "quick-win",
+      "dedup_keys": [
+        ".claude/rules/opencli-first.md:claude-in-chrome",
+        ".claude/rules/browser-automation.md:deprecated"
+      ]
+    }
+  ],
+  "coverage_manifest": [
+    "agent-memory-recall.md — OK: claimed memory-awareness hook registered (UserPromptSubmit, active+repo) and emits 'MEMORY MATCH' (memory-awareness.ts:694).",
+    "agent-model-selection.md — OK: guidance-only, no hook-enforcement claims (no-haiku-enforcer exists but is unclaimed; its weak string match is D2a-11).",
+    "browser-automation.md — OK: no hook claims; its C:10 claude-in-chrome deprecation is contradicted by opencli-first.md (D8a-06).",
+    "claim-verification.md — FALSE ENFORCEMENT CLAIM (line 64: 'epistemic-reminder hook injects warnings after Grep results') — hook registered but dead (reads input.tool, not tool_name); already on disk as D2d-03, not re-filed.",
+    "cli-integration-strategy.md — OK-mostly: inventory doc; codex/kusto/linear/sentry integration rows spot-checked plausible; no load-bearing enforcement claim found false.",
+    "code-intel-boundaries.md — VERIFIED: kill-switch order CCV3_KILLSWITCH->CCV3_CODEGRAPH_OFF matches scripts/code-intel.mjs:366-367; single-writer bus claim consistent (context-bus.ts header + no other bus writer in hooks/src); pageindex-navigator confirmed unregistered (registrations-diff).",
+    "codex-adversarial.md — VERIFIED: plan-exit-premortem-prompt registered (PostToolUse:ExitPlanMode, active); .claude/logs/codex-lift.jsonl and codex-lift.README.md exist; integration-files table paths exist.",
+    "cross-terminal-db.md — VERIFIED: checkFileClaim/claimFile SQL includes project filter (shared/db-utils-pg.ts:625,680) exactly as claimed.",
+    "destructive-commands.md — OK as written (model-side confirm-first policy) but operationally undermined by hook-auto-execute.md (D8a-02) and permission-auto-allow (GAP3-01).",
+    "dev-server-cleanup.md — OK: convention/port-registry doc, no enforcement claims.",
+    "dynamic-recall.md — OK: pointer stub to canonical memory skill.",
+    "git-sync-workflow.md — VERIFIED: reverse-sync abort-on-uncommitted guard present (scripts/sync-claude.sh:56-68 'ABORT: reverse-sync refused'); sync-to-repo hook confirmed unregistered (registrations-diff src_but_never_registered); post-commit forward sync confirmed (.git/hooks/post-commit calls sync-to-active.sh --skip-build). Background-race caveats are D10b-02.",
+    "hook-auto-execute.md — S1 FALSE PREMISE: D8a-02 (auto-execute deny-reason commands; named redirects dead; cited 'Routing to' pattern exists in no hook source).",
+    "hook-dev-lifecycle.md — OK-mostly: vitest claim correct, audit-braintrust-emits.sh exists, 'settings.json NOT auto-synced' consistent with sync scripts; PreToolUse output-shape row is simplified (omits hookSpecificOutput nesting) but matches hook practice.",
+    "knowledge-tree-health.md — OK at registration level: tree-invalidate, session-start-init-check, pageindex-watch all registered; behavioral defects in those hooks are D2e-05/06/07 and D2F-05, not new claim mismatches.",
+    "kusto-cli-safety.md — OK: model-side safety table, no hook claims.",
+    "linear-safety.md — OK: model-side safety table, no hook claims.",
+    "manual-sync.md — FALSE 'What Gets Synced' row (hooks/src ✓): D8a-03.",
+    "memory-usage-guidelines.md — VERIFIED: claimed L0 quality gate exists in the store path (opc/scripts/core/store_learning.py:585-650, NOISE rejection via validate_learning_quality).",
+    "neonctl-safety.md — OK: model-side safety table.",
+    "new-machine-setup.md — BROKEN bootstrap commands and wrong component paths: D8a-05.",
+    "nia-first-external.md — OK: model-side tool routing, no enforcement claims.",
+    "no-haiku.md — OK: model-side; enforcement hook exists but rule doesn't claim it (hook's 'haiku'-substring gap is D2a-11).",
+    "northstar-local-dev.md — OK: project URL note.",
+    "opencli-first.md — CONTRADICTS browser-automation.md C:10 deprecation: D8a-06.",
+    "package-install-safety.md — MIXED: support infrastructure verified REAL (scripts/update-blocklist.mjs, scheduled-blocklist-update.bat, malicious-packages.json exist; Task Scheduler job CCv3-Blocklist-Update queried live: Status Ready, next run 6/11/2026 9:00AM); but 'intercepts all package install commands' is false (D2a-02 compound-command bypass; D2a-03 lost deny reason) and the guard is active-only — absent from repo .claude/settings.json (verified) per SEED-15/D2a-08, so the rule over-promises for any template-bootstrapped machine.",
+    "paste-ready-deliverables.md — OK: formatting policy.",
+    "plan-to-ralph-enforcement.md — STALE 'no hook gate in plan mode' claim: D8a-04; core two-hook mechanism (plan-exit-tracker PostToolUse:ExitPlanMode + plan-to-ralph-enforcer PreToolUse:Edit|Write) verified registered in repo AND active; fail-open + stale-Ralph-state disable is D2a-06.",
+    "prefer-drizzle-orm.md — OK: stack preference, no enforcement claims.",
+    "proactive-delegation.md — OK: audit-braintrust-emits.sh exists (post-spark verification command valid); delegation guidance is model-side.",
+    "proactive-learning.md — OK: pointer stub.",
+    "proactive-memory-disclosure.md — OK: 'MEMORY MATCH' protocol matches the registered memory-awareness hook's actual output string (memory-awareness.ts:694).",
+    "project-registry.md — VERIFIED: .claude/project-registry.json exists in repo (plus .template).",
+    "railway-deploy.md — OK: model-side safety table.",
+    "sentry-safety.md — OK: model-side safety table; the sentry hooks it presupposes are registered active-only (registration drift covered by D2e-11/GAP3-03).",
+    "sync-known-gaps.md — FALSE hooks/src row: D8a-03; remaining rows (hooks/dist Yes, scripts/ralph Yes, templates/ralph Yes, docs Yes, settings.json NO) verified TRUE against scripts/sync-to-active.sh:37-190.",
+    "terminal-command-format.md — OK: formatting policy.",
+    "tldr-cli.md — OK: CLI reference; makes no hook-enforcement claims (tldr-read-enforcer/tldr-context-inject issues are D2b-08/12, unclaimed here).",
+    "use-scout-not-explore.md — OK as guidance; the system-level contradiction (smart-search-router deny text recommending Explore) is D2b-06.",
+    "windows-platform.md — VERIFIED: codegraph contract test exists at .claude/hooks/src/__tests__/codegraph-platform-contract.test.ts as claimed; no enforcement-claim mismatch found (test not executed per read-only rule).",
+    "RULES.md.template (SEED-11 scope) — SPLIT VERDICT: ralph-delegation soft-enforcement claim (line 213) ACCURATE — ralph-delegation-enforcer.ts:131-134 'Always allow - soft enforcement only'; Maestro Mode [C:10] BLOCKED claim (lines 218-222) FALSE in production -> D8a-01."
+  ],
+  "notes": "D8a method: enumerated all 40 active .claude/rules/*.md (plus RULES.md.template for SEED-11), extracted every enforcement claim ('hook X blocks/auto-runs/guards Y'), and verified each against (a) registrations-active.json / registrations-diff.json, (b) repo .claude/settings.json + settings.json.template, and (c) hook source for the load-bearing ten (maestro-enforcer, ralph-delegation-enforcer, plan-to-ralph pair, plan-mode-approval-gate registration, package-install-guard artifacts incl. live schtasks query of CCv3-Blocklist-Update, epistemic-reminder via D2d-03, memory-awareness, smart-search-router deny emitter, db-utils-pg SQL, sync scripts, code-intel.mjs kill-switch, store_learning.py quality gate). Findings already on disk were cross-linked, not re-filed: claim-verification.md's false epistemic-reminder claim (D2d-03), package-install-guard 'intercepts all' falsity (D2a-02/03), registration drift (D2a-08/D2e-11/GAP3-03/SEED-15), template resurrection (D2g-01). Largest systemic result: the two C:10 'Workflow Enforcement' claims in RULES.md split — Ralph soft-enforce is accurate, Maestro blocking is dead via the Agent/Task matcher split-brain (new instance beyond D2b-01's five hooks; src already handles both names so it is a one-word matcher fix in three settings files). Housekeeping observed but below S3 cap: .claude/rules/codex-adversarial.md.bak.20260518-224215 committed alongside the live rule. No tests executed; read-only throughout."
+}

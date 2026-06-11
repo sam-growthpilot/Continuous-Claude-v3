@@ -1,0 +1,325 @@
+[
+  {
+    "id": "D1b-03",
+    "title": "proposed_bus_updates is produced by the facade but has zero consumers: the always-in-context boundary rule claims a 'downstream SubagentStop writer' in present tense, yet no SubagentStop hook is registered anywhere and no hooks/src file references proposed_bus_updates — codegraph results never reach the bus",
+    "severity": "S1",
+    "confidence": "VERIFIED",
+    "proposed_class": "fix",
+    "seed_ref": null,
+    "evidence": [
+      {
+        "file": ".claude/rules/code-intel-boundaries.md",
+        "lines": "32",
+        "quote": "A downstream `SubagentStop` writer revalidates before applying; stale proposals are dropped. The facade never mutates `context.json`."
+      },
+      {
+        "file": "scripts/code-intel.mjs",
+        "lines": "1083-1084",
+        "quote": "      // TTL/validity stamp -- a downstream SubagentStop writer revalidates before\n      // applying. Stale (HEAD moved or corpus drifted) -> the proposal is dropped."
+      }
+    ],
+    "telemetry": "rg 'proposed_bus_updates' over .claude/hooks/src/ returns no matches (exit 1); rg 'SubagentStop' over .claude/settings.json and ~/.claude/settings.json returns no registrations. Every proposal is therefore dropped — not by revalidation, but by the consumer not existing. Consequence: the bus's focus_symbols never receive codegraph data, so the B.3 recall-biasing readers (memory-awareness/agent-recall) run on a starved bus (focus_count 0 in most live *_bus_read rows).",
+    "observe_how": "rg -n 'SubagentStop' .claude/settings.json C:/Users/david.hayes/.claude/settings.json; rg 'proposed_bus_updates' .claude/hooks/src/",
+    "leverage": "structural",
+    "dedup_keys": [
+      "scripts/code-intel.mjs",
+      "proposed_bus_updates",
+      "SubagentStop",
+      ".claude/rules/code-intel-boundaries.md"
+    ],
+    "causal_links": [
+      "D1b-01 (handoff-loss metric has no write-side event because this writer is missing)",
+      "memory-recall 27.4% hit-rate context: bus biasing cannot improve while the bus never receives specialist output"
+    ],
+    "_dim": "D1b",
+    "cluster_id": "C006"
+  },
+  {
+    "id": "D2a-01",
+    "title": "navigator-safety AUTO-APPROVES destructive Bash commands: emits permissionDecision 'allow' on rm -rf / git push --force / DROP TABLE, bypassing the permission prompt it claims to reinforce",
+    "severity": "S1",
+    "confidence": "VERIFIED",
+    "evidence": [
+      {
+        "file": ".claude/hooks/src/navigator-safety.ts",
+        "lines": "175-181",
+        "quote": "      hookEventName: 'PreToolUse',\n      permissionDecision: 'allow',\n      permissionDecisionReason: warning,"
+      },
+      {
+        "file": ".claude/hooks/src/navigator-safety.ts",
+        "lines": "9",
+        "quote": " * Does NOT block - existing hooks (git-memory-check, etc.) handle blocking."
+      },
+      {
+        "file": ".claude/hooks/src/navigator-safety.ts",
+        "lines": "144",
+        "quote": "  lines.push('Ensure user has confirmed this operation.');"
+      }
+    ],
+    "proposed_class": "fix",
+    "leverage": "strategic",
+    "seed_ref": null,
+    "dedup_keys": [
+      ".claude/hooks/src/navigator-safety.ts",
+      "buildSafetyWarning",
+      "permissionDecision-allow-bypass"
+    ],
+    "causal_links": [
+      "D2a-12"
+    ],
+    "observe_how": "Per Claude Code PreToolUse semantics (and the repo's own schemas.md allow|deny|ask contract), an explicit 'allow' from any PreToolUse hook bypasses the permission system entirely — the user confirmation dialog that would normally gate an un-allowlisted `rm -rf`, `git reset --hard`, `git push --force`, or `DROP TABLE` is suppressed, and permissionDecisionReason on 'allow' is shown to the user, NOT to Claude. So the hook that exists to surface destructive-command rules 'for Claude's consideration' instead (a) never reaches Claude and (b) actively removes the human gate for exactly the dangerous commands it matches. It is registered live on matcher Bash in repo .claude/settings.json lines 100-108. Fix: drop the permissionDecision entirely and emit the warning via exit-0 stdout JSON with no decision (or switch to 'ask' for the high-risk patterns).",
+    "telemetry": "Reproduce: in a session where `rm -rf <dir>` is not allowlisted, observe no permission dialog appears because the hook returned allow.",
+    "_dim": "D2a",
+    "cluster_id": "C006"
+  },
+  {
+    "id": "D2b-01",
+    "title": "Matcher split-brain: 5 Task-router hooks registered under matcher \"Agent\" while the live subagent tool matches \"Task\" — explore-to-scout, task-router, ralph-template-inject, pre-tool-knowledge, tldr-context-inject are dead registrations",
+    "severity": "S1",
+    "confidence": "VERIFIED",
+    "evidence": [
+      {
+        "file": ".claude/settings.json",
+        "lines": "21,30",
+        "quote": "        \"matcher\": \"Agent\","
+      },
+      {
+        "file": ".claude/settings.json",
+        "lines": "30",
+        "quote": "            \"command\": \"node C:/Users/david.hayes/.claude/hooks/dist/explore-to-scout.mjs\","
+      },
+      {
+        "file": ".claude/logs/agent-recall.jsonl",
+        "lines": "last row",
+        "quote": "\"results_count\":0,\"kept_after_floor\":0,\"top_score\":0,\"timestamp\":\"2026-06-10T15:22:10.534Z\"}"
+      }
+    ],
+    "proposed_class": "fix",
+    "leverage": "structural",
+    "seed_ref": null,
+    "dedup_keys": [
+      ".claude/settings.json",
+      ".claude/hooks/src/explore-to-scout.ts",
+      ".claude/hooks/src/task-router.ts",
+      ".claude/hooks/src/ralph-template-inject.ts",
+      ".claude/hooks/src/pre-tool-knowledge.ts",
+      ".claude/hooks/src/tldr-context-inject.ts",
+      "matcher-Agent-vs-Task"
+    ],
+    "causal_links": [
+      "D2b-02 (one of its three kill shots)",
+      "D2b-08 (renders its infinite loop latent)"
+    ],
+    "observe_how": "agent-recall-injector is registered with matcher \"Task\" (active ~/.claude/settings.json) and wrote a row TODAY (2026-06-10T15:22) — proving the live spawn tool matches \"Task\". \"Agent\" as a regex cannot match \"Task\", so the 5-hook cohort never fires unless the harness aliases names. Decisive probe: spawn Task(subagent_type=\"Explore\") — if it is NOT denied, explore-to-scout is dead. agent-recall.jsonl already shows 8 \"Explore\" spawn attempts logged, none visibly converted to scout.",
+    "telemetry": "agent-recall.jsonl: 78 rows incl. subagent_type Explore:8 — Explore spawns flow through the Task-matched hook while the Explore-blocking hook sits on the Agent matcher",
+    "_dim": "D2b",
+    "cluster_id": "C006"
+  },
+  {
+    "id": "D2b-02",
+    "title": "ralph-template-inject is dead code three independent ways: gates on nonexistent `data.event` field, emits unsupported `modifiedInput` key, and sits on the dead \"Agent\" matcher — its advertised Maestro-template guarantee silently never happens",
+    "severity": "S1",
+    "confidence": "VERIFIED",
+    "evidence": [
+      {
+        "file": ".claude/hooks/src/ralph-template-inject.ts",
+        "lines": "129",
+        "quote": "        if (data.event !== 'PreToolUse' || (data.tool_name !== 'Agent' && data.tool_name !== 'Task')) {"
+      },
+      {
+        "file": ".claude/hooks/src/ralph-template-inject.ts",
+        "lines": "150",
+        "quote": "                modifiedInput: { prompt: modifiedPrompt },"
+      },
+      {
+        "file": ".claude/skills/hook-developer/references/schemas.md",
+        "lines": "33",
+        "quote": "    \"updatedInput\": {}"
+      }
+    ],
+    "proposed_class": "delete",
+    "leverage": "quick-win",
+    "seed_ref": null,
+    "dedup_keys": [
+      ".claude/hooks/src/ralph-template-inject.ts",
+      "shouldInjectTemplates",
+      "buildInjectedPrompt",
+      "modifiedInput"
+    ],
+    "causal_links": [
+      "caused-by D2b-01 (dead matcher is kill shot #3)"
+    ],
+    "observe_how": "Hook input carries `hook_event_name` (see tldr-context-inject.ts:30 interface and schemas.md), never `event` — so `data.event` is always undefined and the hook unconditionally prints {result:'allow'}. Even if reached, `modifiedInput` is not the documented key (`updatedInput` per the repo's own schema), and explore-to-scout.ts:6 header states \"Claude Code does NOT support modifiedInput\". The hook header claims it prevents \"the common failure mode where templates are forgotten\" — a decision-driving false claim.",
+    "telemetry": "No fire evidence anywhere; sibling hook explore-to-scout.ts header documents the modifiedInput non-support",
+    "_dim": "D2b",
+    "cluster_id": "C006"
+  },
+  {
+    "id": "D2b-03",
+    "title": "agent-recall-injector (DELICATE prior-regression file): 0-for-78 lifetime memory yield — every fire since 2026-05-16 logged results_count:0; root cause is extractIntent passing the entire multi-KB Task prompt as the recall query plus a 3.5s recall budget that uv-run startup alone consumes",
+    "severity": "S1",
+    "confidence": "VERIFIED",
+    "evidence": [
+      {
+        "file": ".claude/hooks/src/agent-recall-injector.ts",
+        "lines": "57,332",
+        "quote": "const RECALL_TIMEOUT_MS = 3500;"
+      },
+      {
+        "file": ".claude/hooks/src/shared/intent-extractor.ts",
+        "lines": "71-74",
+        "quote": "  if (intent.length < 5) {\n    return extractKeywords(prompt);\n  }\n  return intent;"
+      },
+      {
+        "file": ".claude/logs/agent-recall.jsonl",
+        "lines": "all 78 rows",
+        "quote": "\"results_count\":0,\"kept_after_floor\":0,\"top_score\":0,\"timestamp\":\"2026-06-10T15:22:10.534Z\"}"
+      }
+    ],
+    "proposed_class": "fix",
+    "leverage": "strategic",
+    "seed_ref": "SEED-13",
+    "dedup_keys": [
+      ".claude/hooks/src/agent-recall-injector.ts",
+      ".claude/hooks/src/shared/intent-extractor.ts",
+      "extractIntent",
+      "defaultRecall",
+      "RECALL_TIMEOUT_MS"
+    ],
+    "causal_links": [
+      "same root-cause class as SEED-13 (extractIntent passthrough pollutes recall intents)",
+      "amplified by SEED-08 (uv-run startup dominates the 3.5s budget)",
+      "D2b-04 (even the 17 focus-block injections depend on undocumented PreToolUse additionalContext)"
+    ],
+    "observe_how": "node -e over .claude/logs/agent-recall.jsonl: 78 rows, withResults=0, kept_after_floor>0 = 0, avg intent length 2617 chars, max 8826 (full '## Mode\\ncode\\n\\n## Scope...' prompts stored verbatim as both `intent` and `recall_query`). extractIntent only strips leading meta-phrases, so any structured agent prompt passes through whole; the FTS query on an 8KB blob returns nothing or exceeds spawnSync's 3.5s SIGKILL. The sanitization assembly (memory-sanitize.ts, bus-focus.ts: control-strip, allowlist, 60-char term cap, data-only wrapper) is the best-built injection path in this cohort — but it has never had recall content to deliver. Fragility notes for this delicate file: isDirectInvocation guard (lines 526-534) silently disables main() if the bundle is ever renamed; the jsonl row duplicates the full prompt in two fields (log bloat).",
+    "telemetry": "intel-bus.jsonl agent_recall_bus_read: 48 rows, injected_true=17, all 17 from focus_count>0 (bus focus blocks) — zero from memory recall. SUMMARY.md: 'agent-recall: 78 rows; agents never appearing: 30/36'",
+    "_dim": "D2b",
+    "cluster_id": "C006"
+  },
+  {
+    "id": "D2b-04",
+    "title": "Four injector hooks deliver their entire payload via PreToolUse `additionalContext`, a field the repo's own hooks schema does NOT define for PreToolUse — if the live harness ignores it, every context injection in this dimension is a silent no-op",
+    "severity": "S1",
+    "confidence": "INFERRED",
+    "evidence": [
+      {
+        "file": ".claude/skills/hook-developer/references/schemas.md",
+        "lines": "29-33",
+        "quote": "  \"hookSpecificOutput\": {\n    \"hookEventName\": \"PreToolUse\",\n    \"permissionDecision\": \"allow|deny|ask\","
+      },
+      {
+        "file": ".claude/hooks/src/agent-recall-injector.ts",
+        "lines": "440-442",
+        "quote": "    hookSpecificOutput: {\n      hookEventName: 'PreToolUse',\n      additionalContext,"
+      },
+      {
+        "file": ".claude/hooks/src/task-router.ts",
+        "lines": "165-168",
+        "quote": "    hookSpecificOutput: {\n      hookEventName: 'PreToolUse',\n      permissionDecision: 'allow',\n      additionalContext: message"
+      }
+    ],
+    "proposed_class": "investigate",
+    "leverage": "structural",
+    "seed_ref": null,
+    "dedup_keys": [
+      "additionalContext-on-PreToolUse",
+      ".claude/hooks/src/task-router.ts",
+      ".claude/hooks/src/pre-tool-knowledge.ts",
+      ".claude/hooks/src/pre-plan-memory.ts",
+      ".claude/hooks/src/agent-recall-injector.ts"
+    ],
+    "causal_links": [
+      "gates whether D2b-03's 17 focus-block injections ever reached an agent",
+      "affects D2b-11 payload delivery"
+    ],
+    "observe_how": "schemas.md documents additionalContext only for PostToolUse (L78), UserPromptSubmit (L114) and SessionStart; PreToolUse output lists permissionDecision/permissionDecisionReason/updatedInput only. The repo's own hook-dev-lifecycle rule states 'Context injection: PostToolUse additionalContext is the reliable inject pattern'. Probe: spawn a Task while the bus has fresh focus_symbols and check whether the SESSION FOCUS block appears in the subagent transcript; or check the installed Claude Code version's hooks reference. pre-tool-knowledge additionally omits permissionDecision entirely and uses top-level {result:'continue'} (not a documented field).",
+    "telemetry": "No injection-receipt telemetry exists — injected=true in intel-bus only records that the hook EMITTED a block, not that the model received it",
+    "_dim": "D2b",
+    "cluster_id": "C006"
+  },
+  {
+    "id": "D2b-07",
+    "title": "Hook timeout unit error across all registrations: values are millisecond-scale (3000-60000) but the settings field is SECONDS per the repo's own schema — 'timeout: 30000' on smart-search-router/tldr-read-enforcer is ~8.3 hours, so no hook in this cohort has an effective hang cap",
+    "severity": "S1",
+    "confidence": "INFERRED",
+    "evidence": [
+      {
+        "file": ".claude/settings.json",
+        "lines": "76",
+        "quote": "            \"timeout\": 30000"
+      },
+      {
+        "file": ".claude/skills/hook-developer/references/schemas.md",
+        "lines": "338",
+        "quote": "            \"timeout\": 60"
+      },
+      {
+        "file": ".claude/settings.json",
+        "lines": "16",
+        "quote": "            \"timeout\": 5000"
+      }
+    ],
+    "proposed_class": "fix",
+    "leverage": "structural",
+    "seed_ref": null,
+    "dedup_keys": [
+      ".claude/settings.json",
+      "hook-timeout-units",
+      "schemas.md-timeout-60"
+    ],
+    "causal_links": [
+      "turns D2b-08's latent infinite loop into an unbounded session hang if ever revived",
+      "removes the intended cap on D2b-06 daemon stalls and D2b-09 DB stalls"
+    ],
+    "observe_how": "All 76 active registrations use 3000/5000/10000/15000/20000/30000/35000/60000 — exactly the numbers you'd write for ms — while the repo's own hook-developer SKILL.md (L101) and schemas.md (L338) registration examples use \"timeout\": 60 (seconds, matching official Claude Code docs). Verify: register a test hook with `sleep 10` and timeout: 5 vs 5000 and observe which is killed. If the harness clamps to a max, document the clamp; otherwise mass-convert values to seconds.",
+    "telemetry": "Timeout value distribution across active settings: {3000:7, 5000:37, 10000:20, 15000:5, 20000:1, 30000:4, 35000:1, 60000:1, none:5} — not a single value plausibly intended as seconds",
+    "_dim": "D2b",
+    "cluster_id": "C006"
+  },
+  {
+    "id": "D2c-01",
+    "title": "Intent-pollution root cause: no UserPromptSubmit hook filters Claude-Code synthetic prompts (<task-notification> etc.) before using them as recall intent / bus intent; expandGitQuery then swallows the whole XML blob",
+    "severity": "S1",
+    "confidence": "VERIFIED",
+    "seed_ref": "SEED-13",
+    "proposed_class": "fix",
+    "leverage": "structural",
+    "evidence": [
+      {
+        "file": ".claude/logs/memory-recall.jsonl",
+        "lines": "3",
+        "quote": "\"intent\":\"<task-notification>\\n<task-id>btm9rp4ie</task-id>\\n<tool-use-id>toolu_01WtsmufRAD6vMrDUydA6a6o</tool-use-id>\\n<output-file>... </output-file>\\n<status>completed</status>\\n<summary>Background command \\\"Commit Phase 1 memory hardening\\\" completed (exit code 0)</summary>\\n</task-notification> git remote workflow\""
+      },
+      {
+        "file": ".claude/hooks/src/memory-awareness.ts",
+        "lines": "512-528",
+        "quote": "// Skip very short prompts (greetings, commands)\n  if (input.prompt.length < 15) {\n...\n  const gitExpanded = expandGitQuery(input.prompt);\n...\n  const intent = gitExpanded || extractIntent(input.prompt);"
+      },
+      {
+        "file": ".claude/hooks/src/shared/intent-extractor.ts",
+        "lines": "36-42",
+        "quote": "const META_PATTERNS: RegExp[] = [\n  /^(can you|could you|would you|please|help me|i want to|i need to|let's|lets)\\s+/gi,\n...\n  /\\?$/g,\n];"
+      },
+      {
+        "file": ".claude/hooks/src/bus-session-populator.ts",
+        "lines": "58-64",
+        "quote": "function shouldSeed(prompt: string | undefined): boolean {\n  if (process.env.CLAUDE_AGENT_ID) return false;\n  if (typeof prompt !== 'string') return false;\n  if (prompt.length < MIN_PROMPT_LEN) return false;\n  if (prompt.trim().startsWith('/')) return false;\n  return true;\n}"
+      }
+    ],
+    "telemetry": "SUMMARY.md: intent-pollution 24.6%, memory-recall hit-rate 27.4%. memory-recall.jsonl rows where intent begins with '<task-notification>' or '<system-reminder>' are the population.",
+    "observe_how": "grep -c '\"intent\":\"<' .claude/logs/memory-recall.jsonl ; every match is a synthetic-prompt fire that ran a recall + logged + (via bus-session-populator) stamped the bus intent.",
+    "causal_links": [
+      "causes D2c-02 amplification",
+      "drives SUMMARY intent-pollution 24.6% and low hit-rate 27.4%"
+    ],
+    "dedup_keys": [
+      "memory-awareness.ts:main",
+      "memory-awareness.ts:expandGitQuery",
+      "intent-extractor.ts:extractIntent",
+      "bus-session-populator.ts:shouldSeed",
+      "<task-notification>"
+    ],
+    "_dim": "D2c",
+    "cluster_id": "C006"
+  }
+]

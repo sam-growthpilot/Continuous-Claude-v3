@@ -1,0 +1,198 @@
+{
+  "dimension": "D10c",
+  "findings": [
+    {
+      "id": "D10c-01",
+      "title": "CONFIRMED+EXTENDED (D1A-001): SubagentStop is unwired at the EVENT level — no SubagentStop key exists in repo settings, active settings, or the template; the only onSubagentStop handlers live in the never-registered patterns/ library, and the natural PostToolUse fallback vehicle (agent-verification) is dead-matched",
+      "severity": "S1",
+      "confidence": "VERIFIED",
+      "proposed_class": "fix",
+      "leverage": "structural",
+      "seed_ref": null,
+      "evidence": [
+        {
+          "file": ".claude/rules/code-intel-boundaries.md",
+          "lines": "32",
+          "quote": "A downstream `SubagentStop` writer revalidates before applying; stale proposals are dropped."
+        },
+        {
+          "file": ".claude/hooks/src/shared/types.ts",
+          "lines": "25",
+          "quote": "export interface SubagentStopInput {"
+        },
+        {
+          "file": ".claude/hooks/src/patterns/event-driven.ts",
+          "lines": "163",
+          "quote": "export async function onSubagentStop(input: SubagentStopInput): Promise<HookOutput> {"
+        },
+        {
+          "file": ".claude/hooks/src/agent-verification.ts",
+          "lines": "9",
+          "quote": " * Hook: PostToolUse:Task"
+        }
+      ],
+      "observe_how": "grep -n SubagentStop .claude/settings.json .claude/settings.json.template C:/Users/david.hayes/.claude/settings.json returns ZERO hits — the hooks objects in all three config surfaces contain no SubagentStop key at all (verified by parsing each JSON: event keys are PreToolUse/PostToolUse/UserPromptSubmit/SessionStart/SessionEnd/PreCompact[/PermissionRequest active-only]). grep -rn 'onSubagentStop' .claude/hooks/src returns only patterns/*.ts (adversarial, circuit-breaker, event-driven, blackboard, generator-critic, hierarchical, jury, map-reduce, pipeline, swarm, chain-of-responsibility) — none registered anywhere. So Pattern A (SubagentStop bus-commit) is not merely consumer-less (D1A-001/D4a-03/D4b-03): the event class has never been wired in this estate, and any fix must (1) author a new top-level SubagentStop hook, (2) register a brand-new event key on all three settings surfaces, AND (3) note the alternative PostToolUse:Agent vehicle (agent-verification/agent-error-capture, the only hooks that already parse agent output) is itself dead per D10c-02.",
+      "telemetry": "intel-bus 318 live rows incl. 37 codegraph rows carrying proposed_bus_updates with no landing zone (SUMMARY.md); 167 agent_spawned completions in ~/.claude/cache/skill-telemetry.jsonl with zero corresponding bus commits",
+      "dedup_keys": [
+        ".claude/settings.json",
+        ".claude/settings.json.template",
+        ".claude/hooks/src/shared/types.ts",
+        ".claude/hooks/src/patterns/event-driven.ts",
+        "SubagentStop",
+        "onSubagentStop",
+        "proposed_bus_updates-vehicle"
+      ],
+      "causal_links": [
+        "extends D1A-001 (no committer for proposed_bus_updates)",
+        "extends D4a-03 / D4b-03 (pipeline severed, writer asserted in present tense)",
+        "blocked-also-by D2b-01 + D10c-02 (the PostToolUse fallback vehicle sits on the dead Agent matcher)"
+      ]
+    },
+    {
+      "id": "D10c-02",
+      "title": "Matcher split-brain extends beyond D2b-01's 5 router hooks to the ENTIRE agent safety + verification chain: agent-model-guard, no-haiku-enforcer, navigator-validate, maestro-enforcer (PreToolUse) and agent-error-capture, agent-verification, ralph-task-monitor (PostToolUse) are all dead on matcher \"Agent\" in repo, active, AND template — every subagent spawn runs with zero pre-spawn guard and zero post-spawn verification",
+      "severity": "S1",
+      "confidence": "VERIFIED",
+      "proposed_class": "fix",
+      "leverage": "structural",
+      "seed_ref": null,
+      "evidence": [
+        {
+          "file": ".claude/settings.json",
+          "lines": "21-25",
+          "quote": "        \"matcher\": \"Agent\","
+        },
+        {
+          "file": ".claude/settings.json",
+          "lines": "306-310",
+          "quote": "            \"command\": \"node C:/Users/david.hayes/.claude/hooks/dist/agent-error-capture.mjs\","
+        },
+        {
+          "file": ".claude/hooks/src/agent-model-guard.ts",
+          "lines": "3,126",
+          "quote": " * Agent Existence Validation Hook (PreToolUse:Task)"
+        },
+        {
+          "file": ".claude/hooks/src/telemetry-tracker.ts",
+          "lines": "190,199",
+          "quote": "        } else if (data.tool_name === 'Task') {"
+        },
+        {
+          "file": ".claude/hooks/src/ralph-task-monitor.ts",
+          "lines": "310",
+          "quote": "  if (input.tool_name !== 'Agent' && input.tool_name !== 'Task') return;"
+        }
+      ],
+      "observe_how": "Live tool name proof: ~/.claude/cache/skill-telemetry.jsonl holds 167 type:'agent_spawned' rows — telemetry-tracker writes that type ONLY inside its `data.tool_name === 'Task'` branch (telemetry-tracker.ts:190-199) — and 0 rows reference an 'Agent' tool; agent-recall-injector (the lone matcher:\"Task\" hook, active-only) logged a row 2026-06-10T15:22 (D2b-01). A regex matcher \"Agent\" cannot match \"Task\", so all 7 hooks above never execute, even though every one of them internally accepts Task (agent-model-guard.ts:126, no-haiku-enforcer.ts:50, maestro-enforcer.ts:132, navigator-validate.ts:84, agent-error-capture.ts:210, agent-verification.ts:212, ralph-task-monitor.ts:310) and 5 of 7 self-document the correct event in their headers ('PreToolUse:Task' / 'PostToolUse:Task'). Net: no haiku block, no agent-existence validation, no Maestro phase gate, no FAILED_APPROACH capture, no claim verification, no Ralph task sync fires on any spawn. FIX-SEQUENCING CAUTION: flipping the matcher to Task would instantly ARM agent-error-capture's cmd.exe execSync string-interpolation injection (D2d-06) and its /\\berror\\b/ false-failure stores (D2d-07) — those are currently LATENT only because of this dead matcher; fix D2d-06/07 first or simultaneously.",
+      "telemetry": "skill-telemetry.jsonl: 167 agent_spawned (all via tool_name==='Task'), 0 'Agent'-named rows; SUMMARY.md: 30/36 agents never-recalled and corr-null 60.7% — partly downstream of the dead post-spawn chain (no agent error/verification/Braintrust emission ever runs)",
+      "dedup_keys": [
+        ".claude/settings.json",
+        ".claude/settings.json.template",
+        ".claude/hooks/src/agent-model-guard.ts",
+        ".claude/hooks/src/no-haiku-enforcer.ts",
+        ".claude/hooks/src/navigator-validate.ts",
+        ".claude/hooks/src/maestro-enforcer.ts",
+        ".claude/hooks/src/agent-error-capture.ts",
+        ".claude/hooks/src/agent-verification.ts",
+        ".claude/hooks/src/ralph-task-monitor.ts",
+        "matcher-Agent-vs-Task-safety-verification-cohort"
+      ],
+      "causal_links": [
+        "same root cause as D2b-01 (which scoped only the 5 router hooks: explore-to-scout, task-router, ralph-template-inject, pre-tool-knowledge, tldr-context-inject)",
+        "reclassifies D2a-09 (agent-model-guard fail-closed denial), D2a-11 (haiku-string bypass), D2d-05 (ralph-task-monitor tool_result), D2d-06/07 (agent-error-capture injection + false stores), D2d-08 (agent-verification message channel) from LIVE defects to LATENT — none of those hooks ever runs",
+        "kills the fallback vehicle for D10c-01 / D1A-001 (Pattern A bus commit)"
+      ]
+    },
+    {
+      "id": "D10c-03",
+      "title": "Decision-driving false enforcement claims: RULES.md.template, the always-cited hook catalog, and the 2026-05-30 lean audit all assert maestro-enforcer BLOCKS agent spawns ('do block correctly') — it has never fired (dead Agent matcher), so Maestro phase gating is prose-only while three doc surfaces tell models and auditors a hard gate exists",
+      "severity": "S1",
+      "confidence": "VERIFIED",
+      "proposed_class": "document",
+      "leverage": "quick-win",
+      "seed_ref": "SEED-11",
+      "evidence": [
+        {
+          "file": ".claude/templates/RULES.md.template",
+          "lines": "222",
+          "quote": "- Skipping interview = blocked by `maestro-enforcer` hook"
+        },
+        {
+          "file": "docs/ccv3-lean-audit-2026-05-30.md",
+          "lines": "75",
+          "quote": "(`plan-to-ralph-enforcer` and `maestro-enforcer` **do** block correctly.)"
+        },
+        {
+          "file": ".claude/docs/architecture/quick-ref/hook-catalog.md",
+          "lines": "114",
+          "quote": "- **maestro-enforcer** -- blocks phase-skipping in Maestro workflows"
+        }
+      ],
+      "observe_how": "maestro-enforcer is registered only under PreToolUse matcher \"Agent\" (repo .claude/settings.json, active, and template — see D10c-02); the live spawn tool is \"Task\", so the deny branch (maestro-enforcer.ts:132 accepts Task but is never invoked) is unreachable in production. The lean audit at docs/ccv3-lean-audit-2026-05-30.md:75 and :131 ('maestro-enforcer + plan-to-ralph-enforcer + file-claims (correctly blocking)') used this as a verified-working anchor for KEEP verdicts; RULES.md generated from the template ships the same claim into every new machine's always-in-context rules. Same false-claim class as the user-global RULES.md 'Maestro Mode [C:10] agents are BLOCKED until interview phase completes'.",
+      "telemetry": "No maestro-enforcer deny has ever been observed; skill-telemetry shows agent_spawned rows flowing freely during Maestro-era sessions",
+      "dedup_keys": [
+        ".claude/templates/RULES.md.template",
+        "docs/ccv3-lean-audit-2026-05-30.md",
+        ".claude/docs/architecture/quick-ref/hook-catalog.md",
+        "maestro-enforcer-false-blocking-claim"
+      ],
+      "causal_links": [
+        "caused-by D10c-02 / D2b-01 (dead Agent matcher)",
+        "instance of SEED-11 (RULES.md enforcement-claim mismatch) with the specific surfaces named",
+        "doc-drift sibling of SEED-14 (hook catalog covers a fraction of hooks AND misstates this one's effect)"
+      ]
+    },
+    {
+      "id": "D10c-04",
+      "title": "Repo and template ship a 100%-dead agent spawn pipeline: neither contains a single \"Task\"-matched hook (the string \"Task\" appears only inside \"TaskUpdate\"), so a machine bootstrapped from the repo gets 12 registered spawn hooks of which ZERO fire; the only two live spawn hooks (agent-recall-injector PreToolUse:Task, telemetry-tracker PostToolUse:Skill|Task) exist solely in active ~/.claude/settings.json as part of the 18-registration drift",
+      "severity": "S2",
+      "confidence": "VERIFIED",
+      "proposed_class": "fix",
+      "leverage": "structural",
+      "seed_ref": "SEED-15",
+      "evidence": [
+        {
+          "file": ".claude/settings.json.template",
+          "lines": "21",
+          "quote": "        \"matcher\": \"Agent\","
+        },
+        {
+          "file": ".claude/settings.json.template",
+          "lines": "315",
+          "quote": "        \"matcher\": \"Agent\","
+        },
+        {
+          "file": ".claude/settings.json",
+          "lines": "21",
+          "quote": "        \"matcher\": \"Agent\","
+        }
+      ],
+      "observe_how": "grep -n '\\\"Task\\\"' .claude/settings.json .claude/settings.json.template → zero hits in both (only \"TaskUpdate\"/\"TaskUpdate|Bash\" appear). Active ~/.claude/settings.json adds PreToolUse matcher \"Task\" (agent-recall-injector.mjs) and PostToolUse matcher \"Skill|Task\" (telemetry-tracker.mjs) — both absent from repo and template, i.e., inside GAP3-03's 18 active-only registrations. Consequence on a fresh wizard.py bootstrap: every spawn-related hook (9 PreToolUse:Agent + 3 PostToolUse:Agent) is registered-but-dead and there is no spawn telemetry at all (skill-telemetry agent_spawned rows come from the active-only telemetry-tracker); the only repo-registered code observing spawns is the matcher-less braintrust python post_tool_use hook. Even on THIS machine the live chain is just agent-recall-injector (0-for-78 memory yield, D2b-03) + telemetry-tracker — the entire documented multi-hook spawn pipeline reduces to one telemetry row and one empty recall per spawn.",
+      "telemetry": "skill-telemetry.jsonl 167 agent_spawned rows all produced by the ACTIVE-only telemetry-tracker registration; agent-recall.jsonl 78 rows, results_count:0 on all (D2b-03)",
+      "dedup_keys": [
+        ".claude/settings.json.template",
+        ".claude/settings.json",
+        "agent-recall-injector-active-only",
+        "telemetry-tracker-active-only",
+        "repo-zero-Task-matcher"
+      ],
+      "causal_links": [
+        "instance of SEED-15 / GAP3-03 (18 active-only registrations) specialized to the spawn chain",
+        "compounds D2b-01 + D10c-02 (the registrations that DO exist in repo/template are all on the dead matcher)",
+        "sibling of D7a-05 and D10b-05 (bidirectional template/active drift)"
+      ]
+    }
+  ],
+  "coverage_manifest": [
+    "PreToolUse spawn chain (agent-model-guard, explore-to-scout, no-haiku-enforcer, navigator-validate, task-router, ralph-template-inject, maestro-enforcer, pre-tool-knowledge, tldr-context-inject): VERIFIED all 9 registered under matcher \"Agent\" in repo+active+template and therefore never fire on the live \"Task\" tool — 5 covered by D2b-01; the 4 safety hooks newly filed as D10c-02.",
+    "agent-recall-injector: VERIFIED the ONLY PreToolUse hook that actually fires on spawn (matcher \"Task\", ACTIVE settings only — absent from repo and template, D10c-04); delivers zero recall content (0-for-78, owned by D2b-03).",
+    "file-claims: VERIFIED registered PreToolUse Edit|Write only (repo settings) — it is NOT part of the spawn chain as the dimension brief assumed; it fires on file edits, not on Task spawns. No finding.",
+    "no-haiku enforcement: VERIFIED prose-only in production — no-haiku-enforcer.ts:50 accepts Task but the hook never runs (D10c-02); D2a-11's haiku-string bypass is latent on top of that.",
+    "PostToolUse agent chain (agent-error-capture, agent-verification, ralph-task-monitor): VERIFIED all 3 dead on matcher \"Agent\" in repo+active+template (D10c-02) — D2d-05/06/07/08's in-hook defects are latent, not live; flipping the matcher without fixing D2d-06 would arm a command-injection surface.",
+    "Live tool name: VERIFIED \"Task\" — telemetry-tracker writes type:'agent_spawned' only inside its tool_name==='Task' branch (telemetry-tracker.ts:190-199) and 167 such rows exist with 0 'Agent'-named rows; agent-recall.jsonl row 2026-06-10 confirms the PreToolUse side.",
+    "SubagentStop bus-commit (Pattern A, KEY question): CONFIRMED truly zero consumer AND zero registration — no SubagentStop key in repo settings, active settings, or template; only handlers are the never-registered patterns/ library; natural PostToolUse fallback vehicle also dead-matched (D10c-01, extending D1A-001/D4a-03/D4b-03).",
+    "What actually fires on a subagent spawn today: PreToolUse agent-recall-injector (active-only, empty yield) -> agent runs -> PostToolUse telemetry-tracker (active-only) + matcher-less braintrust python post_tool_use. Nothing else in the documented chain executes.",
+    "Enforcement-claim docs: RULES.md.template:222, docs/ccv3-lean-audit-2026-05-30.md:75/131, hook-catalog.md:114 falsely assert maestro-enforcer blocks — filed D10c-03 (seed SEED-11)."
+  ],
+  "notes": "D10c end-to-end spawn trace, frozen tree at 86b8f60. Net result: of the 12 agent-targeted hook registrations in the repo (9 PreToolUse + 3 PostToolUse, all matcher \\\"Agent\\\"), ZERO execute, because the live subagent tool is named \\\"Task\\\" (proven via telemetry-tracker's tool_name==='Task'-gated agent_spawned rows: 167 vs 0). Every hook in the cohort internally accepts both names — the registration matcher is the single point of death, replicated identically across repo settings, active settings, and the new-machine template. The v3 SubagentStop bus-commit (Pattern A) is confirmed to have no implementation vehicle at any layer: the event key is absent from all three settings surfaces and the only onSubagentStop code is the unregistered patterns library. Key fix-sequencing caution carried in D10c-02: re-pointing the matcher to Task instantly activates agent-error-capture's latent cmd.exe injection (D2d-06) and false FAILED_APPROACH stores (D2d-07) — those must be fixed first or together. Cross-links deliberately reference D1a/D1b/D2a/D2b/D2d/D4a/D4b/D7a/D10b/GAP3 findings rather than re-filing them."
+}

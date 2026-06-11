@@ -1,0 +1,284 @@
+[
+  {
+    "id": "D2b-14",
+    "title": "pre-tool-knowledge IMPLEMENTATION_TRIGGERS are substring-matched ('add' hits 'address', 'create' hits 'recreated') so virtually every agent prompt qualifies — one-line payoff: word-boundary matching prevents boilerplate project-context injection on every spawn if this hook is ever revived",
+    "severity": "S3",
+    "confidence": "VERIFIED",
+    "evidence": [
+      {
+        "file": ".claude/hooks/src/pre-tool-knowledge.ts",
+        "lines": "50-52",
+        "quote": "const IMPLEMENTATION_TRIGGERS = [\n  'implement', 'create', 'add', 'build', 'write',\n  'develop', 'make', 'fix', 'update', 'refactor',"
+      },
+      {
+        "file": ".claude/hooks/src/pre-tool-knowledge.ts",
+        "lines": "72-73",
+        "quote": "  for (const trigger of IMPLEMENTATION_TRIGGERS) {\n    if (taskPrompt.includes(trigger) || subagentType.includes(trigger)) {"
+      }
+    ],
+    "proposed_class": "simplify",
+    "leverage": "quick-win",
+    "seed_ref": null,
+    "dedup_keys": [
+      ".claude/hooks/src/pre-tool-knowledge.ts",
+      "IMPLEMENTATION_TRIGGERS",
+      "isImplementationTask"
+    ],
+    "causal_links": [
+      "currently moot because of D2b-01 (dead matcher) and D2b-04 (undocumented injection field)"
+    ],
+    "observe_how": "isImplementationTask uses String.includes over lowercase prompt: 'add' matches inside 'address'/'additive', 'make' inside 'remake', 'fix' inside 'prefix' — effectively any non-trivial prompt triggers, then the hook injects package.json deps, README excerpt and directory listing as fallback context. Convert to \\b-bounded regex and dedupe with the knowledge-tree skill before re-registering.",
+    "telemetry": "n/a — hook currently dead (D2b-01)",
+    "_dim": "D2b",
+    "cluster_id": "C006"
+  },
+  {
+    "id": "D2c-02",
+    "title": "expandGitQuery substring-matches git keywords inside any prompt ('pr' in 'approve'/'preview', 'commit' inside arbitrary text), short-circuits extractIntent, and appends 'git remote workflow' — corrupts the recall query for non-git prompts",
+    "severity": "S2",
+    "confidence": "VERIFIED",
+    "seed_ref": null,
+    "proposed_class": "fix",
+    "leverage": "quick-win",
+    "evidence": [
+      {
+        "file": ".claude/hooks/src/memory-awareness.ts",
+        "lines": "119-126",
+        "quote": "const gitKeywords = ['git', 'push', 'commit', 'pr', 'merge', 'rebase', 'branch'];\n  const hasGitContext = gitKeywords.some(kw => lower.includes(kw));\n\n  if (hasGitContext) {\n    // Add git context to the search\n    return prompt + ' git remote workflow';"
+      },
+      {
+        "file": ".claude/hooks/src/memory-awareness.ts",
+        "lines": "528",
+        "quote": "const intent = gitExpanded || extractIntent(input.prompt);"
+      }
+    ],
+    "telemetry": "Any recall-log intent ending in ' git remote workflow' whose prompt is not actually about git ('pr' matches approve/preview/spring; 'commit' matches commitment).",
+    "observe_how": "grep \"git remote workflow\" .claude/logs/memory-recall.jsonl and inspect whether the source prompt was git-related; false positives confirm the substring bug.",
+    "causal_links": [
+      "amplified by D2c-01 (XML blob containing the word 'Commit' triggered the append)"
+    ],
+    "dedup_keys": [
+      "memory-awareness.ts:expandGitQuery",
+      "gitKeywords"
+    ],
+    "_dim": "D2c",
+    "cluster_id": "C006"
+  },
+  {
+    "id": "D2d-07",
+    "title": "agent-error-capture stores FAILED_APPROACH memories on /\\berror\\b/ alone — successful agent runs that merely mention 'error' ('0 errors', 'error handling') are recorded as failures, polluting archival_memory recall; store is also a synchronous execSync (up to 10s) in the Task hot path",
+    "severity": "S2",
+    "confidence": "VERIFIED",
+    "seed_ref": null,
+    "leverage": "quick-win",
+    "proposed_class": "fix",
+    "dedup_keys": [
+      ".claude/hooks/src/agent-error-capture.ts",
+      "ERROR_PATTERNS",
+      "hasErrorPattern"
+    ],
+    "causal_links": [
+      "contributes to memory-recall hit-rate 27.4% (false FAILED_APPROACH entries dilute recall)",
+      "D2d-06 (each false trigger also exercises the unsafe shell path)"
+    ],
+    "evidence": [
+      {
+        "file": ".claude/hooks/src/agent-error-capture.ts",
+        "lines": "40-42",
+        "quote": "const ERROR_PATTERNS = [\n  /\\berror\\b/i,\n  /\\bfailed\\b/i,"
+      },
+      {
+        "file": ".claude/hooks/src/agent-error-capture.ts",
+        "lines": "223-224",
+        "quote": "    if (hasError) {\n      // Only store on actual error patterns (TypeError, ENOENT, etc.)"
+      },
+      {
+        "file": ".claude/hooks/src/agent-error-capture.ts",
+        "lines": "184",
+        "quote": "      { encoding: 'utf-8', timeout: 10000, stdio: ['pipe', 'pipe', 'pipe'] }"
+      }
+    ],
+    "observe_how": "The comment at line 223 claims storage happens 'only on actual error patterns (TypeError, ENOENT, etc.)' but ERROR_PATTERNS leads with bare /\\berror\\b/i, /\\bfailed\\b/i, /\\bfailure\\b/i, /\\btimeout\\b/i — words present in most healthy agent reports ('all tests passed, 0 errors', 'added error handling'). The G3 quality scorer drops NOISE (<3) but BORDERLINE (3-4) passes, so plausible-looking false failures land tagged agent_failure/FAILED_APPROACH. Query archival_memory for tags LIKE '%agent_failure%' and sample: entries quoting success summaries confirm. Separately, the store is execSync with a 10s ceiling inside PostToolUse:Agent — every false positive adds seconds of blocking latency after agent completion (cf. SEED-16's same store-hot-path pattern). Fix: drop the bare error/failed/failure/timeout words (keep stack-trace and errno patterns), and use detached spawn like post-plan-roadmap does.",
+    "telemetry": "memory-recall hit-rate 27.4%; every Task completion whose text contains 'error' pays the scorer + possible 10s execSync",
+    "_dim": "D2d",
+    "cluster_id": "C006"
+  },
+  {
+    "id": "D2d-08",
+    "title": "agent-verification delivers its entire output (the verification warning) via the legacy top-level 'message' field that the repo's own types/docs mark deprecated — warnings likely never reach Claude, making the hook decorative",
+    "severity": "S2",
+    "confidence": "VERIFIED",
+    "seed_ref": null,
+    "leverage": "quick-win",
+    "proposed_class": "fix",
+    "dedup_keys": [
+      ".claude/hooks/src/agent-verification.ts",
+      "outputWithMessage",
+      "LegacyHookOutput"
+    ],
+    "causal_links": [
+      "D2d-12 (output-contract drift sibling)"
+    ],
+    "evidence": [
+      {
+        "file": ".claude/hooks/src/agent-verification.ts",
+        "lines": "91-93",
+        "quote": "function outputWithMessage(message?: string): void {\n  if (message) {\n    console.log(JSON.stringify({ message }));"
+      },
+      {
+        "file": ".claude/hooks/src/shared/types.ts",
+        "lines": "71-73",
+        "quote": "/**\n * Legacy hook output format (deprecated but still used by some hooks).\n * Prefer PreToolUseHookOutput for new hooks."
+      },
+      {
+        "file": ".claude/rules/hook-dev-lifecycle.md",
+        "lines": "62",
+        "quote": "- Context injection: `PostToolUse additionalContext` is the reliable inject pattern"
+      }
+    ],
+    "observe_how": "The hook's sole purpose is injecting '⚠️ AGENT VERIFICATION WARNING' context after suspicious agent claims, but it never uses hookSpecificOutput.additionalContext — only { message }, which shared/types.ts labels legacy/deprecated and hook-dev-lifecycle.md contrasts with the 'reliable inject pattern'. Sibling hooks on the same event (ralph-task-monitor, post-plan-roadmap) all wrap context in hookSpecificOutput.additionalContext. Secondary nit: the existsSync check at lines 146-151 tests bare filenames ('!file.includes(\"/\")') relative to the hook process cwd, generating false 'files that don't exist' warnings for valid relative paths — low-stakes only because the channel is dead. Observe: trigger a kraken/spark response claiming completion without files and check that no warning appears in context. Fix: route warnings through additionalContext (one-function change).",
+    "telemetry": "Registered on PostToolUse matcher=Agent; warning deliveries observable in transcripts: none expected via legacy field",
+    "_dim": "D2d",
+    "cluster_id": "C006"
+  },
+  {
+    "id": "D2e-09",
+    "title": "architecture-stats-sync: non-unref'd 1s safety-net setTimeout in readStdin keeps the hook process alive ~1 second on EVERY Bash PostToolUse — a fixed latency floor added to every Bash call in the session",
+    "severity": "S2",
+    "confidence": "VERIFIED",
+    "evidence": [
+      {
+        "file": ".claude/hooks/src/architecture-stats-sync.ts",
+        "lines": "177-179",
+        "quote": "    process.stdin.on('end', () => resolve(data));\n    // Safety net — never hang the hook\n    setTimeout(() => resolve(data), 1000);"
+      }
+    ],
+    "proposed_class": "fix",
+    "leverage": "quick-win",
+    "dedup_keys": [
+      ".claude/hooks/src/architecture-stats-sync.ts",
+      "readStdin",
+      "setTimeout unref"
+    ],
+    "causal_links": [],
+    "observe_how": "The timer is never cleared or unref'd, so even after stdin 'end' resolves and main() prints its output, the live timer holds the event loop and the process cannot exit until ~1000ms have elapsed. Claude Code waits for hook exit, so every Bash tool call registered to this hook pays ~1s. One-line fix: `setTimeout(...).unref()` or clearTimeout on 'end'.",
+    "telemetry": "wall-time of the architecture-stats-sync hook per Bash call (should be ~50ms Node startup, observed ~1s+)",
+    "seed_ref": null,
+    "_dim": "D2e",
+    "cluster_id": "C006"
+  },
+  {
+    "id": "D2e-11",
+    "title": "Registration drift instance: 8 of the 13 reviewed PostToolUse hooks (telemetry-tracker, mcp-activity-tracker, vercel-deploy-context, post-edit-diagnostics, web-lookup-advisor, sentry-deploy-release, linear-branch-context, architecture-stats-sync) are registered ONLY in active ~/.claude/settings.json, absent from repo .claude/settings.json",
+    "severity": "S2",
+    "confidence": "VERIFIED",
+    "evidence": [
+      {
+        "file": ".claude/settings.json",
+        "lines": "449",
+        "quote": "            \"command\": \"node C:/Users/david.hayes/.claude/hooks/dist/bus-tool-populator.mjs\","
+      },
+      {
+        "file": ".claude/settings.json",
+        "lines": "410",
+        "quote": "            \"command\": \"node C:/Users/david.hayes/.claude/hooks/dist/git-auto-commit.mjs\","
+      }
+    ],
+    "proposed_class": "document",
+    "leverage": "quick-win",
+    "dedup_keys": [
+      ".claude/settings.json",
+      "hook registration drift",
+      "telemetry-tracker",
+      "post-edit-diagnostics",
+      "architecture-stats-sync"
+    ],
+    "causal_links": [
+      "SEED-15 (same active-only-registration gap; these 8 are additional named instances beyond package-install-guard)"
+    ],
+    "observe_how": "grep of repo .claude/settings.json finds registrations for only git-auto-commit, tree-invalidate, pageindex-watch, import-validator, bus-tool-populator; the other 8 reviewed hooks exist only in the unsynced active ~/.claude/settings.json. A fresh machine bootstrapped from the repo silently loses skill telemetry, bus edited-role writes, and post-edit diagnostics. Evidence quotes anchor the repo file; the 8 absences were verified by per-name grep (no matches).",
+    "telemetry": "diff of hooks.PostToolUse arrays between repo and active settings.json",
+    "seed_ref": "SEED-15",
+    "_dim": "D2e",
+    "cluster_id": "C006"
+  },
+  {
+    "id": "D2e-15",
+    "title": "architecture-stats-sync: fires off HEAD without checking the commit command actually succeeded — a FAILED `git commit` (hook denial, nothing staged) still inspects the PREVIOUS commit and can spuriously launch the background sync",
+    "severity": "S3",
+    "confidence": "VERIFIED",
+    "evidence": [
+      {
+        "file": ".claude/hooks/src/architecture-stats-sync.ts",
+        "lines": "218-220",
+        "quote": "  // Only NOW do the (slightly more expensive) git show call\n  const repoRoot = resolveRepoRoot();\n  const files = getHeadCommitFiles(repoRoot);"
+      },
+      {
+        "file": ".claude/hooks/src/architecture-stats-sync.ts",
+        "lines": "101-104",
+        "quote": "export function shouldFireSync(input: PostToolUseInput, commitFiles: string): boolean {\n  if (input.tool_name !== 'Bash') return false;\n  const command = input.tool_input?.command;\n  if (!command) return false;"
+      }
+    ],
+    "proposed_class": "fix",
+    "leverage": "quick-win",
+    "dedup_keys": [
+      ".claude/hooks/src/architecture-stats-sync.ts",
+      "shouldFireSync",
+      "getHeadCommitFiles",
+      "tool_response success"
+    ],
+    "causal_links": [
+      "D2e-09"
+    ],
+    "observe_how": "Payoff: gate on detectToolError(input.tool_response) (already exists in shared/tool-error.ts) so a failed commit whose HEAD happens to touch .claude/hooks doesn't re-run the stats sync; sync is idempotent so impact is wasted work, not corruption.",
+    "telemetry": ".claude/logs/architecture-stats-sync.log entries with no corresponding new commit",
+    "seed_ref": null,
+    "_dim": "D2e",
+    "cluster_id": "C006"
+  },
+  {
+    "id": "D2F-04",
+    "title": "Session-start chain spawns >=5 separate `uv run python` cold starts (+2 PowerShell, ~10 Node) per session open — the uv startup tax is paid five times for what are mostly status probes",
+    "severity": "S2",
+    "confidence": "VERIFIED",
+    "evidence": [
+      {
+        "file": ".claude/hooks/src/shared/db-utils-pg.ts",
+        "lines": "68-71",
+        "quote": "    const result = spawnSync('uv', ['run', 'python', '-c', wrappedCode, ...args], {\n      encoding: 'utf-8',\n      maxBuffer: 1024 * 1024,\n      timeout: 3000,  // 3 second timeout (reduced for faster startup)"
+      },
+      {
+        "file": ".claude/hooks/src/session-start-init-check.ts",
+        "lines": "98-100",
+        "quote": "    execSync(\n      `cd \"${opcDir}\" && uv run python scripts/core/lazy_tree.py regenerate --project \"${projectDir}\"`,\n      { encoding: 'utf-8', timeout: 10000, stdio: ['pipe', 'pipe', 'pipe'] }"
+      },
+      {
+        "file": ".claude/hooks/src/session-start-context-loaders.ts",
+        "lines": "45-49",
+        "quote": "  const result = await runCommand(\n    'tree-daemon',\n    'powershell',"
+      }
+    ],
+    "proposed_class": "simplify",
+    "leverage": "structural",
+    "seed_ref": "SEED-08",
+    "dedup_keys": [
+      ".claude/hooks/src/shared/db-utils-pg.ts",
+      "runPgQuery",
+      ".claude/hooks/src/session-start-init-check.ts",
+      "generateTree",
+      ".claude/hooks/src/session-start-context-loaders.ts",
+      ".claude/hooks/src/session-start-memory-loaders.ts"
+    ],
+    "causal_links": [
+      "SEED-08",
+      "D2F-02",
+      "D2F-05",
+      "D2F-06",
+      "D2F-07"
+    ],
+    "observe_how": "Trace process creation during one session open (Process Monitor / Sysmon): session-register x2 uv, continuity recall x1 uv, init-check tree regen x1 uv, tree-daemon status x1 uv, memory-daemon status x1 uv. Even with hooks running in parallel (Claude Code docs), 5 concurrent uv+Python interpreter starts contend on CPU/disk and the gate is the slowest one.",
+    "telemetry": "Estimated session-open gate ~6-10s typical (parallel; worst 30s via docker timeout); if serialized, summed budget is ~18-35s. uv interpreter startup is the shared root cause.",
+    "_dim": "D2f",
+    "cluster_id": "C006"
+  }
+]

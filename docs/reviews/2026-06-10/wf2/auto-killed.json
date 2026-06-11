@@ -1,0 +1,35 @@
+[
+  {
+    "id": "D9-02",
+    "reason": "all evidence files in exclusion manifest",
+    "files": [
+      "docs/reviews/2026-06-10/harvest/table-intel-bus.json",
+      "docs/reviews/2026-06-10/harvest/table-intel-bus.json",
+      "docs/reviews/2026-06-10/harvest/table-intel-bus.json"
+    ]
+  },
+  {
+    "id": "GAP2-01",
+    "reason": "all evidence files in exclusion manifest",
+    "files": [
+      "docs/reviews/2026-06-10/findings/WF1-STATE.json",
+      "docs/reviews/2026-06-10/CHECKPOINT.md"
+    ]
+  },
+  {
+    "id": "GAP2-02",
+    "reason": "all evidence files in exclusion manifest",
+    "files": [
+      "docs/reviews/2026-06-10/findings/WF1-STATE.json",
+      "docs/reviews/2026-06-10/CHECKPOINT.md"
+    ]
+  },
+  {
+    "id": "GAP2-03",
+    "reason": "all evidence files in exclusion manifest",
+    "files": [
+      "docs/reviews/2026-06-10/findings/WF1-STATE.json",
+      "docs/reviews/2026-06-10/CHECKPOINT.md"
+    ]
+  }
+]

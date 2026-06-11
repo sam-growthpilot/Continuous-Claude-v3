@@ -1,0 +1,314 @@
+[
+  {
+    "id": "D2b-05",
+    "title": "smart-search-router writes its Grep-context handshake to hardcoded POSIX '/tmp/claude-search-context' — on Windows this silently creates and grows C:\\tmp\\claude-search-context at the drive root (hundreds of per-session JSON files since January, no cleanup path)",
+    "severity": "S0",
+    "confidence": "VERIFIED",
+    "evidence": [
+      {
+        "file": ".claude/hooks/src/smart-search-router.ts",
+        "lines": "46",
+        "quote": "const CONTEXT_DIR = '/tmp/claude-search-context';"
+      },
+      {
+        "file": ".claude/hooks/src/tldr-read-enforcer.ts",
+        "lines": "28-29",
+        "quote": "const CONTEXT_DIR = '/tmp/claude-search-context';\nconst CONTEXT_MAX_AGE_MS = 30000; // 30 seconds - context expires after this"
+      }
+    ],
+    "proposed_class": "fix",
+    "leverage": "quick-win",
+    "seed_ref": null,
+    "dedup_keys": [
+      ".claude/hooks/src/smart-search-router.ts",
+      ".claude/hooks/src/tldr-read-enforcer.ts",
+      "CONTEXT_DIR",
+      "C:/tmp/claude-search-context"
+    ],
+    "causal_links": [
+      "the tldr-read-enforcer cross-file context feature only works via this junk dir (reader uses the same constant)",
+      "D2b-10 lives in the same file"
+    ],
+    "observe_how": "Observed live: C:\\tmp\\claude-search-context\\ contains hundreds of <session-uuid>.json files dated 2026-01-26 through 2026-06-06 (ls confirmed). Node resolves '/tmp/...' against the current drive on win32. The 30s staleness check is read-side only — nothing ever deletes files, so every session that runs a Grep adds a permanent file outside any project. Fix: os.tmpdir() + periodic cleanup, or scope under ~/.claude/cache.",
+    "telemetry": "Direct artifact count at C:\\tmp\\claude-search-context (Jan 26 -> Jun 6 accumulation, ~hundreds of files)",
+    "_dim": "D2b",
+    "cluster_id": "C017"
+  },
+  {
+    "id": "D2b-06",
+    "title": "smart-search-router (LIVE on every Grep) hard-DENIES legitimate searches: any 3+-word pattern is classified 'semantic' and denied even when no semantic index exists, and two deny messages instruct the model to use Task(subagent_type=\"Explore\") — the exact spawn the system elsewhere bans",
+    "severity": "S1",
+    "confidence": "VERIFIED",
+    "evidence": [
+      {
+        "file": ".claude/hooks/src/smart-search-router.ts",
+        "lines": "397-399",
+        "quote": "  // 3+ words without code indicators → likely semantic\n  if (words.length >= 3) {\n    return 'semantic';"
+      },
+      {
+        "file": ".claude/hooks/src/smart-search-router.ts",
+        "lines": "556",
+        "quote": "- \\`Task(subagent_type=\"Explore\", prompt=\"${pattern}\")\\` - agent exploration`;"
+      },
+      {
+        "file": ".claude/hooks/src/smart-search-router.ts",
+        "lines": "591-594",
+        "quote": "    hookSpecificOutput: {\n      hookEventName: 'PreToolUse',\n      permissionDecision: 'deny',\n      permissionDecisionReason: reason"
+      }
+    ],
+    "proposed_class": "fix",
+    "leverage": "structural",
+    "seed_ref": null,
+    "dedup_keys": [
+      ".claude/hooks/src/smart-search-router.ts",
+      "classifyQuery",
+      "tldrSemantic",
+      "permissionDecision-deny-Grep"
+    ],
+    "causal_links": [
+      "contradicts explore-to-scout's purpose (and today Explore is NOT blocked per D2b-01, so the bad suggestion is followable)",
+      "amplified by D2b-07 (PowerShell-per-daemon-query latency has no real timeout cap)"
+    ],
+    "observe_how": "Grep for an exact multi-word string (e.g. an error message \"database is locked error\") → classifyQuery returns 'semantic' → deny fires even on the no_index/daemon_unavailable/no-results branches (all four reason branches end in the same deny at L590-597). Structural queries are also denied with a hardcoded `--lang python` ast-grep suggestion regardless of project language (getAstGrepSuggestion L407-423). Each intercepted Grep also pays up to 6 sequential queryDaemonSync calls, each spawning a fresh PowerShell process on Windows (daemon-client.ts L570-585).",
+    "telemetry": "This very review session: literal single-token Greps passed (allow path); multi-word patterns would have been denied. trackHookActivitySync routes counts to the TLDR daemon (not file-inspectable here)",
+    "_dim": "D2b",
+    "cluster_id": "C017"
+  },
+  {
+    "id": "D2b-10",
+    "title": "smart-search-router ripgrepFallback builds a shell command by string-interpolating the model/content-influenced Grep pattern with only `\"` and `$` escaped — cmd.exe metacharacters and bash backticks survive (injection), and the `2>/dev/null` redirect is invalid on cmd.exe so the fallback is broken on Windows anyway",
+    "severity": "S1",
+    "confidence": "VERIFIED",
+    "evidence": [
+      {
+        "file": ".claude/hooks/src/smart-search-router.ts",
+        "lines": "100-102",
+        "quote": "    const escaped = pattern.replace(/\"/g, '\\\\\"').replace(/\\$/g, '\\\\$');\n    const result = execSync(\n      `rg \"${escaped}\" \"${projectDir}\" --type py --line-number --max-count 10 2>/dev/null`,"
+      }
+    ],
+    "proposed_class": "fix",
+    "leverage": "quick-win",
+    "seed_ref": null,
+    "dedup_keys": [
+      ".claude/hooks/src/smart-search-router.ts",
+      "ripgrepFallback",
+      "execSync-pattern-injection"
+    ],
+    "causal_links": [
+      "reachable from lookupSymbol/tldrSearch on every intercepted Grep whenever the daemon is indexing/unavailable",
+      "same file as D2b-05/D2b-06"
+    ],
+    "observe_how": "A Grep pattern like `x\" & calc & \"` breaks out of the double quotes under cmd.exe; `%PATH%` expands inside quotes; under a bash shell backticks execute. The pattern is attacker-influenceable via prompt injection in repo content ('grep for <payload>'). Replace with spawnSync('rg', [pattern, dir, ...]) array args and drop the /dev/null redirect (use stdio:'pipe'). Note the same file's Windows daemon path interpolates the JSON query into a powershell -Command string (daemon-client.ts L570-585) with only single-quote doubling — fragile, same fix class.",
+    "telemetry": "Fallback triggers whenever daemon response has indexing/unavailable status — i.e., on first Grep in any un-indexed project",
+    "_dim": "D2b",
+    "cluster_id": "C017"
+  },
+  {
+    "id": "GAP4-01",
+    "title": "smart-search-router (PreToolUse:Grep, registered-active) feeds the model's raw Grep `pattern` into an execSync cmd.exe shell-string (`rg \"${escaped}\"`), escaping only \" and $ — the cmd.exe danger set (& | > < ^ %VAR%) passes through. Fires on EVERY Grep whenever the TLDR daemon is down. D5a saw this site and punted it as 'minor'.",
+    "severity": "S1",
+    "confidence": "VERIFIED",
+    "seed_ref": null,
+    "proposed_class": "fix",
+    "leverage": "structural",
+    "dedup_keys": [
+      ".claude/hooks/src/smart-search-router.ts",
+      "ripgrepFallback",
+      "tldrSearch",
+      "lookupSymbol",
+      "extractTarget",
+      "execSync-cmd.exe"
+    ],
+    "causal_links": [
+      "extends D5a triage (D5a labeled smart-search-router.ts:101 'minor, bounded by timeout+2>/dev/null' — re-rated here as live S1 injection on the Grep hot path)",
+      "same model-controlled-pattern source as GAP4-02"
+    ],
+    "telemetry": "Stop the TLDR daemon (or run where it never started), issue a Grep whose pattern contains a cmd.exe metachar — e.g. pattern `foo & calc` or `x>poc.txt` — and observe the side-effect (file written / second command run). Count: on Windows `execSync` with no `shell` option uses %ComSpec% = cmd.exe; the escape regex at line 100 only handles \" and $. Also note `2>/dev/null` at line 102 is a no-op on cmd.exe (creates a literal file named 'null').",
+    "observe_how": "main() at line 447 reads `pattern = input.tool_input.pattern` (the model's Grep regex) and at line 455 calls extractTarget(pattern) UNCONDITIONALLY before any literal/early-return. extractTarget -> lookupSymbol(pattern) -> tldrSearch(`def ${pattern}`) / `class ${pattern}` / `${pattern} =`. tldrSearch tries the daemon first but falls through to ripgrepFallback(pattern) when the daemon is indexing/unavailable OR on ANY thrown error (catch, lines 89-92). ripgrepFallback builds `rg \"${escaped}\" \"${projectDir}\" --type py ... 2>/dev/null` with escaped = pattern.replace(/\"/g,'\\\\\"').replace(/\\$/g,'\\\\$') and runs it through execSync (cmd.exe). cmd.exe treats & | > < ^ and %VAR% as live metacharacters — none are escaped — so a Grep pattern containing them executes/redirects. Same remediation class as D5a-01/02/03: drop the shell-string, use spawnSync('rg', [escaped, projectDir, '--type','py',...], {shell:false}).",
+    "evidence": [
+      {
+        "file": ".claude/hooks/src/smart-search-router.ts",
+        "lines": "100-104",
+        "quote": "const escaped = pattern.replace(/\"/g, '\\\\\"').replace(/\\$/g, '\\\\$');\n    const result = execSync(\n      `rg \"${escaped}\" \"${projectDir}\" --type py --line-number --max-count 10 2>/dev/null`,\n      { encoding: 'utf-8', timeout: 3000 }\n    );"
+      },
+      {
+        "file": ".claude/hooks/src/smart-search-router.ts",
+        "lines": "447",
+        "quote": "const pattern = input.tool_input.pattern;"
+      },
+      {
+        "file": ".claude/hooks/src/smart-search-router.ts",
+        "lines": "197-198",
+        "quote": "  // Try function first (most common)\n  const funcResults = tldrSearch(`def ${pattern}`, projectDir);"
+      },
+      {
+        "file": ".claude/hooks/src/smart-search-router.ts",
+        "lines": "89-92",
+        "quote": "  } catch {\n    // Fall back to ripgrep on any error\n    return ripgrepFallback(pattern, projectDir);\n  }"
+      }
+    ],
+    "_dim": "GAP4",
+    "cluster_id": "C017"
+  },
+  {
+    "id": "D10a-01",
+    "title": "Braintrust per-turn 'stop' finalizer is registered under SessionEnd, not Stop — every LLM span of the whole session is parented to the FINAL turn's span, and current_turn_span_id never resets between turns",
+    "severity": "S1",
+    "confidence": "VERIFIED",
+    "proposed_class": "fix",
+    "leverage": "structural",
+    "seed_ref": null,
+    "evidence": [
+      {
+        "file": ".claude/hooks/braintrust_hooks.py",
+        "lines": "546-547",
+        "quote": "def stop(input_data: dict) -> dict:\n    \"\"\"Handle Stop hook - creates LLM spans for model calls within the turn."
+      },
+      {
+        "file": ".claude/settings.json",
+        "lines": "264, 282-285",
+        "quote": "\"command\": \"python C:/Users/david.hayes/.claude/hooks/braintrust_hooks.py stop\",\n            \"timeout\": 15000"
+      },
+      {
+        "file": ".claude/hooks/braintrust_hooks.py",
+        "lines": "640-642",
+        "quote": "\"root_span_id\": root_span_id,\n            \"span_parents\": [turn_span_id],"
+      },
+      {
+        "file": ".claude/hooks/braintrust_hooks.py",
+        "lines": "824-825",
+        "quote": "set_session_value(session_id, \"turn_last_line\", line_num)\n    set_session_value(session_id, \"current_turn_span_id\", \"\")"
+      }
+    ],
+    "observe_how": "The stop entry at settings.json:284 sits inside the \"SessionEnd\" block opened at line 264; grep of repo .claude/settings.json finds NO \"Stop\" event block, and the active-registration harvest lists no Stop event either. So during a live session each user_prompt_submit creates a fresh 'Turn N' span (braintrust_hooks.py:382-402) but the per-turn finalizer never runs: current_turn_span_id is only cleared at line 825, i.e. at SessionEnd. The single SessionEnd pass walks the ENTIRE transcript (turn_last_line starts at 0) and parents every create_llm_span event to the one turn_span_id read at line 575 — the LAST turn. Result: Turn 1..N-1 spans are empty shells with no end metrics, and the final turn span owns all LLM calls/tokens of the session. Any per-turn Braintrust analysis (braintrust-analyze, judge_session, the C.3 telemetry watch) reads misattributed traces. Gated on TRACE_TO_BRAINTRUST=true (braintrust_hooks.py:41); the corr-null 60.7% harvest metric indicates trace data is live. Fix: register `braintrust_hooks.py stop` under a Stop event block (its docstring's design), keep session_end at SessionEnd.",
+    "telemetry": "harvest SUMMARY corr-null 60.7%; Braintrust: count LLM spans per turn span — expect ~all under the max turn id per session",
+    "dedup_keys": [
+      ".claude/hooks/braintrust_hooks.py:stop",
+      ".claude/settings.json:SessionEnd:braintrust-stop",
+      "current_turn_span_id"
+    ],
+    "causal_links": [
+      "enables D10a-02 (stale span is never cleared, so the off-by-one read always finds it)",
+      "same per-prompt Python spawn frame as D6a-05",
+      "same wrong-span family as D2F-11 (hook-health-monitor attaches to session UUID)"
+    ],
+    "_dim": "D10a",
+    "cluster_id": "C001"
+  },
+  {
+    "id": "D2a-02",
+    "title": "package-install-guard is bypassed by any compound command (cd X && npm install evil) — all regexes are start-anchored, contradicting the rule claim that it 'intercepts all package install commands'",
+    "severity": "S1",
+    "confidence": "VERIFIED",
+    "evidence": [
+      {
+        "file": ".claude/hooks/src/package-install-guard.ts",
+        "lines": "65-67",
+        "quote": "  { regex: /^pip\\s+install\\b/, ecosystem: 'pypi', skipTokens: 2 },\n  { regex: /^uv\\s+pip\\s+install\\b/, ecosystem: 'pypi', skipTokens: 3 },"
+      },
+      {
+        "file": ".claude/hooks/src/package-install-guard.ts",
+        "lines": "488-490",
+        "quote": "function stripEnvPrefix(command: string): string {\n  return command.replace(/^(\\s*[A-Za-z_][A-Za-z0-9_]*=[^\\s]*\\s+)*/, '');"
+      },
+      {
+        "file": ".claude/rules/package-install-safety.md",
+        "lines": "5",
+        "quote": "A PreToolUse:Bash hook (`package-install-guard`) intercepts all package install commands and runs a 4-layer security check before allowing execution."
+      }
+    ],
+    "proposed_class": "fix",
+    "leverage": "structural",
+    "seed_ref": "SEED-15",
+    "dedup_keys": [
+      ".claude/hooks/src/package-install-guard.ts",
+      "INSTALL_PATTERNS",
+      "isPackageInstallCommand"
+    ],
+    "causal_links": [
+      "D2a-03"
+    ],
+    "observe_how": "Every INSTALL_PATTERNS regex is anchored with ^ after stripEnvPrefix, so `cd .claude/hooks && npm install <pkg>`, `echo x; pip install <pkg>`, `bash -c \"pip install <pkg>\"`, or any pipeline/chained form falls through isPackageInstallCommand() -> outputContinue(). `cd <dir> && npm install` is one of the most common shapes Claude actually emits (this repo's own hook-dev workflow uses it), so the 4-layer supply-chain check is skipped in routine real usage while the rule doc asserts full coverage. Fix: split the command on shell separators (&&, ;, |, ||) and test each segment, as the typosquat/blocklist layers already operate per-package.",
+    "telemetry": "Grep session transcripts for Bash commands matching /&&\\s*(npm|pip|uv|pnpm|yarn)\\s+(install|add|i)\\b/ — each is an unguarded install.",
+    "_dim": "D2a",
+    "cluster_id": "C012"
+  },
+  {
+    "id": "D2a-05",
+    "title": "plan-mode-approval-gate has a silent bypass: in --dangerously-skip-permissions sessions, transcript-resolution failure (missing/oversized transcript or no permissionMode entry) downgrades the intended 'deny' to 'ask', which the gate's own header documents is auto-allowed in bypass mode",
+    "severity": "S1",
+    "confidence": "VERIFIED",
+    "evidence": [
+      {
+        "file": ".claude/hooks/src/plan-mode-approval-gate.ts",
+        "lines": "11-14",
+        "quote": " * swallowed when the session was started with\n * `--dangerously-skip-permissions`: 187 ms after the gate's `ask`,\n * Claude Code's built-in PermissionRequest layer auto-allows"
+      },
+      {
+        "file": ".claude/hooks/src/plan-mode-approval-gate.ts",
+        "lines": "380-388",
+        "quote": "      try {\n        const resolved = resolveEffectivePermissionMode(projectDir, sessionId);\n        if (resolved) permissionMode = resolved;\n        else permissionMode = undefined;"
+      },
+      {
+        "file": ".claude/hooks/src/plan-mode-approval-gate.ts",
+        "lines": "289-293",
+        "quote": "    if (size === 0 || size > MAX_TRANSCRIPT_BYTES) return null;\n    const text = readFileSync(transcriptPath, 'utf-8');\n    return detectUnderlyingPermissionMode(text);"
+      }
+    ],
+    "proposed_class": "fix",
+    "leverage": "structural",
+    "seed_ref": null,
+    "dedup_keys": [
+      ".claude/hooks/src/plan-mode-approval-gate.ts",
+      "resolveEffectivePermissionMode",
+      "decideGate"
+    ],
+    "causal_links": [
+      "D2a-06",
+      "D2a-08"
+    ],
+    "observe_how": "When input.permission_mode reports 'plan' (the layered case the hook explicitly defends against), the underlying mode is recovered from the transcript. If that recovery returns null — transcript missing, size 0, size > 16MB (long sessions reach this), or no parseable non-plan permissionMode line — permissionMode becomes undefined and decideGate falls through to 'ask' (lines 115-121). In a bypass session 'ask' is auto-allowed per the hook's own empirical note, so the exact scenario the deny branch was built for silently re-opens for long-running bypass sessions. Secondary doc/code drift: comments claim an 8MB cap and 'backwards in 256KB chunks' (lines 184-186, 180) while the code uses a 16MB cap (line 142) and two full readFileSync passes (goal scan + mode scan) of the same transcript per ExitPlanMode. Fix: when rawPermissionMode === 'plan' and resolution returns null, deny (fail-closed) instead of ask.",
+    "telemetry": "Check hook logs for 'Forcing plan-mode approval dialog' entries with rawPermissionMode='plan' and permissionMode=undefined in bypass sessions.",
+    "_dim": "D2a",
+    "cluster_id": "C014"
+  },
+  {
+    "id": "D2a-06",
+    "title": "isRalphActive() has no TTL/staleness check — a stale .ralph/state.json with session.active=true permanently disables BOTH plan-mode-approval-gate and plan-to-ralph-enforcer for that project",
+    "severity": "S1",
+    "confidence": "VERIFIED",
+    "evidence": [
+      {
+        "file": ".claude/hooks/src/shared/state-schema.ts",
+        "lines": "187-191",
+        "quote": "  const unified = readRalphUnifiedState(projectDir);\n  if (unified?.session?.active) {\n    return { active: true, storyId: unified.story_id, source: 'unified' };"
+      },
+      {
+        "file": ".claude/hooks/src/plan-mode-approval-gate.ts",
+        "lines": "100",
+        "quote": "  if (params.ralphActive) return { action: 'allow' };"
+      },
+      {
+        "file": ".claude/hooks/src/plan-to-ralph-enforcer.ts",
+        "lines": "74-77",
+        "quote": "  // Plan approved + Ralph active -> allow (agents edit via delegation)\n  if (ralphActive) {\n    return { block: false };"
+      }
+    ],
+    "proposed_class": "fix",
+    "leverage": "structural",
+    "seed_ref": "SEED-07",
+    "dedup_keys": [
+      ".claude/hooks/src/shared/state-schema.ts",
+      "isRalphActive",
+      "readRalphUnifiedState",
+      ".ralph/state.json"
+    ],
+    "causal_links": [
+      "D2a-05"
+    ],
+    "observe_how": "RalphSessionState carries last_activity ('epoch ms from Python') and ralph-delegation-enforcer even refreshes a heartbeat, but isRalphActive() never reads last_activity — only the boolean. If a Ralph run crashes or is killed without cleanup (this machine's MEMORY.md records exactly such a rogue multi-day Ralph loop), session.active stays true indefinitely and every plan-gate allow-branch fires forever: ExitPlanMode auto-allows with no dialog and post-plan code edits are never blocked. By contrast the sibling maestro-enforcer applies a 4h STATE_TTL — the asymmetry is the bug. SEED-07's doubled continuous-claude/continuous-claude/.ralph/ artifact shows stray .ralph dirs do occur in practice. Fix: treat active=true with last_activity older than ~4h as inactive.",
+    "telemetry": "ls .ralph/state.json mtime vs session.active across projects; any active=true older than a day is a live gate bypass.",
+    "_dim": "D2a",
+    "cluster_id": "C015"
+  }
+]

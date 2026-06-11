@@ -1,0 +1,300 @@
+[
+  {
+    "id": "D10a-05",
+    "title": "One prompt can compose up to four competing mandatory directives in a single skill-activation injection — '⚠️ ACTION REQUIRED - INVOKE SKILL FIRST', 'ACTION: Use AskUserQuestion to confirm before spawning', 'ACTION: Use Skill tool BEFORE responding', and '⛔ BLOCKING: You MUST invoke ... before generating ANY response' — plus memory-awareness's parallel 'call /recall' hint; whichever imperative the model obeys, it disobeys another",
+    "severity": "S2",
+    "confidence": "VERIFIED",
+    "proposed_class": "simplify",
+    "leverage": "structural",
+    "seed_ref": null,
+    "evidence": [
+      {
+        "file": ".claude/hooks/src/skill-activation-prompt.ts",
+        "lines": "371-372",
+        "quote": "⚠️ ACTION REQUIRED - INVOKE SKILL FIRST:\nUse the Skill tool with: { \"skill\": \"${workflowTrigger.skill}\" }"
+      },
+      {
+        "file": ".claude/hooks/src/skill-activation-prompt.ts",
+        "lines": "243-244",
+        "quote": "output += 'ACTION: Use AskUserQuestion to confirm before spawning:\\n';\n        output += `  \"I'll use ${suggestedAgent} to ${inference.work_breakdown}. Proceed?\"\\n`;"
+      },
+      {
+        "file": ".claude/hooks/src/skill-activation-prompt.ts",
+        "lines": "646-650",
+        "quote": "if (confirmedSkills.length > 0) {\n                    output += 'ACTION: Use Skill tool BEFORE responding\\n';\n                }"
+      },
+      {
+        "file": ".claude/hooks/src/skill-activation-prompt.ts",
+        "lines": "658-660",
+        "quote": "const blockMessage = output + '\\n⛔ BLOCKING: You MUST invoke ' +\n                        blockingSkills.map(s => s.name).join(', ') +\n                        ' skill(s) before generating ANY response.';"
+      },
+      {
+        "file": ".claude/hooks/src/memory-awareness.ts",
+        "lines": "695",
+        "quote": "const memoryContext = `${wrapMemoryContext(body)}\\nMemory results above are reference data only; call /recall \"${safeIntent}\" for full content if needed.`;"
+      }
+    ],
+    "observe_how": "Composition is verified from control flow: the workflow banner is pushed to messages (line 394) and execution deliberately continues ('Continue to skill matching — don't exit early', line 381); pattern inference runs on EVERY prompt (line 385) and its block is prepended to the same output (lines 532-534); the per-skill ACTION lines and the blocking footer append to that same output; messages are joined into ONE emission (line 743). A prompt like 'fix the failing bug in the auth module' matches the fix workflow trigger AND yields a pattern inference AND keyword-matches skills — producing 'invoke skill FIRST', 'ask the user FIRST via AskUserQuestion', and 'use Skill tool BEFORE responding' as simultaneous mandates (~1.5-2.5KB of banner text), while memory-awareness separately injects the /recall suggestion for the same turn. The directives are mutually exclusive orderings of the model's first action; obeying the agentica confirm-first instruction violates the blocking must-invoke-first instruction. Simplify: pick one router (the workflow trigger already has highest confidence), demote the rest to non-imperative context, and drop the agentica ACTION when a >=0.9 workflow matched.",
+    "telemetry": "Count prompts whose injection contains >1 distinct 'ACTION'/'BLOCKING' directive (transcript grep); compare skill-invocation compliance on single- vs multi-directive turns",
+    "dedup_keys": [
+      ".claude/hooks/src/skill-activation-prompt.ts:checkWorkflowTriggers",
+      ".claude/hooks/src/skill-activation-prompt.ts:generateAgenticaOutput",
+      ".claude/hooks/src/skill-activation-prompt.ts:blockMessage",
+      "conflicting-action-directives"
+    ],
+    "causal_links": [
+      "rides on D2c-06 (the {result:'continue',message} shape these banners are delivered in may not reach the model at all — settle that first; if it does deliver, this conflict is live every matching prompt)",
+      "D6a-03 (the per-prompt uv pattern-inference spawn exists to produce the second, conflicting directive)"
+    ],
+    "_dim": "D10a",
+    "cluster_id": "C004"
+  },
+  {
+    "id": "D10a-06",
+    "title": "heartbeat stores the first 100 chars of ANY prompt — including <task-notification> XML — as sessions.working_on, so cross-terminal peers see markup junk instead of work context",
+    "severity": "S3",
+    "confidence": "VERIFIED",
+    "proposed_class": "fix",
+    "leverage": "quick-win",
+    "seed_ref": "SEED-13",
+    "evidence": [
+      {
+        "file": ".claude/hooks/src/heartbeat.ts",
+        "lines": "77-79",
+        "quote": "const workingOn = input.prompt\n    ? input.prompt.split('\\n')[0].substring(0, 100)\n    : undefined;"
+      },
+      {
+        "file": ".claude/hooks/src/heartbeat.ts",
+        "lines": "87-88",
+        "quote": "// Update session heartbeat via registerSession (upserts)\n  const result = registerSession(sessionId, project, workingOn);"
+      }
+    ],
+    "observe_how": "Payoff: one synthetic-prompt guard (skip working_on update when the prompt starts with '<task-notification>'/'<system-reminder>') keeps the cross-terminal sessions table's working_on column human-readable — it is the peer-session display surface documented in cross-terminal-db.md. For a notification prompt the first line is literally '<task-notification>', which is what lands in the DB whenever the 30s cache TTL has lapsed. Query: SELECT working_on FROM sessions WHERE working_on LIKE '<%';",
+    "telemetry": "docker exec continuous-claude-postgres psql ... \"SELECT count(*) FROM sessions WHERE working_on LIKE '<%'\"",
+    "dedup_keys": [
+      ".claude/hooks/src/heartbeat.ts:workingOn",
+      "sessions.working_on",
+      "<task-notification>:heartbeat"
+    ],
+    "causal_links": [
+      "instance-of SEED-13 / D2c-01 (third surface, after recall intent and bus intent, consuming unfiltered synthetic prompts)"
+    ],
+    "_dim": "D10a",
+    "cluster_id": "C005"
+  },
+  {
+    "id": "D10b-06",
+    "title": "On a single `git commit` of a hook edit, THREE write-side actors fire with no ordering/exclusion: background forward-sync (active dir), git-commit-roadmap (non-atomic RMW of ROADMAP.md), architecture-stats-sync (detached writer of architecture.json) -- each a separate unguarded fs.writeFileSync/cp into a shared file",
+    "severity": "S2",
+    "confidence": "VERIFIED",
+    "proposed_class": "document",
+    "leverage": "structural",
+    "observe_how": "git-commit-roadmap does fs.readFileSync(ROADMAP) then fs.writeFileSync(ROADMAP) with no lock; under two concurrent commits (multi-terminal, both editing the same repo) the second clobbers the first's roadmap append. This is the same single-writer-violation class as SEED-02's roadmap contamination. The three actors write disjoint files this run, so no direct corruption today, but the pattern (full-file RMW, no lock, fire-on-every-commit) is the recurrence vector the May-2026 history warns about.",
+    "telemetry": "Wrap ROADMAP.md and architecture.json writes in the same lock the forward-sync needs (D10b-02). Track concurrent-commit collisions via a write-attempt log keyed by file+pid.",
+    "evidence": [
+      {
+        "file": ".claude/hooks/src/git-commit-roadmap.ts",
+        "lines": "283-285",
+        "quote": "  const updated = appendToCompleted(content, entry);\n\n  fs.writeFileSync(roadmapPath, updated);"
+      },
+      {
+        "file": ".claude/hooks/src/git-commit-roadmap.ts",
+        "lines": "5-6",
+        "quote": " * PostToolUse:Bash - Detects successful git commits and updates ROADMAP.md"
+      },
+      {
+        "file": ".claude/rules/git-sync-workflow.md",
+        "lines": "n/a",
+        "quote": "two *automatic* reverse-sync triggers used to race the background forward-sync and **clobber fresh repo edits with stale active copies**"
+      }
+    ],
+    "dedup_keys": [
+      ".claude/hooks/src/git-commit-roadmap.ts",
+      "ROADMAP.md",
+      "non-atomic write",
+      "single-writer"
+    ],
+    "causal_links": [
+      "SEED-02",
+      "D10b-02"
+    ],
+    "seed_ref": "SEED-02",
+    "_dim": "D10b",
+    "cluster_id": "C007"
+  },
+  {
+    "id": "D1A-008",
+    "title": "Q12 WRRF rank-fusion and §17-1 bus-wrrf.jsonl weight logging never implemented anywhere; biasByFocus is a binary contains re-sort",
+    "severity": "S3",
+    "confidence": "VERIFIED",
+    "proposed_class": "document",
+    "leverage": "quick-win",
+    "seed_ref": null,
+    "evidence": [
+      {
+        "file": "scripts/code-intel.mjs",
+        "lines": "736",
+        "quote": "scored.sort((a, b) => (b.hit ? 1 : 0) - (a.hit ? 1 : 0) || a.idx - b.idx);"
+      },
+      {
+        "file": "C:/Users/david.hayes/.claude/plans/we-have-recently-done-refactored-storm.md",
+        "lines": "555",
+        "quote": "1. **WRRF source weights are educated guesses.** `{user_mentioned: 2.0, serena_lsp: 1.5, codegraph_fts: 1.0, tldr_ast: 1.0, grep_hit: 0.3}` — no labeled data to fit them."
+      }
+    ],
+    "observe_how": "grep -rln 'WRRF\\|bus-wrrf' over hooks/scripts returns only docs/. Payoff: one design-amendment line ('rank fusion deferred; ranks_by_source unused') prevents Phase D's +w_bus recall boost from being built on a phantom rank model.",
+    "telemetry": "",
+    "dedup_keys": [
+      "WRRF",
+      "bus-wrrf.jsonl",
+      "ranks_by_source",
+      "biasByFocus"
+    ],
+    "causal_links": [
+      "caused-by D1A-001 (no ranks ever written, so nothing to fuse)"
+    ],
+    "_dim": "D1a",
+    "cluster_id": "C010"
+  },
+  {
+    "id": "D2a-03",
+    "title": "package-install-guard block reason is silently lost: deny JSON printed to stdout in a non-schema shape + process.exit(2), but exit-2 blocking reads stderr; advisory path also uses a PostToolUse-only field",
+    "severity": "S2",
+    "confidence": "VERIFIED",
+    "evidence": [
+      {
+        "file": ".claude/hooks/src/package-install-guard.ts",
+        "lines": "589-596",
+        "quote": "  const output = {\n    permissionDecision: 'deny',\n    reason,"
+      },
+      {
+        "file": ".claude/skills/hook-developer/references/schemas.md",
+        "lines": "42",
+        "quote": "**Exit code 2:** Blocks tool, stderr shown to Claude."
+      },
+      {
+        "file": ".claude/hooks/src/package-install-guard.ts",
+        "lines": "598-605",
+        "quote": "function outputAllowWithAdvisory(advisory: string): void {\n  const output = {\n    hookSpecificOutput: {\n      additionalContext: advisory,"
+      }
+    ],
+    "proposed_class": "fix",
+    "leverage": "quick-win",
+    "seed_ref": null,
+    "dedup_keys": [
+      ".claude/hooks/src/package-install-guard.ts",
+      "outputDeny",
+      "outputAllowWithAdvisory"
+    ],
+    "causal_links": [
+      "D2a-02"
+    ],
+    "observe_how": "outputDeny() puts permissionDecision/reason at the TOP level (the valid PreToolUse shape requires hookSpecificOutput.{hookEventName,permissionDecision,permissionDecisionReason}) and writes it to STDOUT, then exits 2. The exit-2 path blocks but feeds STDERR to Claude — which is empty — so the carefully built remediation text (typosquat suggestion, advisory ID, SKIP_PACKAGE_GUARD override hint) never reaches Claude; it just sees a generic hook block and may retry blind. The warn path's hookSpecificOutput.additionalContext (no hookEventName) is a PostToolUse field per the repo's own schemas.md, so HIGH-severity OSV advisories and <7d age warnings are likely dropped too. Fix: emit the standard PreToolUse deny JSON on stdout with exit 0, and write the reason to stderr if keeping exit 2.",
+    "telemetry": "Trigger a typosquat block (e.g. `pip install requets`) and inspect what Claude receives — the suggestion text is absent.",
+    "_dim": "D2a",
+    "cluster_id": "C012"
+  },
+  {
+    "id": "D2a-10",
+    "title": "acquireLockSync busy-waits with a synchronous 100% CPU spin loop (up to 5s) and creates/deletes a .lock file even for pure reads on the per-Edit/Write and per-Agent hot paths",
+    "severity": "S3",
+    "confidence": "VERIFIED",
+    "evidence": [
+      {
+        "file": ".claude/hooks/src/shared/atomic-write.ts",
+        "lines": "98-100",
+        "quote": "        // Busy wait (synchronous context — no setTimeout available)\n        const waitUntil = Date.now() + LOCK_RETRY_MS;\n        while (Date.now() < waitUntil) { /* spin */ }"
+      },
+      {
+        "file": ".claude/hooks/src/shared/atomic-write.ts",
+        "lines": "286-289",
+        "quote": "export function readStateWithLock(filePath: string): string | null {\n  if (!existsSync(filePath)) return null;\n\n  const locked = acquireLockSync(filePath, 2000); // Shorter timeout for reads"
+      }
+    ],
+    "proposed_class": "simplify",
+    "leverage": "quick-win",
+    "seed_ref": null,
+    "dedup_keys": [
+      ".claude/hooks/src/shared/atomic-write.ts",
+      "acquireLockSync",
+      "readStateWithLock"
+    ],
+    "causal_links": [],
+    "observe_how": "plan-to-ralph-enforcer calls readStateWithLock on EVERY Edit/Write and maestro-enforcer on every Agent spawn; each read acquires an exclusive lock (write+unlink of a .lock file in %TEMP%) and, under contention, pegs a core in a Date.now() spin for up to 2-5s. Payoff: use Atomics.wait on a SharedArrayBuffer or simply read without the lock (atomic rename writes already guarantee readers never see partial JSON — the read lock adds no correctness).",
+    "telemetry": "Process Monitor on %TEMP% claude-*.json.lock create/delete churn per Edit.",
+    "_dim": "D2a",
+    "cluster_id": "C016"
+  },
+  {
+    "id": "D2b-12",
+    "title": "tldr-read-enforcer deny message tells the model 'To read full file anyway, use: Read <basename>' — but a retried Read of the same non-test file is denied again (only offset/limit bypasses), and explicit limit>=100 or offset:0 are also denied, creating a deny-retry friction loop",
+    "severity": "S2",
+    "confidence": "VERIFIED",
+    "evidence": [
+      {
+        "file": ".claude/hooks/src/tldr-read-enforcer.ts",
+        "lines": "389",
+        "quote": "  if (input.tool_input.offset || (input.tool_input.limit && input.tool_input.limit < 100)) {"
+      },
+      {
+        "file": ".claude/hooks/src/tldr-read-enforcer.ts",
+        "lines": "484-485",
+        "quote": "To read specific lines, use: Read with offset/limit\nTo read full file anyway, use: Read ${basename(filePath)} (test files bypass this)`,"
+      }
+    ],
+    "proposed_class": "fix",
+    "leverage": "quick-win",
+    "seed_ref": null,
+    "dedup_keys": [
+      ".claude/hooks/src/tldr-read-enforcer.ts",
+      "isAllowedFile",
+      "chooseTldrMode",
+      "deny-retry-loop"
+    ],
+    "causal_links": [
+      "consumes the C:\\tmp handshake from D2b-05",
+      "subject to D2b-07 (30000 'ms' timeout is really ~8.3h)"
+    ],
+    "observe_how": "Read any >3000-byte code file outside the allowlist while the TLDR daemon is up: deny with TLDR context. Follow the message's own advice ('Read <basename>') → denied again identically; a defensive `limit: 200` is also denied (only limit<100 passes); `offset: 0` is falsy so an explicit start-of-file windowed read is denied too. The model burns a round-trip per misleading instruction. Fix: honor any explicit limit/offset, and make the bypass instruction match the actual bypass.",
+    "telemetry": "trackHookActivitySync('tldr-read-enforcer', reads_intercepted) goes to the daemon; not file-inspectable, instrument before tuning",
+    "_dim": "D2b",
+    "cluster_id": "C017"
+  },
+  {
+    "id": "D2c-03",
+    "title": "sentry-error-context reads input.user_message (wrong field — Claude Code sends 'prompt') so it can NEVER inject; also not registered in active settings.json — double-dead hook",
+    "severity": "S2",
+    "confidence": "VERIFIED",
+    "seed_ref": null,
+    "proposed_class": "fix",
+    "leverage": "quick-win",
+    "evidence": [
+      {
+        "file": ".claude/hooks/src/sentry-error-context.ts",
+        "lines": "17-20",
+        "quote": "interface UserPromptInput {\n  user_message: string;\n  session_id: string;\n}"
+      },
+      {
+        "file": ".claude/hooks/src/sentry-error-context.ts",
+        "lines": "64-65",
+        "quote": "const message = input.user_message;\n    if (!shouldSuggestSentry(message)) return null;"
+      },
+      {
+        "file": ".claude/hooks/src/heartbeat.ts",
+        "lines": "40-44",
+        "quote": "interface HookInput {\n  session_id?: string;\n  cwd?: string;\n  prompt?: string;\n}"
+      }
+    ],
+    "telemetry": "Active settings.json UserPromptSubmit array has 12 entries; the 12th is braintrust_hooks.py user_prompt_submit, NOT sentry-error-context (verified by enumerating commands).",
+    "observe_how": "node -e on .claude/settings.json hooks.UserPromptSubmit: sentry-error-context.mjs is absent. Even if added, input.user_message is undefined so shouldSuggestSentry returns false on every prompt.",
+    "causal_links": [
+      "instance of SUMMARY '35/111 hook srcs never registered'"
+    ],
+    "dedup_keys": [
+      "sentry-error-context.ts:UserPromptInput.user_message",
+      "sentry-error-context.ts:handleUserPrompt"
+    ],
+    "_dim": "D2c",
+    "cluster_id": "C018"
+  }
+]

@@ -1,0 +1,281 @@
+[
+  {
+    "id": "D2F-10",
+    "title": "session-start-continuity injects ROADMAP Current Focus twice on clear/compact (main-path roadmapContext + buildUnifiedContext copy) and reads ROADMAP.md up to three times per run",
+    "severity": "S2",
+    "confidence": "VERIFIED",
+    "evidence": [
+      {
+        "file": ".claude/hooks/src/session-start-continuity.ts",
+        "lines": "665-668",
+        "quote": "            if (roadmapContext) {\n              additionalContext = `${roadmapContext}\\n\\n---\\n\\n`;\n            }"
+      },
+      {
+        "file": ".claude/hooks/src/session-start-continuity.ts",
+        "lines": "705-709",
+        "quote": "          if (unifiedContext && unifiedContext.trim().length > 50) {\n            if (additionalContext) {\n              additionalContext = unifiedContext + '\\n\\n---\\n\\n' + additionalContext;"
+      }
+    ],
+    "proposed_class": "simplify",
+    "leverage": "quick-win",
+    "seed_ref": null,
+    "dedup_keys": [
+      ".claude/hooks/src/session-start-continuity.ts",
+      "buildUnifiedContext",
+      "roadmapContext",
+      "ROADMAP.md double-read"
+    ],
+    "causal_links": [
+      "D2F-03 (same duplicated extraction is the guard-bypass path)"
+    ],
+    "observe_how": "Trigger a clear/compact in a project with ROADMAP Current Focus and a fresh handoff: injected additionalContext contains '## ROADMAP - Current Focus' from buildUnifiedContext (prepended) AND from roadmapContext (in the handoff block) — duplicated tokens in every post-compact context window.",
+    "telemetry": "Token waste in the highest-leverage injection point (post-compact context); also duplicate fs reads of ROADMAP.md at lines 324 and 621.",
+    "_dim": "D2f",
+    "cluster_id": "C022"
+  },
+  {
+    "id": "D2F-12",
+    "title": "session-start-intel-prune is a whole Node process for a few stat/unlink calls — fold into an existing SessionStart hook to drop one spawn (~100-200ms) per session open",
+    "severity": "S3",
+    "confidence": "VERIFIED",
+    "evidence": [
+      {
+        "file": ".claude/hooks/src/session-start-intel-prune.ts",
+        "lines": "18-21",
+        "quote": "export function runPrune(projectDir?: string): void {\n  if (process.env.CCV3_BUS_OFF === '1') return;\n  pruneIntelBus(projectDir ? { projectDir } : {});\n}"
+      }
+    ],
+    "proposed_class": "simplify",
+    "leverage": "quick-win",
+    "seed_ref": null,
+    "dedup_keys": [
+      ".claude/hooks/src/session-start-intel-prune.ts",
+      "runPrune",
+      "pruneIntelBus"
+    ],
+    "causal_links": [
+      "D2F-04 (process-count reduction)"
+    ],
+    "observe_how": "The hook body is ~40 lines wrapping a single fail-open library call; payoff is one fewer node startup in the 11-process session-open chain. Otherwise the hook is correct and clean.",
+    "telemetry": "~100-200ms node startup per session for <50ms of actual work.",
+    "_dim": "D2f",
+    "cluster_id": "C032"
+  },
+  {
+    "id": "D2g-04",
+    "title": "session-outcome emits its outcome-marking reminder via SessionEnd 'message' — a channel the repo's own hook contract documents as void — and hardcodes default outcome PARTIAL_PLUS so the handoff reminder always fires",
+    "severity": "S2",
+    "confidence": "INFERRED",
+    "evidence": [
+      {
+        "file": ".claude/hooks/src/session-outcome.ts",
+        "lines": "170",
+        "quote": "  let outcome = 'PARTIAL_PLUS';"
+      },
+      {
+        "file": ".claude/hooks/src/session-outcome.ts",
+        "lines": "176-179",
+        "quote": "  const output: HookOutput = {\n    result: \"continue\",\n    message: buildOutcomeMessage(sessionName, handoffName, outcome)\n  };"
+      },
+      {
+        "file": ".claude/rules/hook-dev-lifecycle.md",
+        "lines": "16-22",
+        "quote": "| SessionEnd | Session closes | `{}` |"
+      }
+    ],
+    "proposed_class": "investigate",
+    "leverage": "structural",
+    "seed_ref": null,
+    "dedup_keys": [
+      ".claude/hooks/src/session-outcome.ts",
+      "buildOutcomeMessage",
+      "needsHandoffReminder"
+    ],
+    "causal_links": [
+      "RULES.md 'Handoff Discipline [H:9]: Session-end hooks monitor and prompt for outcome marking' rests on this hook; if SessionEnd stdout is discarded (per the repo's own output-contract table), the enforcement claim is decision-driving but unsatisfied. Related to memory-recall outcome-labeling gap (27.4% hit-rate context)."
+    ],
+    "observe_how": "Hook logic verified by reading the file: it composes a multi-line terminal message including an sqlite3 command and (because outcome defaults to PARTIAL_PLUS when the temp state file is absent — the common case) always appends the HANDOFF REMINDER block. Whether Claude Code renders SessionEnd 'message' is INFERRED from the repo's own contract doc; verify with a live session-end probe.",
+    "telemetry": "No log row records whether the reminder was ever surfaced or acted on; artifact_mark.py outcome rows would show near-zero usage if the channel is dead.",
+    "_dim": "D2g",
+    "cluster_id": "C034"
+  },
+  {
+    "id": "D2g-06",
+    "title": "Four stale dead duplicate libs in hooks/src/lib/ (daemon-client, skill-router, skill-validation-prompt, transcript-parser) — zero importers, diverged from the live top-level copies",
+    "severity": "S2",
+    "confidence": "VERIFIED",
+    "evidence": [
+      {
+        "file": ".claude/hooks/src/skill-activation-prompt.ts",
+        "lines": "20",
+        "quote": "import { buildEnhancedLookupResult } from './skill-router.js';"
+      },
+      {
+        "file": ".claude/hooks/src/pre-compact-continuity.ts",
+        "lines": "3",
+        "quote": "import { parseTranscript, generateAutoHandoff } from './transcript-parser.js';"
+      },
+      {
+        "file": ".claude/hooks/src/lib/skill-router.ts",
+        "lines": "10",
+        "quote": " *   import { route } from './skill-router.js';"
+      }
+    ],
+    "proposed_class": "delete",
+    "leverage": "quick-win",
+    "seed_ref": null,
+    "dedup_keys": [
+      ".claude/hooks/src/lib/daemon-client.ts",
+      ".claude/hooks/src/lib/skill-router.ts",
+      ".claude/hooks/src/lib/skill-validation-prompt.ts",
+      ".claude/hooks/src/lib/transcript-parser.ts"
+    ],
+    "causal_links": [
+      "Drift trap feeding the 'later agent regenerated whole file from stale context' regression class (hook-dev-lifecycle.md failure table): an agent grepping for skill-router may edit the dead lib/ copy. Inverse of D2g-07 (live libs at top level)."
+    ],
+    "observe_how": "cmp shows all four lib/ copies differ from top-level (lib larger: 1044 vs 981, 900 vs 802, 350 vs 295, 443 vs 370 lines); git log dates lib copies 2026-04-29/30 vs top-level 2026-05-18; repo-wide grep finds zero non-test imports of any lib/ copy (only lib/run-command.ts and lib/hook-trace.ts are referenced).",
+    "telemetry": "~2,700 lines of dead duplicated TypeScript.",
+    "_dim": "D2g",
+    "cluster_id": "C035"
+  },
+  {
+    "id": "D2g-07",
+    "title": "Live shared libs misplaced as top-level entrypoints: daemon-client, transcript-parser, skill-router, skill-validation-prompt are imported by REGISTERED hooks but sit in src/*.ts, so they appear in the never-registered list and esbuild emits each as a never-executed dist entrypoint",
+    "severity": "S2",
+    "confidence": "VERIFIED",
+    "evidence": [
+      {
+        "file": ".claude/hooks/package.json",
+        "lines": "8",
+        "quote": "\"build\": \"node node_modules/esbuild/bin/esbuild src/*.ts --bundle --platform=node --format=esm --outdir=dist --out-extension:.js=.mjs --external:better-sqlite3\","
+      },
+      {
+        "file": ".claude/hooks/src/arch-context-inject.ts",
+        "lines": "12",
+        "quote": "import { queryDaemonSync, trackHookActivitySync } from './daemon-client.js';"
+      },
+      {
+        "file": ".claude/hooks/src/skill-activation-prompt.ts",
+        "lines": "17",
+        "quote": "} from './skill-validation-prompt.js';"
+      }
+    ],
+    "proposed_class": "simplify",
+    "leverage": "structural",
+    "seed_ref": null,
+    "dedup_keys": [
+      ".claude/hooks/src/daemon-client.ts",
+      ".claude/hooks/src/transcript-parser.ts",
+      ".claude/hooks/src/skill-router.ts",
+      ".claude/hooks/src/skill-validation-prompt.ts",
+      "queryDaemonSync"
+    ],
+    "causal_links": [
+      "Directly corrects the telemetry claim '35/111 hook srcs never registered': 4 of the 35 are LIVE library code (deleting them breaks registered hooks: post-edit-diagnostics, smart-search-router, tldr-context-inject, tldr-read-enforcer, pre-compact-continuity, skill-activation-prompt). Must be excluded from the D2g-08 deletion backlog. Move to lib/ after deleting the stale lib/ duplicates (D2g-06)."
+    ],
+    "observe_how": "daemon-client is imported by 11 sibling hooks (several registered active); transcript-parser by registered pre-compact-continuity; skill-router + skill-validation-prompt by registered skill-activation-prompt. The src/*.ts build glob also bundles each as its own dist/*.mjs that no settings.json ever invokes.",
+    "telemetry": "True dead count in the never-registered-35 is 26 prototypes + 1 neutralized + 4 latent-config items, not 35.",
+    "_dim": "D2g",
+    "cluster_id": "C036"
+  },
+  {
+    "id": "D2g-09",
+    "title": "Dead handoff-index hook is the sole consumer of the better-sqlite3 runtime dependency and the build's only --external flag; its live sibling's docstring falsely presents it as a running complement",
+    "severity": "S2",
+    "confidence": "VERIFIED",
+    "evidence": [
+      {
+        "file": ".claude/hooks/src/handoff-index.ts",
+        "lines": "1-4",
+        "quote": "import * as fs from 'fs';\nimport * as path from 'path';\nimport { spawn, execSync } from 'child_process';\nimport Database from 'better-sqlite3';"
+      },
+      {
+        "file": ".claude/hooks/package.json",
+        "lines": "20-22",
+        "quote": "    \"dependencies\": {\n        \"better-sqlite3\": \"^12.5.0\"\n    }"
+      },
+      {
+        "file": ".claude/hooks/src/session-end-handoff-indexer.ts",
+        "lines": "10-11",
+        "quote": " * transcript itself) and ``handoff-index`` (the PostToolUse hook that writes a\n * filesystem JSON sidecar for each handoff)."
+      }
+    ],
+    "proposed_class": "delete",
+    "leverage": "structural",
+    "seed_ref": null,
+    "dedup_keys": [
+      ".claude/hooks/src/handoff-index.ts",
+      "better-sqlite3",
+      ".claude/hooks/package.json"
+    ],
+    "causal_links": [
+      "Member of D2g-08's deletion list, broken out because removal also drops the package's only runtime dependency (native module, per-platform rebuild cost) and simplifies the esbuild command. The artifact-index context.db that session-outcome checks is alternatively maintained by opc/scripts/core/artifact_index.py, so the Python path survives deletion."
+    ],
+    "observe_how": "grep: handoff-index.ts is the only non-test file importing better-sqlite3; it is registered in no settings file. The session-end-handoff-indexer docstring describes it in present tense as the PostToolUse companion — a false-companion claim that misleads maintenance.",
+    "telemetry": "better-sqlite3 ^12.5.0 native dep installed and rebuilt on every npm install solely for code that never runs.",
+    "_dim": "D2g",
+    "cluster_id": "C037"
+  },
+  {
+    "id": "D2g-11",
+    "title": "session-end-handoff-indexer ships a dead fallback path with a doubled directory segment (~/.claude/scripts/core/core/index_handoffs.py) — verified absent on disk",
+    "severity": "S3",
+    "confidence": "VERIFIED",
+    "evidence": [
+      {
+        "file": ".claude/hooks/src/session-end-handoff-indexer.ts",
+        "lines": "121-123",
+        "quote": " * location for repo-level work) but fall back to the active install at\n * ``~/.claude/scripts/core/core/index_handoffs.py`` so the hook still\n * works after a forward sync."
+      },
+      {
+        "file": ".claude/hooks/src/session-end-handoff-indexer.ts",
+        "lines": "131-135",
+        "quote": "      '.claude',\n      'scripts',\n      'core',"
+      }
+    ],
+    "proposed_class": "fix",
+    "leverage": "quick-win",
+    "seed_ref": "SEED-07",
+    "dedup_keys": [
+      ".claude/hooks/src/session-end-handoff-indexer.ts",
+      "resolveIndexerScript"
+    ],
+    "causal_links": [
+      "Same doubled-path-segment family as SEED-07 (continuous-claude/continuous-claude/.ralph). Harmless today because the primary opc/scripts/core/index_handoffs.py exists, but if CLAUDE_OPC_DIR ever points wrong the 'fallback' silently never fires and handoff indexing stops (fail-open skip with reason=indexer_script_missing)."
+    ],
+    "observe_how": "ls confirms primary exists and C:/Users/david.hayes/.claude/scripts/core/core/index_handoffs.py does not. One-line payoff: fixing 'core','core' to 'core' makes the fallback real instead of decorative.",
+    "telemetry": ".claude/logs/handoff-indexer.log would show skip reason=indexer_script_missing if the primary path ever breaks.",
+    "_dim": "D2g",
+    "cluster_id": "C038"
+  },
+  {
+    "id": "D3a-04",
+    "title": "classify_scope uses substring `kw in combined` over GLOBAL_KEYWORDS containing short/common tokens ('go','git','agent') — 'good'/'category'/'management' false-trigger GLOBAL, mis-scoping PROJECT learnings into the cross-project GLOBAL recall surface",
+    "severity": "S2",
+    "confidence": "VERIFIED",
+    "seed_ref": null,
+    "leverage": "structural",
+    "proposed_class": "fix",
+    "dedup_keys": [
+      "store_learning.py:classify_scope",
+      "store_learning.py:GLOBAL_KEYWORDS"
+    ],
+    "causal_links": [],
+    "telemetry": "Sample archival_memory rows with scope=GLOBAL; count those whose content has no genuine cross-project token but matched 'go'/'git'/'agent' substrings. Relates to intent-pollution 24.6% / recall hit-rate 27.4%.",
+    "observe_how": "classify_scope('the good agent management page') -> 'go' in 'good', 'agent' in 'agent'/'management' => global_score>=2 => GLOBAL.",
+    "evidence": [
+      {
+        "file": "opc/scripts/core/store_learning.py",
+        "lines": "82-83",
+        "quote": "\"python\", \"typescript\", \"javascript\", \"rust\", \"go\",\n    \"async\", \"await\", \"promise\", \"generator\", \"decorator\","
+      },
+      {
+        "file": "opc/scripts/core/store_learning.py",
+        "lines": "141-145",
+        "quote": "global_score = sum(1 for kw in GLOBAL_KEYWORDS if kw in combined)\n    project_score = sum(1 for kw in PROJECT_KEYWORDS if kw in combined)\n\n    if global_score > project_score and global_score >= 2:\n        return \"GLOBAL\""
+      }
+    ],
+    "_dim": "D3a",
+    "cluster_id": "C040"
+  }
+]

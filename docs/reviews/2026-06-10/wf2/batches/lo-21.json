@@ -1,0 +1,288 @@
+[
+  {
+    "id": "D8c-05",
+    "title": "tldr-code SKILL.md claims routine analysis 'is handled automatically by 8 hooks' — 4 of the 8 (impact-refactor, arch-context-inject, edit-context-inject, signature-helper) are registered in NEITHER repo nor active settings.json",
+    "severity": "S2",
+    "confidence": "VERIFIED",
+    "proposed_class": "fix",
+    "seed_ref": null,
+    "evidence": [
+      {
+        "file": ".claude/skills/tldr-code/SKILL.md",
+        "lines": "15",
+        "quote": "Routine analysis (call graph injection, AST-summarized reads, post-edit diagnostics) is handled automatically by 8 hooks — see `tldr-context-inject`, `tldr-read-enforcer`, `smart-search-router`, `impact-refactor`, `arch-context-inject`, `edit-context-inject`, `post-edit-diagnostics`, `signature-helper`."
+      },
+      {
+        "file": ".claude/hooks/src/impact-refactor.ts",
+        "lines": "2-4",
+        "quote": "* UserPromptSubmit Hook: Impact Analysis for Refactoring (DAEMON)\n *\n * When user mentions refactor/change/rename + function name, automatically"
+      }
+    ],
+    "observe_how": "grep each of the 8 names against both C:/Users/david.hayes/.claude/settings.json (active) and .claude/settings.json (repo): tldr-context-inject/tldr-read-enforcer/smart-search-router/post-edit-diagnostics REGISTERED; impact-refactor/arch-context-inject/edit-context-inject/signature-helper appear in NEITHER file — their src exists but they never execute. The skill's 'don't add new tldr-* sub-skills; extend a hook' guidance assumes coverage that half-doesn't exist (e.g. no automatic refactor impact analysis actually fires).",
+    "telemetry": "Consistent with SUMMARY.md '35/111 hook srcs never-registered' — this finding pins 4 specific never-registered hooks that a high-traffic skill explicitly claims are live.",
+    "causal_links": [
+      "Instance-level confirmation of the never-registered-hooks telemetry: dead hook source is being advertised as active behavior by the canonical TLDR skill",
+      "Fix is either register the 4 hooks or delete them and drop the claim — the skill currently blocks sub-skill creation on the false premise"
+    ],
+    "dedup_keys": [
+      ".claude/skills/tldr-code/SKILL.md:8-hooks",
+      ".claude/hooks/src/impact-refactor.ts",
+      ".claude/hooks/src/arch-context-inject.ts",
+      ".claude/hooks/src/edit-context-inject.ts",
+      ".claude/hooks/src/signature-helper.ts"
+    ],
+    "leverage": "structural",
+    "_dim": "D8c",
+    "cluster_id": "C099"
+  },
+  {
+    "id": "D8c-07",
+    "title": "hook-scaffold teaches PostToolUse output field 'systemPromptSuffix' — contradicts hook-dev-lifecycle rule and the 36-file dominant 'additionalContext' pattern; scaffolded hooks may inject via a no-op field",
+    "severity": "S2",
+    "confidence": "VERIFIED",
+    "proposed_class": "investigate",
+    "seed_ref": null,
+    "evidence": [
+      {
+        "file": ".claude/skills/hook-scaffold/SKILL.md",
+        "lines": "187",
+        "quote": "| Wrong output shape | PreToolUse uses `permissionDecision`. PostToolUse uses `systemPromptSuffix`. SessionStart uses `additionalContext`. |"
+      },
+      {
+        "file": ".claude/skills/hook-scaffold/references/hook-templates.md",
+        "lines": "115",
+        "quote": "- `{ hookSpecificOutput: { hookEventName: \"PostToolUse\", systemPromptSuffix: \"...\" } }` = inject text after tool output"
+      },
+      {
+        "file": ".claude/rules/hook-dev-lifecycle.md",
+        "lines": "13",
+        "quote": "| PostToolUse | After tool executes | `{ hookSpecificOutput: { additionalContext: \"...\" } }` |"
+      }
+    ],
+    "observe_how": "grep -rl systemPromptSuffix .claude/hooks/src/ → exactly one production hook (epistemic-reminder.ts); grep -rl additionalContext → 36 hook source files. The contradiction is verified; which field Claude Code's PostToolUse runtime actually honors is the open question. If additionalContext is the real contract (per the rule doc and 36-file majority), every PostToolUse hook scaffolded from hook-templates.md silently injects nothing — and epistemic-reminder.ts (the enforcement mechanism cited by claim-verification.md: 'The epistemic-reminder hook injects warnings after Grep results') is already a silent no-op. Decide the runtime contract with a live probe, then align hook-scaffold + epistemic-reminder to it.",
+    "telemetry": "",
+    "causal_links": [
+      "If systemPromptSuffix is a dead field, the claim-verification rule's stated enforcement (epistemic-reminder warnings after Grep) has never fired — connects doc-drift to a live enforcement gap"
+    ],
+    "dedup_keys": [
+      ".claude/skills/hook-scaffold/SKILL.md:systemPromptSuffix",
+      ".claude/skills/hook-scaffold/references/hook-templates.md",
+      ".claude/hooks/src/epistemic-reminder.ts",
+      "hookSpecificOutput.additionalContext"
+    ],
+    "leverage": "structural",
+    "_dim": "D8c",
+    "cluster_id": "C023"
+  },
+  {
+    "id": "D8c-08",
+    "title": "memory SKILL.md artifact-index commands cite scripts/artifact_query.py — file lives at scripts/core/artifact_query.py; command fails as written (2 occurrences)",
+    "severity": "S2",
+    "confidence": "VERIFIED",
+    "proposed_class": "fix",
+    "seed_ref": null,
+    "evidence": [
+      {
+        "file": ".claude/skills/memory/SKILL.md",
+        "lines": "311",
+        "quote": "uv run python scripts/artifact_query.py \"<query>\" [--outcome SUCCEEDED|FAILED] [--limit N]"
+      },
+      {
+        "file": ".claude/skills/memory/SKILL.md",
+        "lines": "358",
+        "quote": "uv run python scripts/artifact_query.py \"authentication OAuth\" --outcome SUCCEEDED"
+      },
+      {
+        "file": ".claude/skills/create_handoff/SKILL.md",
+        "lines": "112",
+        "quote": "cd \"$PROJECT_ROOT/opc\" && uv run python scripts/core/artifact_mark.py --latest --outcome <USER_CHOICE>"
+      }
+    ],
+    "observe_how": "ls opc/scripts/artifact_query.py → No such file; ls opc/scripts/core/ → artifact_index.py, artifact_mark.py, artifact_query.py, artifact_schema.sql. The sibling create_handoff skill already uses the correct core/ path for artifact_mark.py, confirming the canonical location. memory SKILL.md is the canonical memory reference (consolidates 4 retired rules), so the broken Recall-Reasoning section fails every artifact-index lookup attempted from it. The --outcome flag itself is valid (verified in artifact_query.py argparse).",
+    "telemetry": "",
+    "causal_links": [
+      "Likely a relic from before the scripts/core/ reorganization; the consolidation that made memory/SKILL.md canonical copied the stale path forward"
+    ],
+    "dedup_keys": [
+      ".claude/skills/memory/SKILL.md:artifact_query",
+      "opc/scripts/core/artifact_query.py"
+    ],
+    "leverage": "quick-win",
+    "_dim": "D8c",
+    "cluster_id": "C100"
+  },
+  {
+    "id": "D8c-09",
+    "title": "CLAUDE.md global (and repo template) claims 'Hook System (90+ active hooks)' — active settings.json registers 75 distinct hook binaries",
+    "severity": "S3",
+    "confidence": "VERIFIED",
+    "proposed_class": "document",
+    "seed_ref": null,
+    "evidence": [
+      {
+        "file": ".claude/templates/CLAUDE.md.template",
+        "lines": "284",
+        "quote": "### Hook System (90+ active hooks)"
+      }
+    ],
+    "observe_how": "grep -o 'dist/[a-z0-9-]*\\.mjs' C:/Users/david.hayes/.claude/settings.json | sort -u | wc -l → 75. The identical '90+ active hooks' heading is live in the user's always-in-context ~/.claude/CLAUDE.md. Payoff: corrects an inflated inventory claim in the doc that is injected into every session on this machine, and keeps the template honest for new-machine bootstraps.",
+    "telemetry": "Consistent with SUMMARY.md: 111 hook srcs, 35 never-registered → ~76 registered; 75 distinct .mjs registrations measured.",
+    "causal_links": [
+      "Same doc-rot family as SEED-14 (hook catalog covers a fraction of hooks) — inventory numbers in prose drift because nothing regenerates them"
+    ],
+    "dedup_keys": [
+      ".claude/templates/CLAUDE.md.template:hook-count",
+      "90+ active hooks"
+    ],
+    "leverage": "quick-win",
+    "_dim": "D8c",
+    "cluster_id": "C101"
+  },
+  {
+    "id": "D9-03",
+    "title": "Codegraph in-facade routing share is 45.7% (37 of 81 eligible queries) — the other 44 fell back to TLDR despite codegraph being 'LIVE'; on the only measurable axis, adoption is at barely half the >=80% C.5 gate, and the gate's true denominator (facade-vs-bypass) has zero data",
+    "severity": "S2",
+    "confidence": "VERIFIED",
+    "evidence": [
+      {
+        "file": "docs/reviews/2026-06-10/harvest/table-intel-bus.json",
+        "lines": "44-49",
+        "quote": "      \"null\": 193,\n      \"context-bus\": 21,\n      \"tldr\": 43,"
+      },
+      {
+        "file": "docs/reviews/2026-06-10/harvest/table-intel-bus.json",
+        "lines": "52-60",
+        "quote": "      \"bus_write\": 67,\n      \"find-symbol\": 53,"
+      },
+      {
+        "file": "docs/ccv3-session9-kickoff-2026-06-05.md",
+        "lines": "118",
+        "quote": "**C.5** (flip `CCV3_FACADE_MODE=deny`) is **gated** on intel-bus showing **≥80% facade-route adoption** + bypass→0"
+      }
+    ],
+    "proposed_class": "investigate",
+    "leverage": "structural",
+    "seed_ref": "SEED-10",
+    "dedup_keys": [
+      "table-intel-bus.json:codegraph_rows",
+      "scripts/code-intel.mjs:codegraph-fallback-share",
+      "C.5-adoption-gate"
+    ],
+    "causal_links": [
+      "D1A-004",
+      "D1b-01",
+      "SEED-10",
+      "SEED-09"
+    ],
+    "telemetry": "live window: codegraph-eligible queries = find-symbol 53 + who-calls 25 + code-context 3 = 81; specialists: codegraph 35 + codegraph-fused 2 = 37 vs tldr 43 + tldr-fused 1 = 44 (37+44=81, exact accounting) -> 45.7% codegraph share; only 7 distinct live days",
+    "observe_how": "Every live tldr row is a fallback for a codegraph-eligible query (no cfg/dfg/slice/dead/diagnostics query types appear in the live window), so the 54% fallback rate is not TLDR doing its own job — it is the kill-switch-order path (CCV3_KILLSWITCH -> CCV3_CODEGRAPH_OFF -> binary-absent -> TLDR) firing on more than half of calls. Investigate WHICH leg fires: instrument the fallback branch in scripts/code-intel.mjs to log the fallback reason (env flag vs binary-absent vs missing .codegraph DB in the query cwd) to intel-bus, then re-measure. Separately, the C.5 gate as written (facade-route adoption vs bypass) remains unmeasurable per D1b-01 — 37 codegraph rows over 7 days cannot evidence an 80% gate whose denominator is never logged.",
+    "_dim": "D9",
+    "cluster_id": "C103"
+  },
+  {
+    "id": "D9-04",
+    "title": "Agent-recall telemetry shows the working agent fleet is ~8 of 36: 30 agents (incl. oracle, debug-agent, sleuth, architect, phoenix, arbiter — the agents the rules route to) have NEVER hit the recall surface; activity is dominated by the review pipeline (codex-adversary+critic+plan-reviewer = 39/78 = 50%), and banned 'Explore' appears 8 times",
+    "severity": "S2",
+    "confidence": "VERIFIED",
+    "evidence": [
+      {
+        "file": "docs/reviews/2026-06-10/harvest/table-agent-recall.json",
+        "lines": "2-5",
+        "quote": "  \"rows\": 78,\n  \"by_subagent\": {\n    \"codex-adversary\": 23,\n    \"scout\": 16,"
+      },
+      {
+        "file": "docs/reviews/2026-06-10/harvest/table-agent-recall.json",
+        "lines": "8-9",
+        "quote": "    \"Explore\": 8,\n    \"plan-reviewer\": 4,"
+      },
+      {
+        "file": ".claude/rules/use-scout-not-explore.md",
+        "lines": "3",
+        "quote": "For codebase exploration tasks, use `scout` (Sonnet) instead of `Explore` (Haiku)."
+      }
+    ],
+    "proposed_class": "simplify",
+    "leverage": "structural",
+    "seed_ref": null,
+    "dedup_keys": [
+      "table-agent-recall.json:agents_never_appearing",
+      ".claude/agents:fleet-pruning",
+      "use-scout-not-explore:Explore-violation"
+    ],
+    "causal_links": [
+      "D2b-03",
+      "D9-01"
+    ],
+    "telemetry": "78 rows: codex-adversary 23, scout 16, kraken 12, critic 12, Explore 8, plan-reviewer 4, Plan 2, spark 1; agents_never_appearing = 30/36 (incl. all debug/research/deploy/orchestration agents)",
+    "observe_how": "Two readings, both actionable: (1) if the 30 absent agents are never spawned, the 36-agent inventory advertised in CLAUDE.md/agent docs is ~78% dead weight — maintenance cost (model-selection rules, validation hooks, docs) with no usage; cross-check by grepping Task-tool spawn telemetry (Braintrust traces) for any spawn of the 30 names over the same window. (2) If they ARE spawned but never reach agent-recall-injector, the injector's matcher misses them (consistent with D2b-01 Agent/Task matcher split-brain). Either way the surface is double-dead: per D2b-03 the injector yielded 0 memories in all 78 fires that DID happen. The 8 'Explore' rows are a live violation of use-scout-not-explore.md observable directly in telemetry — a cheap compliance probe for any future rules-adherence check. Recommend: prune or archive never-used agents, or fix injector coverage, before investing further in per-agent memory.",
+    "_dim": "D9",
+    "cluster_id": "C104"
+  },
+  {
+    "id": "D9-05",
+    "title": "Codex-lift telemetry inverts the review pipeline's assumed hierarchy (codex_only 77 > claude_only 49, overlap only 14/140) — the single cross-model pass out-finds the multi-agent Claude review arm, the 'both-flag = high-confidence' synthesis rule almost never has material (1.4 findings/run), and the log tracks raw counts with no accepted/rejected disposition, so the designed ROI decision cannot actually be made from it",
+    "severity": "S2",
+    "confidence": "VERIFIED",
+    "evidence": [
+      {
+        "file": "docs/reviews/2026-06-10/harvest/table-codex-pageindex.json",
+        "lines": "4-6",
+        "quote": "    \"total_claude_only\": 49,\n    \"total_codex_only\": 77,\n    \"total_both\": 14"
+      },
+      {
+        "file": ".claude/rules/codex-adversarial.md",
+        "lines": "87",
+        "quote": "The `codex_only` count IS the cross-model lift — if it's consistently zero, the Codex pass isn't earning its quota cost and should be reconsidered."
+      },
+      {
+        "file": ".claude/rules/codex-adversarial.md",
+        "lines": "83",
+        "quote": "Findings that BOTH critic and codex-adversary flag are high-confidence - the cross-model lift is exactly the findings only one side catches."
+      }
+    ],
+    "proposed_class": "investigate",
+    "leverage": "quick-win",
+    "seed_ref": null,
+    "dedup_keys": [
+      "table-codex-pageindex.json:codex_lift",
+      ".claude/logs/codex-lift.jsonl:schema-disposition",
+      ".claude/rules/codex-adversarial.md:roi-metric"
+    ],
+    "causal_links": [],
+    "telemetry": "10 runs: claude_only 49, codex_only 77, both 14 (overlap = 10% of 140 distinct findings; both averages 1.4/run)",
+    "observe_how": "The rule's own kill-criterion (codex_only consistently zero) is decisively NOT met — Codex earns its quota on this metric. But the inverse comparison is the real signal: a single gpt-5.5 pass produces 57% more unique findings than the parallel Opus critic+plan-reviewer arm. Three non-exclusive explanations the current schema cannot distinguish: Claude reviewers under-detect; finding granularity/dedup differs per source (one side splits, the other merges); or Codex over-reports unvalidated noise. Fix is one schema field: extend the codex-lift.jsonl row (emitted by /review and /premortem per codex-adversarial.md §Telemetry) with per-source accepted/rejected disposition recorded at synthesis time, then ROI = accepted-codex_only per quota-dollar becomes computable. Until then, treat 77-vs-49 as a precision-unknown count, not a verdict that the Claude review arm is redundant.",
+    "_dim": "D9",
+    "cluster_id": "C105"
+  },
+  {
+    "id": "GAP3-04",
+    "title": "COVERAGE (clean): codex-adversary agent passes the untrusted diff/plan to `codex exec` via a quoted heredoc + stdin redirect (no shell expansion, no argv interpolation) -- not a shell-injection surface; matches its documented --disable multi_agent and -o clean-capture fixes",
+    "severity": "S3",
+    "confidence": "VERIFIED",
+    "proposed_class": "document",
+    "seed_ref": null,
+    "leverage": "quick-win",
+    "observe_how": "Read .claude/agents/codex-adversary.md Step 5-6; the diff goes into PROMPT_FILE via `cat > FILE <<'PROMPT_EOF'` (single-quoted delimiter = literal) and is fed as `- < $PROMPT_FILE`. No interpolation of review content into a shell word. Payoff: removes codex-adversary from the D5b injection-surface backlog.",
+    "telemetry": "n/a (structural review verdict)",
+    "dedup_keys": [
+      ".claude/agents/codex-adversary.md",
+      "PROMPT_EOF",
+      "codex exec"
+    ],
+    "causal_links": [],
+    "evidence": [
+      {
+        "file": ".claude/agents/codex-adversary.md",
+        "lines": "146-149",
+        "quote": "PROMPT_FILE=\"$(mktemp -t codex-adv-XXXXXX.txt)\"\ncat > \"$PROMPT_FILE\" <<'PROMPT_EOF'\n<the full prompt from Step 4>\nPROMPT_EOF"
+      },
+      {
+        "file": ".claude/agents/codex-adversary.md",
+        "lines": "180-184",
+        "quote": "--disable multi_agent \\\n  -C \"$CLAUDE_PROJECT_DIR\" \\\n  -o \"$FINAL_MSG_FILE\" \\\n  - < \"$PROMPT_FILE\""
+      }
+    ],
+    "_dim": "GAP3",
+    "cluster_id": "C106"
+  }
+]

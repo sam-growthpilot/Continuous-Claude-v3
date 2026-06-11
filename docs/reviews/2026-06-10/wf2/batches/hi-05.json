@@ -1,0 +1,323 @@
+[
+  {
+    "id": "D5a-02",
+    "title": "hook-error-pipeline.ts has the identical un-escaped execSync shell-string store_learning call (content = error message interpolated, escapes only \" and \\n) — same junk-creation + injection class as D5a-01",
+    "severity": "S1",
+    "confidence": "VERIFIED",
+    "seed_ref": "SEED-01",
+    "proposed_class": "fix",
+    "leverage": "structural",
+    "dedup_keys": [
+      "hook-error-pipeline.ts",
+      "storeErrorAsLearning",
+      "execSync",
+      "store_learning.py"
+    ],
+    "causal_links": [
+      "same-root-cause as D5a-01",
+      "would-produce junk with 'Hook ' prefix"
+    ],
+    "observe_how": "storeErrorAsLearning() (called by captureHookError, the shared error-capture wrapper) builds content=`Hook '<name>' failed with error: ${error.errorMessage}. Stack: ...` and execs a shell string with escapedContent escaping only \" and \\n. error.errorMessage is arbitrary thrown-error text (can contain backtick/>/$()), so the same stdout-redirect / command-substitution failure mode applies. Any junk file it produced would carry a 'Hook ' content prefix (store_learning skips that too -> 'noise_prefix: Hook '). Same fix as D5a-01: pass args as an array via spawnSync (no shell), matching the safe callers (periodic-extract/browser-learning-extractor/post-plan-roadmap/smarter-everyday).",
+    "telemetry": "Grep junk artifacts for content beginning 'Hook '; count captureHookError invocations where errorMessage contains shell metachars.",
+    "evidence": [
+      {
+        "file": ".claude/hooks/src/hook-error-pipeline.ts",
+        "lines": "87",
+        "quote": "const content = `Hook '${error.hookName}' failed with error: ${error.errorMessage}. ${error.errorStack ? `Stack: ${error.errorStack.substring(0, 300)}` : ''}`;"
+      },
+      {
+        "file": ".claude/hooks/src/hook-error-pipeline.ts",
+        "lines": "98-104",
+        "quote": "const escapedContent = content\n      .replace(/\"/g, '\\\\\"')\n      .replace(/\\n/g, '\\\\n')\n      .substring(0, 1500);\n\n    execSync(\n      `cd \"${opcDir}\" && uv run python scripts/core/store_learning.py ` +"
+      }
+    ],
+    "_dim": "D5a",
+    "cluster_id": "C006"
+  },
+  {
+    "id": "D5a-03",
+    "title": "user-confirmation-detector.ts (UserPromptSubmit hot path) passes the raw user prompt into an execSync shell:true command escaping only \" — backtick/$()/;/> in a prompt reaches the shell (command injection + junk creation)",
+    "severity": "S1",
+    "confidence": "VERIFIED",
+    "seed_ref": null,
+    "proposed_class": "fix",
+    "leverage": "structural",
+    "dedup_keys": [
+      "user-confirmation-detector.ts",
+      "storeUserConfirmedLearning",
+      "storeVictoryFromConfirmation",
+      "execSync",
+      "shell:true"
+    ],
+    "causal_links": [
+      "same shell-string class as D5a-01/D5a-02",
+      "user-content reaches shell"
+    ],
+    "observe_how": "Two call sites build content embedding the user's verbatim prompt (`User confirmed: \"${prompt}\"`) and exec it with execSync({shell:true}), escaping only the double-quote (`.replace(/\"/g, '\\\\\"')`) — NOT backtick, $(), ;, &, > or %VAR%. This is a UserPromptSubmit hook so the prompt is fully user-controlled free text. A prompt containing a backtick or $(...) executes an arbitrary subcommand; a > redirects store_learning stdout to an attacker/user-named file. Same remediation: spawnSync with an args array, drop shell:true. (Note: on Windows the execSync shell is cmd.exe, where \\\" is NOT a valid quote-escape anyway, so even the one escape applied is ineffective — a literal \" in a prompt breaks --content quoting regardless.)",
+    "telemetry": "Log when a prompt reaching storeUserConfirmedLearning/storeVictoryFromConfirmation contains shell metacharacters; count resulting non-zero store exits.",
+    "evidence": [
+      {
+        "file": ".claude/hooks/src/user-confirmation-detector.ts",
+        "lines": "126-127",
+        "quote": "const escapedContent = content.slice(0, 1000).replace(/\"/g, '\\\\\"');\n  const cmd = `uv run python ${script} --session-id \"${sessionId}\" --type USER_PREFERENCE --content \"${escapedContent}\" --context \"user confirmation\" --tags \"user_confirmed,verified\" --confidence high --project-dir \"${projectDir}\"`;"
+      },
+      {
+        "file": ".claude/hooks/src/user-confirmation-detector.ts",
+        "lines": "131-137",
+        "quote": "execSync(cmd, {\n      encoding: 'utf-8',\n      cwd: opcDir,\n      timeout: 60000,\n      stdio: ['pipe', 'pipe', 'pipe'],\n      shell: true\n    });"
+      },
+      {
+        "file": ".claude/hooks/src/user-confirmation-detector.ts",
+        "lines": "121-123",
+        "quote": "const content = context\n    ? `User confirmed: \"${prompt}\". Context: ${context}`\n    : `User confirmed: \"${prompt}\"`;"
+      }
+    ],
+    "_dim": "D5a",
+    "cluster_id": "C006"
+  },
+  {
+    "id": "D7d-02",
+    "title": "Stale fork .claude/scripts/sync-claude.sh ships to ~/.claude with NO clobber guard, reverse-sync as no-arg DEFAULT, and a mis-rooted REPO_CLAUDE that targets <parent>/.claude/.claude",
+    "severity": "S1",
+    "confidence": "VERIFIED",
+    "seed_ref": null,
+    "proposed_class": "delete",
+    "leverage": "quick-win",
+    "evidence": [
+      {
+        "file": ".claude/scripts/sync-claude.sh",
+        "lines": "13",
+        "quote": "DIRECTION=\"to-repo\""
+      },
+      {
+        "file": ".claude/scripts/sync-claude.sh",
+        "lines": "8-10",
+        "quote": "REPO_ROOT=\"$(dirname \"$SCRIPT_DIR\")\"\nREPO_CLAUDE=\"$REPO_ROOT/.claude\"\nUSER_CLAUDE=\"$HOME/.claude\""
+      },
+      {
+        "file": "scripts/sync-claude.sh",
+        "lines": "56-58",
+        "quote": "    # Pre-flight 2 (2026-06-01): refuse reverse-sync if the REPO has uncommitted\n    # changes in the synced dirs. Reverse-sync (active -> repo) would overwrite\n    # fresh repo edits with the active copy -- the exact clobber that reverted"
+      },
+      {
+        "file": ".claude/scripts/sync-claude.sh",
+        "lines": "46",
+        "quote": "    AUDIT_SCRIPT=\"$REPO_ROOT/scripts/audit-braintrust-emits.sh\""
+      },
+      {
+        "file": ".claude/scripts/sync-to-active.sh",
+        "lines": "39",
+        "quote": "SYNC_DIRS=\"rules agents skills scripts docs\""
+      }
+    ],
+    "observe_how": "diff scripts/sync-claude.sh .claude/scripts/sync-claude.sh -> `55,74d54` (the entire Pre-flight 2 dirty-repo abort, added 2026-06-01 in commit 4631b43, is ABSENT from the .claude copy, last touched 2026-05-31 in 651f520). Forward sync (SYNC_DIRS includes `scripts`) installs this fork at ~/.claude/scripts/sync-claude.sh. Run there with no args: DIRECTION defaults to to-repo; REPO_ROOT=dirname(~/.claude/scripts)=~/.claude so REPO_CLAUDE=~/.claude/.claude (copies the active tree into a nested ~/.claude/.claude junk mirror — same doubled-path family as SEED-07); AUDIT_SCRIPT resolves to ~/.claude/scripts/audit-braintrust-emits.sh which does not exist, so the `[ -f ]` check silently SKIPS the audit gate. Net: the executable whose unguarded twin destroyed repo edits twice (per .claude/rules/git-sync-workflow.md) exists in the active environment with BOTH safety gates inert and a contamination-producing target, one no-arg invocation away.",
+    "telemetry": "Check for existence of ~/.claude/.claude/ nested dir as the smoking gun of a past invocation.",
+    "causal_links": [
+      "SEED-07",
+      "D7d-03"
+    ],
+    "dedup_keys": [
+      ".claude/scripts/sync-claude.sh",
+      "scripts/sync-claude.sh:pre-flight-2",
+      "~/.claude/.claude-nesting"
+    ],
+    "_dim": "D7d",
+    "cluster_id": "C006"
+  },
+  {
+    "id": "D8a-01",
+    "title": "RULES.md Maestro Mode [C:10] claims agents are BLOCKED by maestro-enforcer until interview completes — but the hook is registered only under the dead 'Agent' matcher (repo, active, AND template), so the C:10 blocking guarantee never fires in production",
+    "severity": "S1",
+    "confidence": "VERIFIED",
+    "seed_ref": "SEED-11",
+    "evidence": [
+      {
+        "file": ".claude/templates/RULES.md.template",
+        "lines": "218-222",
+        "quote": "When Maestro is active, agents are BLOCKED until interview phase completes.\n- Phases: recon -> interview -> approval -> execute\n- Skipping interview = blocked by `maestro-enforcer` hook"
+      },
+      {
+        "file": ".claude/settings.json",
+        "lines": "21,55",
+        "quote": "\"matcher\": \"Agent\",\n... \"command\": \"node C:/Users/david.hayes/.claude/hooks/dist/maestro-enforcer.mjs\","
+      },
+      {
+        "file": ".claude/hooks/src/maestro-enforcer.ts",
+        "lines": "131-132",
+        "quote": "// Only process Agent/Task tool calls\n    if (input.tool_name !== 'Agent' && input.tool_name !== 'Task') {"
+      }
+    ],
+    "causal_links": [
+      "D2b-01",
+      "D2b-13"
+    ],
+    "proposed_class": "fix",
+    "observe_how": "Activate Maestro state, attempt a subagent spawn before 'interview complete' — no deny fires; or check hook logs for zero maestro-enforcer PreToolUse activations despite live Maestro sessions.",
+    "telemetry": "D2b-01 verified the live subagent tool matches 'Task' (Task-matched agent-recall-injector has 78 logged fires; Agent-matched hooks have none). maestro-enforcer.ts:132 already accepts both tool names internally, so the registration matcher is the single point of failure — a one-word matcher fix ('Agent' -> 'Task' or 'Agent|Task') in repo settings.json, active settings.json, and settings.json.template restores the documented C:10 gate.",
+    "leverage": "quick-win",
+    "dedup_keys": [
+      ".claude/hooks/src/maestro-enforcer.ts",
+      ".claude/templates/RULES.md.template:Maestro-Mode",
+      ".claude/settings.json:maestro-enforcer",
+      "matcher-Agent-vs-Task"
+    ],
+    "_dim": "D8a",
+    "cluster_id": "C006"
+  },
+  {
+    "id": "D8b-02",
+    "title": "Catalog lists sync-to-repo as a live PostToolUse hook — it was deliberately UNREGISTERED 2026-06-01 after clobbering uncommitted repo edits",
+    "severity": "S1",
+    "confidence": "VERIFIED",
+    "seed_ref": "SEED-14",
+    "leverage": "quick-win",
+    "proposed_class": "fix",
+    "evidence": [
+      {
+        "file": ".claude/docs/architecture/quick-ref/hook-catalog.md",
+        "lines": "76",
+        "quote": "| sync-to-repo | Write\\|Edit | Auto-sync ~/.claude changes to continuous-claude repo |"
+      },
+      {
+        "file": ".claude/rules/git-sync-workflow.md",
+        "lines": "30",
+        "quote": "**Unregistered** from active + repo `settings.json`. Source retained (unused)."
+      }
+    ],
+    "observe_how": "sync-to-repo absent from all 80 active settings.json hook entries; git-sync-workflow.md documents its removal as a root-cause fix for repo-edit clobbering. A reader trusting the catalog either assumes ~/.claude edits auto-flow to the repo (and silently loses work by skipping the manual reverse-sync) or re-registers a hook that was removed for data-loss behavior.",
+    "dedup_keys": [
+      ".claude/hooks/src/sync-to-repo.ts",
+      ".claude/docs/architecture/quick-ref/hook-catalog.md:76",
+      "sync-to-repo"
+    ],
+    "causal_links": [
+      "SEED-14"
+    ],
+    "_dim": "D8b",
+    "cluster_id": "C006"
+  },
+  {
+    "id": "D8b-03",
+    "title": "Catalog claims ralph-delegation-enforcer BLOCKS code edits when Ralph is active — source explicitly says soft-enforcement, always-allow since 2026-04-23",
+    "severity": "S1",
+    "confidence": "VERIFIED",
+    "seed_ref": "SEED-11",
+    "leverage": "quick-win",
+    "proposed_class": "fix",
+    "evidence": [
+      {
+        "file": ".claude/docs/architecture/quick-ref/hook-catalog.md",
+        "lines": "51,112",
+        "quote": "| ralph-delegation-enforcer | Edit\\|Write\\|Bash | Block direct code edits when Ralph is active |"
+      },
+      {
+        "file": ".claude/hooks/src/ralph-delegation-enforcer.ts",
+        "lines": "6",
+        "quote": " * Does NOT block Edit/Write/Bash tools."
+      },
+      {
+        "file": ".claude/hooks/src/ralph-delegation-enforcer.ts",
+        "lines": "68-69",
+        "quote": "// SOFT ENFORCEMENT (2026-04-23): Ralph-delegation-enforcer logs activity\n  // but does NOT block tools."
+      }
+    ],
+    "observe_how": "Catalog row (line 51) AND the 'Blocking Hooks / Key blockers' list (line 112) both assert blocking. Source line 134 comment: 'Always allow - soft enforcement only'. RULES.md was corrected to soft-enforcement; the catalog never was. Decision-driving: a user trusting the catalog believes autonomous Ralph runs are hook-fenced against direct code edits — they are not.",
+    "dedup_keys": [
+      ".claude/hooks/src/ralph-delegation-enforcer.ts",
+      ".claude/docs/architecture/quick-ref/hook-catalog.md:51",
+      "ralph-delegation-enforcer"
+    ],
+    "causal_links": [
+      "SEED-11"
+    ],
+    "_dim": "D8b",
+    "cluster_id": "C006"
+  },
+  {
+    "id": "D8b-04",
+    "title": "docs/ARCHITECTURE.md §2 presents 5 never-registered hooks (path-rules, typescript-preflight, handoff-index, compiler-in-the-loop, session-end-cleanup) as live 'automatic behaviors'; §6 flow diagram routes through LEANN, removed from the code",
+    "severity": "S1",
+    "confidence": "VERIFIED",
+    "seed_ref": null,
+    "leverage": "structural",
+    "proposed_class": "fix",
+    "evidence": [
+      {
+        "file": "docs/ARCHITECTURE.md",
+        "lines": "147",
+        "quote": "Hooks fire automatically at specific lifecycle points. Users don't invoke them directly - they just work."
+      },
+      {
+        "file": "docs/ARCHITECTURE.md",
+        "lines": "163",
+        "quote": "| `typescript-preflight` | Edit, Write | Runs TypeScript compiler check |"
+      },
+      {
+        "file": "docs/ARCHITECTURE.md",
+        "lines": "455",
+        "quote": "| - Semantic?   -> LEANN/Embeddings"
+      },
+      {
+        "file": ".claude/hooks/src/smart-search-router.ts",
+        "lines": "405",
+        "quote": "// LEANN functions removed - TLDR cross-file covers this use case"
+      }
+    ],
+    "observe_how": "All 5 named hooks exist as src .ts files (verified) but none appear in the 80 active settings.json entries — they never fire. A reader believes TypeScript compile checks (typescript-preflight, compiler-in-the-loop), handoff indexing on Write (handoff-index; the real one is session-end-handoff-indexer at SessionEnd), and path enforcement (path-rules) happen automatically. §6's smart-search-router flow shows a LEANN semantic route the code removed. Also §4 MCP list still names Firecrawl/Perplexity (lines 77-78) as the MCP server examples.",
+    "telemetry": "harvest: 35/111 hook srcs never-registered",
+    "dedup_keys": [
+      "docs/ARCHITECTURE.md",
+      "path-rules.ts",
+      "typescript-preflight.ts",
+      "handoff-index.ts",
+      "compiler-in-the-loop.ts",
+      "session-end-cleanup.ts",
+      "LEANN"
+    ],
+    "causal_links": [
+      "harvest:src-never-registered-35",
+      "D8b-01"
+    ],
+    "_dim": "D8b",
+    "cluster_id": "C006"
+  },
+  {
+    "id": "D8c-03",
+    "title": "ralph SKILL.md claims ralph-delegation-enforcer hook BLOCKS Edit/Write/Bash — hook has been soft-enforcement (always allow) since 2026-04-23",
+    "severity": "S1",
+    "confidence": "VERIFIED",
+    "proposed_class": "document",
+    "seed_ref": "SEED-11",
+    "evidence": [
+      {
+        "file": ".claude/skills/ralph/SKILL.md",
+        "lines": "33",
+        "quote": "**Enforcement:** The `ralph-delegation-enforcer` hook blocks Edit/Write/Bash when Ralph mode is active."
+      },
+      {
+        "file": ".claude/hooks/src/ralph-delegation-enforcer.ts",
+        "lines": "68-69",
+        "quote": "// SOFT ENFORCEMENT (2026-04-23): Ralph-delegation-enforcer logs activity\n  // but does NOT block tools. The hook cannot distinguish orchestrator from"
+      },
+      {
+        "file": ".claude/hooks/src/ralph-delegation-enforcer.ts",
+        "lines": "134",
+        "quote": "// Always allow - soft enforcement only"
+      }
+    ],
+    "observe_how": "Read .claude/hooks/src/ralph-delegation-enforcer.ts main() — every path emits allow; no permissionDecision:'deny' exists for Ralph-active state. RULES.md was corrected to 'soft enforcement since 2026-04-23' but the ralph skill (loaded on every /ralph invocation, [C:10]-tagged Core Rule section) still asserts hard blocking. Decision-driving: the autonomous orchestrator is told a hard safety gate exists where none does, so direct-edit violations in Ralph mode pass silently while the skill implies they are impossible.",
+    "telemetry": "",
+    "causal_links": [
+      "New instance of the SEED-11 enforcement-claim-mismatch family: the 2026-04-23 soft-enforcement downgrade was propagated to RULES.md but not to .claude/skills/ralph/SKILL.md",
+      "references/agents.md and state-management.md under ralph/ should be checked for the same stale claim during the fix"
+    ],
+    "dedup_keys": [
+      ".claude/skills/ralph/SKILL.md:enforcement",
+      ".claude/hooks/src/ralph-delegation-enforcer.ts",
+      "ralph-delegation-enforcer"
+    ],
+    "leverage": "quick-win",
+    "_dim": "D8c",
+    "cluster_id": "C006"
+  }
+]

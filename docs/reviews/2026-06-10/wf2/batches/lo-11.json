@@ -1,0 +1,289 @@
+[
+  {
+    "id": "D2g-03",
+    "title": "pre-compact-continuity generateAutoSummary reads two data feeds no registered hook writes, and its line parser splits Windows paths on ':' (drive letter bug) — ~95 lines of dead-feed code with a latent corruption bug",
+    "severity": "S2",
+    "confidence": "VERIFIED",
+    "evidence": [
+      {
+        "file": ".claude/hooks/src/pre-compact-continuity.ts",
+        "lines": "189-191",
+        "quote": "          const parts = line.split(':');\n          // filepath is second part, remove project dir prefix\n          return parts[1]?.replace(projectDir + '/', '') || '';"
+      },
+      {
+        "file": ".claude/hooks/post_tool_use_tracker.py",
+        "lines": "162-164",
+        "quote": "    timestamp = int(time.time())\n    with open(log_file, \"a\") as f:\n        f.write(f\"{timestamp}:{file_path}:{repo}\\n\")"
+      },
+      {
+        "file": ".claude/hooks/src/pre-compact-continuity.ts",
+        "lines": "198-199",
+        "quote": "  const gitClaudeDir = path.join(projectDir, '.git', 'claude', 'branches');\n  let buildAttempts = { passed: 0, failed: 0 };"
+      }
+    ],
+    "proposed_class": "simplify",
+    "leverage": "structural",
+    "seed_ref": null,
+    "dedup_keys": [
+      ".claude/hooks/src/pre-compact-continuity.ts",
+      "generateAutoSummary",
+      ".claude/hooks/post_tool_use_tracker.py",
+      "edited-files.log",
+      "attempts.jsonl"
+    ],
+    "causal_links": [
+      "Feeds are written only by the legacy unregistered post_tool_use_tracker.py (edited-files.log) and by nothing at all for .git/claude/branches/*/attempts.jsonl (zero writers in hooks/src). Hook itself (auto-handoff generation via transcript-parser) is live and registered; only generateAutoSummary is dead."
+    ],
+    "observe_how": "grep shows edited-files.log written only by post_tool_use_tracker.py, which appears in no settings.json (repo, template, or active); build_pass/build_fail appears only in this reader. If the feed were ever re-enabled on Windows, format {epoch}:{C:\\path}:{repo} split(':') yields parts[1]='C', so the ledger would receive 'Files changed: C' junk appended into CONTINUITY_CLAUDE-*.md.",
+    "telemetry": "generateAutoSummary returns null today (both feeds empty), so ledger auto-append silently never happens — the 'brief summary to ledger for visibility' feature is inert.",
+    "_dim": "D2g",
+    "cluster_id": "C033"
+  },
+  {
+    "id": "GAP1-02",
+    "title": "Two diverging post-tool-use-tracker Python variants (underscore 8750B vs hyphen 12612B) both committed — duplication/ambiguity smell the TS-only review could not surface",
+    "severity": "S3",
+    "confidence": "VERIFIED",
+    "evidence": [
+      {
+        "file": ".claude/hooks/post_tool_use_tracker.py",
+        "lines": "162-164",
+        "quote": "    timestamp = int(time.time())\n    with open(log_file, \"a\") as f:\n        f.write(f\"{timestamp}:{file_path}:{repo}\\n\")"
+      },
+      {
+        "file": ".claude/hooks/post-tool-use-tracker.py",
+        "lines": "1",
+        "quote": "(present, 12612 bytes, git-tracked, differs from underscore variant per `diff -q`)"
+      }
+    ],
+    "proposed_class": "investigate",
+    "leverage": "quick-win",
+    "seed_ref": null,
+    "dedup_keys": [
+      ".claude/hooks/post_tool_use_tracker.py",
+      ".claude/hooks/post-tool-use-tracker.py"
+    ],
+    "causal_links": [
+      "Same dead-feed-writer family as D2g-03 (which cited the underscore variant as the sole writer of edited-files.log consumed by pre-compact-continuity.ts). With two diverging copies and neither registered in settings.json, a maintainer re-enabling the feed cannot tell which file is canonical — the exact drift trap hook-dev-lifecycle.md warns about, but in Python where no esbuild/test guards it.",
+      "Payoff: resolving which of the two is canonical (or deleting both with the dead feed) removes the ambiguity before someone wires the wrong one back into settings.json."
+    ],
+    "observe_how": "`ls -la .claude/hooks/*.py` shows both files; `git ls-files` confirms both tracked; `diff -q` reports they DIFFER. Neither name appears in any repo/active/template settings.json registration (grep = 0 command refs for post*tool*use*tracker). The underscore copy is the one D2g-03 traced as a dead-feed writer.",
+    "telemetry": "Neither variant is registered, so both produce nothing today; the cost is pure ambiguity + ~21KB of orphaned-but-tracked Python with one foot in a documented dead-feed path.",
+    "_dim": "GAP1",
+    "cluster_id": "C033"
+  },
+  {
+    "id": "D3a-05",
+    "title": "Dead pipeline: agent-error-capture builds content starting with \"Agent '\" which is the FIRST entry in store_learning.py NOISE_PREFIXES — every store it attempts is gate-rejected before embedding; the hook still logs 'Stored failure learning'",
+    "severity": "S2",
+    "confidence": "VERIFIED",
+    "seed_ref": null,
+    "leverage": "structural",
+    "proposed_class": "fix",
+    "dedup_keys": [
+      "agent-error-capture.ts:content",
+      "store_learning.py:NOISE_PREFIXES",
+      "store_learning.py:validate_learning_quality"
+    ],
+    "causal_links": [],
+    "telemetry": "SELECT count(*) FROM archival_memory WHERE tags @> '{agent_failure}'; expect ~0 despite hook firing. 30/36 agents never in agent-recall (SUMMARY) is consistent with agent-failure learnings never persisting.",
+    "observe_how": "Run agent-error-capture on any failure; store_learning returns {skipped:true, reason:'noise_prefix: Agent ''} at gate step 1.",
+    "evidence": [
+      {
+        "file": ".claude/hooks/src/agent-error-capture.ts",
+        "lines": "144-144",
+        "quote": "const content = `Agent '${agentType}' error: ${errorContext}`;"
+      },
+      {
+        "file": "opc/scripts/core/store_learning.py",
+        "lines": "167-168",
+        "quote": "NOISE_PREFIXES = [\n    \"Agent '\",           # agent failure dumps"
+      },
+      {
+        "file": "opc/scripts/core/store_learning.py",
+        "lines": "337-341",
+        "quote": "for prefix in NOISE_PREFIXES:\n        if stripped.startswith(prefix):\n            reason = f\"noise_prefix: {prefix}\"\n...\n            return {\"passes\": False, \"reason\": reason}"
+      }
+    ],
+    "_dim": "D3a",
+    "cluster_id": "C039"
+  },
+  {
+    "id": "D3a-03",
+    "title": "_emit_store_quality_score is a synchronous timeout=2.0s HTTP POST invoked on EVERY gate outcome (incl. noise/too_short rejections), inside validate_learning_quality on the store hot path",
+    "severity": "S2",
+    "confidence": "VERIFIED",
+    "seed_ref": "SEED-16",
+    "leverage": "quick-win",
+    "proposed_class": "simplify",
+    "dedup_keys": [
+      "store_learning.py:_emit_store_quality_score",
+      "store_learning.py:validate_learning_quality"
+    ],
+    "causal_links": [
+      "SEED-16"
+    ],
+    "telemetry": "When TRACE_TO_BRAINTRUST=true + the 3 BRAINTRUST_* env vars set, time a rejected-noise store; up to 2s blocking before the rejection returns. Count call sites: 6 emit calls (4 reject paths + 2 pass paths).",
+    "observe_how": "Set the 4 env guards, store a 5-char fragment; gate rejects at step 3 but still blocks on the feedback POST first.",
+    "evidence": [
+      {
+        "file": "opc/scripts/core/store_learning.py",
+        "lines": "269-277",
+        "quote": "requests.post(\n                f\"{api_url}/v1/project_logs/{project_id}/feedback\",\n                json=payload,\n...\n                timeout=2.0,\n            )"
+      },
+      {
+        "file": "opc/scripts/core/store_learning.py",
+        "lines": "354-356",
+        "quote": "reason = f\"too_short ({len(stripped)}<{min_len})\"\n        _emit_store_quality_score(False, reason, learning_type, content_len, session_id)\n        return {\"passes\": False, \"reason\": reason}"
+      }
+    ],
+    "_dim": "D3a",
+    "cluster_id": "C039"
+  },
+  {
+    "id": "D4a-06",
+    "title": "Duplicated intel-bus appender in code-intel.mjs (appendIntelRow) re-implements ts/rotation/4KB-cap WITHOUT the redaction layer and with drop-instead-of-truncate semantics — two manually-synced writers race-rotate the same file",
+    "severity": "S2",
+    "confidence": "VERIFIED",
+    "proposed_class": "simplify",
+    "leverage": "structural",
+    "seed_ref": null,
+    "evidence": [
+      {
+        "file": "scripts/code-intel.mjs",
+        "lines": "205-212",
+        "quote": "function appendIntelRow(event) {\n  if (BUS_OFF) return;\n  try {\n    const base = { ts: new Date().toISOString(), schema_version: 1, facade: '/code-intel', ...event };"
+      },
+      {
+        "file": "scripts/code-intel.mjs",
+        "lines": "212",
+        "quote": "    if (Buffer.byteLength(line, 'utf-8') > MAX_LINE_BYTES) return; // drop oversized (never partial)"
+      },
+      {
+        "file": ".claude/hooks/src/shared/intel-bus.ts",
+        "lines": "357-359",
+        "quote": " * Concurrent-writer note (accepted, low severity -- cross-model review F3/F5):\n * two processes can both cross the cap, and one rotated GENERATION of telemetry\n * HISTORY may then be lost (a second rename replacing a just-rotated .1; likewise"
+      }
+    ],
+    "observe_how": "appendIntelRow never calls (or reimplements) redactSecretsDeep — its safety rests entirely on the allowlist comment at scripts/code-intel.mjs:196-203; any future field addition (e.g. an error string or raw query echo) lands on disk unredacted. It also drops oversized events where intel-bus.ts truncates the largest field first, and both writers independently run the rotate-to-.1 logic on the same intel-bus.jsonl (race acknowledged in intel-bus.ts but now doubled across processes). The duplication exists because the .mjs script can't import the TS module; extracting a tiny shared .mjs (or compiling the appender) removes the drift surface.",
+    "telemetry": "intel-bus.jsonl currently 647 rows written by both implementations",
+    "dedup_keys": [
+      "scripts/code-intel.mjs:appendIntelRow",
+      ".claude/hooks/src/shared/intel-bus.ts:appendIntelBus",
+      ".claude/hooks/src/shared/intel-bus.ts:maybeRotate"
+    ],
+    "causal_links": [
+      "D4a-04 (redaction gaps apply only to the TS path; the mjs path has none)"
+    ],
+    "_dim": "D4a",
+    "cluster_id": "C053"
+  },
+  {
+    "id": "D4a-08",
+    "title": "pruneIntelBus prunes a '.2' generation that maybeRotate never creates — dead branch implying multi-generation rotation that does not exist",
+    "severity": "S3",
+    "confidence": "VERIFIED",
+    "proposed_class": "delete",
+    "leverage": "quick-win",
+    "seed_ref": null,
+    "evidence": [
+      {
+        "file": ".claude/hooks/src/shared/intel-bus.ts",
+        "lines": "384",
+        "quote": "      rename(path, `${path}.1`);"
+      },
+      {
+        "file": ".claude/hooks/src/shared/intel-bus.ts",
+        "lines": "405",
+        "quote": "    for (const suffix of ['.1', '.2']) {"
+      }
+    ],
+    "observe_how": "Payoff: dropping '.2' (or documenting why it is reserved) removes the misleading implication that rotation keeps two generations; rotation is single-generation by design (~2x cap bound). Prune IS wired (session-start-intel-prune.ts) so the live branch works.",
+    "telemetry": "",
+    "dedup_keys": [
+      ".claude/hooks/src/shared/intel-bus.ts:pruneIntelBus",
+      ".claude/hooks/src/shared/intel-bus.ts:maybeRotate"
+    ],
+    "causal_links": [],
+    "_dim": "D4a",
+    "cluster_id": "C053"
+  },
+  {
+    "id": "D6a-02",
+    "title": "memory-awareness docstring claims local+DB recall run 'in parallel' but main() runs them strictly sequentially — adds checkLocalMemory's 2s uv-startup on top of checkDbMemory's 5-12s for ZERO concurrency benefit",
+    "severity": "S2",
+    "confidence": "VERIFIED",
+    "proposed_class": "fix",
+    "leverage": "quick-win",
+    "observe_how": "Read memory-recall.jsonl total_elapsed_ms: the local leg's ~2s uv startup is additive, not overlapped. Confirm by noting checkLocalMemory returns before checkDbMemory is invoked.",
+    "telemetry": "total_elapsed_ms in memory-recall.jsonl ~= localMs + dbMs (serial), not max(localMs, dbMs).",
+    "evidence": [
+      {
+        "file": ".claude/hooks/src/memory-awareness.ts",
+        "lines": "586-587",
+        "quote": "const local = checkLocalMemory(recallQuery, projectDir);\n  const [db, dbTimedOut] = checkDbMemory(recallQuery, projectDir, daemonReady);"
+      },
+      {
+        "file": ".claude/hooks/src/memory-awareness.ts",
+        "lines": "151-162",
+        "quote": "const result = spawnSync('uv', [\n      'run', 'python', projectMemoryScript,\n      'query', intent, ... timeout: 2000,"
+      },
+      {
+        "file": ".claude/hooks/src/memory-awareness.ts",
+        "lines": "225-240",
+        "quote": "const result = spawnSync('uv', args, { ... timeout: useHybrid ? 12000 : 5000, killSignal: 'SIGKILL', });"
+      }
+    ],
+    "dedup_keys": [
+      ".claude/hooks/src/memory-awareness.ts:checkLocalMemory",
+      ".claude/hooks/src/memory-awareness.ts:checkDbMemory"
+    ],
+    "causal_links": [
+      "D6a-01"
+    ],
+    "seed_ref": null,
+    "_dim": "D6a",
+    "cluster_id": "C058"
+  },
+  {
+    "id": "D6b-01",
+    "title": "Memory hot path spawns TWO cold `uv run python` processes per prompt; the BGE daemon amortizes the model load but NOT the ~2.2s Python interpreter boot paid twice (SEED-08 root cause)",
+    "severity": "S2",
+    "confidence": "VERIFIED",
+    "seed_ref": "SEED-08",
+    "proposed_class": "investigate",
+    "leverage": "structural",
+    "observe_how": "Time `uv run python opc/scripts/core/recall_learnings.py --query X --k 3 --json` cold vs warm; subtract the daemon embed_elapsed_ms (in JSON _meta) to isolate the uv+import tax. Compare to memory-recall.jsonl duration_ms rows.",
+    "telemetry": "<project>/.claude/logs/memory-recall.jsonl duration_ms field per fire",
+    "evidence": [
+      {
+        "file": ".claude/hooks/src/memory-awareness.ts",
+        "lines": "225-240",
+        "quote": "const result = spawnSync('uv', args, {\n    encoding: 'utf-8',\n    cwd: opcDir,\n    env: {\n      ...process.env,\n      PYTHONPATH: opcDir\n    },\n    timeout: useHybrid ? 12000 : 5000,"
+      },
+      {
+        "file": ".claude/hooks/src/memory-awareness.ts",
+        "lines": "151-160",
+        "quote": "const result = spawnSync('uv', [\n      'run', 'python', projectMemoryScript,\n      'query', intent,\n      '--project-dir', projectDir,\n      '-k', '3',\n      '--json'\n    ], {\n      encoding: 'utf-8',\n      cwd: path.join(homeDir, '.claude', 'scripts', 'core'),\n      timeout: 2000,"
+      },
+      {
+        "file": ".claude/hooks/src/memory-awareness.ts",
+        "lines": "220-223",
+        "quote": "// safer margin under system load. uv run startup ~2.2s + imports + DB query\n  // + (optional) embed daemon route + result write = ~4.3-6.0s typical."
+      },
+      {
+        "file": "opc/scripts/core/recall_learnings.py",
+        "lines": "240-244",
+        "quote": "# ready=True under EMBED_DAEMON_PING_TIMEOUT_S, query embeds are routed\n# through the daemon (TCP loopback, length-prefixed JSON frames) instead\n# of paying the ~30s sentence-transformers import tax in-process."
+      }
+    ],
+    "causal_links": [],
+    "dedup_keys": [
+      ".claude/hooks/src/memory-awareness.ts:checkDbMemory",
+      ".claude/hooks/src/memory-awareness.ts:checkLocalMemory",
+      "uv-run-python-startup-tax"
+    ],
+    "_dim": "D6b",
+    "cluster_id": "C058"
+  }
+]

@@ -1,0 +1,295 @@
+[
+  {
+    "id": "D1A-009",
+    "title": "files_in_play 8-role taxonomy collapsed in practice: only edited/read_for_context/grep_hit are ever written; every Read is load-bearing (no offset heuristic), ambient slice is grep-only, user_mentioned/test_failed/dependency_traced/read_for_browse/doc_read have no writer",
+    "severity": "S3",
+    "confidence": "VERIFIED",
+    "proposed_class": "document",
+    "leverage": "quick-win",
+    "seed_ref": null,
+    "evidence": [
+      {
+        "file": ".claude/hooks/src/bus-tool-populator.ts",
+        "lines": "116-118",
+        "quote": "// A Read is recorded LOAD-BEARING (`read_for_context`) on purpose: the B.3 readers\n// (extractBusFocus) bias recall from the load_bearing slice ONLY, so an ambient role would make\n// reads invisible to recall and defeat the feature (cross-model review F3)."
+      },
+      {
+        "file": "C:/Users/david.hayes/.claude/plans/we-have-recently-done-refactored-storm.md",
+        "lines": "137",
+        "quote": "| `read_for_browse` (Read without offset) | ambient | Capped |"
+      },
+      {
+        "file": ".claude/hooks/src/post-edit-diagnostics.ts",
+        "lines": "54",
+        "quote": "addFileInPlay(b, { path: filePath, role: 'edited', turn_added: b.current_turn ?? 0 });"
+      }
+    ],
+    "observe_how": "grep role writers across hooks/src: only 'edited' (post-edit-diagnostics.ts:54), 'read_for_context' and 'grep_hit' (bus-tool-populator.ts:129,146) appear. Deliberate, comment-justified divergence; §17 issue 3 (role-classification edge cases) was dispositioned by never building the heuristic. Payoff: one rule/design note stops future work assuming the full taxonomy is live (e.g. Q11 ambient-cap reasoning).",
+    "telemetry": "",
+    "dedup_keys": [
+      ".claude/hooks/src/bus-tool-populator.ts",
+      ".claude/hooks/src/post-edit-diagnostics.ts",
+      "FileRole",
+      "files_in_play"
+    ],
+    "causal_links": [],
+    "_dim": "D1a",
+    "cluster_id": "C011"
+  },
+  {
+    "id": "D2e-03",
+    "title": "post-edit-diagnostics: blocking whole-project tsc --noEmit (spawnSync, 30s timeout) on EVERY .ts/.tsx/.js/.jsx/.mjs/.cjs edit once the spawn is fixed — per-edit hot-path tax scaling with project size, and it reports project-wide errors, not the edited file's",
+    "severity": "S2",
+    "confidence": "VERIFIED",
+    "evidence": [
+      {
+        "file": ".claude/hooks/src/post-edit-diagnostics.ts",
+        "lines": "226-229",
+        "quote": "    const result = spawnSync('tsc', ['--noEmit', '--pretty', 'false'], {\n      cwd: projectDir,\n      timeout: 30000,\n      encoding: 'utf-8',"
+      },
+      {
+        "file": ".claude/hooks/src/post-edit-diagnostics.ts",
+        "lines": "239",
+        "quote": "    const diagnostics = parseTscOutput(result.stdout || '');"
+      }
+    ],
+    "proposed_class": "simplify",
+    "leverage": "structural",
+    "dedup_keys": [
+      ".claude/hooks/src/post-edit-diagnostics.ts",
+      "runTscDiagnostics",
+      "tsc --noEmit whole project"
+    ],
+    "causal_links": [
+      "caused-by D2e-02 (currently masked because the spawn fails instantly)"
+    ],
+    "observe_how": "spawnSync blocks the PostToolUse hook for a full project type-check (no --incremental, no file scoping, no tsconfig flag) on every JS-family edit. The Python path uses the warm TLDR daemon; the TS path has no equivalent. Currently invisible only because D2e-02 makes it a no-op.",
+    "telemetry": "hook wall-time per Edit on a TS project once spawn is fixed; compare daemon-backed Python path (~ms) vs tsc (~5-30s)",
+    "seed_ref": null,
+    "_dim": "D2e",
+    "cluster_id": "C011"
+  },
+  {
+    "id": "D2e-08",
+    "title": "Bus writer inconsistency: post-edit-diagnostics records 'edited' files as RAW ABSOLUTE paths with no existence/containment/noise validation, while bus-tool-populator stores validated project-relative paths — and the edited-role write is skipped whenever diagnostics early-return (daemon unavailable, tsc missing)",
+    "severity": "S2",
+    "confidence": "VERIFIED",
+    "evidence": [
+      {
+        "file": ".claude/hooks/src/post-edit-diagnostics.ts",
+        "lines": "54",
+        "quote": "      addFileInPlay(b, { path: filePath, role: 'edited', turn_added: b.current_turn ?? 0 });"
+      },
+      {
+        "file": ".claude/hooks/src/bus-tool-populator.ts",
+        "lines": "69-70",
+        "quote": "  if (isNoise(rel)) return null;\n  return rel;"
+      },
+      {
+        "file": ".claude/hooks/src/post-edit-diagnostics.ts",
+        "lines": "129-133",
+        "quote": "    // If daemon is unavailable or no errors, silently succeed\n    if (response.status === 'unavailable' || response.error) {\n      console.log('{}');\n      return;"
+      }
+    ],
+    "proposed_class": "fix",
+    "leverage": "structural",
+    "dedup_keys": [
+      ".claude/hooks/src/post-edit-diagnostics.ts",
+      "recordBusFilesInPlay",
+      ".claude/hooks/src/bus-tool-populator.ts",
+      "toRecordablePath",
+      "files_in_play path format"
+    ],
+    "causal_links": [
+      "caused-by D2e-02 (tsc early return is the dominant skip path on Windows)"
+    ],
+    "observe_how": "Single-writer discipline itself is CLEAN (only post-edit-diagnostics, bus-tool-populator, bus-session-populator call mutateBus; caps enforced in addFileInPlay AND at the coerceBus read chokepoint). But the two PostToolUse writers disagree on path canon: 'edited' rows are absolute (C:\\\\... or C:/...), unfiltered (node_modules/out-of-project edits recorded), so (path,role) dedup and any future path-keyed consumer sees two formats. Today's B.3 reader only takes basenames (bus-focus.ts basenameNoExt), which masks the inconsistency. Also: recordBusFilesInPlay is placed AFTER the unavailable/tsc early returns, so the comment 'runs before the early-return' only holds for the clean-file case. Route the edited path through toRecordablePath and hoist the call.",
+    "telemetry": "inspect .claude/cache/session/*/context.json: mixed absolute 'edited' vs relative 'read_for_context' paths; count of edited rows vs actual edit count (37 codegraph / 318 intel-bus rows context)",
+    "seed_ref": null,
+    "_dim": "D2e",
+    "cluster_id": "C011"
+  },
+  {
+    "id": "D10b-07",
+    "title": "git-auto-commit (PostToolUse:Write|Edit) does `git add -A` over ALL of ~/.claude including dist files the background forward-sync is concurrently overwriting -> can snapshot a half-synced active dist into a safety commit",
+    "severity": "S3",
+    "confidence": "VERIFIED",
+    "proposed_class": "document",
+    "leverage": "quick-win",
+    "observe_how": "git-auto-commit only acts when the edited file is under ~/.claude (isInClaudeDir) -- so it is NOT in the repo-edit path -- but when a DIRECT ~/.claude edit triggers it, doCommit runs `git add -A` (stages everything in ~/.claude). If a forward-sync from a concurrent repo commit is mid-flight, the -A stages a partially-copied dist tree. Debounced to 10min so the window is narrow, but the `add -A` blast radius is wider than the file that triggered it. Payoff: scoping the add to the triggering path (or the debounce key) avoids snapshotting unrelated in-flight sync state.",
+    "telemetry": "Replace `git add -A` with staging only tracked changes relevant to the edit, or guard with the same sync lock (D10b-02).",
+    "evidence": [
+      {
+        "file": ".claude/hooks/src/git-auto-commit.ts",
+        "lines": "137-139",
+        "quote": "  try {\n    // Stage all changes (respects .gitignore)\n    execSync('git add -A', { cwd: CLAUDE_DIR, stdio: 'pipe' });"
+      },
+      {
+        "file": ".claude/hooks/src/git-auto-commit.ts",
+        "lines": "211-215",
+        "quote": "  // Check if file is in ~/.claude and tracked\n  if (!isInClaudeDir(filePath) || !isTrackedByGit(filePath)) {\n    console.log('{}');\n    return;\n  }"
+      }
+    ],
+    "dedup_keys": [
+      ".claude/hooks/src/git-auto-commit.ts",
+      "git add -A",
+      "~/.claude safety commit"
+    ],
+    "causal_links": [
+      "D10b-02"
+    ],
+    "seed_ref": null,
+    "_dim": "D10b",
+    "cluster_id": "C008"
+  },
+  {
+    "id": "D2e-12",
+    "title": "git-auto-commit: isInClaudeDir prefix check lacks a trailing separator — any sibling dir like ~/.claude-backup matches and triggers a full `git add -A` commit of ~/.claude",
+    "severity": "S3",
+    "confidence": "VERIFIED",
+    "evidence": [
+      {
+        "file": ".claude/hooks/src/git-auto-commit.ts",
+        "lines": "65-67",
+        "quote": "  const normalizedFile = resolve(filePath).replace(/\\\\/g, '/');\n  const normalizedClaudeDir = CLAUDE_DIR.replace(/\\\\/g, '/');\n  return normalizedFile.startsWith(normalizedClaudeDir);"
+      }
+    ],
+    "proposed_class": "fix",
+    "leverage": "quick-win",
+    "dedup_keys": [
+      ".claude/hooks/src/git-auto-commit.ts",
+      "isInClaudeDir",
+      "prefix startsWith"
+    ],
+    "causal_links": [
+      "D2e-01"
+    ],
+    "observe_how": "One-line payoff: append '/' to normalizedClaudeDir before startsWith — same sibling-prefix bypass the bus code already guards (context-bus.ts busPath rootWithSep).",
+    "telemetry": "none needed",
+    "seed_ref": null,
+    "_dim": "D2e",
+    "cluster_id": "C008"
+  },
+  {
+    "id": "D1A-003",
+    "title": "Phase B.5 (patch top-5 instruction surfaces) never executed: all five named files exist and contain zero code-intel/codegraph references; always-in-context tldr-cli.md still routes symbol search and callers to TLDR directly, contradicting the boundary contract",
+    "severity": "S2",
+    "confidence": "VERIFIED",
+    "proposed_class": "fix",
+    "leverage": "structural",
+    "seed_ref": null,
+    "evidence": [
+      {
+        "file": "C:/Users/david.hayes/.claude/plans/we-have-recently-done-refactored-storm.md",
+        "lines": "294-295",
+        "quote": "### Phase B.5 (NEW): Patch top-5 instruction surfaces — 1 day\n- `.claude/rules/tldr-cli.md` (highest leverage — always in context per CLAUDE.md \"Operational Rules\"; ~7 direct-call examples)"
+      },
+      {
+        "file": ".claude/rules/tldr-cli.md",
+        "lines": "38",
+        "quote": "- **Finding code**: Use `tldr search \"pattern\"` instead of grep for structured results"
+      },
+      {
+        "file": ".claude/rules/code-intel-boundaries.md",
+        "lines": "26",
+        "quote": "- **TLDR `search`** — deprecated for symbol search (codegraph owns it; `find-symbol` → `codegraph query`, TLDR `search` is the off/absent fallback only)."
+      }
+    ],
+    "observe_how": "grep -rn 'codegraph\\|code-intel' over .claude/rules/tldr-cli.md, .claude/skills/serena/SKILL.md, .claude/skills/tldr-code/SKILL.md, .claude/skills/search-router/SKILL.md, .claude/skills/explore/references/depth-procedures.md returns zero matches; all five files exist (ls). tldr-cli.md:38 and :42 still instruct direct `tldr search`/`tldr impact` for exactly the query types the boundary doc assigns to codegraph.",
+    "telemetry": "Only 37 of 318 intel-bus rows are codegraph (SUMMARY.md) — consistent with agents being pulled back to the deprecated direct-TLDR path the design's own premortem flagged (tiger #4, C 0.87)",
+    "dedup_keys": [
+      ".claude/rules/tldr-cli.md",
+      ".claude/skills/serena/SKILL.md",
+      ".claude/skills/tldr-code/SKILL.md",
+      ".claude/skills/search-router/SKILL.md",
+      ".claude/skills/explore/references/depth-procedures.md",
+      "Phase B.5"
+    ],
+    "causal_links": [
+      "D1A-004 (with the enforcer also inert, NOTHING counteracts the unpatched surfaces)",
+      "D1A-005 (low facade adoption starves the C.3 telemetry watch)"
+    ],
+    "_dim": "D1a",
+    "cluster_id": "C009"
+  },
+  {
+    "id": "D8c-06",
+    "title": "search-router SKILL.md crowns TLDR search 'DEFAULT FOR ALL CODE SEARCH' and points to nonexistent /tldr-search skill — contradicts post-Phase-C boundary contract (TLDR search deprecated for symbol search; codegraph owns it)",
+    "severity": "S2",
+    "confidence": "VERIFIED",
+    "proposed_class": "fix",
+    "seed_ref": null,
+    "evidence": [
+      {
+        "file": ".claude/skills/search-router/SKILL.md",
+        "lines": "25-26",
+        "quote": "│   → TLDR Search - 95% token savings\n│   DEFAULT FOR ALL CODE SEARCH - use instead of Grep"
+      },
+      {
+        "file": ".claude/skills/search-router/SKILL.md",
+        "lines": "88",
+        "quote": "- `/tldr-search` - **DEFAULT** - Code exploration with 95% token savings"
+      },
+      {
+        "file": ".claude/rules/code-intel-boundaries.md",
+        "lines": "29",
+        "quote": "- **TLDR `search`** — deprecated for symbol search (codegraph owns it; `find-symbol` → `codegraph query`, TLDR `search` is the off/absent fallback only)."
+      }
+    ],
+    "observe_how": "ls .claude/skills/ — no tldr-search dir exists (only tldr-code and tldr-stats; tldr-code/SKILL.md:15 declares itself 'the single skill for TLDR usage' and forbids tldr-* sub-skills). search-router never mentions codegraph or /code-intel, so its routing decision tree sends symbol queries to a path the boundary rule explicitly deprecated on 2026-06-07. Observed live: a runtime hook intercept during this review also told the model to 'use /tldr-search' — the ghost reference is propagated beyond this skill.",
+    "telemetry": "SUMMARY.md: 37 codegraph rows in intel-bus show the codegraph path is live and in use; search-router routes around it entirely.",
+    "causal_links": [
+      "Same root cause as D8c-01: Phase C ship updated the boundary rule and the facade but not the routing-guidance skills",
+      "Cross-link D8c-01 (code-intel SKILL.md stale absent-claim) — fixing both together restores a consistent symbol-search story"
+    ],
+    "dedup_keys": [
+      ".claude/skills/search-router/SKILL.md",
+      "/tldr-search",
+      "tldr search deprecated",
+      "codegraph"
+    ],
+    "leverage": "quick-win",
+    "_dim": "D8c",
+    "cluster_id": "C009"
+  },
+  {
+    "id": "D10a-02",
+    "title": "memory-awareness attaches per-turn memory scores to the PREVIOUS turn's Braintrust span: resolveBraintrustSpan prefers a current_turn_span_id that is one turn stale at UserPromptSubmit time, while the adjacent comment claims root-span attachment and metadata says attached_to:'turn'",
+    "severity": "S2",
+    "confidence": "VERIFIED",
+    "proposed_class": "fix",
+    "leverage": "quick-win",
+    "seed_ref": null,
+    "evidence": [
+      {
+        "file": ".claude/hooks/src/memory-awareness.ts",
+        "lines": "650-652",
+        "quote": "// Span-id resolution: this hook runs BEFORE the Python braintrust_hooks.py\n  // user_prompt_submit handler, so the NEW turn span doesn't exist yet at\n  // emit time. We attach to root_span_id (which DOES persist across turns)"
+      },
+      {
+        "file": ".claude/hooks/src/memory-awareness.ts",
+        "lines": "492-493",
+        "quote": "if (state.current_turn_span_id && state.current_turn_span_id.length > 0) {\n    return { spanId: state.current_turn_span_id, attachedTo: 'turn' };"
+      },
+      {
+        "file": ".claude/hooks/braintrust_hooks.py",
+        "lines": "401-402",
+        "quote": "set_session_value(session_id, \"turn_count\", turn_count)\n    set_session_value(session_id, \"current_turn_span_id\", turn_span_id)"
+      }
+    ],
+    "observe_how": "The comment is internally inconsistent with the code three lines below it: the code PREFERS current_turn_span_id, falling back to root only when it is empty. Because the Python handler runs after memory-awareness in the UPS chain (settings.json:166 vs :196) and the turn span is never cleared mid-session (D10a-01), the state file at emit time always holds turn N-1's span from turn 2 onward. So memory_recall_relevance/memory_recall_hit for the prompt of turn N land on Turn N-1's span, stamped metadata.attached_to:'turn' — downstream queries that trust that tag align scores to the wrong prompt. Only turn 1 behaves as the comment describes (no span yet -> root). Verify in Braintrust: for any session, the memory_recall_* score timestamps postdate the span they're attached to by one full turn. Fix: prefer root_span_id as the comment intends, or carry turn_count in the score metadata so consumers can realign.",
+    "telemetry": "Braintrust: memory_recall_* scores with metadata.attached_to='turn' vs the turn span's own created timestamp — systematic one-turn lag",
+    "dedup_keys": [
+      ".claude/hooks/src/memory-awareness.ts:resolveBraintrustSpan",
+      ".claude/hooks/src/memory-awareness.ts:readBraintrustSessionState",
+      "memory_recall_relevance"
+    ],
+    "causal_links": [
+      "D10a-01 (never-cleared current_turn_span_id is what the preference branch finds)",
+      "D6a-06 (the awaited 2s HTTP emit this resolution feeds)",
+      "D10a-03 (correct only under serial-in-registration-order execution; racy if hooks run in parallel)"
+    ],
+    "_dim": "D10a",
+    "cluster_id": "C002"
+  }
+]

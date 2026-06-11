@@ -1,0 +1,252 @@
+{
+  "dimension": "D7b",
+  "findings": [
+    {
+      "id": "D7b-01",
+      "title": "28 ghost skill registrations in skill-rules.json (26 arscontexta-* from removed plugin + 2 archived skills) with live triggers — hook injects 'SKILL ACTIVATION CHECK' for skills that don't exist",
+      "severity": "S1",
+      "confidence": "VERIFIED",
+      "proposed_class": "fix",
+      "seed_ref": null,
+      "evidence": [
+        {
+          "file": ".claude/skills/skill-rules.json",
+          "lines": "968-970",
+          "quote": "    \"environment-triage\": {\n      \"type\": \"domain\",\n      \"enforcement\": \"suggest\","
+        },
+        {
+          "file": ".claude/skills/skill-rules.json",
+          "lines": "2103-2105",
+          "quote": "    \"arscontexta-remember\": {\n      \"type\": \"process\",\n      \"enforcement\": \"suggest\","
+        },
+        {
+          "file": ".claude/hooks/src/skill-activation-prompt.ts",
+          "lines": "399",
+          "quote": "        for (const [skillName, config] of Object.entries(rules.skills)) {"
+        },
+        {
+          "file": ".claude/hooks/src/skill-activation-prompt.ts",
+          "lines": "546",
+          "quote": "                output += '🎯 SKILL ACTIVATION CHECK\\n';"
+        }
+      ],
+      "dedup_keys": [
+        ".claude/skills/skill-rules.json",
+        ".claude/hooks/src/skill-activation-prompt.ts",
+        "arscontexta",
+        "idearalph",
+        "environment-triage"
+      ],
+      "causal_links": [
+        "D6a-03"
+      ],
+      "leverage": "quick-win",
+      "observe_how": "Diff Object.keys(rules.skills) against `ls .claude/skills/`: 26 arscontexta-* entries plus idearalph and environment-triage have no skill directory anywhere in the repo (idearalph and environment-triage exist only in .claude/skills/.archive/; no arscontexta dir exists in repo or ~/.claude/skills — the runtime available-skills list confirms none are loaded). skill-activation-prompt.ts has no existsSync check on the suggested skill (only on the rules file and pattern script, lines 180/342/344). The 28 ghosts carry ~85 live keywords + 30 intentPatterns: environment-triage matches everyday dev prompts ('pip install', 'import error', 'venv', 'ModuleNotFoundError'); arscontexta-learn matches 'learn about'; arscontexta-remember's '/remember' keyword shadows the REAL remember skill, which has no registration at all. Matching prompts inject a SKILL ACTIVATION CHECK telling the model to activate a nonexistent skill. Five test files (.claude/hooks/src/__tests__/arscontexta-*.test.ts) actively pin the dead entries, adding maintenance weight. Fix: deregister the 28 entries (and decide whether the arscontexta test suite should die with them); add a dir-existence filter in the hook as defense-in-depth.",
+      "telemetry": "Count of skill-activation suggestions naming a skill absent from .claude/skills/ per week (expected to drop to 0 after deregistration); secondary: Skill-tool invocation failures for arscontexta-*/environment-triage/idearalph."
+    },
+    {
+      "id": "D7b-02",
+      "title": "railway-cli and neonctl registered as top-level JSON keys outside the skills map, in a non-schema shape — registrations are dead despite status 'verified'",
+      "severity": "S2",
+      "confidence": "VERIFIED",
+      "proposed_class": "fix",
+      "seed_ref": null,
+      "evidence": [
+        {
+          "file": ".claude/skills/skill-rules.json",
+          "lines": "2909-2911",
+          "quote": "  \"railway-cli\": {\n    \"keywords\": [\n      \"railway\","
+        },
+        {
+          "file": ".claude/skills/skill-rules.json",
+          "lines": "2919-2920",
+          "quote": "    \"score\": 90,\n    \"status\": \"verified\""
+        },
+        {
+          "file": ".claude/hooks/src/skill-activation-prompt.ts",
+          "lines": "399",
+          "quote": "        for (const [skillName, config] of Object.entries(rules.skills)) {"
+        }
+      ],
+      "dedup_keys": [
+        ".claude/skills/skill-rules.json:railway-cli",
+        ".claude/skills/skill-rules.json:neonctl",
+        "skill-rules-top-level-keys"
+      ],
+      "causal_links": [],
+      "leverage": "quick-win",
+      "observe_how": "skill-rules.json top-level keys are [version, description, skills, agents, patterns, notes, railway-cli, neonctl] — the last two sit AFTER the notes block (lines 2909 and 2922), outside skills{}. They also use a flat {keywords, score, status} shape with no promptTriggers wrapper, so even if moved under skills they would be skipped by the hook's `if (!triggers) continue` (line 401). Net effect: zero prompt-trigger routing for two actively-documented CLI skills (both have rules: railway-deploy.md, neonctl-safety.md) while the registry claims status 'verified' / score 90 — a false routing claim that would survive any audit reading only the status fields. Fix: move both under skills{} in the promptTriggers schema; find and fix the registrar/vetting step that appended them at root.",
+      "telemetry": "Skill-activation suggestion count for railway-cli/neonctl on prompts containing 'railway deploy' or 'neonctl' (currently structurally 0)."
+    },
+    {
+      "id": "D7b-03",
+      "title": "Fourth presentation skill family carries ~46MB across 3 overlapping skills, including a bit-identical 6.2MB brand PDF in two skills and a redundant 5.6MB zip of the skill inside itself",
+      "severity": "S2",
+      "confidence": "VERIFIED",
+      "proposed_class": "simplify",
+      "seed_ref": null,
+      "evidence": [
+        {
+          "file": ".claude/skills/fourth-presentation-builder/SKILL.md",
+          "lines": "3",
+          "quote": "description: Expert guidance for creating Fourth-branded PowerPoint presentations (PPTX files only) using official brand guidelines, templates, colors, typography, and layout principles. Ensures professional, on-brand presentations every time."
+        },
+        {
+          "file": ".claude/skills/fourth-presentation-suite/SKILL.md",
+          "lines": "3",
+          "quote": "description: Generate Fourth-branded EBR/QBR and sales presentations using a two-phase workflow. Phase 1 builds a stunning animated HTML presentation for design review and approval. Phase 2 converts the approved HTML to PPTX for distribution. HTML is always built first -- PPTX is never built until the user explicitly approves the HTML design. Uses the bundled html-engine for visual quality with Fourth brand identity. v6 adds Fourth Midnight palette, 4-color glow rotation, and corrected brand colors."
+        },
+        {
+          "file": ".claude/skills/fourth-brand-guidelines/SKILL.md",
+          "lines": "3",
+          "quote": "description: Expert guidance for creating Fourth-branded content across all formats (excluding PowerPoint). Covers brand voice, messaging, visual identity, Fourth iQ branding, tone principles, color systems, typography, and photography for marketing materials, documents, web content, and all communications."
+        }
+      ],
+      "dedup_keys": [
+        ".claude/skills/fourth-presentation-builder",
+        ".claude/skills/fourth-presentation-suite",
+        ".claude/skills/fourth-brand-guidelines",
+        "Fourth Brand guidelines.pdf"
+      ],
+      "causal_links": [],
+      "leverage": "structural",
+      "observe_how": "du -sk: fourth-presentation-builder 22.8MB, fourth-presentation-suite 12.0MB, fourth-brand-guidelines 11.6MB (~46MB total — by far the heaviest skills in the tree). md5sum confirms 'fourth-presentation-builder/references/Fourth Brand guidelines.pdf' and 'fourth-brand-guidelines/references/Fourth Brand guidelines.pdf' are bit-identical (e1cd86add850965da2c9d40fba80c331, 6,208,470 bytes each). fourth-brand-guidelines additionally stores fourth-brand-guidelines.zip (5,620,402 bytes) — a packaging artifact of itself. Functionally, the suite's two-phase workflow (HTML then PPTX, with its own Fourth_2025_Template.pptx) covers the builder's PPTX-only role, and only the suite is registered in skill-rules.json; the builder (last commit 2026-03-07, referenced only by fourth-brand-guidelines) plus its 2 PPTX/POTX templates duplicates that capability. All ~46MB rides every repo->~/.claude sync and the git history. Simplify: single shared assets/references dir (or keep the PDF in one skill and cross-reference), delete the self-zip, and fold/retire the builder into the suite.",
+      "telemetry": "Repo size of .claude/skills/ (currently dominated by these 3 dirs); sync-to-active.sh copy volume."
+    },
+    {
+      "id": "D7b-04",
+      "title": "14 skills have zero references anywhere (agents/rules/docs/hooks/other skills) and no skill-rules registration; at least 6 are stale by content and age — delete candidates",
+      "severity": "S2",
+      "confidence": "VERIFIED",
+      "proposed_class": "delete",
+      "seed_ref": null,
+      "evidence": [
+        {
+          "file": ".claude/skills/task-master-workflow/SKILL.md",
+          "lines": "2-3",
+          "quote": "name: task-master-workflow\ndescription: Automatically assists with task-master-ai workflows when user discusses tasks, implementation work, opens .taskmaster files, or mentions what to work on. Proactively manages task status, logs progress, and suggests next tasks without explicit commands."
+        },
+        {
+          "file": ".claude/skills/tdd-migrate/SKILL.md",
+          "lines": "2-3",
+          "quote": "name: tdd-migrate\ndescription: TDD workflow for migrations - orchestrate agents, zero main context growth"
+        },
+        {
+          "file": ".claude/skills/meeting-brief-generator/SKILL.md",
+          "lines": "2-3",
+          "quote": "name: meeting-brief-generator\ndescription: Generates structured meeting briefs when user opens meeting-agendas files, discusses meetings, or mentions calls. Auto-extracts context from related projects, creates checklists, and links to Q4 goals documentation."
+        }
+      ],
+      "dedup_keys": [
+        ".claude/skills/task-master-workflow",
+        ".claude/skills/meeting-brief-generator",
+        ".claude/skills/tdd-migrate",
+        ".claude/skills/extract-v2",
+        ".claude/skills/implement_plan_micro",
+        ".claude/skills/date-logic-management"
+      ],
+      "causal_links": [],
+      "leverage": "quick-win",
+      "observe_how": "Reference scan (node script over .claude/agents, .claude/rules, docs/, .claude/hooks/src, CLAUDE.md, and all other skills, excluding self-dir/skill-rules/eval artifacts) found ZERO mentions for 14 unrouted skills: date-logic-management, extract-v2, fourth-brand-guidelines, implement_plan_micro, iq360-event-audit, landing-page-builder, log-work, meeting-brief-generator, paper-design, ralph-resume, session-score, task-master-workflow, tdd-migrate, win-preflight. Clear delete candidates by content+age: task-master-workflow (no .taskmaster dir exists in repo; last commit 2026-01-29), meeting-brief-generator (references 'Q4 goals documentation'; 2026-01-29), tdd-migrate (2026-01-14, 8KB, fully overlapped by tdd + migrate workflow skills), extract-v2 (manual extraction superseded by the automatic L0-L3 hook extraction pipeline; 2026-03-08), implement_plan_micro (2026-03-07; sibling of implement_plan), date-logic-management (2026-03-07). NOT delete candidates despite zero refs: iq360-event-audit (active work product, last commit 2026-05-18), fourth-brand-guidelines (see D7b-03), and 6 user-facing utilities (landing-page-builder, paper-design, log-work, session-score, win-preflight, ralph-resume) that work via native description triggering — owner decision. Every retained skill costs its description slot in the always-loaded available-skills system-prompt block.",
+      "telemetry": "Skill tool invocation counts per skill name over trailing 30 days (transcripts/Braintrust); zero invocations + zero refs = confirm delete."
+    },
+    {
+      "id": "D7b-05",
+      "title": "Duplication clusters: 6 skill-lifecycle meta-skills (skill-developer/skill-development/skill-forge/skill-upgrader/vet-skill/find-skills) and 6 testing skills (test/full-test-suite/qa-test/qa-suite/tdd/tdd-migrate); full-test-suite frontmatter name mismatches its directory",
+      "severity": "S2",
+      "confidence": "VERIFIED",
+      "proposed_class": "simplify",
+      "seed_ref": null,
+      "evidence": [
+        {
+          "file": ".claude/skills/skill-developer/SKILL.md",
+          "lines": "2-3",
+          "quote": "name: skill-developer\ndescription: Meta-skill for creating and managing Claude Code skills"
+        },
+        {
+          "file": ".claude/skills/skill-development/SKILL.md",
+          "lines": "2-3",
+          "quote": "name: skill-development\ndescription: Skill Development Rules"
+        },
+        {
+          "file": ".claude/skills/full-test-suite/SKILL.md",
+          "lines": "2-3",
+          "quote": "name: full-test\ndescription: Complete platform testing suite - functional + frontend design quality testing with graded report"
+        }
+      ],
+      "dedup_keys": [
+        ".claude/skills/skill-developer",
+        ".claude/skills/skill-development",
+        ".claude/skills/skill-forge",
+        ".claude/skills/skill-upgrader",
+        ".claude/skills/full-test-suite",
+        "skill-lifecycle-cluster",
+        "testing-cluster"
+      ],
+      "causal_links": [
+        "D7b-04"
+      ],
+      "leverage": "structural",
+      "observe_how": "Six meta-skills all claim part of the skill-creation lifecycle: skill-developer ('creating and managing'), skill-development ('Skill Development Rules', user-invocable:false), skill-forge (377KB; 'full lifecycle from authoring through validation, testing, optimization, and packaging' — a superset of the other two), skill-upgrader ('Upgrade any skill to v5 Hybrid format', 1 doc ref), vet-skill (external-install vetting, registered), find-skills (discovery, registered). _archived/ even contains archived copies of skill-developer and skill-development while live copies persist — a previous consolidation attempt that didn't finish. Testing cluster: test, full-test-suite (frontmatter says name: full-test, mismatching its full-test-suite directory — whichever identity a router keys on, the other dangles), qa-test, qa-suite, tdd, tdd-migrate (dead, see D7b-04) — overlapping orchestration prose for the same verification job. Consolidation target: skill-forge absorbs skill-developer + skill-upgrader (keep vet-skill and find-skills for their distinct jobs); testing collapses to test + qa-suite (structured) + tdd (philosophy), with full-test-suite either renamed consistently or folded into qa-suite.",
+      "telemetry": "Per-skill Skill-tool invocation share within each cluster over 30 days — invocation-share <5% for a cluster member supports folding it."
+    },
+    {
+      "id": "D7b-06",
+      "title": "Stray ebr-data-prep.skill — a 16KB ZIP archive committed as a flat file in .claude/skills/, never unpacked, not loadable as a skill",
+      "severity": "S3",
+      "confidence": "VERIFIED",
+      "proposed_class": "delete",
+      "seed_ref": null,
+      "evidence": [
+        {
+          "file": ".claude/skills/ebr-data-prep.skill",
+          "lines": "1",
+          "quote": "ebr-data-prep-clean/SKILL.md"
+        }
+      ],
+      "dedup_keys": [
+        ".claude/skills/ebr-data-prep.skill"
+      ],
+      "causal_links": [],
+      "leverage": "quick-win",
+      "observe_how": "The file starts with PK zip magic and its central directory lists ebr-data-prep-clean/SKILL.md and ebr-data-prep-clean/scripts/prep_ebr_package.py (16,079 bytes, committed 2026-03-16, b5bffe4). Skills must be <name>/SKILL.md directories — a flat .skill zip is invisible to both the native loader and skill-rules routing, so it is pure junk in the tree and in every sync. Payoff: one `git rm` removes a dead binary from the skill tree and the repo->active sync (or unpack it properly if EBR data prep is still wanted).",
+      "telemetry": "n/a — binary presence check."
+    },
+    {
+      "id": "D7b-07",
+      "title": "iq360-event-audit description defers single-query asks to sibling skill `iq360-events` which does not exist in the repo or active ~/.claude/skills",
+      "severity": "S3",
+      "confidence": "VERIFIED",
+      "proposed_class": "fix",
+      "seed_ref": null,
+      "evidence": [
+        {
+          "file": ".claude/skills/iq360-event-audit/SKILL.md",
+          "lines": "3",
+          "quote": "Differs from `iq360-events`: that skill answers single ad-hoc KQL questions; this skill is for multi-step analyses that end in a report."
+        }
+      ],
+      "dedup_keys": [
+        ".claude/skills/iq360-event-audit/SKILL.md",
+        "iq360-events"
+      ],
+      "causal_links": [],
+      "leverage": "quick-win",
+      "observe_how": "Grep for 'iq360-events' across .claude/skills finds only iq360-event-audit's own SKILL.md and its evals/trigger_eval.json; `ls .claude/skills | grep iq360` and `ls ~/.claude/skills | grep iq360` both return only iq360-event-audit. The description explicitly instructs the model to 'defer to iq360-events' for single counts/one-liner queries — routing to a skill that doesn't exist, so simple iQ360 queries dead-end or fall back unguided. Payoff: one-line description edit (point at the kusto-cli skill, or restore/create iq360-events) stops the misrouting.",
+      "telemetry": "Skill-tool failures naming iq360-events."
+    }
+  ],
+  "coverage_manifest": [
+    "skill-rules.json (2,935 lines; 86 skills-map entries, 18 agents, 2 stray top-level keys) fully diffed against the 136-entry skills inventory: 28 ghost registrations (D7b-01), 2 dead top-level entries with false 'verified' status (D7b-02), 56 valid routed skills, 1 plugin-namespaced registration (frontend-design -> frontend-design plugin) judged plausibly intentional and not flagged.",
+    "Routable set — 56 registered skills with live dirs (ralph, plan-mode, mot, debug-hooks, hook-developer, implement_plan, commit, describe_pr, fix, build, explore, debug, create_handoff, resume_handoff, continuity_ledger, skill-developer, vet-skill, github-search, firecrawl-scrape, nia-docs, exa-code-search, ast-grep-find, repoprompt, memory, morph-search, morph-apply, perplexity-search, qlty-check, braintrust-analyze, onboard, tdd, workflow-router, search-router, tldr-code, migrate, refactor, release, review, security, test, braintrust-tracing, cli-reference, premortem, discovery-interview, shadcn-create, ui-ux-pro-max, systematic-debugging, databases, code-review, personas, mcp-guidance, vercel-cli, fourth-presentation-suite, find-skills, opencli, serena, tldr-stats): ACTIVE, no dead-weight action.",
+    "Referenced-but-unrouted set — 35 skills with 3+ corpus references (agent-browser, browser-dev-cycle, code-intel, dead-code, excalidraw-mcp, help, hook-audit, hooks, implement_task, init-project, knowledge-tree, kusto-cli, linear, maestro, memory-curate, memory-stats, next-best-practices, next-cache-components, plan-agent, project-registry, qa-suite, qa-test, react-perf, recall, remember, repo-research-analyst, research, roadmap, sentry-cli, skill-development, skill-forge, sub-agents, supersede, sync-drift, ui-audit, validate-agent): KEEP — native description triggering plus references; raw counts substring-inflated (help/hooks/research/recall), sanity-checked manually before verdict.",
+    "Low-ref unrouted — 25 skills with 1-2 references (agent-context-isolation, agent-development, agentica-prompts/sdk/spawn, azure-deployment, fourth-presentation-builder, frontend-slides, full-test-suite, health-check, hook-scaffold, landing-page-score, next-upgrade, notion-bridge, pageindex-search, parallel-agents, post-ship-audit, recall-reasoning, research-external, rlm-analyze, skill-upgrader, stale-scan, system_overview, tour, weekly-report): KEEP/WATCH — each anchored by at least one agent, rule, doc, or sibling-skill reference.",
+    "Zero-ref unrouted — 14 skills triaged via frontmatter read + git last-commit dates: 6 delete candidates (task-master-workflow, meeting-brief-generator, tdd-migrate, extract-v2, implement_plan_micro, date-logic-management — D7b-04); iq360-event-audit KEEP (active 2026-05-18, but stale cross-ref D7b-07); fourth-brand-guidelines handled under D7b-03; 6 owner-decision utilities (landing-page-builder, paper-design, log-work, session-score, win-preflight, ralph-resume).",
+    "Duplication clusters inspected: Fourth presentation family ~46MB with bit-identical 6.2MB PDF x2 and self-zip (D7b-03); skill-lifecycle meta family of 6 (D7b-05); testing family of 6 incl full-test-suite name/dir mismatch (D7b-05); memory family (memory, recall, remember, supersede, memory-curate, memory-stats — thin 4-24KB routers over one substrate, judged coherent, NO action); frontend family (frontend-slides vs frontend-design plugin vs ui-ux-pro-max vs paper-design — distinct scopes, NO action beyond paper-design's zero-ref note).",
+    "Suspicious SKILL.md frontmatters read in depth (15): task-master-workflow, meeting-brief-generator, iq360-event-audit, extract-v2, tdd-migrate, date-logic-management, skill-developer, skill-development, hooks, test, full-test-suite, fourth-presentation-builder, fourth-presentation-suite, fourth-brand-guidelines, ebr-data-prep.skill (zip).",
+    "Stray non-skill artifacts in .claude/skills/ root: ebr-data-prep.skill flagged (D7b-06); _eval/, _eval-progress.json, _parse-validation.js, _sandbox/ recognized as eval tooling and not flagged.",
+    "Archive dirs (.archive, _archive, _archived, archive — four parallel archive conventions holding ~60 retired skills): contents excluded from findings per exclusion manifest; the registration leakage FROM them (idearalph, environment-triage) is captured in D7b-01.",
+    "skill-activation-prompt.ts consumption path read (lines 340-600): confirmed rules.skills-only iteration, no skill-dir existence check, suggest/block message construction — performance angle already owned by D6a-03/D2c, not re-reported."
+  ],
+  "notes": "Method: registration diff (skill-rules.json vs directory inventory) + full-repo reference scan (node script over .claude/agents, .claude/rules, docs/, .claude/hooks/src, CLAUDE.md, sibling skills; self-dir and eval artifacts excluded) + frontmatter/git-date reads for the suspicious tail. Caveat: the reference scan is substring-based, so short names (help, hooks, test, research, recall) are inflated — verdicts for those relied on registration status and manual checks, not raw counts. The runtime available-skills list for this session was used as corroboration that no arscontexta-* skill is loaded anywhere. Cross-links: D7b-01 compounds D6a-03 (skill-activation-prompt already flagged HEAVY per prompt; 28 ghost entries with ~115 trigger terms add pure-noise match surface to that hot path). No prior dimension audited skill-rules registration content (D2c/D6a covered the hook's runtime cost only; CRITICS.json explicitly lists D7b as the killed-dimension gap this run fills). S3 count: 2 of 5 cap used."
+}

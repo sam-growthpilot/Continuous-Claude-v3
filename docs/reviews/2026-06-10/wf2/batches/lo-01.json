@@ -1,0 +1,315 @@
+[
+  {
+    "id": "D10b-03",
+    "title": "The only dist-staleness detector (session-start-init-check) is advisory-only, fires at NEXT SessionStart, checks the wrong target (repo dist DIR-mtime, never active ~/.claude dist), and uses a coarse dir-mtime comparison that an in-place cp can defeat on Windows",
+    "severity": "S2",
+    "confidence": "VERIFIED",
+    "proposed_class": "fix",
+    "leverage": "structural",
+    "observe_how": "Read the freshness block: it gates on `projectDir.includes('continuous-claude')` and stats `.claude/hooks/dist` (the REPO dir), comparing each src .ts mtime to the dist DIRECTORY mtime. It never inspects ~/.claude/hooks/dist (what actually runs). It only pushes a `maintenanceWarnings` string; it never blocks and never rebuilds. So a stale dist that ran the entire session surfaces only as text at the next session start, in the repo project only.",
+    "telemetry": "Compare per-file: for each src X.ts, stat the corresponding dist X.mjs (not the dir); and run the check against ACTIVE ~/.claude/hooks/dist, not the repo. Better: a SessionStart that rebuilds-or-blocks rather than printing a warning the model may ignore.",
+    "evidence": [
+      {
+        "file": ".claude/hooks/src/session-start-init-check.ts",
+        "lines": "456-462",
+        "quote": "// Check hook build freshness (CCv3 repo only)\n  if (projectDir.includes('continuous-claude')) {\n    const hookSrcDir = path.join(projectDir, '.claude', 'hooks', 'src');\n    const hookDistDir = path.join(projectDir, '.claude', 'hooks', 'dist');\n    ...\n        const distMtime = fs.statSync(hookDistDir).mtimeMs;"
+      },
+      {
+        "file": ".claude/hooks/src/session-start-init-check.ts",
+        "lines": "463-472",
+        "quote": "const staleFiles = fs.readdirSync(hookSrcDir)\n          .filter(f => f.endsWith('.ts'))\n          .filter(f => {\n              return fs.statSync(path.join(hookSrcDir, f)).mtimeMs > distMtime;\n          ...\n          maintenanceWarnings.push(`[!] Hook dist/ is stale -- ${staleFiles.length} source files newer than dist."
+      }
+    ],
+    "dedup_keys": [
+      ".claude/hooks/src/session-start-init-check.ts",
+      "hook dist freshness",
+      "dir-mtime",
+      "maintenanceWarnings"
+    ],
+    "causal_links": [
+      "D10b-01",
+      "D10b-02"
+    ],
+    "seed_ref": null,
+    "_dim": "D10b",
+    "cluster_id": "C006"
+  },
+  {
+    "id": "D10b-04",
+    "title": "architecture-stats-sync fires a DETACHED background `sync-architecture-stats.mjs --apply` on every watched commit, rewriting tracked architecture.json AFTER the commit -> perpetual post-commit working-tree dirt (the `M architecture.json` in this session's git status)",
+    "severity": "S2",
+    "confidence": "VERIFIED",
+    "proposed_class": "investigate",
+    "leverage": "quick-win",
+    "observe_how": "Hook is PostToolUse:Bash; on a commit touching .claude/{hooks,agents,skills}/ or scripts/ it spawns detached `node scripts/sync-architecture-stats.mjs --apply` which writes docs/architecture/system-visualization/architecture.json. Because it runs AFTER the commit, the regenerated file is left uncommitted. The review's own session `git status` opened with `M docs/architecture/system-visualization/architecture.json`; architecture-stats-sync.log confirms it fired ('done: stats synced.').",
+    "telemetry": "Count how often `git status` is non-clean solely due to architecture.json after a commit. Either (a) make the sync part of pre-commit so it lands in the same commit, or (b) gitignore the generated artifact and regenerate on demand.",
+    "evidence": [
+      {
+        "file": ".claude/hooks/src/architecture-stats-sync.ts",
+        "lines": "144-160",
+        "quote": "function fireBackgroundSync(repoRoot: string): void {\n    ...\n    const scriptPath = path.join(repoRoot, 'scripts', 'sync-architecture-stats.mjs');\n    const child = spawn('node', [scriptPath, '--apply'], {\n      cwd: repoRoot,\n      detached: true,\n      stdio: ['ignore', out, err],\n    });\n    child.unref();"
+      },
+      {
+        "file": ".claude/hooks/src/architecture-stats-sync.ts",
+        "lines": "4-9",
+        "quote": "* Detects successful `git commit` operations and, if the most recent commit\n * touched files under `.claude/(hooks|agents|skills)/` or `scripts/`, fires\n * `scripts/sync-architecture-stats.mjs --apply` in the background\n * (fire-and-forget; never blocks the user)."
+      },
+      {
+        "file": ".claude/logs/architecture-stats-sync.log",
+        "lines": "tail",
+        "quote": "done: stats synced."
+      }
+    ],
+    "dedup_keys": [
+      ".claude/hooks/src/architecture-stats-sync.ts",
+      "sync-architecture-stats.mjs",
+      "architecture.json",
+      "post-commit dirt"
+    ],
+    "causal_links": [],
+    "seed_ref": null,
+    "_dim": "D10b",
+    "cluster_id": "C006"
+  },
+  {
+    "id": "D10b-05",
+    "title": "architecture-stats-sync is registered in ACTIVE ~/.claude/settings.json but NOT in repo .claude/settings.json -> a new machine bootstrapping from the repo template silently loses this commit-chain hook (same class as SEED-15)",
+    "severity": "S2",
+    "confidence": "VERIFIED",
+    "proposed_class": "fix",
+    "leverage": "structural",
+    "observe_how": "Grep both settings.json: repo's has no architecture-stats-sync entry; active ~/.claude/settings.json registers `node ~/.claude/hooks/dist/architecture-stats-sync.mjs` on PostToolUse:Bash (and it has fired -- 55KB log). Per sync-known-gaps.md settings.json is intentionally NOT synced, so the repo template is the new-machine source of truth and it omits this hook. The hook .ts + dist .mjs exist in the repo (dead until hand-registered).",
+    "telemetry": "Reconcile the active vs repo settings.json hook registration sets; the delta IS the new-machine gap. This is the same root cause SEED-15 found for package-install-guard et al.",
+    "evidence": [
+      {
+        "file": ".claude/settings.json",
+        "lines": "n/a",
+        "quote": "architecture-stats-sync NOT registered in repo settings.json (grep over s.hooks found zero matches), while active ~/.claude/settings.json has: PostToolUse | Bash | node ~/.claude/hooks/dist/architecture-stats-sync.mjs"
+      },
+      {
+        "file": ".claude/rules/sync-known-gaps.md",
+        "lines": "n/a",
+        "quote": "| `settings.json` | NO | Intentional -- local config | Manual copy (risky) |"
+      }
+    ],
+    "dedup_keys": [
+      ".claude/settings.json",
+      "architecture-stats-sync",
+      "new-machine registration gap"
+    ],
+    "causal_links": [
+      "SEED-15"
+    ],
+    "seed_ref": "SEED-15",
+    "_dim": "D10b",
+    "cluster_id": "C006"
+  },
+  {
+    "id": "D10c-04",
+    "title": "Repo and template ship a 100%-dead agent spawn pipeline: neither contains a single \"Task\"-matched hook (the string \"Task\" appears only inside \"TaskUpdate\"), so a machine bootstrapped from the repo gets 12 registered spawn hooks of which ZERO fire; the only two live spawn hooks (agent-recall-injector PreToolUse:Task, telemetry-tracker PostToolUse:Skill|Task) exist solely in active ~/.claude/settings.json as part of the 18-registration drift",
+    "severity": "S2",
+    "confidence": "VERIFIED",
+    "proposed_class": "fix",
+    "leverage": "structural",
+    "seed_ref": "SEED-15",
+    "evidence": [
+      {
+        "file": ".claude/settings.json.template",
+        "lines": "21",
+        "quote": "        \"matcher\": \"Agent\","
+      },
+      {
+        "file": ".claude/settings.json.template",
+        "lines": "315",
+        "quote": "        \"matcher\": \"Agent\","
+      },
+      {
+        "file": ".claude/settings.json",
+        "lines": "21",
+        "quote": "        \"matcher\": \"Agent\","
+      }
+    ],
+    "observe_how": "grep -n '\\\"Task\\\"' .claude/settings.json .claude/settings.json.template → zero hits in both (only \"TaskUpdate\"/\"TaskUpdate|Bash\" appear). Active ~/.claude/settings.json adds PreToolUse matcher \"Task\" (agent-recall-injector.mjs) and PostToolUse matcher \"Skill|Task\" (telemetry-tracker.mjs) — both absent from repo and template, i.e., inside GAP3-03's 18 active-only registrations. Consequence on a fresh wizard.py bootstrap: every spawn-related hook (9 PreToolUse:Agent + 3 PostToolUse:Agent) is registered-but-dead and there is no spawn telemetry at all (skill-telemetry agent_spawned rows come from the active-only telemetry-tracker); the only repo-registered code observing spawns is the matcher-less braintrust python post_tool_use hook. Even on THIS machine the live chain is just agent-recall-injector (0-for-78 memory yield, D2b-03) + telemetry-tracker — the entire documented multi-hook spawn pipeline reduces to one telemetry row and one empty recall per spawn.",
+    "telemetry": "skill-telemetry.jsonl 167 agent_spawned rows all produced by the ACTIVE-only telemetry-tracker registration; agent-recall.jsonl 78 rows, results_count:0 on all (D2b-03)",
+    "dedup_keys": [
+      ".claude/settings.json.template",
+      ".claude/settings.json",
+      "agent-recall-injector-active-only",
+      "telemetry-tracker-active-only",
+      "repo-zero-Task-matcher"
+    ],
+    "causal_links": [
+      "instance of SEED-15 / GAP3-03 (18 active-only registrations) specialized to the spawn chain",
+      "compounds D2b-01 + D10c-02 (the registrations that DO exist in repo/template are all on the dead matcher)",
+      "sibling of D7a-05 and D10b-05 (bidirectional template/active drift)"
+    ],
+    "_dim": "D10c",
+    "cluster_id": "C006"
+  },
+  {
+    "id": "D1A-002",
+    "title": "Master kill switch CCV3_KILLSWITCH does not short-circuit the bus layer: context-bus/intel-bus/populator hooks check only CCV3_BUS_OFF; CCV3_L2_OFF unimplemented (design Q16 says 'Master short-circuits all')",
+    "severity": "S2",
+    "confidence": "VERIFIED",
+    "proposed_class": "fix",
+    "leverage": "quick-win",
+    "seed_ref": null,
+    "evidence": [
+      {
+        "file": ".claude/hooks/src/shared/context-bus.ts",
+        "lines": "299-301",
+        "quote": "function busOff(): boolean {\n  return process.env.CCV3_BUS_OFF === '1';\n}"
+      },
+      {
+        "file": ".claude/hooks/src/shared/intel-bus.ts",
+        "lines": "275",
+        "quote": "if (process.env.CCV3_BUS_OFF === '1') return;"
+      },
+      {
+        "file": "C:/Users/david.hayes/.claude/plans/we-have-recently-done-refactored-storm.md",
+        "lines": "402-407",
+        "quote": "- `CCV3_KILLSWITCH=1` → master, every bus reader / codegraph / facade skips."
+      }
+    ],
+    "observe_how": "grep -rln CCV3_KILLSWITCH across .claude/hooks/src and scripts returns ONLY scripts/code-intel.mjs; grep CCV3_L2_OFF returns nothing. Set CCV3_KILLSWITCH=1 and the bus-session/bus-tool populators and intel-bus appender keep reading/writing.",
+    "telemetry": "",
+    "dedup_keys": [
+      ".claude/hooks/src/shared/context-bus.ts",
+      ".claude/hooks/src/shared/intel-bus.ts",
+      "CCV3_KILLSWITCH",
+      "CCV3_L2_OFF",
+      "busOff"
+    ],
+    "causal_links": [],
+    "_dim": "D1a",
+    "cluster_id": "C006"
+  },
+  {
+    "id": "D1A-004",
+    "title": "code-intel-enforcer diverges from design B.5: registered on Grep|Agent (not Bash|mcp__serena__*), default OFF (not warn), and logs nothing to intel-bus — the §9 facade-bypass metric is unmeasurable and the Phase C.5 deny gate can never be evaluated",
+    "severity": "S2",
+    "confidence": "VERIFIED",
+    "proposed_class": "document",
+    "leverage": "structural",
+    "seed_ref": null,
+    "evidence": [
+      {
+        "file": ".claude/hooks/src/code-intel-enforcer.ts",
+        "lines": "5-6",
+        "quote": "* DEFAULT OFF. Even when enabled it NEVER denies -- it only emits a non-blocking\n * `additionalContext` nudge toward the /code-intel facade."
+      },
+      {
+        "file": ".claude/hooks/src/code-intel-enforcer.ts",
+        "lines": "25",
+        "quote": "* touches the bus; it reads no disk and writes no state."
+      },
+      {
+        "file": "C:/Users/david.hayes/.claude/plans/we-have-recently-done-refactored-storm.md",
+        "lines": "292",
+        "quote": "- B.5 `code-intel-enforcer.ts` (PreToolUse on `Bash|mcp__serena__*`) in **warn mode** — `CCV3_FACADE_MODE=warn` default. Logs would-route events to intel-bus."
+      },
+      {
+        "file": "C:/Users/david.hayes/.claude/plans/we-have-recently-done-refactored-storm.md",
+        "lines": "307",
+        "quote": "- Flip `CCV3_FACADE_MODE=deny` only after intel-bus.jsonl shows ≥80% facade-route adoption AND `facade-bypass rate` trending to 0."
+      }
+    ],
+    "observe_how": "Read code-intel-enforcer.ts (no appendIntelBus import, facadeMode() maps anything but 'warn' to off, comment says deny is forbidden); grep intel-bus.jsonl for would-route/bypass events — none exist. The C.5 gate inputs therefore cannot ever be produced by the shipped code. Divergence is deliberate (header cites E1: adoption != quality) but the design's warn->deny migration story is now unreachable without amendment.",
+    "telemetry": "facade-bypass rate target 'trending to 0 by Phase C.5' (design §9) has zero data points",
+    "dedup_keys": [
+      ".claude/hooks/src/code-intel-enforcer.ts",
+      "CCV3_FACADE_MODE",
+      "facade-bypass rate",
+      "Phase C.5"
+    ],
+    "causal_links": [
+      "D1A-003 (unpatched surfaces + inert enforcer compound)",
+      "D1A-005 (one more §9 metric with no producer)"
+    ],
+    "_dim": "D1a",
+    "cluster_id": "C006"
+  },
+  {
+    "id": "D1A-005",
+    "title": "Phases C.3/D/E all absent: no intel-bus-stats.mjs, no weekly digest owner, no metadata.bus_snapshot memory bridge — intel-bus telemetry accumulates with no consumer, and the §9 metrics the C.3 watch needs are uncomputable as built",
+    "severity": "S2",
+    "confidence": "VERIFIED",
+    "proposed_class": "fix",
+    "leverage": "strategic",
+    "seed_ref": "SEED-10",
+    "evidence": [
+      {
+        "file": "C:/Users/david.hayes/.claude/plans/we-have-recently-done-refactored-storm.md",
+        "lines": "317-319",
+        "quote": "- E.1 `scripts/intel-bus-stats.mjs` querying intel-bus.jsonl for §9 metrics.\n- E.2 Weekly digest in handoff format. Owner: scheduled `/loop 7d`.\n- E.3 Defines the review process — fixes the \"telemetry without owner\" elephant (Codex 0.80)."
+      },
+      {
+        "file": "C:/Users/david.hayes/.claude/plans/we-have-recently-done-refactored-storm.md",
+        "lines": "311",
+        "quote": "- D.1 Learning-extraction hooks snapshot `focus_symbols.id[]` + `files_in_play.load_bearing[].path` into `archival_memory.metadata.bus_snapshot` (NOT `content`)."
+      }
+    ],
+    "observe_how": "ls scripts/ shows backfill-intel-bus.mjs and code-intel.mjs but no intel-bus-stats.mjs; grep -rln bus_snapshot over hooks/scripts/opc returns only docs. NEW root-cause evidence on SEED-10: C.3 is not merely 'not started' — three of six §9 metrics (bus utilization on focus_symbols, handoff loss, facade-bypass rate) have no producer (D1A-001, D1A-004), so starting the watch today would measure vacuous zeros.",
+    "telemetry": "318 live intel-bus rows with zero consumers; corr-null 60.7% (SUMMARY.md) and nobody computing it from the design's own stats script",
+    "dedup_keys": [
+      "scripts/intel-bus-stats.mjs",
+      "bus_snapshot",
+      "Phase D",
+      "Phase E",
+      "Phase C.3",
+      "intel-bus.jsonl"
+    ],
+    "causal_links": [
+      "caused-by D1A-001",
+      "caused-by D1A-004",
+      "SEED-10"
+    ],
+    "_dim": "D1a",
+    "cluster_id": "C006"
+  },
+  {
+    "id": "D1A-006",
+    "title": "Facade bus discovery skips Q7's persisted-file recovery: approximates the bus id from raw COORDINATION_SESSION_ID, then falls back to most-recent-mtime context.json — under concurrent sessions it silently biases recall from ANOTHER session's bus",
+    "severity": "S2",
+    "confidence": "VERIFIED",
+    "proposed_class": "fix",
+    "leverage": "quick-win",
+    "seed_ref": "SEED-12",
+    "evidence": [
+      {
+        "file": "scripts/code-intel.mjs",
+        "lines": "130-132",
+        "quote": "// 2. Env-derived candidate from COORDINATION_SESSION_ID. NOTE: this is a best-effort\n  //    approximation of getBusId() (which derives the session signal via getSessionId(),\n  //    not the raw env var)."
+      },
+      {
+        "file": "scripts/code-intel.mjs",
+        "lines": "155-157",
+        "quote": "const result = { busId: top.name, path: top.path, discovery: 'most-recent', exists: true };\n  if (candidates.length > 1) {\n    result.warning = `multiple sessions found (${candidates.length}); used most-recent. Pass --bus <id> to disambiguate.`;"
+      },
+      {
+        "file": "C:/Users/david.hayes/.claude/plans/we-have-recently-done-refactored-storm.md",
+        "lines": "383",
+        "quote": "Persisted to file on first call so subprocesses can recover."
+      },
+      {
+        "file": ".claude/hooks/src/shared/session-bus-id.ts",
+        "lines": "8-10",
+        "quote": "* BOUNDARY (finding #15): this is a SECOND exported function, NOT a merge.\n * Coordination callers (session-register.ts / file-claims.ts) keep their\n * existing COORDINATION_SESSION_ID-first chain in shared/session-id.ts"
+      }
+    ],
+    "observe_how": "Read discoverBus() in scripts/code-intel.mjs:119-160. getSessionId() persists the session signal to ~/.claude/.coordination-session-id (session-id.ts chain), which the facade could read to reconstruct the exact bus id; instead it uses the env var (often unset in a bare shell) and then mtime. With two terminals on the same project, the facade reads whichever session wrote last (warning only, bias still applied). Also new instance for SEED-12: this is now a THIRD bus/session-id derivation alongside session-id.ts and session-isolation.ts.",
+    "telemetry": "",
+    "dedup_keys": [
+      "scripts/code-intel.mjs",
+      "discoverBus",
+      ".claude/hooks/src/shared/session-bus-id.ts",
+      "getBusId",
+      "COORDINATION_SESSION_ID"
+    ],
+    "causal_links": [
+      "SEED-12 (two competing getSessionId schemes; the facade adds an approximation of a third)"
+    ],
+    "_dim": "D1a",
+    "cluster_id": "C006"
+  }
+]

@@ -1,0 +1,327 @@
+[
+  {
+    "id": "D2F-05",
+    "title": "session-start-init-check TREE_MAX_AGE_SECONDS=300 means the knowledge tree is 'stale' on virtually every startup — a <=10s uv-run tree regeneration fires almost every session open",
+    "severity": "S2",
+    "confidence": "VERIFIED",
+    "evidence": [
+      {
+        "file": ".claude/hooks/src/session-start-init-check.ts",
+        "lines": "49",
+        "quote": "const TREE_MAX_AGE_SECONDS = 300; // 5 minutes"
+      },
+      {
+        "file": ".claude/hooks/src/session-start-init-check.ts",
+        "lines": "366-368",
+        "quote": "  if (!status.tree || isTreeStale(projectDir)) {\n    if (hasCodeFiles(projectDir)) {\n      console.error('[*] Generating knowledge tree...');"
+      }
+    ],
+    "proposed_class": "simplify",
+    "leverage": "quick-win",
+    "seed_ref": null,
+    "dedup_keys": [
+      ".claude/hooks/src/session-start-init-check.ts",
+      "TREE_MAX_AGE_SECONDS",
+      "isTreeStale",
+      "generateTree"
+    ],
+    "causal_links": [
+      "D2F-04"
+    ],
+    "observe_how": "Check mtime of .claude/knowledge-tree.json before/after two session starts >5 min apart — it regenerates both times even with zero code changes. The `_stale` marker from tree-invalidate already exists as the precise invalidation channel; the 300s mtime fallback makes it redundant and hot.",
+    "telemetry": "Adds ~3-10s (uv + python + project scan) to nearly every startup in any project with code files; the tree-invalidate hook already marks staleness on actual edits.",
+    "_dim": "D2f",
+    "cluster_id": "C006"
+  },
+  {
+    "id": "D2F-06",
+    "title": "session-register: two sequential uv-run Postgres round-trips (3s cap each) per session; registration silently no-ops if uv cold start exceeds 3s, and the COORDINATION_SESSION_ID env export is dead across processes",
+    "severity": "S2",
+    "confidence": "VERIFIED",
+    "evidence": [
+      {
+        "file": ".claude/hooks/src/session-register.ts",
+        "lines": "53-56",
+        "quote": "  const registerResult = registerSession(sessionId, project, '');\n\n  // Get other active sessions\n  const sessionsResult = getActiveSessions(project);"
+      },
+      {
+        "file": ".claude/hooks/src/session-register.ts",
+        "lines": "39",
+        "quote": "  process.env.COORDINATION_SESSION_ID = sessionId;"
+      },
+      {
+        "file": ".claude/hooks/src/shared/db-utils-pg.ts",
+        "lines": "71",
+        "quote": "      timeout: 3000,  // 3 second timeout (reduced for faster startup)"
+      }
+    ],
+    "proposed_class": "fix",
+    "leverage": "structural",
+    "seed_ref": "SEED-12",
+    "dedup_keys": [
+      ".claude/hooks/src/session-register.ts",
+      "registerSession",
+      "getActiveSessions",
+      "COORDINATION_SESSION_ID",
+      "runPgQuery"
+    ],
+    "causal_links": [
+      "D2F-04",
+      "SEED-12 (two competing getSessionId schemes — this hook is the writer of the file-based one)"
+    ],
+    "observe_how": "Time `uv run python -c \"print('ok')\"` from opc dir; if cold start >3s, spawnSync kills the child, registerResult.success is false, and the hook still prints the awareness banner claiming MULTI-SESSION COORDINATION ACTIVE. The env assignment at line 39 only mutates this hook's own process; sibling hooks each run as fresh processes — the writeSessionId() file is the only real channel.",
+    "telemetry": "Cross-check sessions table: count of session-start events vs rows actually upserted reveals the silent-failure rate. Costs ~4-6s of the session-open budget either way.",
+    "_dim": "D2f",
+    "cluster_id": "C006"
+  },
+  {
+    "id": "D2F-07",
+    "title": "context-loaders + memory-loaders each pay PowerShell startup plus a full `uv run python ... status` probe (~3-7s each) just to ask 'is the daemon running'; the .ps1 scripts they invoke exist only in ~/.claude, not in the repo",
+    "severity": "S2",
+    "confidence": "VERIFIED",
+    "evidence": [
+      {
+        "file": ".claude/hooks/src/session-start-context-loaders.ts",
+        "lines": "46-48",
+        "quote": "    'powershell',\n    ['-ExecutionPolicy', 'Bypass', '-File', `${hooksDir}/session-start-tree-daemon.ps1`],\n    stdinContent,"
+      },
+      {
+        "file": ".claude/hooks/src/session-start-memory-loaders.ts",
+        "lines": "43-47",
+        "quote": "  const result = await runCommand(\n    'memory-daemon',\n    'powershell',"
+      },
+      {
+        "file": ".claude/hooks/src/lib/run-command.ts",
+        "lines": "29-33",
+        "quote": "  return new Promise((resolve) => {\n    const proc = spawn(command, args, {\n      timeout: timeoutMs,"
+      }
+    ],
+    "proposed_class": "simplify",
+    "leverage": "structural",
+    "seed_ref": "SEED-15",
+    "dedup_keys": [
+      ".claude/hooks/src/session-start-context-loaders.ts",
+      ".claude/hooks/src/session-start-memory-loaders.ts",
+      ".claude/hooks/src/lib/run-command.ts",
+      "session-start-tree-daemon.ps1",
+      "session-start-memory-daemon.ps1"
+    ],
+    "causal_links": [
+      "D2F-04",
+      "SEED-15 (these two hooks are among the active-only registrations; the .ps1 payloads are additionally absent from the repo tree, so a template-built machine spawns PowerShell against a missing file every session)"
+    ],
+    "observe_how": "ls .claude/hooks/*.ps1 in the repo shows only persist-project-dir.ps1 — session-start-tree-daemon.ps1 and session-start-memory-daemon.ps1 live solely in ~/.claude/hooks/. The active tree-daemon.ps1 runs `uv run python scripts/core/tree_daemon.py --status` and memory-daemon.ps1 runs `uv run python scripts/core/memory_daemon.py status` (plus a 500ms sleep) on EVERY session open, even when both daemons are already up; awaited with 20s/15s hook timeouts. A PID-file/port liveness check in Node would cost milliseconds.",
+    "telemetry": "~6-14s of combined parallel-lane work per session open for a pair of yes/no liveness answers. Note: knowledge-tree-health.md states 'There is no persistent watcher daemon' while this hook starts tree_daemon.py --background — doc/behavior contradiction worth resolving in the same pass.",
+    "_dim": "D2f",
+    "cluster_id": "C006"
+  },
+  {
+    "id": "D2g-05",
+    "title": "session-end-extract shells out via execSync with string-interpolated sessionId/projectDir (quoting/injection fragility) and blocks SessionEnd up to 10s on a synchronous uv-python gate",
+    "severity": "S2",
+    "confidence": "VERIFIED",
+    "evidence": [
+      {
+        "file": ".claude/hooks/src/session-end-extract.ts",
+        "lines": "63-65",
+        "quote": "    const result = execSync(\n      `cd \"${opcDir}\" && uv run python scripts/core/lazy_memory.py check --session-id \"${sessionId}\" --project \"${projectDir}\" --min-turns ${MIN_TURNS} --json`,\n      { encoding: 'utf-8', timeout: 10000, stdio: ['pipe', 'pipe', 'pipe'] }"
+      }
+    ],
+    "proposed_class": "fix",
+    "leverage": "quick-win",
+    "seed_ref": "SEED-01",
+    "dedup_keys": [
+      ".claude/hooks/src/session-end-extract.ts",
+      "shouldExtract",
+      "execSync"
+    ],
+    "causal_links": [
+      "Same unquoted/interpolated-shell-metachar failure family as SEED-01 (junk-creator invoking store_learning.py with unquoted metachars). Sibling functions in the SAME file (extractWithDedup, extractLearningsLegacy) already use spawn with array args — the safe pattern exists 20 lines below."
+    ],
+    "observe_how": "A projectDir containing $(...) or backticks (or `&` on Windows cmd) is interpolated raw into the shell string. Values normally come from CLAUDE_PROJECT_DIR/cwd so exploitation is low, but the warm-recall latency seed (SEED-08, uv startup 13-17s) means this sync gate can routinely eat its full 10s timeout at every session end before falling through to 'assume extract'.",
+    "telemetry": "On timeout the catch returns true ('extract anyway'), so the gate adds latency without ever preventing extraction when uv is slow — pure cost.",
+    "_dim": "D2g",
+    "cluster_id": "C006"
+  },
+  {
+    "id": "D2g-08",
+    "title": "26 SAFE-dead unregistered hook prototypes in hooks/src — no registration in active runtime, repo settings.json, or template; no imports from any non-test source; deletable as a batch",
+    "severity": "S2",
+    "confidence": "VERIFIED",
+    "evidence": [
+      {
+        "file": ".claude/hooks/src/compiler-in-the-loop.ts",
+        "lines": "2-4",
+        "quote": " * Compiler-in-the-Loop Hook\n *\n * PostToolUse handler for .lean files:"
+      },
+      {
+        "file": ".claude/hooks/src/auto-build.ts",
+        "lines": "2",
+        "quote": " * Auto-Build Hook (NEUTRALIZED)"
+      },
+      {
+        "file": ".claude/hooks/src/auto-build.ts",
+        "lines": "12-13",
+        "quote": " * It never triggers a build. The hook remains registered in settings.json\n * but is a no-op; deregistration is deferred to Phase 2."
+      }
+    ],
+    "proposed_class": "delete",
+    "leverage": "structural",
+    "seed_ref": null,
+    "dedup_keys": [
+      "arch-context-inject.ts",
+      "browser-learning-extractor.ts",
+      "code-field-protocol.ts",
+      "compiler-in-the-loop.ts",
+      "compiler-in-the-loop-stop.ts",
+      "dashboard-reporter.ts",
+      "edit-context-inject.ts",
+      "git-memory-check.ts",
+      "handoff-index.ts",
+      "hook-error-pipeline.ts",
+      "impact-refactor.ts",
+      "import-error-detector.ts",
+      "path-rules.ts",
+      "plan-mode-discovery.ts",
+      "post-edit-notify.ts",
+      "post-learning-prompt.ts",
+      "prd-task-template-enforcer.ts",
+      "pre-tool-use-broadcast.ts",
+      "react-perf-context.ts",
+      "session-end-cleanup.ts",
+      "session-start-dead-code.ts",
+      "session-start-parallel.ts",
+      "signature-helper.ts",
+      "skill-install-registrar.ts",
+      "test-build.ts",
+      "typescript-preflight.ts"
+    ],
+    "causal_links": [
+      "EXCLUDED from this list (NOT safe-dead): daemon-client/transcript-parser/skill-router/skill-validation-prompt (live libs, D2g-07); periodic-extract (registered in repo settings.json + template, SEED-15's repo-only item); sync-to-repo + pageindex-navigator + auto-build (template registrations must be removed first, D2g-01); diagnostics (deliberate CLI utility 'node dist/diagnostics.mjs', not a hook). Orphan tests to delete with: __tests__/dashboard-reporter.test.ts; auto-build's _register/_test scripts in D2g-10. auto-build.ts header's 'remains registered in settings.json' is itself a stale false claim — it is registered nowhere active."
+    ],
+    "observe_how": "Three-way verification: (1) grep of each name against .claude/settings.json (repo) and .claude/settings.json.template = 0 hits for all 26; (2) registrations-diff src_but_never_registered_active includes all; (3) repo-wide import grep finds no non-test importer of any of the 26; (4) reference scan of scripts/, skills/, agents/ finds only doc/visualization mentions. Family note: arch/edit-context-inject, impact-refactor, post-edit-notify, session-start-dead-code, signature-helper are the dead TLDR-daemon context-injection generation; compiler-in-the-loop(-stop) target .lean files — Lean is not in this stack.",
+    "telemetry": "All 26 are bundled by esbuild on every `npm run build` into dist entrypoints that never execute — pure build time and dist weight; they also inflate the hook-catalog drift (SEED-14).",
+    "_dim": "D2g",
+    "cluster_id": "C006"
+  },
+  {
+    "id": "D2g-10",
+    "title": "Committed junk in hooks/src: two 39-byte tmpclaude-*-cwd temp files (git-tracked since commit ef00c22), one-line test-build.ts, and three _register/_test-auto-build .cjs one-off scripts",
+    "severity": "S2",
+    "confidence": "VERIFIED",
+    "evidence": [
+      {
+        "file": ".claude/hooks/src/tmpclaude-681c-cwd",
+        "lines": "1",
+        "quote": "/c/Users/david.hayes/.claude/hooks/src"
+      },
+      {
+        "file": ".claude/hooks/src/test-build.ts",
+        "lines": "1",
+        "quote": "console.log('test');"
+      },
+      {
+        "file": ".claude/hooks/src/_register-auto-build.cjs",
+        "lines": "1-2",
+        "quote": "const fs = require('fs');\nconst p = 'C:/Users/david.hayes/.claude/settings.json';"
+      }
+    ],
+    "proposed_class": "delete",
+    "leverage": "quick-win",
+    "seed_ref": "SEED-06",
+    "dedup_keys": [
+      ".claude/hooks/src/tmpclaude-681c-cwd",
+      ".claude/hooks/src/tmpclaude-9453-cwd",
+      ".claude/hooks/src/test-build.ts",
+      ".claude/hooks/src/_register-auto-build.cjs",
+      ".claude/hooks/src/_test-auto-build.cjs",
+      ".claude/hooks/src/_test-auto-build-e2e.cjs"
+    ],
+    "causal_links": [
+      "New instance of the junk-artifact family (SEED-06 stray scripts/.claude/logs, SEED-07 doubled path) — but these are COMMITTED to git, not just stray on disk. test-build.ts is also counted in D2g-08's 26. _register-auto-build.cjs hardcodes the machine-specific active settings path, so it is also non-portable."
+    ],
+    "observe_how": "git ls-files confirms both tmpclaude-*-cwd files are tracked (added in ef00c22, content is a single cwd path — mktemp-style debris); test-build.ts compiles to a dist bundle whose entire behavior is printing 'test'.",
+    "telemetry": "Six junk files in the production hook source tree; tmpclaude pattern suggests a script that writes cwd-probe temp files into whatever directory it runs from — worth confirming the writer is gone.",
+    "_dim": "D2g",
+    "cluster_id": "C006"
+  },
+  {
+    "id": "D3a-06",
+    "title": "Caller-safety inventory (SEED-01 completeness): 3 UNSAFE string-interpolation shell-outs vs 4 SAFE array-arg spawns vs 2 doc-only non-callers",
+    "severity": "S2",
+    "confidence": "VERIFIED",
+    "seed_ref": "SEED-01",
+    "leverage": "quick-win",
+    "proposed_class": "fix",
+    "dedup_keys": [
+      "browser-learning-extractor.ts",
+      "periodic-extract.ts",
+      "smarter-everyday.ts",
+      "post-plan-roadmap.ts",
+      "post-learning-prompt.ts",
+      "ralph-monitor.ts"
+    ],
+    "causal_links": [
+      "D3a-01",
+      "SEED-01"
+    ],
+    "telemetry": "n/a (static inventory)",
+    "observe_how": "Read each call site; spawn(uv,[array]) with no shell:true is injection-safe; execSync(`...${x}...`) is not.",
+    "evidence": [
+      {
+        "file": ".claude/hooks/src/browser-learning-extractor.ts",
+        "lines": "445-452",
+        "quote": "const args = [\n    'run', 'python', 'scripts/core/store_learning.py',\n    '--session-id', sessionId,"
+      },
+      {
+        "file": ".claude/hooks/src/periodic-extract.ts",
+        "lines": "190-203",
+        "quote": "const child = spawn('uv', [\n      'run', 'python', 'scripts/core/store_learning.py',\n...\n      env: { ...process.env, PYTHONPATH: '.' },"
+      },
+      {
+        "file": ".claude/hooks/src/post-learning-prompt.ts",
+        "lines": "118-118",
+        "quote": "return 'Multiple file edits detected. ... `/remember` or use store_learning.py';"
+      }
+    ],
+    "_dim": "D3a",
+    "cluster_id": "C006"
+  },
+  {
+    "id": "D3a-02",
+    "title": "Silent store failures: dedup-search errors and all backend/embedding exceptions are swallowed; detached spawn callers use stdio:'ignore', so a failed store returns success-shaped or unseen — no telemetry that a learning was lost",
+    "severity": "S2",
+    "confidence": "VERIFIED",
+    "seed_ref": null,
+    "leverage": "structural",
+    "proposed_class": "investigate",
+    "dedup_keys": [
+      "store_learning.py:store_learning_v2",
+      "periodic-extract.ts",
+      "smarter-everyday.ts",
+      "post-plan-roadmap.ts"
+    ],
+    "causal_links": [],
+    "telemetry": "Compare count of store_learning spawns (hook logs) vs archival_memory inserts/24h (system_health already surfaces 'No learnings stored in 24h'). Gap = silent losses. Relates recall hit-rate 27.4%.",
+    "observe_how": "Kill DATABASE_URL mid-session; store_learning_v2 returns {success:false,error:...} but detached spawn (stdio:'ignore') discards it; dedup search failure path just `pass`es and double-stores.",
+    "evidence": [
+      {
+        "file": "opc/scripts/core/store_learning.py",
+        "lines": "538-540",
+        "quote": "except Exception:\n            # If search fails, proceed with storing (don't block on dedup errors)\n            pass"
+      },
+      {
+        "file": "opc/scripts/core/store_learning.py",
+        "lines": "579-580",
+        "quote": "except Exception as e:\n        return {\"success\": False, \"error\": str(e)}"
+      },
+      {
+        "file": ".claude/hooks/src/periodic-extract.ts",
+        "lines": "198-204",
+        "quote": "], {\n      cwd: opcDir,\n      detached: true,\n      stdio: 'ignore',"
+      }
+    ],
+    "_dim": "D3a",
+    "cluster_id": "C006"
+  }
+]

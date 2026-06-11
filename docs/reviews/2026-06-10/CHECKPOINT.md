@@ -1,16 +1,11 @@
-# Deep-Review Checkpoint (2026-06-10, after WF-1 completion run #2)
+# Deep-Review Checkpoint (2026-06-10, WF-1 COMPLETE)
 
-**State:** WF-0 complete (committed 8723034). WF-1 run #1: 15/29 dims, 147 findings (committed d643eaa). WF-1 run #2 (wc46k5ue0, 21 agents, 6.4M tokens, ~161 min): +5 dims (D6a, D6b, D7a, D7c, D10b) + 3 completeness critics (CRITICS.json) + gap-fill GAP1-GAP4 — **9 agents died on transient server-side rate limiting** (not spend limit). Disk tally: **25 dimension files, 196 findings — S0: 4, S1: 60, S2: 92, S3: 36** (+4 unset from gap entries).
-**Review SHA:** 86b8f60 (post-merge main; PRs #8/#9/#10 merged). Telemetry snapshot + exclusion manifest + seeds in harvest/.
+**State:** WF-0 complete (8723034). **WF-1 COMPLETE across 3 runs:** run #1 15 dims/147 findings (d643eaa, spend limit); run #2 +5 dims + critics + gap-fills (rate-limited); run #3 (wlvqd3qxz, 3 sequential batches of 3) finished the last 9 dims — 9/9, 2.9M tokens, ~3h49m. **Final tally: 33 dimension files (29 dims + 4 gap-fills), 248 findings — S0: 4, S1: 75, S2: 125, S3: 44.** Critics confirm all 111 hook srcs have verdict lines.
+**Review SHA:** 86b8f60 (post-merge main; PRs #8/#9/#10 merged). Telemetry snapshot + exclusion manifest + seeds in harvest/. Post-freeze commits touch only review artifacts + the settings.json deregistration (eae979e) — source files unchanged; refuters needing the frozen bytes use `git show 86b8f60:<file>`.
 
-## Still missing (9 — rate-limited, re-run as smaller low-concurrency workflow)
-D5b security:injection-surfaces · D7b lean:skills · D7d lean:scripts+duplication · D8a drift:rules-vs-code · D8b drift:docs-vs-code · D8c drift:skills-vs-behavior · D9 telemetry:interpretation · D10a trace:prompt-journey · D10c trace:agent-spawn-journey
-Coverage note: D8 (all 3 readers) and D9 are entirely missing — their coverage manifests CANNOT be marked complete until re-run. D5b partially overlaps WF-3's mandatory Codex security pass but should still run.
-
-## Resume
-1. Re-run the 9 missing agents as a NEW workflow at LOW concurrency (~4-5) — rate-limit pressure was the killer. Briefs in the saved workflow scripts (session workflow dir; see WF1-STATE.json).
-2. WF-2 adversarial verification over ALL findings on disk (content-match at SHA 86b8f60; S0/S1 split → KEEP-AND-FLAG arbitration; reachability on every CONFIRM). [GATE G-B]
-3. WF-3 synthesis + 2 mandatory codex passes → report + backlog → G-C ratification → Phase 4 quick wins via /ralph.
+## Next
+1. **WF-2 adversarial verification** (launching): mechanical exclusion pre-kill + dedup_keys clustering orchestrator-side → batches ≤8 under wf2/batches/ → S0/S1 dual oppositional refuters (split → KEEP-AND-FLAG → arbitrator must cite counter-evidence) · S2/S3 single ops-realist → reachability evidence on every CONFIRM → verdicts to wf2/WF2-VERDICTS.json → **tiered ledger → GATE G-B**.
+2. WF-3 synthesis + 2 mandatory codex passes → report + backlog → G-C ratification → Phase 4 quick wins via /ralph.
 
 ## Interim actions taken (user-authorized carve-outs)
 - **D2a-01 MITIGATED (2026-06-10, commit eae979e):** navigator-safety hook DEREGISTERED from repo + active settings.json after spot verification (PreToolUse 'allow' on destructive Bash = auto-approve + prompt suppression). Source retained for Phase 4 rewrite (allow→ask or PostToolUse additionalContext). Details: findings/INTERIM-ACTIONS.md.

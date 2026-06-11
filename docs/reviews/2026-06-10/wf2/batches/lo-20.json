@@ -1,0 +1,289 @@
+[
+  {
+    "id": "D8b-05",
+    "title": "Three entry-point docs give three different inventories, all wrong: ARCHITECTURE.md '92 srcs/23 registered, 31 agents, 129 skills' vs README '93 srcs/25 registered, 40+ agents, 137+ skills' vs reality 111 srcs/76 registered, 36 agents, 134 skills",
+    "severity": "S2",
+    "confidence": "VERIFIED",
+    "seed_ref": null,
+    "leverage": "quick-win",
+    "proposed_class": "fix",
+    "evidence": [
+      {
+        "file": "docs/ARCHITECTURE.md",
+        "lines": "763-765",
+        "quote": "| TypeScript hooks | 92 source files, 23 registered | Active in `.claude/hooks/src/` |\n| Skills | 129 directories | In `.claude/skills/` |\n| Agents | 31 | Defined in `.claude/agents/` |"
+      },
+      {
+        "file": "README.md",
+        "lines": "314-316",
+        "quote": "5. ✅ Installs 40+ specialized agents\n6. ✅ Installs 137+ skill workflows\n7. ✅ Installs 93 hook source files (25 registered)"
+      },
+      {
+        "file": "README.md",
+        "lines": "399",
+        "quote": "<summary>See full agent roster (40+ agents across 9 categories)</summary>"
+      }
+    ],
+    "observe_how": "Ground truth verified: `ls .claude/hooks/src/*.ts | wc -l` = 111; active settings.json = 76 unique registered; `ls .claude/agents/*.md | wc -l` = 36; sync-architecture-stats.mjs counts 134 SKILL.md dirs. README understates the running hook surface by 3x (25 vs 76) and overstates agents (40+); ARCHITECTURE.md does the inverse (31 agents). Any sizing/triage decision based on these docs starts from a wrong inventory.",
+    "dedup_keys": [
+      "docs/ARCHITECTURE.md:763",
+      "README.md:316",
+      "README.md:399",
+      "hook-count",
+      "agent-count",
+      "skill-count"
+    ],
+    "causal_links": [
+      "D8b-06"
+    ],
+    "_dim": "D8b",
+    "cluster_id": "C092"
+  },
+  {
+    "id": "D8b-08",
+    "title": "ARCHITECTURE.md claims symbol index is 'Built by build_symbol_index.py on SessionStart' — nothing invokes it; §7 also cites two files that do not exist",
+    "severity": "S2",
+    "confidence": "VERIFIED",
+    "seed_ref": null,
+    "leverage": "quick-win",
+    "proposed_class": "fix",
+    "evidence": [
+      {
+        "file": "docs/ARCHITECTURE.md",
+        "lines": "345",
+        "quote": "Built by `opc/scripts/tldr/build_symbol_index.py` on SessionStart."
+      },
+      {
+        "file": "docs/ARCHITECTURE.md",
+        "lines": "501-502",
+        "quote": "| `opc/scripts/temporal_memory/store_pg.py` | Temporal memory PostgreSQL store |\n| `opc/scripts/artifact_index.py` | Artifact index management |"
+      }
+    ],
+    "observe_how": "grep for build_symbol_index across .claude/hooks/src/, scripts/, and settings.json returns zero callers (script exists at opc/scripts/tldr/build_symbol_index.py but is orphaned — no SessionStart hook runs it, so /tmp/claude-symbol-index is never built as documented). ls confirms opc/scripts/temporal_memory/store_pg.py and opc/scripts/artifact_index.py do not exist (temporal_memory dir itself is gone).",
+    "dedup_keys": [
+      "docs/ARCHITECTURE.md:345",
+      "opc/scripts/tldr/build_symbol_index.py",
+      "opc/scripts/temporal_memory/store_pg.py",
+      "opc/scripts/artifact_index.py"
+    ],
+    "causal_links": [
+      "D8b-04"
+    ],
+    "_dim": "D8b",
+    "cluster_id": "C093"
+  },
+  {
+    "id": "D8b-09",
+    "title": "hooks.md subsystem lifecycle diagram names session-start-parallel as a running SessionStart hook — it exists in src but is not registered; the 4 actually-registered new SessionStart hooks are absent",
+    "severity": "S2",
+    "confidence": "VERIFIED",
+    "seed_ref": "SEED-14",
+    "leverage": "quick-win",
+    "proposed_class": "fix",
+    "evidence": [
+      {
+        "file": ".claude/docs/architecture/subsystems/hooks.md",
+        "lines": "6-9",
+        "quote": "SessionStart ──────→ Runs once when Claude session begins\n                     • session-start-docker (ensure services)\n                     • session-start-parallel (setup tasks)"
+      }
+    ],
+    "observe_how": ".claude/hooks/src/session-start-parallel.ts exists but appears in none of the 80 active registrations. Registered SessionStart hooks the diagram omits: session-start-context-loaders, session-start-memory-loaders, session-start-intel-prune, session-end-handoff-indexer (SessionEnd). Same drift family as D8b-01 but in the subsystem deep-dive that INDEX.md routes 'Find a hook' readers to.",
+    "dedup_keys": [
+      ".claude/docs/architecture/subsystems/hooks.md",
+      ".claude/hooks/src/session-start-parallel.ts",
+      "session-start-parallel"
+    ],
+    "causal_links": [
+      "D8b-01",
+      "harvest:src-never-registered-35"
+    ],
+    "_dim": "D8b",
+    "cluster_id": "C094"
+  },
+  {
+    "id": "D8b-10",
+    "title": "Stale line-count references: INDEX.md and hooks.md advertise 'hooks/README.md (718 lines)' and 'agents/README.md (750 lines)' — actuals are 699 and 744",
+    "severity": "S3",
+    "confidence": "VERIFIED",
+    "seed_ref": null,
+    "leverage": "quick-win",
+    "proposed_class": "fix",
+    "evidence": [
+      {
+        "file": ".claude/docs/architecture/INDEX.md",
+        "lines": "73-74",
+        "quote": "- [hooks/README.md](file:///C:/Users/david.hayes/continuous-claude/docs/hooks/README.md) - Full hook reference (718 lines)"
+      },
+      {
+        "file": ".claude/docs/architecture/subsystems/hooks.md",
+        "lines": "199",
+        "quote": "For comprehensive hook documentation (718 lines) with exit codes, MCP patterns, and examples:"
+      }
+    ],
+    "observe_how": "wc -l docs/hooks/README.md = 699; docs/agents/README.md = 744. Payoff: dropping the hardcoded line counts (or regenerating them) removes a freshness tell that undermines trust in the index every time the target docs change.",
+    "dedup_keys": [
+      ".claude/docs/architecture/INDEX.md:73",
+      "docs/hooks/README.md",
+      "docs/agents/README.md"
+    ],
+    "causal_links": [],
+    "_dim": "D8b",
+    "cluster_id": "C095"
+  },
+  {
+    "id": "D8b-11",
+    "title": "ARCHITECTURE.md says 'five pillars' while INDEX.md's canonical model is 'Six Pillars' (Braintrust missing from ARCHITECTURE.md)",
+    "severity": "S3",
+    "confidence": "VERIFIED",
+    "seed_ref": null,
+    "leverage": "quick-win",
+    "proposed_class": "fix",
+    "evidence": [
+      {
+        "file": "docs/ARCHITECTURE.md",
+        "lines": "7",
+        "quote": "The system has five pillars: **Memory** (persistent learnings), **Hooks** (automatic behaviors), **Agents** (specialized sub-assistants), **PageIndex** (document intelligence), and **Workflows** (multi-step orchestration)."
+      },
+      {
+        "file": ".claude/docs/architecture/INDEX.md",
+        "lines": "28",
+        "quote": "## Six Pillars"
+      }
+    ],
+    "observe_how": "One-line edit adds Braintrust as the sixth pillar so the two entry-point docs stop disagreeing about the system's top-level shape. (RLM is a seventh subsystem in INDEX's table but deliberately not a pillar.)",
+    "dedup_keys": [
+      "docs/ARCHITECTURE.md:7",
+      ".claude/docs/architecture/INDEX.md:28",
+      "six-pillars"
+    ],
+    "causal_links": [
+      "D8b-04"
+    ],
+    "_dim": "D8b",
+    "cluster_id": "C096"
+  },
+  {
+    "id": "D8c-01",
+    "title": "code-intel SKILL.md still documents Phase-B 'codegraph is absent' routing while codegraph is LIVE (C.2) — routing table, escalation contract, and kill-switch docs all stale",
+    "severity": "S2",
+    "confidence": "VERIFIED",
+    "proposed_class": "document",
+    "seed_ref": null,
+    "evidence": [
+      {
+        "file": ".claude/skills/code-intel/SKILL.md",
+        "lines": "56-57",
+        "quote": "- **codegraph is absent** (no `.codegraph/`, Phase C). Any query that would ideally hit codegraph\n  (`who-calls`, `find-symbol`, `code-context`) falls back to TLDR with `escalated_from:\"codegraph\"`."
+      },
+      {
+        "file": ".claude/skills/code-intel/SKILL.md",
+        "lines": "31",
+        "quote": "| `who-calls <fn> [path]` | **TLDR** (`tldr impact`) | codegraph is absent (Phase C) -> falls back to TLDR; `escalated_from:\"codegraph\"`. |"
+      },
+      {
+        "file": "scripts/code-intel.mjs",
+        "lines": "812-813",
+        "quote": "if (!codegraphAbsent()) {\n        // LIVE path: codegraph owns reverse call graph. ensureFresh() so the DB"
+      },
+      {
+        "file": ".claude/rules/code-intel-boundaries.md",
+        "lines": "8",
+        "quote": "**Phase C status (2026-06-07):** codegraph is now **LIVE** — `@colbymchenry/codegraph@0.9.9` is wired behind `/code-intel` as the first L3 specialist (C.2)."
+      }
+    ],
+    "observe_how": "Read .claude/skills/code-intel/SKILL.md vs scripts/code-intel.mjs case 'who-calls' (lines 809-872). Binary verified present at .claude/hooks/node_modules/@colbymchenry/codegraph/npm-shim.js, .codegraph/ dir exists, package.json pins 0.9.9. SKILL.md Kill switch section (line 76) documents only CCV3_BUS_OFF; script lines 366-367 also honor CCV3_KILLSWITCH and CCV3_CODEGRAPH_OFF (undocumented in the skill). Script header comment scripts/code-intel.mjs:17 ('codegraph -> ABSENT (Phase C)') is equally stale.",
+    "telemetry": "SUMMARY.md: intel-bus 318 live rows including 37 codegraph rows — codegraph is demonstrably routing in production while the trigger-loaded skill says it is absent.",
+    "causal_links": [
+      "C.2 wiring (commit a0f8062) updated scripts/code-intel.mjs and code-intel-boundaries.md but skipped the skill that loads on '/code-intel'/'who calls'/'find symbol' triggers",
+      "Same fix should update the stale header comment at scripts/code-intel.mjs:17 and add CCV3_KILLSWITCH/CCV3_CODEGRAPH_OFF to the SKILL.md kill-switch section"
+    ],
+    "dedup_keys": [
+      ".claude/skills/code-intel/SKILL.md",
+      "scripts/code-intel.mjs:codegraphAbsent",
+      "CCV3_CODEGRAPH_OFF",
+      "who-calls"
+    ],
+    "leverage": "quick-win",
+    "_dim": "D8c",
+    "cluster_id": "C055"
+  },
+  {
+    "id": "D8c-02",
+    "title": "review SKILL.md telemetry recipe writes 'critic_only' field — diverges from canonical 'claude_only' schema (README, premortem skill, and all 10 live rows)",
+    "severity": "S2",
+    "confidence": "VERIFIED",
+    "proposed_class": "fix",
+    "seed_ref": null,
+    "evidence": [
+      {
+        "file": ".claude/skills/review/SKILL.md",
+        "lines": "183-186",
+        "quote": "--argjson critic_count <N> \\\n  --argjson codex_count <N> \\\n  --argjson both_count <N> \\\n  '{ts:$ts, skill:$skill, scope:$scope, critic_only:($critic_count - $both_count), codex_only:($codex_count - $both_count), both:$both_count, via:\"direct\"}' \\"
+      },
+      {
+        "file": ".claude/logs/codex-lift.README.md",
+        "lines": "12",
+        "quote": "\"claude_only\": 3,                  // findings only Claude/critic flagged"
+      },
+      {
+        "file": ".claude/skills/premortem/SKILL.md",
+        "lines": "352",
+        "quote": "'{ts:$ts, skill:$skill, scope:$scope, claude_only:$claude_only, codex_only:$codex_only, both:$both, via:$via}' \\"
+      }
+    ],
+    "observe_how": "Diff the two skills' Phase-3/Step-6 jq recipes against .claude/logs/codex-lift.README.md schema. All 10 rows currently in .claude/logs/codex-lift.jsonl are skill:'premortem' with claude_only; zero 'review' rows exist yet. The first /review run that follows its SKILL.md verbatim will append a row whose claude_only is absent — the README aggregation queries (jq 'map(.claude_only) | add / length') return null/error on such rows, silently degrading the lift metric that decides whether Codex earns its quota.",
+    "telemetry": ".claude/logs/codex-lift.jsonl: 10/10 rows are premortem-sourced claude_only rows; 0 review rows despite the skill claiming Phase 3 telemetry on every run.",
+    "causal_links": [
+      "codex-adversarial.md rule and codex-lift.README.md define claude_only as canonical; review/SKILL.md Phase 3 was authored with a divergent field name and never exercised"
+    ],
+    "dedup_keys": [
+      ".claude/skills/review/SKILL.md:critic_only",
+      ".claude/logs/codex-lift.jsonl",
+      "claude_only"
+    ],
+    "leverage": "quick-win",
+    "_dim": "D8c",
+    "cluster_id": "C097"
+  },
+  {
+    "id": "D8c-04",
+    "title": "build/fix/explore workflow chains name four nonexistent skills: research-codebase, test-driven-development, tldr-impact, dependency-preflight",
+    "severity": "S2",
+    "confidence": "VERIFIED",
+    "proposed_class": "fix",
+    "seed_ref": null,
+    "evidence": [
+      {
+        "file": ".claude/skills/build/SKILL.md",
+        "lines": "65-67",
+        "quote": "\"brownfield\": [\"onboard\", \"research-codebase\", \"plan-agent\", \"validate-agent\", \"implement_plan\"],\n    \"tdd\": [\"plan-agent\", \"test-driven-development\", \"implement_plan\"],\n    \"refactor\": [\"tldr-impact\", \"plan-agent\", \"test-driven-development\", \"implement_plan\"]"
+      },
+      {
+        "file": ".claude/skills/fix/SKILL.md",
+        "lines": "103-104",
+        "quote": "| `deps` | dependency-preflight → oracle → plan-agent → premortem → kraken → qlty-check → commit |\n| `pr-comments` | github-search → research-codebase → plan-agent → premortem → kraken → commit |"
+      },
+      {
+        "file": ".claude/skills/explore/SKILL.md",
+        "lines": "130",
+        "quote": "| **research-codebase** | Pattern documentation (used by deep depth) |"
+      }
+    ],
+    "observe_how": "ls .claude/skills/ shows actual skill dirs are 'research' (not research-codebase), 'tdd' (not test-driven-development), 'tldr-code' (no tldr-impact skill — impact is a CLI subcommand), and no dependency-preflight skill or agent exists anywhere (.claude/skills/dependency-preflight: No such file; no match in .claude/agents/). These are the literal chain-step identifiers the orchestrator skills instruct the model to 'execute' — each invocation requires the model to guess the real target or fail. /build and /fix are the two primary CLAUDE.md-routed workflows ('implement' → /build, 'bug' → /fix).",
+    "telemetry": "",
+    "causal_links": [
+      "Skill renames (research-codebase→research, test-driven-development→tdd) were applied to skill dirs during the Phase-4/5 skill evaluation passes but the orchestrator chain definitions that reference them were never updated"
+    ],
+    "dedup_keys": [
+      ".claude/skills/build/SKILL.md:CHAINS",
+      ".claude/skills/fix/SKILL.md:scopes",
+      "research-codebase",
+      "test-driven-development",
+      "tldr-impact",
+      "dependency-preflight"
+    ],
+    "leverage": "structural",
+    "_dim": "D8c",
+    "cluster_id": "C098"
+  }
+]

@@ -1,0 +1,326 @@
+[
+  {
+    "id": "D2d-03",
+    "title": "epistemic-reminder is dead code in production: reads input.tool (canonical field is tool_name) so the Grep match never fires — yet claim-verification.md tells every session the hook 'injects warnings after Grep results'",
+    "severity": "S1",
+    "confidence": "VERIFIED",
+    "seed_ref": null,
+    "leverage": "quick-win",
+    "proposed_class": "fix",
+    "dedup_keys": [
+      ".claude/hooks/src/epistemic-reminder.ts",
+      "input.tool",
+      ".claude/rules/claim-verification.md"
+    ],
+    "causal_links": [
+      "D2d-12 (field-name drift instance)"
+    ],
+    "evidence": [
+      {
+        "file": ".claude/hooks/src/epistemic-reminder.ts",
+        "lines": "44-47",
+        "quote": "  const tool = input.tool;\n\n  // Only add reminder for Grep results (Read results are more reliable)\n  if (tool !== 'Grep') {"
+      },
+      {
+        "file": ".claude/hooks/src/shared/types.ts",
+        "lines": "37-39",
+        "quote": "export interface PostToolUseInput {\n  session_id: string;\n  tool_name: string;"
+      },
+      {
+        "file": ".claude/rules/claim-verification.md",
+        "lines": "60-61",
+        "quote": "The `epistemic-reminder` hook injects warnings after Grep results. Follow them."
+      },
+      {
+        "file": ".claude/hooks/src/epistemic-reminder.ts",
+        "lines": "67-69",
+        "quote": "    hookSpecificOutput: {\n      hookEventName: 'PostToolUse',\n      systemPromptSuffix: reminder,"
+      }
+    ],
+    "observe_how": "Registered live with matcher Grep|Read (verified in ~/.claude/settings.json), so it spawns a node process on EVERY Grep and Read, then always prints '{}' because input.tool is undefined (Claude Code sends tool_name; every other hook in src/ uses tool_name). Even if the field matched, the output uses systemPromptSuffix — not the additionalContext field the repo's own hook-dev-lifecycle rule documents as 'the reliable inject pattern'. Double-dead, plus a decision-driving false claim in a rule loaded into every session's context. Fix is two field renames, or delete the hook and the rule's enforcement sentence.",
+    "telemetry": "Fires on every Grep/Read tool call session-wide; injected reminders delivered: 0",
+    "_dim": "D2d",
+    "cluster_id": "C023"
+  },
+  {
+    "id": "D2d-09",
+    "title": "prd-roadmap-sync marks the CURRENT ROADMAP goal complete whenever ANY fully-checked tasks-*.md is written — titleToComplete falls back to roadmap.current.title with no check that the tasks file relates to the current goal; section matching is first-word substring",
+    "severity": "S1",
+    "confidence": "VERIFIED",
+    "seed_ref": null,
+    "leverage": "structural",
+    "proposed_class": "fix",
+    "dedup_keys": [
+      ".claude/hooks/src/prd-roadmap-sync.ts",
+      "handleTasksChange",
+      "moveToCompleted",
+      "titleToComplete"
+    ],
+    "causal_links": [
+      "same unguarded-ROADMAP-write family that roadmap-completion already had to neuter (its lines 150-152 document the prior clobber)"
+    ],
+    "evidence": [
+      {
+        "file": ".claude/hooks/src/prd-roadmap-sync.ts",
+        "lines": "497-499",
+        "quote": "  if (progress.isComplete) {\n    // Move to completed\n    const titleToComplete = roadmap.current?.title || progress.featureName;"
+      },
+      {
+        "file": ".claude/hooks/src/prd-roadmap-sync.ts",
+        "lines": "335",
+        "quote": "      if (stripped.startsWith('**') && stripped.toLowerCase().includes(title.toLowerCase().split(' ')[0])) {"
+      },
+      {
+        "file": ".claude/hooks/src/roadmap-completion.ts",
+        "lines": "150-152",
+        "quote": "  // ADVISORY ONLY — never writes. (Previously: unconditional updateRoadmapContent +\n  // promoteNextPlanned + fs.writeFileSync, which clobbered manual edits and falsely\n  // advanced Current Focus on every unrelated task completion.)"
+      },
+      {
+        "file": ".claude/hooks/src/prd-roadmap-sync.ts",
+        "lines": "519-521",
+        "quote": "  if (updated !== roadmapContent) {\n    fs.writeFileSync(roadmapPath, updated);\n  }"
+      }
+    ],
+    "observe_how": "Write any tasks-foo.md inside the project with all checkboxes ticked: handleTasksChange computes isComplete=true and calls moveToCompleted(roadmapContent, roadmap.current?.title) — the CURRENT goal, even if 'foo' is unrelated to it — replacing Current Focus with the '_No current goal._' placeholder and appending a bogus '- [x]' line. moveToCompleted/promoteToCurrent/updateProgress all match sections by the FIRST WORD of the title via substring includes (line 335), so titles sharing a first word ('CCv3-Hardening ...') cross-match. roadmap-completion was already converted to advisory-only after exactly this clobbering failure mode (its own comment is the precedent), but prd-roadmap-sync retained the unconditional fs.writeFileSync path. Fix: require the tasks file's featureName to match the current goal before completing, or convert to advisory like roadmap-completion.",
+    "telemetry": "Registered live on Write|Edit; trigger frequency tied to ai-dev-tasks usage (tasks-*.md files)",
+    "_dim": "D2d",
+    "cluster_id": "C024"
+  },
+  {
+    "id": "D2d-10",
+    "title": "git-commit-roadmap records commits into THIS project's ROADMAP without verifying the commit ran in this project — 'cd <other-repo> && git commit' (routine for ~/.claude quick fixes) writes a foreign repo's commit into the session project's Completed section",
+    "severity": "S1",
+    "confidence": "VERIFIED",
+    "seed_ref": null,
+    "leverage": "quick-win",
+    "proposed_class": "fix",
+    "dedup_keys": [
+      ".claude/hooks/src/git-commit-roadmap.ts",
+      "isGitCommitCommand",
+      "appendToCompleted"
+    ],
+    "causal_links": [
+      "second cross-project ROADMAP contamination vector alongside SEED-02/D2d-01 (different hook, same class)"
+    ],
+    "evidence": [
+      {
+        "file": ".claude/hooks/src/git-commit-roadmap.ts",
+        "lines": "61-63",
+        "quote": "function isGitCommitCommand(command: string): boolean {\n  const normalized = command.toLowerCase().trim();\n  return normalized.includes('git commit') && !normalized.includes('--amend');"
+      },
+      {
+        "file": ".claude/hooks/src/git-commit-roadmap.ts",
+        "lines": "265-266",
+        "quote": "  const projectDir = process.env.CLAUDE_PROJECT_DIR || process.cwd();\n  const roadmapPath = findRoadmapPath(projectDir);"
+      },
+      {
+        "file": ".claude/hooks/src/git-commit-roadmap.ts",
+        "lines": "285",
+        "quote": "  fs.writeFileSync(roadmapPath, updated);"
+      }
+    ],
+    "observe_how": "The Bash command string is only checked for the substring 'git commit'; nothing inspects a leading 'cd <path> &&' or compares the commit's repo to CLAUDE_PROJECT_DIR. The git-sync workflow in this environment explicitly commits in OTHER directories from a session ('cd ~/continuous-claude && git commit' from any project, ~/.claude quick fixes) — each such feat:/fix: commit appends a '- [x]' entry to the CURRENT session project's ROADMAP Completed with today's date and the foreign hash. Reproduce: from a session in project A, run cd ../project-B && git commit -m 'feat: x' and read project A's ROADMAP. Fix: parse a leading cd target (or run git -C check) and skip when the commit repo differs from projectDir.",
+    "telemetry": "Registered live on PostToolUse:Bash; cross-repo commits are a documented routine pattern in git-sync-workflow.md",
+    "_dim": "D2d",
+    "cluster_id": "C007"
+  },
+  {
+    "id": "D2e-01",
+    "title": "git-auto-commit: shell-interpolated git commands (commit -m \"${message}\" with filenames from git status; check-ignore \"${filePath}\" from tool_input) — command breakage/injection vector",
+    "severity": "S1",
+    "confidence": "VERIFIED",
+    "evidence": [
+      {
+        "file": ".claude/hooks/src/git-auto-commit.ts",
+        "lines": "155",
+        "quote": "    execSync(`git commit -m \"${message}\"`, {"
+      },
+      {
+        "file": ".claude/hooks/src/git-auto-commit.ts",
+        "lines": "151-153",
+        "quote": "    const summary = getChangeSummary();\n    const timestamp = new Date().toISOString().replace('T', ' ').slice(0, 19);\n    const message = `Auto: ${timestamp} - ${summary}`;"
+      },
+      {
+        "file": ".claude/hooks/src/git-auto-commit.ts",
+        "lines": "73",
+        "quote": "    execSync(`git check-ignore -q \"${filePath}\"`, {"
+      }
+    ],
+    "proposed_class": "fix",
+    "leverage": "quick-win",
+    "dedup_keys": [
+      ".claude/hooks/src/git-auto-commit.ts",
+      "doCommit",
+      "isTrackedByGit",
+      "execSync interpolation"
+    ],
+    "causal_links": [
+      "SEED-01 (same unquoted-shell-metachar class as the store_learning junk-creator)"
+    ],
+    "observe_how": "A tracked file in ~/.claude whose name contains a double-quote or & makes the commit message embed git-status's quoted form; on cmd.exe the interpolated string splits/executes. check-ignore path comes straight from tool_input.file_path (model-controlled), only prefix-checked by isInClaudeDir.",
+    "telemetry": "git log in ~/.claude for malformed 'Auto:' commits; stderr 'Git commit failed' lines",
+    "seed_ref": null,
+    "_dim": "D2e",
+    "cluster_id": "C008"
+  },
+  {
+    "id": "D2e-02",
+    "title": "post-edit-diagnostics: spawnSync('tsc') cannot resolve the .cmd shim on Windows — the entire TS/JS diagnostics path is silently dead on the primary platform, and the early return also skips the bus 'edited' write for every TS/JS edit",
+    "severity": "S1",
+    "confidence": "VERIFIED",
+    "evidence": [
+      {
+        "file": ".claude/hooks/src/post-edit-diagnostics.ts",
+        "lines": "226-228",
+        "quote": "    const result = spawnSync('tsc', ['--noEmit', '--pretty', 'false'], {\n      cwd: projectDir,\n      timeout: 30000,"
+      },
+      {
+        "file": ".claude/hooks/src/post-edit-diagnostics.ts",
+        "lines": "233-235",
+        "quote": "    if (result.error || result.status === null) {\n      console.log('{}');\n      return;"
+      },
+      {
+        "file": ".claude/rules/windows-platform.md",
+        "lines": "20",
+        "quote": "1. **`.cmd`/`.bat` shims CANNOT be spawned directly on modern Node (CVE-2024-27980 hardening).**"
+      }
+    ],
+    "proposed_class": "fix",
+    "leverage": "structural",
+    "dedup_keys": [
+      ".claude/hooks/src/post-edit-diagnostics.ts",
+      "runTscDiagnostics",
+      "spawnSync tsc",
+      "recordBusFilesInPlay"
+    ],
+    "causal_links": [
+      "causes D2e-08 partially (TS/JS edited-role rows missing from intel-bus files_in_play)",
+      "D2e-03"
+    ],
+    "observe_how": "ls of C:/Users/david.hayes/AppData/Roaming/npm and .claude/hooks/node_modules/.bin shows only tsc (sh), tsc.cmd, tsc.ps1 — no tsc.exe. Node spawnSync on win32 resolves only .exe, so result.error (ENOENT) fires and the hook prints '{}' BEFORE recordBusFilesInPlay (line 255). The project's own C.1 platform contract documents this exact trap; user CLAUDE.md still claims '*.ts/*.tsx edits trigger automatic tsc --noEmit diagnostics' — a decision-driving false claim. Fix per windows-platform.md finding #1: invoke the real JS entrypoint (node <pkg>/typescript/bin/tsc) or cmd.exe /c tsc.cmd with array args, and hoist recordBusFilesInPlay above the early returns.",
+    "telemetry": "intel-bus: 318 live rows but TS-heavy sessions show edited-role gaps; zero tsc diagnostics ever injected on this machine",
+    "seed_ref": null,
+    "_dim": "D2e",
+    "cluster_id": "C011"
+  },
+  {
+    "id": "D2F-01",
+    "title": "roadmap-reconcile emits nonstandard `{values:{system}}` output — contradiction report is silently dropped, the whole hook is dead weight on every session open",
+    "severity": "S1",
+    "confidence": "VERIFIED",
+    "evidence": [
+      {
+        "file": ".claude/hooks/src/roadmap-reconcile.ts",
+        "lines": "462-466",
+        "quote": "  return {\n    values: {\n      system: message,"
+      },
+      {
+        "file": ".claude/rules/hook-dev-lifecycle.md",
+        "lines": "20",
+        "quote": "| SessionStart | Session begins | `{ hookSpecificOutput: { additionalContext: \"...\" } }` |"
+      }
+    ],
+    "proposed_class": "fix",
+    "leverage": "quick-win",
+    "seed_ref": null,
+    "dedup_keys": [
+      ".claude/hooks/src/roadmap-reconcile.ts",
+      "reconcile",
+      "values.system"
+    ],
+    "causal_links": [
+      "D2F-08 becomes user-visible noise once this output path is fixed"
+    ],
+    "observe_how": "Run `echo '{\"session_id\":\"x\",\"source\":\"startup\"}' | node ~/.claude/hooks/dist/roadmap-reconcile.mjs` in a repo with 2+ contradictions; the stdout JSON has neither hookSpecificOutput nor systemMessage, so Claude Code injects nothing.",
+    "telemetry": "No ROADMAP-reconciliation message has ever appeared in session-start context despite the hook running every session (it ran ~0.3-0.5s incl. a git subprocess each time).",
+    "_dim": "D2f",
+    "cluster_id": "C013"
+  },
+  {
+    "id": "D3b-01",
+    "title": "HYBRID_FLOOR 0.01 is applied to decay-multiplied RRF scores, mathematically excluding most of the memory corpus from proactive injection",
+    "severity": "S1",
+    "confidence": "VERIFIED",
+    "proposed_class": "fix",
+    "leverage": "quick-win",
+    "seed_ref": null,
+    "evidence": [
+      {
+        "file": ".claude/hooks/src/memory-awareness.ts",
+        "lines": "48-49",
+        "quote": "const TEXT_ONLY_FLOOR = 0.05;  // FTS ts_rank scores: 0.05-0.5 typical\nconst HYBRID_FLOOR = 0.01;     // RRF fused scores: 0.01-0.03 typical"
+      },
+      {
+        "file": "opc/scripts/core/recall_learnings.py",
+        "lines": "477-479",
+        "quote": "# Keep the legacy \"similarity\" key in sync so existing consumers\n        # that read result[\"similarity\"] see the decay-adjusted score.\n        r[\"similarity\"] = base * weight"
+      },
+      {
+        "file": "opc/scripts/core/recall_learnings.py",
+        "lines": "236",
+        "quote": "DEFAULT_DECAY_LAMBDA = 0.02"
+      },
+      {
+        "file": "opc/scripts/core/db/memory_service_pg.py",
+        "lines": "148-149",
+        "quote": "COALESCE(1.0 / (${rrf_k_param} + f.fts_rank), 0) +\n                COALESCE(1.0 / (${rrf_k_param} + v.vec_rank), 0) as rrf_score,"
+      }
+    ],
+    "dedup_keys": [
+      "memory-awareness.ts:HYBRID_FLOOR",
+      "recall_learnings.py:_apply_decay",
+      "applyFloor"
+    ],
+    "causal_links": [
+      "compounded-by:D3b-02",
+      "explains:hit-rate-27.4%"
+    ],
+    "observe_how": "Math is fixed by the constants: with rrf_k=60 the max single-arm RRF score is 1/61=0.0164 and max dual-arm rank-1 is 2/61=0.0328. The JSON `score` the hook floors is similarity=base*decay (decay=exp(-age_days*0.02)). Solving 0.0164*exp(-0.02a)>=0.01 gives a<=24.7 days; 0.0328*exp(-0.02a)>=0.01 gives a<=59.4 days. So ANY single-arm match older than ~25 days and ANY match at all older than ~59 days is silently dropped, regardless of relevance. The floor comment assumes pre-decay RRF scores; the value floored is post-decay.",
+    "telemetry": "table-memory-recall.json: top_score p75=0.0149 (just under single-arm 0.0164 max), p50=0, hit-rate 27.4% — consistent with a corpus mostly older than the 25/59-day cutoffs.",
+    "_dim": "D3b",
+    "cluster_id": "C041"
+  },
+  {
+    "id": "D3b-02",
+    "title": "Hybrid FTS arm uses plainto_tsquery (AND semantics) over the raw full-prompt intent, so the FTS arm is ~always empty and hybrid degenerates to vector-only at half the score ceiling",
+    "severity": "S1",
+    "confidence": "VERIFIED",
+    "proposed_class": "fix",
+    "leverage": "structural",
+    "seed_ref": null,
+    "evidence": [
+      {
+        "file": "opc/scripts/core/db/memory_service_pg.py",
+        "lines": "134-135",
+        "quote": "WHERE {where_clause}\n            AND to_tsvector('english', content) @@ plainto_tsquery('english', ${text_query_param})"
+      },
+      {
+        "file": "opc/scripts/core/recall_learnings.py",
+        "lines": "848-851",
+        "quote": "rows = await conn.fetch(\n            sql,\n            query,"
+      },
+      {
+        "file": "opc/scripts/core/recall_learnings.py",
+        "lines": "536-541",
+        "quote": "# Build OR-based query: \"session affinity terminal\" -> 'session' | 'affinity' | 'terminal'\n        # This matches documents containing ANY of the terms, ranked by how many match\n        words = [w for w in clean_query.split() if len(w) > 2]"
+      },
+      {
+        "file": ".claude/hooks/src/shared/intent-extractor.ts",
+        "lines": "63-66",
+        "quote": "export function extractIntent(prompt: string): string {\n  if (typeof prompt !== 'string') return '';\n  let intent = prompt.trim();"
+      }
+    ],
+    "dedup_keys": [
+      "memory_service_pg.py:build_rrf_sql",
+      "plainto_tsquery",
+      "search_learnings_hybrid_rrf"
+    ],
+    "causal_links": [
+      "compounds:D3b-01"
+    ],
+    "observe_how": "The text-only path (search_learnings_text_only_postgres) tokenizes the query and OR-joins it before to_tsquery; the hybrid path passes the raw multi-word intent (the whole user prompt minus meta-prefixes, per extractIntent) straight into plainto_tsquery, which ANDs all lexemes. A sentence-length intent almost never matches every lexeme in any stored learning, so fts_ranked is empty and rrf_score caps at 1/(60+rank) ≈ 0.0164. Run any sentence query with --json and check fts_rank is null on all results.",
+    "telemetry": "top_score p75=0.0149 < dual-arm minimum (rank-1+rank-20 ≈ 0.029) across 281 logged recalls — no evidence of any dual-arm fusion ever occurring.",
+    "_dim": "D3b",
+    "cluster_id": "C042"
+  }
+]

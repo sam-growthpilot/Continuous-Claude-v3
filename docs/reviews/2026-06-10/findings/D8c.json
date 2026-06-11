@@ -1,0 +1,353 @@
+{
+  "dimension": "D8c",
+  "findings": [
+    {
+      "id": "D8c-01",
+      "title": "code-intel SKILL.md still documents Phase-B 'codegraph is absent' routing while codegraph is LIVE (C.2) — routing table, escalation contract, and kill-switch docs all stale",
+      "severity": "S2",
+      "confidence": "VERIFIED",
+      "proposed_class": "document",
+      "seed_ref": null,
+      "evidence": [
+        {
+          "file": ".claude/skills/code-intel/SKILL.md",
+          "lines": "56-57",
+          "quote": "- **codegraph is absent** (no `.codegraph/`, Phase C). Any query that would ideally hit codegraph\n  (`who-calls`, `find-symbol`, `code-context`) falls back to TLDR with `escalated_from:\"codegraph\"`."
+        },
+        {
+          "file": ".claude/skills/code-intel/SKILL.md",
+          "lines": "31",
+          "quote": "| `who-calls <fn> [path]` | **TLDR** (`tldr impact`) | codegraph is absent (Phase C) -> falls back to TLDR; `escalated_from:\"codegraph\"`. |"
+        },
+        {
+          "file": "scripts/code-intel.mjs",
+          "lines": "812-813",
+          "quote": "if (!codegraphAbsent()) {\n        // LIVE path: codegraph owns reverse call graph. ensureFresh() so the DB"
+        },
+        {
+          "file": ".claude/rules/code-intel-boundaries.md",
+          "lines": "8",
+          "quote": "**Phase C status (2026-06-07):** codegraph is now **LIVE** — `@colbymchenry/codegraph@0.9.9` is wired behind `/code-intel` as the first L3 specialist (C.2)."
+        }
+      ],
+      "observe_how": "Read .claude/skills/code-intel/SKILL.md vs scripts/code-intel.mjs case 'who-calls' (lines 809-872). Binary verified present at .claude/hooks/node_modules/@colbymchenry/codegraph/npm-shim.js, .codegraph/ dir exists, package.json pins 0.9.9. SKILL.md Kill switch section (line 76) documents only CCV3_BUS_OFF; script lines 366-367 also honor CCV3_KILLSWITCH and CCV3_CODEGRAPH_OFF (undocumented in the skill). Script header comment scripts/code-intel.mjs:17 ('codegraph -> ABSENT (Phase C)') is equally stale.",
+      "telemetry": "SUMMARY.md: intel-bus 318 live rows including 37 codegraph rows — codegraph is demonstrably routing in production while the trigger-loaded skill says it is absent.",
+      "causal_links": [
+        "C.2 wiring (commit a0f8062) updated scripts/code-intel.mjs and code-intel-boundaries.md but skipped the skill that loads on '/code-intel'/'who calls'/'find symbol' triggers",
+        "Same fix should update the stale header comment at scripts/code-intel.mjs:17 and add CCV3_KILLSWITCH/CCV3_CODEGRAPH_OFF to the SKILL.md kill-switch section"
+      ],
+      "dedup_keys": [
+        ".claude/skills/code-intel/SKILL.md",
+        "scripts/code-intel.mjs:codegraphAbsent",
+        "CCV3_CODEGRAPH_OFF",
+        "who-calls"
+      ],
+      "leverage": "quick-win"
+    },
+    {
+      "id": "D8c-02",
+      "title": "review SKILL.md telemetry recipe writes 'critic_only' field — diverges from canonical 'claude_only' schema (README, premortem skill, and all 10 live rows)",
+      "severity": "S2",
+      "confidence": "VERIFIED",
+      "proposed_class": "fix",
+      "seed_ref": null,
+      "evidence": [
+        {
+          "file": ".claude/skills/review/SKILL.md",
+          "lines": "183-186",
+          "quote": "--argjson critic_count <N> \\\n  --argjson codex_count <N> \\\n  --argjson both_count <N> \\\n  '{ts:$ts, skill:$skill, scope:$scope, critic_only:($critic_count - $both_count), codex_only:($codex_count - $both_count), both:$both_count, via:\"direct\"}' \\"
+        },
+        {
+          "file": ".claude/logs/codex-lift.README.md",
+          "lines": "12",
+          "quote": "\"claude_only\": 3,                  // findings only Claude/critic flagged"
+        },
+        {
+          "file": ".claude/skills/premortem/SKILL.md",
+          "lines": "352",
+          "quote": "'{ts:$ts, skill:$skill, scope:$scope, claude_only:$claude_only, codex_only:$codex_only, both:$both, via:$via}' \\"
+        }
+      ],
+      "observe_how": "Diff the two skills' Phase-3/Step-6 jq recipes against .claude/logs/codex-lift.README.md schema. All 10 rows currently in .claude/logs/codex-lift.jsonl are skill:'premortem' with claude_only; zero 'review' rows exist yet. The first /review run that follows its SKILL.md verbatim will append a row whose claude_only is absent — the README aggregation queries (jq 'map(.claude_only) | add / length') return null/error on such rows, silently degrading the lift metric that decides whether Codex earns its quota.",
+      "telemetry": ".claude/logs/codex-lift.jsonl: 10/10 rows are premortem-sourced claude_only rows; 0 review rows despite the skill claiming Phase 3 telemetry on every run.",
+      "causal_links": [
+        "codex-adversarial.md rule and codex-lift.README.md define claude_only as canonical; review/SKILL.md Phase 3 was authored with a divergent field name and never exercised"
+      ],
+      "dedup_keys": [
+        ".claude/skills/review/SKILL.md:critic_only",
+        ".claude/logs/codex-lift.jsonl",
+        "claude_only"
+      ],
+      "leverage": "quick-win"
+    },
+    {
+      "id": "D8c-03",
+      "title": "ralph SKILL.md claims ralph-delegation-enforcer hook BLOCKS Edit/Write/Bash — hook has been soft-enforcement (always allow) since 2026-04-23",
+      "severity": "S1",
+      "confidence": "VERIFIED",
+      "proposed_class": "document",
+      "seed_ref": "SEED-11",
+      "evidence": [
+        {
+          "file": ".claude/skills/ralph/SKILL.md",
+          "lines": "33",
+          "quote": "**Enforcement:** The `ralph-delegation-enforcer` hook blocks Edit/Write/Bash when Ralph mode is active."
+        },
+        {
+          "file": ".claude/hooks/src/ralph-delegation-enforcer.ts",
+          "lines": "68-69",
+          "quote": "// SOFT ENFORCEMENT (2026-04-23): Ralph-delegation-enforcer logs activity\n  // but does NOT block tools. The hook cannot distinguish orchestrator from"
+        },
+        {
+          "file": ".claude/hooks/src/ralph-delegation-enforcer.ts",
+          "lines": "134",
+          "quote": "// Always allow - soft enforcement only"
+        }
+      ],
+      "observe_how": "Read .claude/hooks/src/ralph-delegation-enforcer.ts main() — every path emits allow; no permissionDecision:'deny' exists for Ralph-active state. RULES.md was corrected to 'soft enforcement since 2026-04-23' but the ralph skill (loaded on every /ralph invocation, [C:10]-tagged Core Rule section) still asserts hard blocking. Decision-driving: the autonomous orchestrator is told a hard safety gate exists where none does, so direct-edit violations in Ralph mode pass silently while the skill implies they are impossible.",
+      "telemetry": "",
+      "causal_links": [
+        "New instance of the SEED-11 enforcement-claim-mismatch family: the 2026-04-23 soft-enforcement downgrade was propagated to RULES.md but not to .claude/skills/ralph/SKILL.md",
+        "references/agents.md and state-management.md under ralph/ should be checked for the same stale claim during the fix"
+      ],
+      "dedup_keys": [
+        ".claude/skills/ralph/SKILL.md:enforcement",
+        ".claude/hooks/src/ralph-delegation-enforcer.ts",
+        "ralph-delegation-enforcer"
+      ],
+      "leverage": "quick-win"
+    },
+    {
+      "id": "D8c-04",
+      "title": "build/fix/explore workflow chains name four nonexistent skills: research-codebase, test-driven-development, tldr-impact, dependency-preflight",
+      "severity": "S2",
+      "confidence": "VERIFIED",
+      "proposed_class": "fix",
+      "seed_ref": null,
+      "evidence": [
+        {
+          "file": ".claude/skills/build/SKILL.md",
+          "lines": "65-67",
+          "quote": "\"brownfield\": [\"onboard\", \"research-codebase\", \"plan-agent\", \"validate-agent\", \"implement_plan\"],\n    \"tdd\": [\"plan-agent\", \"test-driven-development\", \"implement_plan\"],\n    \"refactor\": [\"tldr-impact\", \"plan-agent\", \"test-driven-development\", \"implement_plan\"]"
+        },
+        {
+          "file": ".claude/skills/fix/SKILL.md",
+          "lines": "103-104",
+          "quote": "| `deps` | dependency-preflight → oracle → plan-agent → premortem → kraken → qlty-check → commit |\n| `pr-comments` | github-search → research-codebase → plan-agent → premortem → kraken → commit |"
+        },
+        {
+          "file": ".claude/skills/explore/SKILL.md",
+          "lines": "130",
+          "quote": "| **research-codebase** | Pattern documentation (used by deep depth) |"
+        }
+      ],
+      "observe_how": "ls .claude/skills/ shows actual skill dirs are 'research' (not research-codebase), 'tdd' (not test-driven-development), 'tldr-code' (no tldr-impact skill — impact is a CLI subcommand), and no dependency-preflight skill or agent exists anywhere (.claude/skills/dependency-preflight: No such file; no match in .claude/agents/). These are the literal chain-step identifiers the orchestrator skills instruct the model to 'execute' — each invocation requires the model to guess the real target or fail. /build and /fix are the two primary CLAUDE.md-routed workflows ('implement' → /build, 'bug' → /fix).",
+      "telemetry": "",
+      "causal_links": [
+        "Skill renames (research-codebase→research, test-driven-development→tdd) were applied to skill dirs during the Phase-4/5 skill evaluation passes but the orchestrator chain definitions that reference them were never updated"
+      ],
+      "dedup_keys": [
+        ".claude/skills/build/SKILL.md:CHAINS",
+        ".claude/skills/fix/SKILL.md:scopes",
+        "research-codebase",
+        "test-driven-development",
+        "tldr-impact",
+        "dependency-preflight"
+      ],
+      "leverage": "structural"
+    },
+    {
+      "id": "D8c-05",
+      "title": "tldr-code SKILL.md claims routine analysis 'is handled automatically by 8 hooks' — 4 of the 8 (impact-refactor, arch-context-inject, edit-context-inject, signature-helper) are registered in NEITHER repo nor active settings.json",
+      "severity": "S2",
+      "confidence": "VERIFIED",
+      "proposed_class": "fix",
+      "seed_ref": null,
+      "evidence": [
+        {
+          "file": ".claude/skills/tldr-code/SKILL.md",
+          "lines": "15",
+          "quote": "Routine analysis (call graph injection, AST-summarized reads, post-edit diagnostics) is handled automatically by 8 hooks — see `tldr-context-inject`, `tldr-read-enforcer`, `smart-search-router`, `impact-refactor`, `arch-context-inject`, `edit-context-inject`, `post-edit-diagnostics`, `signature-helper`."
+        },
+        {
+          "file": ".claude/hooks/src/impact-refactor.ts",
+          "lines": "2-4",
+          "quote": "* UserPromptSubmit Hook: Impact Analysis for Refactoring (DAEMON)\n *\n * When user mentions refactor/change/rename + function name, automatically"
+        }
+      ],
+      "observe_how": "grep each of the 8 names against both C:/Users/david.hayes/.claude/settings.json (active) and .claude/settings.json (repo): tldr-context-inject/tldr-read-enforcer/smart-search-router/post-edit-diagnostics REGISTERED; impact-refactor/arch-context-inject/edit-context-inject/signature-helper appear in NEITHER file — their src exists but they never execute. The skill's 'don't add new tldr-* sub-skills; extend a hook' guidance assumes coverage that half-doesn't exist (e.g. no automatic refactor impact analysis actually fires).",
+      "telemetry": "Consistent with SUMMARY.md '35/111 hook srcs never-registered' — this finding pins 4 specific never-registered hooks that a high-traffic skill explicitly claims are live.",
+      "causal_links": [
+        "Instance-level confirmation of the never-registered-hooks telemetry: dead hook source is being advertised as active behavior by the canonical TLDR skill",
+        "Fix is either register the 4 hooks or delete them and drop the claim — the skill currently blocks sub-skill creation on the false premise"
+      ],
+      "dedup_keys": [
+        ".claude/skills/tldr-code/SKILL.md:8-hooks",
+        ".claude/hooks/src/impact-refactor.ts",
+        ".claude/hooks/src/arch-context-inject.ts",
+        ".claude/hooks/src/edit-context-inject.ts",
+        ".claude/hooks/src/signature-helper.ts"
+      ],
+      "leverage": "structural"
+    },
+    {
+      "id": "D8c-06",
+      "title": "search-router SKILL.md crowns TLDR search 'DEFAULT FOR ALL CODE SEARCH' and points to nonexistent /tldr-search skill — contradicts post-Phase-C boundary contract (TLDR search deprecated for symbol search; codegraph owns it)",
+      "severity": "S2",
+      "confidence": "VERIFIED",
+      "proposed_class": "fix",
+      "seed_ref": null,
+      "evidence": [
+        {
+          "file": ".claude/skills/search-router/SKILL.md",
+          "lines": "25-26",
+          "quote": "│   → TLDR Search - 95% token savings\n│   DEFAULT FOR ALL CODE SEARCH - use instead of Grep"
+        },
+        {
+          "file": ".claude/skills/search-router/SKILL.md",
+          "lines": "88",
+          "quote": "- `/tldr-search` - **DEFAULT** - Code exploration with 95% token savings"
+        },
+        {
+          "file": ".claude/rules/code-intel-boundaries.md",
+          "lines": "29",
+          "quote": "- **TLDR `search`** — deprecated for symbol search (codegraph owns it; `find-symbol` → `codegraph query`, TLDR `search` is the off/absent fallback only)."
+        }
+      ],
+      "observe_how": "ls .claude/skills/ — no tldr-search dir exists (only tldr-code and tldr-stats; tldr-code/SKILL.md:15 declares itself 'the single skill for TLDR usage' and forbids tldr-* sub-skills). search-router never mentions codegraph or /code-intel, so its routing decision tree sends symbol queries to a path the boundary rule explicitly deprecated on 2026-06-07. Observed live: a runtime hook intercept during this review also told the model to 'use /tldr-search' — the ghost reference is propagated beyond this skill.",
+      "telemetry": "SUMMARY.md: 37 codegraph rows in intel-bus show the codegraph path is live and in use; search-router routes around it entirely.",
+      "causal_links": [
+        "Same root cause as D8c-01: Phase C ship updated the boundary rule and the facade but not the routing-guidance skills",
+        "Cross-link D8c-01 (code-intel SKILL.md stale absent-claim) — fixing both together restores a consistent symbol-search story"
+      ],
+      "dedup_keys": [
+        ".claude/skills/search-router/SKILL.md",
+        "/tldr-search",
+        "tldr search deprecated",
+        "codegraph"
+      ],
+      "leverage": "quick-win"
+    },
+    {
+      "id": "D8c-07",
+      "title": "hook-scaffold teaches PostToolUse output field 'systemPromptSuffix' — contradicts hook-dev-lifecycle rule and the 36-file dominant 'additionalContext' pattern; scaffolded hooks may inject via a no-op field",
+      "severity": "S2",
+      "confidence": "VERIFIED",
+      "proposed_class": "investigate",
+      "seed_ref": null,
+      "evidence": [
+        {
+          "file": ".claude/skills/hook-scaffold/SKILL.md",
+          "lines": "187",
+          "quote": "| Wrong output shape | PreToolUse uses `permissionDecision`. PostToolUse uses `systemPromptSuffix`. SessionStart uses `additionalContext`. |"
+        },
+        {
+          "file": ".claude/skills/hook-scaffold/references/hook-templates.md",
+          "lines": "115",
+          "quote": "- `{ hookSpecificOutput: { hookEventName: \"PostToolUse\", systemPromptSuffix: \"...\" } }` = inject text after tool output"
+        },
+        {
+          "file": ".claude/rules/hook-dev-lifecycle.md",
+          "lines": "13",
+          "quote": "| PostToolUse | After tool executes | `{ hookSpecificOutput: { additionalContext: \"...\" } }` |"
+        }
+      ],
+      "observe_how": "grep -rl systemPromptSuffix .claude/hooks/src/ → exactly one production hook (epistemic-reminder.ts); grep -rl additionalContext → 36 hook source files. The contradiction is verified; which field Claude Code's PostToolUse runtime actually honors is the open question. If additionalContext is the real contract (per the rule doc and 36-file majority), every PostToolUse hook scaffolded from hook-templates.md silently injects nothing — and epistemic-reminder.ts (the enforcement mechanism cited by claim-verification.md: 'The epistemic-reminder hook injects warnings after Grep results') is already a silent no-op. Decide the runtime contract with a live probe, then align hook-scaffold + epistemic-reminder to it.",
+      "telemetry": "",
+      "causal_links": [
+        "If systemPromptSuffix is a dead field, the claim-verification rule's stated enforcement (epistemic-reminder warnings after Grep) has never fired — connects doc-drift to a live enforcement gap"
+      ],
+      "dedup_keys": [
+        ".claude/skills/hook-scaffold/SKILL.md:systemPromptSuffix",
+        ".claude/skills/hook-scaffold/references/hook-templates.md",
+        ".claude/hooks/src/epistemic-reminder.ts",
+        "hookSpecificOutput.additionalContext"
+      ],
+      "leverage": "structural"
+    },
+    {
+      "id": "D8c-08",
+      "title": "memory SKILL.md artifact-index commands cite scripts/artifact_query.py — file lives at scripts/core/artifact_query.py; command fails as written (2 occurrences)",
+      "severity": "S2",
+      "confidence": "VERIFIED",
+      "proposed_class": "fix",
+      "seed_ref": null,
+      "evidence": [
+        {
+          "file": ".claude/skills/memory/SKILL.md",
+          "lines": "311",
+          "quote": "uv run python scripts/artifact_query.py \"<query>\" [--outcome SUCCEEDED|FAILED] [--limit N]"
+        },
+        {
+          "file": ".claude/skills/memory/SKILL.md",
+          "lines": "358",
+          "quote": "uv run python scripts/artifact_query.py \"authentication OAuth\" --outcome SUCCEEDED"
+        },
+        {
+          "file": ".claude/skills/create_handoff/SKILL.md",
+          "lines": "112",
+          "quote": "cd \"$PROJECT_ROOT/opc\" && uv run python scripts/core/artifact_mark.py --latest --outcome <USER_CHOICE>"
+        }
+      ],
+      "observe_how": "ls opc/scripts/artifact_query.py → No such file; ls opc/scripts/core/ → artifact_index.py, artifact_mark.py, artifact_query.py, artifact_schema.sql. The sibling create_handoff skill already uses the correct core/ path for artifact_mark.py, confirming the canonical location. memory SKILL.md is the canonical memory reference (consolidates 4 retired rules), so the broken Recall-Reasoning section fails every artifact-index lookup attempted from it. The --outcome flag itself is valid (verified in artifact_query.py argparse).",
+      "telemetry": "",
+      "causal_links": [
+        "Likely a relic from before the scripts/core/ reorganization; the consolidation that made memory/SKILL.md canonical copied the stale path forward"
+      ],
+      "dedup_keys": [
+        ".claude/skills/memory/SKILL.md:artifact_query",
+        "opc/scripts/core/artifact_query.py"
+      ],
+      "leverage": "quick-win"
+    },
+    {
+      "id": "D8c-09",
+      "title": "CLAUDE.md global (and repo template) claims 'Hook System (90+ active hooks)' — active settings.json registers 75 distinct hook binaries",
+      "severity": "S3",
+      "confidence": "VERIFIED",
+      "proposed_class": "document",
+      "seed_ref": null,
+      "evidence": [
+        {
+          "file": ".claude/templates/CLAUDE.md.template",
+          "lines": "284",
+          "quote": "### Hook System (90+ active hooks)"
+        }
+      ],
+      "observe_how": "grep -o 'dist/[a-z0-9-]*\\.mjs' C:/Users/david.hayes/.claude/settings.json | sort -u | wc -l → 75. The identical '90+ active hooks' heading is live in the user's always-in-context ~/.claude/CLAUDE.md. Payoff: corrects an inflated inventory claim in the doc that is injected into every session on this machine, and keeps the template honest for new-machine bootstraps.",
+      "telemetry": "Consistent with SUMMARY.md: 111 hook srcs, 35 never-registered → ~76 registered; 75 distinct .mjs registrations measured.",
+      "causal_links": [
+        "Same doc-rot family as SEED-14 (hook catalog covers a fraction of hooks) — inventory numbers in prose drift because nothing regenerates them"
+      ],
+      "dedup_keys": [
+        ".claude/templates/CLAUDE.md.template:hook-count",
+        "90+ active hooks"
+      ],
+      "leverage": "quick-win"
+    }
+  ],
+  "coverage_manifest": [
+    "memory: DRIFT — artifact_query.py path broken (D8c-08); all recall/store commands and 7 advanced flags (--valid-at/--no-decay/--decay-lambda/--include-superseded/--vector-only/--text-only/--k) verified present in opc/scripts/core/recall_learnings.py",
+    "code-intel: DRIFT — entire routing/escalation/kill-switch section describes Phase-B 'codegraph absent' state; codegraph live since C.2 (D8c-01)",
+    "review: DRIFT — Phase 3 telemetry recipe writes critic_only vs canonical claude_only (D8c-02); agent roster and modes consistent with codex-adversarial rule",
+    "premortem: CLEAN — Step 6 telemetry matches canonical schema (claude_only), references/example-session.md exists, workflow consistent with codex-adversarial rule",
+    "ralph: DRIFT — claims ralph-delegation-enforcer blocks tools; hook is always-allow soft enforcement since 2026-04-23 (D8c-03); all referenced scripts (ralph-state-v2.py, ralph-progress-sync.py) and ~/.claude/ai-dev-tasks templates verified present",
+    "maestro: CLEAN — all 4 maestro hooks (detector/enforcer/state-manager/cleanup) registered in both repo and active settings.json, so the BLOCK enforcement claims hold; minor unverified: pinned metadata model claude-opus-4-5-20251101, duplicate 'Phase 2' headings",
+    "commit: CLEAN — .claude/scripts/generate-reasoning.sh exists; no-attribution policy is a deliberate user override of harness default",
+    "health-check: CLEAN — opc/scripts/health_check.py exists with --skip-slow/--categories/--quiet all verified in argparse; scheduled-health-check.bat and notion-health-prompt.md exist",
+    "recall: CLEAN — recall_learnings.py + claimed flags verified",
+    "remember: CLEAN — store_learning.py exists; type table is a 5-row subset of the canonical 7 (omits USER_PREFERENCE/OPEN_THREAD) but not contradictory",
+    "explore: DRIFT (minor) — Related Skills references nonexistent research-codebase (bundled in D8c-04); references/depth-procedures.md exists",
+    "build: DRIFT — chain definitions name research-codebase/test-driven-development/tldr-impact, none exist as skills (D8c-04); references/modes.md + question-flows.md exist",
+    "fix: DRIFT — deps/pr-comments chains name dependency-preflight and research-codebase, neither exists (D8c-04); references/agents.md + debugging-procedures.md exist",
+    "hook-audit: CLEAN — paths verified including .claude/docs/architecture/quick-ref/hook-catalog.md (exists at stated path)",
+    "hook-scaffold: DRIFT — PostToolUse output shape (systemPromptSuffix) contradicts hook-dev-lifecycle rule and 36/37 production hooks (D8c-07)",
+    "sync-drift: CLEAN — procedure consistent with sync-known-gaps rule (dist synced, settings.json local-only)",
+    "roadmap: CLEAN — purely procedural, no external path/command claims to break",
+    "create_handoff: CLEAN — artifact_mark.py cited at correct scripts/core/ path; outcome-marking flow matches RULES.md handoff discipline",
+    "tldr-code: DRIFT — 4 of 8 hooks claimed to 'handle routine analysis automatically' are unregistered dead source (D8c-05); CLI command surface matches tldr-cli rule",
+    "search-router: DRIFT — TLDR search 'DEFAULT FOR ALL CODE SEARCH' contradicts post-Phase-C deprecation; /tldr-search skill does not exist (D8c-06)",
+    "CLAUDE.md global (10 operational claims sampled): 9 VALID (recall/store commands, docker-compose.yml at ~/.claude/docker, ~/.claude/cache/agents convention dir, all 6 skill-enforcement SKILL.md paths, plan-to-ralph-enforcer + plan-exit-tracker registered, maestro enforcement hooks registered, judge_session.py exists, rlm_client.py exists at opc/scripts/core/, ai-dev-tasks templates exist); 1 STALE: '90+ active hooks' vs 75 distinct registrations (D8c-09)"
+  ],
+  "notes": "Method: read all 20 assigned SKILL.md files in full at the working tree; spot-verified the 2-3 most load-bearing claims per skill against referenced scripts/hooks/logs (read-only Bash ls/grep + Read). Excluded dirs untouched. Two environment observations relevant to other dimensions: (1) the Bash tool was repeatedly forced into background execution mid-review, and (2) a runtime daemon-gate hook intercepted a plain Grep call with a message directing to the nonexistent '/tldr-search' skill — corroborating D8c-06's ghost reference from the hook side (hook behavior itself is out of this dimension's scope). Severity calibration: D8c-03 is the lone S1 because it is a false claim about a safety gate consumed by the autonomous (Ralph) path; all path/flag/schema drift held at S2 per dimension brief; single S3 (hook-count inflation) carries its one-line payoff. The cluster D8c-01 + D8c-06 shares one root cause (Phase C shipped without updating trigger-loaded routing docs) and is best fixed as one pass."
+}
