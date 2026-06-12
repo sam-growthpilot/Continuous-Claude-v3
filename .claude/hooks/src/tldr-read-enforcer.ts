@@ -12,6 +12,7 @@
 import { readFileSync, existsSync, statSync } from 'fs';
 import { basename, extname } from 'path';
 import { queryDaemonSync, DaemonResponse, trackHookActivitySync } from './daemon-client';
+import { CONTEXT_DIR } from './shared/search-context-path.js';
 
 // Search context from smart-search-router
 interface SearchContext {
@@ -25,7 +26,8 @@ interface SearchContext {
   callers?: string[];           // Cross-file: where the symbol is called/used
 }
 
-const CONTEXT_DIR = '/tmp/claude-search-context';
+// CONTEXT_DIR is the search-context handshake dir, shared with smart-search-router.
+// Resolved under os.tmpdir() in ./shared/search-context-path (QW-02).
 const CONTEXT_MAX_AGE_MS = 30000; // 30 seconds - context expires after this
 
 /**

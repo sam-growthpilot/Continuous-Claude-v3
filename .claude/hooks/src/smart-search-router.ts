@@ -14,6 +14,7 @@ import { execSync } from 'child_process';
 import { join } from 'path';
 import { queryDaemonSync, DaemonResponse, trackHookActivitySync } from './daemon-client.js';
 import { logHook } from './shared/session-activity.js';
+import { CONTEXT_DIR } from './shared/search-context-path.js';
 
 interface GrepInput {
   pattern: string;
@@ -43,7 +44,8 @@ interface SearchContext {
   callers?: string[];           // Cross-file: where the symbol is called/used
 }
 
-const CONTEXT_DIR = '/tmp/claude-search-context';
+// CONTEXT_DIR is the search-context handshake dir, shared with tldr-read-enforcer.
+// Resolved under os.tmpdir() in ./shared/search-context-path (QW-02).
 
 function storeSearchContext(sessionId: string, context: SearchContext): void {
   try {

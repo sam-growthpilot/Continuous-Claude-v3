@@ -260,8 +260,12 @@ function trackHookActivitySync(hookName, projectDir, success = true, metrics = {
   }
 }
 
+// src/shared/search-context-path.ts
+import * as os from "os";
+import * as path from "path";
+var CONTEXT_DIR = path.join(os.tmpdir(), "claude-search-context");
+
 // src/tldr-read-enforcer.ts
-var CONTEXT_DIR = "/tmp/claude-search-context";
 var CONTEXT_MAX_AGE_MS = 3e4;
 function getSearchContext(sessionId) {
   try {

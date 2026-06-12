@@ -1,7 +1,7 @@
 // src/smart-search-router.ts
 import { existsSync as existsSync3, mkdirSync as mkdirSync3, writeFileSync as writeFileSync3 } from "fs";
 import { execSync as execSync2 } from "child_process";
-import { join as join3 } from "path";
+import { join as join4 } from "path";
 
 // src/daemon-client.ts
 import { existsSync, readFileSync, writeFileSync, unlinkSync, mkdirSync } from "fs";
@@ -325,8 +325,12 @@ function logHook(sessionId, hookName) {
   writeFileSync2(filePath, JSON.stringify(activity), { encoding: "utf-8" });
 }
 
+// src/shared/search-context-path.ts
+import * as os from "os";
+import * as path from "path";
+var CONTEXT_DIR = path.join(os.tmpdir(), "claude-search-context");
+
 // src/smart-search-router.ts
-var CONTEXT_DIR = "/tmp/claude-search-context";
 function storeSearchContext(sessionId, context) {
   try {
     if (!existsSync3(CONTEXT_DIR)) {
@@ -372,7 +376,7 @@ function ripgrepFallback(pattern, projectDir) {
   }
 }
 function checkSemanticIndexExists(projectDir) {
-  const indexPath = join3(projectDir, ".tldr", "cache", "semantic", "index.faiss");
+  const indexPath = join4(projectDir, ".tldr", "cache", "semantic", "index.faiss");
   return existsSync3(indexPath);
 }
 function tldrSemantic(query, projectDir = ".") {
