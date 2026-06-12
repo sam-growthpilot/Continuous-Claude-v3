@@ -4,8 +4,9 @@
 **Review SHA:** 86b8f60 (post-merge main; PRs #8/#9/#10 merged). Telemetry snapshot + exclusion manifest + seeds in harvest/. Post-freeze commits touch only review artifacts + the settings.json deregistration (eae979e) — source files unchanged; refuters needing the frozen bytes use `git show 86b8f60:<file>`.
 
 ## Next
-1. **WF-2 adversarial verification** (launching): mechanical exclusion pre-kill + dedup_keys clustering orchestrator-side → batches ≤8 under wf2/batches/ → S0/S1 dual oppositional refuters (split → KEEP-AND-FLAG → arbitrator must cite counter-evidence) · S2/S3 single ops-realist → reachability evidence on every CONFIRM → verdicts to wf2/WF2-VERDICTS.json → **tiered ledger → GATE G-B**.
-2. WF-3 synthesis + 2 mandatory codex passes → report + backlog → G-C ratification → Phase 4 quick wins via /ralph.
+1. **WF-2 adversarial verification — COMPLETE (2026-06-11, run wf_69ab5f8d-34c, 47 agents, ~6.4M tok).** 248 findings verified: **190 CONFIRM, 48 DOWNGRADE, 10 KILL, 0 no-verdict.** Confirmed by severity S0=3 S1=43 S2=106 S3=38. 3 spot-checks hand-verified verbatim at SHA 86b8f60. Artifacts in wf2/: WF2-VERDICTS.json, confirmed-digest.json, GATE-B-LEDGER.md. Committed c695c63. (Hit spend-limit then transient-throttle mid-run twice; finished via same-session resume — cached agents replay free.)
+2. **GATE G-B — AWAITING USER RATIFICATION** (ledger: wf2/GATE-B-LEDGER.md). Do NOT start WF-3 until ratified. D2a-01 navigator-safety already mitigated (eae979e); D5a-01 junk-creator fast-track-ratifiable (E2).
+3. WF-3 synthesis + 2 mandatory codex passes → report + backlog → G-C ratification → Phase 4 quick wins via /ralph.
 
 ## Interim actions taken (user-authorized carve-outs)
 - **D2a-01 MITIGATED (2026-06-10, commit eae979e):** navigator-safety hook DEREGISTERED from repo + active settings.json after spot verification (PreToolUse 'allow' on destructive Bash = auto-approve + prompt suppression). Source retained for Phase 4 rewrite (allow→ask or PostToolUse additionalContext). Details: findings/INTERIM-ACTIONS.md.
