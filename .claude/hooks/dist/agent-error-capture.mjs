@@ -2,7 +2,7 @@
 
 // src/agent-error-capture.ts
 import { readFileSync, existsSync } from "fs";
-import { execSync } from "child_process";
+import { spawnSync } from "child_process";
 import { join } from "path";
 
 // src/shared/memory-quality-scorer.ts
@@ -242,12 +242,28 @@ function storeLearning(sessionId, agentType, prompt, errorContext) {
     `score:${score.score}`
   ];
   try {
-    const escapedContent = content.replace(/"/g, '\\"').replace(/\n/g, "\\n");
-    const escapedContext = `Failed agent invocation: ${agentType}`;
+    const contextStr = `Failed agent invocation: ${agentType}`;
     const tagsStr = tags.join(",");
-    execSync(
-      `cd "${opcDir}" && uv run python scripts/core/store_learning.py --session-id "${sessionId}" --type FAILED_APPROACH --content "${escapedContent}" --context "${escapedContext}" --tags "${tagsStr}" --confidence medium`,
-      { encoding: "utf-8", timeout: 1e4, stdio: ["pipe", "pipe", "pipe"] }
+    spawnSync(
+      "uv",
+      [
+        "run",
+        "python",
+        "scripts/core/store_learning.py",
+        "--session-id",
+        sessionId,
+        "--type",
+        "FAILED_APPROACH",
+        "--content",
+        content,
+        "--context",
+        contextStr,
+        "--tags",
+        tagsStr,
+        "--confidence",
+        "medium"
+      ],
+      { cwd: opcDir, shell: false, encoding: "utf-8", timeout: 1e4, stdio: ["pipe", "pipe", "pipe"] }
     );
     console.error(`[AgentErrorCapture] Stored failure learning for agent '${agentType}'`);
   } catch (err) {
@@ -293,4 +309,9 @@ async function main() {
     outputContinue();
   }
 }
-main();
+if (process.argv[1] && process.argv[1].includes("agent-error-capture")) {
+  main();
+}
+export {
+  storeLearning
+};

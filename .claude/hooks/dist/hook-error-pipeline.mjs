@@ -7,7 +7,7 @@ var __require = /* @__PURE__ */ ((x) => typeof require !== "undefined" ? require
 });
 
 // src/hook-error-pipeline.ts
-import { execSync } from "child_process";
+import { spawnSync } from "child_process";
 import { existsSync, writeFileSync, readFileSync, mkdirSync } from "fs";
 import { join } from "path";
 import { tmpdir } from "os";
@@ -60,10 +60,27 @@ function storeErrorAsLearning(error) {
     "infrastructure"
   ];
   try {
-    const escapedContent = content.replace(/"/g, '\\"').replace(/\n/g, "\\n").substring(0, 1500);
-    execSync(
-      `cd "${opcDir}" && uv run python scripts/core/store_learning.py --session-id "${error.sessionId || "unknown"}" --type FAILED_APPROACH --content "${escapedContent}" --context "Hook infrastructure failure" --tags "${tags.join(",")}" --confidence medium`,
-      { encoding: "utf-8", timeout: 1e4, stdio: ["pipe", "pipe", "pipe"] }
+    const cappedContent = content.substring(0, 1500);
+    spawnSync(
+      "uv",
+      [
+        "run",
+        "python",
+        "scripts/core/store_learning.py",
+        "--session-id",
+        error.sessionId || "unknown",
+        "--type",
+        "FAILED_APPROACH",
+        "--content",
+        cappedContent,
+        "--context",
+        "Hook infrastructure failure",
+        "--tags",
+        tags.join(","),
+        "--confidence",
+        "medium"
+      ],
+      { cwd: opcDir, shell: false, encoding: "utf-8", timeout: 1e4, stdio: ["pipe", "pipe", "pipe"] }
     );
     console.error(`[HookErrorPipeline] Stored hook failure learning for '${error.hookName}'`);
   } catch (err) {

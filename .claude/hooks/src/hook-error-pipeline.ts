@@ -19,7 +19,7 @@
  * to catch unhandled errors from any hook output.
  */
 
-import { execSync } from 'child_process';
+import { spawnSync } from 'child_process';
 import { existsSync, writeFileSync, readFileSync, mkdirSync } from 'fs';
 import { join } from 'path';
 import { tmpdir } from 'os';
@@ -95,20 +95,24 @@ function storeErrorAsLearning(error: HookError): void {
   ];
 
   try {
-    const escapedContent = content
-      .replace(/"/g, '\\"')
-      .replace(/\n/g, '\\n')
-      .substring(0, 1500);
+    // QW-01: spawn with no shell — pass each argument as a separate argv element.
+    // The raw content is handed to Python verbatim (no shell = no injection);
+    // the previous sh-style double-quote escaping is removed. The 1500-char cap
+    // (a size limit, not escaping) is preserved.
+    const cappedContent = content.substring(0, 1500);
 
-    execSync(
-      `cd "${opcDir}" && uv run python scripts/core/store_learning.py ` +
-      `--session-id "${error.sessionId || 'unknown'}" ` +
-      `--type FAILED_APPROACH ` +
-      `--content "${escapedContent}" ` +
-      `--context "Hook infrastructure failure" ` +
-      `--tags "${tags.join(',')}" ` +
-      `--confidence medium`,
-      { encoding: 'utf-8', timeout: 10000, stdio: ['pipe', 'pipe', 'pipe'] }
+    spawnSync(
+      'uv',
+      [
+        'run', 'python', 'scripts/core/store_learning.py',
+        '--session-id', error.sessionId || 'unknown',
+        '--type', 'FAILED_APPROACH',
+        '--content', cappedContent,
+        '--context', 'Hook infrastructure failure',
+        '--tags', tags.join(','),
+        '--confidence', 'medium',
+      ],
+      { cwd: opcDir, shell: false, encoding: 'utf-8', timeout: 10000, stdio: ['pipe', 'pipe', 'pipe'] }
     );
 
     console.error(`[HookErrorPipeline] Stored hook failure learning for '${error.hookName}'`);

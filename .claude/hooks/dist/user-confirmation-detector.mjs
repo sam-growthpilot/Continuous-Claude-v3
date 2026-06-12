@@ -1,14 +1,9 @@
 #!/usr/bin/env node
-var __require = /* @__PURE__ */ ((x) => typeof require !== "undefined" ? require : typeof Proxy !== "undefined" ? new Proxy(x, {
-  get: (a, b) => (typeof require !== "undefined" ? require : a)[b]
-}) : x)(function(x) {
-  if (typeof require !== "undefined") return require.apply(this, arguments);
-  throw Error('Dynamic require of "' + x + '" is not supported');
-});
 
 // src/user-confirmation-detector.ts
 import * as fs from "fs";
 import * as path from "path";
+import { spawnSync } from "child_process";
 
 // src/shared/atomic-write.ts
 import {
@@ -231,17 +226,37 @@ async function storeUserConfirmedLearning(sessionId, prompt, context, projectDir
   const opcDir = getOpcDir();
   const content = context ? `User confirmed: "${prompt}". Context: ${context}` : `User confirmed: "${prompt}"`;
   const script = "scripts/core/store_learning.py";
-  const escapedContent = content.slice(0, 1e3).replace(/"/g, '\\"');
-  const cmd = `uv run python ${script} --session-id "${sessionId}" --type USER_PREFERENCE --content "${escapedContent}" --context "user confirmation" --tags "user_confirmed,verified" --confidence high --project-dir "${projectDir}"`;
+  const cappedContent = content.slice(0, 1e3);
   try {
-    const { execSync } = __require("child_process");
-    execSync(cmd, {
-      encoding: "utf-8",
-      cwd: opcDir,
-      timeout: 6e4,
-      stdio: ["pipe", "pipe", "pipe"],
-      shell: true
-    });
+    spawnSync(
+      "uv",
+      [
+        "run",
+        "python",
+        script,
+        "--session-id",
+        sessionId,
+        "--type",
+        "USER_PREFERENCE",
+        "--content",
+        cappedContent,
+        "--context",
+        "user confirmation",
+        "--tags",
+        "user_confirmed,verified",
+        "--confidence",
+        "high",
+        "--project-dir",
+        projectDir
+      ],
+      {
+        encoding: "utf-8",
+        cwd: opcDir,
+        timeout: 6e4,
+        stdio: ["pipe", "pipe", "pipe"],
+        shell: false
+      }
+    );
     return true;
   } catch {
     return false;
@@ -255,19 +270,39 @@ File: ${state.tracked_file}
 Solution: ${state.last_edit_content || "Final edit"}
 ${failedApproaches ? `Failed approaches: ${failedApproaches}` : ""}`;
   const script = "scripts/core/store_learning.py";
-  const escapedContent = content.slice(0, 2e3).replace(/"/g, '\\"');
+  const cappedContent = content.slice(0, 2e3);
   const contextStr = `Victory (user confirmed): ${state.context || state.tracked_file}`;
   const tagsStr = `victory,verified,user_confirmed,attempts:${state.attempts}`;
-  const cmd = `uv run python ${script} --session-id "${state.session_id}" --type WORKING_SOLUTION --content "${escapedContent}" --context "${contextStr}" --tags "${tagsStr}" --confidence high --project-dir "${projectDir}"`;
   try {
-    const { execSync } = __require("child_process");
-    execSync(cmd, {
-      encoding: "utf-8",
-      cwd: opcDir,
-      timeout: 6e4,
-      stdio: ["pipe", "pipe", "pipe"],
-      shell: true
-    });
+    spawnSync(
+      "uv",
+      [
+        "run",
+        "python",
+        script,
+        "--session-id",
+        state.session_id,
+        "--type",
+        "WORKING_SOLUTION",
+        "--content",
+        cappedContent,
+        "--context",
+        contextStr,
+        "--tags",
+        tagsStr,
+        "--confidence",
+        "high",
+        "--project-dir",
+        projectDir
+      ],
+      {
+        encoding: "utf-8",
+        cwd: opcDir,
+        timeout: 6e4,
+        stdio: ["pipe", "pipe", "pipe"],
+        shell: false
+      }
+    );
     return true;
   } catch {
     return false;
@@ -337,7 +372,13 @@ async function readStdin() {
     process.stdin.on("end", () => resolve(data));
   });
 }
-main().catch((err) => {
-  console.error("user-confirmation-detector error:", err);
-  console.log(JSON.stringify({ continue: true }));
-});
+if (process.argv[1] && process.argv[1].includes("user-confirmation-detector")) {
+  main().catch((err) => {
+    console.error("user-confirmation-detector error:", err);
+    console.log(JSON.stringify({ continue: true }));
+  });
+}
+export {
+  storeUserConfirmedLearning,
+  storeVictoryFromConfirmation
+};

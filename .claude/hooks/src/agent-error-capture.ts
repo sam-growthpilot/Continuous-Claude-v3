@@ -21,7 +21,7 @@
  */
 
 import { readFileSync, existsSync } from 'fs';
-import { execSync } from 'child_process';
+import { spawnSync } from 'child_process';
 import { join } from 'path';
 import { scoreExtraction } from './shared/memory-quality-scorer.js';
 
@@ -126,7 +126,7 @@ function extractErrorContext(response: string, maxLen = 500): string {
   return response.substring(0, maxLen / 2) + '\n...\n' + response.substring(response.length - maxLen / 2);
 }
 
-function storeLearning(
+export function storeLearning(
   sessionId: string,
   agentType: string,
   prompt: string,
@@ -168,20 +168,24 @@ function storeLearning(
   ];
 
   try {
-    // Use synchronous exec to store the learning
-    const escapedContent = content.replace(/"/g, '\\"').replace(/\n/g, '\\n');
-    const escapedContext = `Failed agent invocation: ${agentType}`;
+    // QW-01: spawn with no shell — pass each argument as a separate argv element.
+    // The raw content is handed to Python verbatim (no shell = no injection),
+    // so the previous sh-style double-quote escaping is removed entirely.
+    const contextStr = `Failed agent invocation: ${agentType}`;
     const tagsStr = tags.join(',');
 
-    execSync(
-      `cd "${opcDir}" && uv run python scripts/core/store_learning.py ` +
-      `--session-id "${sessionId}" ` +
-      `--type FAILED_APPROACH ` +
-      `--content "${escapedContent}" ` +
-      `--context "${escapedContext}" ` +
-      `--tags "${tagsStr}" ` +
-      `--confidence medium`,
-      { encoding: 'utf-8', timeout: 10000, stdio: ['pipe', 'pipe', 'pipe'] }
+    spawnSync(
+      'uv',
+      [
+        'run', 'python', 'scripts/core/store_learning.py',
+        '--session-id', sessionId,
+        '--type', 'FAILED_APPROACH',
+        '--content', content,
+        '--context', contextStr,
+        '--tags', tagsStr,
+        '--confidence', 'medium',
+      ],
+      { cwd: opcDir, shell: false, encoding: 'utf-8', timeout: 10000, stdio: ['pipe', 'pipe', 'pipe'] }
     );
 
     console.error(`[AgentErrorCapture] Stored failure learning for agent '${agentType}'`);
@@ -245,4 +249,8 @@ async function main() {
   }
 }
 
-main();
+// Only auto-run when invoked directly as a hook (not when imported by tests).
+// process.argv[1] is the bundled dist filename when Claude Code runs the hook.
+if (process.argv[1] && process.argv[1].includes('agent-error-capture')) {
+  main();
+}

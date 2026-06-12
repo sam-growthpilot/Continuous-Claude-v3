@@ -18,6 +18,7 @@
 
 import * as fs from 'fs';
 import * as path from 'path';
+import { spawnSync } from 'child_process';
 import { writeStateWithLock } from './shared/atomic-write.js';
 
 interface UserPromptSubmitInput {
@@ -110,7 +111,7 @@ function isMemoryRequest(prompt: string): boolean {
   return MEMORY_SIGNALS.some(p => p.test(prompt));
 }
 
-async function storeUserConfirmedLearning(
+export async function storeUserConfirmedLearning(
   sessionId: string,
   prompt: string,
   context: string | null,
@@ -122,26 +123,42 @@ async function storeUserConfirmedLearning(
     ? `User confirmed: "${prompt}". Context: ${context}`
     : `User confirmed: "${prompt}"`;
 
+  // QW-01: spawn with no shell — pass each argument as a separate argv element.
+  // The raw content is handed to Python verbatim (no shell = no injection); the
+  // previous sh-style double-quote escaping is removed. The 1000-char cap (a size
+  // limit, not escaping) is preserved. cwd stays opcDir so the relative script
+  // path resolves exactly as before.
   const script = 'scripts/core/store_learning.py';
-  const escapedContent = content.slice(0, 1000).replace(/"/g, '\\"');
-  const cmd = `uv run python ${script} --session-id "${sessionId}" --type USER_PREFERENCE --content "${escapedContent}" --context "user confirmation" --tags "user_confirmed,verified" --confidence high --project-dir "${projectDir}"`;
+  const cappedContent = content.slice(0, 1000);
 
   try {
-    const { execSync } = require('child_process');
-    execSync(cmd, {
-      encoding: 'utf-8',
-      cwd: opcDir,
-      timeout: 60000,
-      stdio: ['pipe', 'pipe', 'pipe'],
-      shell: true
-    });
+    spawnSync(
+      'uv',
+      [
+        'run', 'python', script,
+        '--session-id', sessionId,
+        '--type', 'USER_PREFERENCE',
+        '--content', cappedContent,
+        '--context', 'user confirmation',
+        '--tags', 'user_confirmed,verified',
+        '--confidence', 'high',
+        '--project-dir', projectDir,
+      ],
+      {
+        encoding: 'utf-8',
+        cwd: opcDir,
+        timeout: 60000,
+        stdio: ['pipe', 'pipe', 'pipe'],
+        shell: false,
+      }
+    );
     return true;
   } catch {
     return false;
   }
 }
 
-async function storeVictoryFromConfirmation(
+export async function storeVictoryFromConfirmation(
   state: SmarterState,
   prompt: string,
   projectDir: string
@@ -159,21 +176,37 @@ File: ${state.tracked_file}
 Solution: ${state.last_edit_content || 'Final edit'}
 ${failedApproaches ? `Failed approaches: ${failedApproaches}` : ''}`;
 
+  // QW-01: spawn with no shell — pass each argument as a separate argv element.
+  // The raw content is handed to Python verbatim (no shell = no injection); the
+  // previous sh-style double-quote escaping is removed. The 2000-char cap (a size
+  // limit, not escaping) is preserved. cwd stays opcDir so the relative script
+  // path resolves exactly as before.
   const script = 'scripts/core/store_learning.py';
-  const escapedContent = content.slice(0, 2000).replace(/"/g, '\\"');
+  const cappedContent = content.slice(0, 2000);
   const contextStr = `Victory (user confirmed): ${state.context || state.tracked_file}`;
   const tagsStr = `victory,verified,user_confirmed,attempts:${state.attempts}`;
-  const cmd = `uv run python ${script} --session-id "${state.session_id}" --type WORKING_SOLUTION --content "${escapedContent}" --context "${contextStr}" --tags "${tagsStr}" --confidence high --project-dir "${projectDir}"`;
 
   try {
-    const { execSync } = require('child_process');
-    execSync(cmd, {
-      encoding: 'utf-8',
-      cwd: opcDir,
-      timeout: 60000,
-      stdio: ['pipe', 'pipe', 'pipe'],
-      shell: true
-    });
+    spawnSync(
+      'uv',
+      [
+        'run', 'python', script,
+        '--session-id', state.session_id,
+        '--type', 'WORKING_SOLUTION',
+        '--content', cappedContent,
+        '--context', contextStr,
+        '--tags', tagsStr,
+        '--confidence', 'high',
+        '--project-dir', projectDir,
+      ],
+      {
+        encoding: 'utf-8',
+        cwd: opcDir,
+        timeout: 60000,
+        stdio: ['pipe', 'pipe', 'pipe'],
+        shell: false,
+      }
+    );
     return true;
   } catch {
     return false;
@@ -269,7 +302,11 @@ async function readStdin(): Promise<string> {
   });
 }
 
-main().catch(err => {
-  console.error('user-confirmation-detector error:', err);
-  console.log(JSON.stringify({ continue: true }));
-});
+// Only auto-run when invoked directly as a hook (not when imported by tests).
+// process.argv[1] is the bundled dist filename when Claude Code runs the hook.
+if (process.argv[1] && process.argv[1].includes('user-confirmation-detector')) {
+  main().catch(err => {
+    console.error('user-confirmation-detector error:', err);
+    console.log(JSON.stringify({ continue: true }));
+  });
+}
