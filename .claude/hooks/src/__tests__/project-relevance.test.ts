@@ -167,6 +167,39 @@ describe('getProjectIdentity', () => {
     expect(identity.keywords).toContain('claude');
   });
 
+  it('stopwords toxic generic tokens out of distinctiveKeywords', () => {
+    setupRegistryMock('C:/Users/david.hayes/continuous-claude', MOCK_REGISTRY);
+    const identity = getProjectIdentity('C:/Users/david.hayes/continuous-claude');
+    // The bare tokens "continuous" and "claude" are poisonous -- they match
+    // unrelated plans ("continuous integration", any "claude" mention).
+    expect(identity.distinctiveKeywords).not.toContain('continuous');
+    expect(identity.distinctiveKeywords).not.toContain('claude');
+    // The full multi-token identity survives as a distinctive signal.
+    expect(identity.distinctiveKeywords).toContain('continuous-claude');
+  });
+
+  it('keeps distinctive single tokens (e.g. northstar) but drops stopwords', () => {
+    setupRegistryMock('C:/Users/david.hayes/Projects/northstar-transformation', MOCK_REGISTRY);
+    const identity = getProjectIdentity('C:/Users/david.hayes/Projects/northstar-transformation');
+    expect(identity.distinctiveKeywords).toContain('northstar');
+    expect(identity.distinctiveKeywords).toContain('transformation');
+  });
+
+  it('records the resolved project path on the identity', () => {
+    setupRegistryMock('C:/Users/david.hayes/continuous-claude', MOCK_REGISTRY);
+    const identity = getProjectIdentity('C:/Users/david.hayes/continuous-claude');
+    expect(identity.projectPath).toBe(path.resolve('C:/Users/david.hayes/continuous-claude'));
+  });
+
+  it('collects distinctive tokens of other registered projects', () => {
+    setupRegistryMock('C:/Users/david.hayes/continuous-claude', MOCK_REGISTRY);
+    const identity = getProjectIdentity('C:/Users/david.hayes/continuous-claude');
+    expect(identity.otherProjectTokens).toContain('northstar');
+    expect(identity.otherProjectTokens).toContain('ecg');
+    // Generic stopwords from sibling names must not leak in.
+    expect(identity.otherProjectTokens).not.toContain('the');
+  });
+
   it('deduplicates keywords', () => {
     setupRegistryMock('C:/Users/david.hayes/continuous-claude', MOCK_REGISTRY, MOCK_PACKAGE_JSON);
     const identity = getProjectIdentity('C:/Users/david.hayes/continuous-claude');
@@ -186,8 +219,13 @@ describe('isContentRelevantToProject', () => {
       dirName: 'continuous-claude',
       registryName: 'continuous-claude',
       packageName: 'continuous-claude',
+      projectPath: 'C:/Users/david.hayes/continuous-claude',
       keywords: ['continuous', 'claude', 'continuous-claude'],
+      // distinctiveKeywords drops generic stopwords (continuous, claude, code, ...)
+      // and keeps multi-token identity signals.
+      distinctiveKeywords: ['continuous-claude'],
       otherProjects: ['NorthStar Transformation', 'Fourth Connect', 'ECG Lead Reactivation Engine'],
+      otherProjectTokens: ['northstar', 'transformation', 'fourth', 'connect', 'ecg', 'lead', 'reactivation', 'engine'],
       ...overrides,
     };
   }
@@ -249,12 +287,13 @@ describe('isContentRelevantToProject', () => {
   });
 
   it('returns relevant=true when no other projects in registry (fail-open)', () => {
-    const identity = makeIdentity({ otherProjects: [] });
-    const content = 'Plan: Implement the NorthStar Transformation dashboard with new metrics and charts for the enterprise platform.';
+    // No registry => no sibling names AND no sibling tokens (they derive together).
+    const identity = makeIdentity({ otherProjects: [], otherProjectTokens: [] });
+    const content = 'Plan: Implement the NorthStar Transformation dashboard with new metrics and charts for the enterprise.';
     const result = isContentRelevantToProject(content, identity);
     expect(result.relevant).toBe(true);
     expect(result.confidence).toBe('low');
-    expect(result.reason).toBe('no registry to compare against');
+    expect(result.reason).toBe('no cross-project signals');
   });
 
   it('returns relevant=false when identity has empty keywords but other project is mentioned', () => {
@@ -296,6 +335,96 @@ describe('isContentRelevantToProject', () => {
   it('returns relevant=true for undefined content (fail-open)', () => {
     const identity = makeIdentity();
     const result = isContentRelevantToProject(undefined as any, identity);
+    expect(result.relevant).toBe(true);
+    expect(result.confidence).toBe('low');
+  });
+
+  // ---------------------------------------------------------------------------
+  // QW-03 regression suite (D2d-01 positive flip + toxic-keyword stopword fix)
+  // ---------------------------------------------------------------------------
+
+  // SEED-02 / Session-9: the post-plan-roadmap hook clobbered continuous-claude's
+  // Current Focus with a foreign "Harden the Alpha + Lay a Solid FastMCP v3
+  // Foundation" goal mentioning Salesforce/FastMCP. The registered sibling is
+  // named "fourth-salesforce-mcp" (its literal name is NOT a substring of the
+  // title), so the old registered-name substring check passed it through.
+  it('Session-9 regression: BLOCKS a foreign Salesforce/FastMCP goal with no continuous-claude identity', () => {
+    const identity = makeIdentity({
+      // The sibling distinctive token "salesforce" comes from fourth-salesforce-mcp.
+      otherProjects: ['NorthStar Transformation', 'fourth-salesforce-mcp', 'agent-factory'],
+      otherProjectTokens: ['northstar', 'transformation', 'fourth', 'salesforce', 'mcp', 'agent', 'factory'],
+    });
+    const content =
+      'Harden the Alpha and Lay a Solid FastMCP v3 Foundation. Ship the approved ' +
+      'SOQL COUNT fix first; defer wiring the tool-call rate limiter because Salesforce ' +
+      'upstream limits suffice for the 16 users on the hosted MCP server.';
+    const result = isContentRelevantToProject(content, identity);
+    expect(result.relevant).toBe(false);
+    expect(result.confidence).toBe('high');
+  });
+
+  it('Session-9 regression: BLOCKS a foreign FastMCP-only goal with no continuous-claude identity', () => {
+    const identity = makeIdentity();
+    const content =
+      'Build out the FastMCP v3 hosted server foundation: harden the alpha, add ' +
+      'guardrails and cleanup, and finalize the OAuth token store for the tenant proxy.';
+    const result = isContentRelevantToProject(content, identity);
+    expect(result.relevant).toBe(false);
+    expect(result.confidence).toBe('high');
+  });
+
+  // Proves the toxic-keyword stopword fix: before stopwording, the bare token
+  // "continuous" (from continuous-claude) matched inside "continuous integration"
+  // and "claude" was equally toxic, so a foreign CI plan slipped through fail-open.
+  it("'continuous' false-positive: BLOCKS a foreign 'continuous integration pipeline' plan with no real cc identity", () => {
+    const identity = makeIdentity();
+    const content =
+      'Stand up a continuous integration pipeline for the Salesforce deployment service: ' +
+      'add build, lint and test stages, then wire automated rollouts to the staging tenant.';
+    const result = isContentRelevantToProject(content, identity);
+    expect(result.relevant).toBe(false);
+    expect(result.confidence).toBe('high');
+  });
+
+  it("'claude' false-positive: BLOCKS a foreign plan that only mentions the word 'claude'", () => {
+    const identity = makeIdentity();
+    const content =
+      'Add a Claude-powered chat assistant to the NorthStar Transformation dashboard, ' +
+      'wiring streaming responses into the existing enterprise metrics view.';
+    const result = isContentRelevantToProject(content, identity);
+    expect(result.relevant).toBe(false);
+    expect(result.confidence).toBe('high');
+  });
+
+  // No regression for legitimate continuous-claude plans: the distinctive
+  // identity signal (full "continuous-claude" name) is positive own evidence.
+  it('legit plan: ALLOWS a real continuous-claude plan that names the project and its components', () => {
+    const identity = makeIdentity();
+    const content =
+      'Continuous-claude session 9: build and wire codegraph behind /code-intel, ' +
+      'reconcile the hooks and memory subsystems, and decide the bus-bias hybrid-recall lift.';
+    const result = isContentRelevantToProject(content, identity);
+    expect(result.relevant).toBe(true);
+  });
+
+  it('legit plan: ALLOWS a continuous-claude plan referenced by project path', () => {
+    const identity = makeIdentity();
+    const content =
+      'Refactor the contamination guard at ' +
+      'C:/Users/david.hayes/continuous-claude/.claude/hooks/src/shared/project-relevance.ts ' +
+      'to require positive own-project evidence before writing the ROADMAP Current Focus.';
+    const result = isContentRelevantToProject(content, identity);
+    expect(result.relevant).toBe(true);
+  });
+
+  // Fail-open is preserved ONLY for genuinely ambiguous content (no project-like
+  // entity named at all) -- a generic engineering refactor must still pass.
+  it('preserves fail-open for genuinely ambiguous content with no project entity', () => {
+    const identity = makeIdentity();
+    const content =
+      'Refactor the authentication system to use JWT tokens instead of session cookies. ' +
+      'Add rate limiting to prevent brute force attacks on login endpoints.';
+    const result = isContentRelevantToProject(content, identity);
     expect(result.relevant).toBe(true);
     expect(result.confidence).toBe('low');
   });

@@ -161,6 +161,32 @@ export function extractLedgerSection(handoffContent: string): string | null {
  * `"## <Header>\n<trimmed body>"` block for each header that exists with a
  * non-empty body; `[]` if none.
  */
+/**
+ * Extract the ROADMAP `## Current Focus` body, gated through the cross-project
+ * contamination guard (D2F-03). Returns the trimmed focus body if it passes the
+ * guard, or null if the section is absent OR appears to belong to a different
+ * project (SEED-02 — a foreign Salesforce/FastMCP focus must not propagate into
+ * this project's unified context).
+ *
+ * Pure + testable: takes the raw ROADMAP content and projectDir, so the guard
+ * decision can be tested without invoking buildUnifiedContext's memory-recall
+ * side effects.
+ */
+export function extractGuardedCurrentFocus(roadmapContent: string, projectDir: string): string | null {
+  const currentMatch = roadmapContent.match(/## Current Focus\n([\s\S]*?)(?=\n## |$)/);
+  if (!currentMatch) return null;
+  const currentFocus = currentMatch[1].trim();
+  if (!currentFocus) return null;
+
+  const identity = getProjectIdentity(projectDir);
+  const relevance = isContentRelevantToProject(currentFocus, identity);
+  if (!relevance.relevant) {
+    console.error(`[session-start-continuity] buildUnifiedContext: ROADMAP focus appears contaminated, skipping: ${relevance.reason}`);
+    return null;
+  }
+  return currentFocus;
+}
+
 export function extractNotesSections(roadmapContent: string): string[] {
   const HEADERS = ['Notes', 'For Next Session', 'Scratch'];
   const blocks: string[] = [];
@@ -323,10 +349,12 @@ async function buildUnifiedContext(projectDir: string): Promise<string> {
     try {
       const roadmap = fs.readFileSync(roadmapPath, 'utf-8');
 
-      // Extract Current Focus section
-      const currentMatch = roadmap.match(/## Current Focus\n([\s\S]*?)(?=\n## |$)/);
-      if (currentMatch) {
-        sections.push(`## ROADMAP - Current Focus\n${currentMatch[1].trim().substring(0, 500)}`);
+      // Extract Current Focus section -- gated by the cross-project
+      // contamination guard (D2F-03). A foreign focus is dropped, never
+      // re-injected into the unified context.
+      const guardedFocus = extractGuardedCurrentFocus(roadmap, projectDir);
+      if (guardedFocus) {
+        sections.push(`## ROADMAP - Current Focus\n${guardedFocus.substring(0, 500)}`);
       }
 
       // Extract most recent planning session

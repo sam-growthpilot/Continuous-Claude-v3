@@ -105,6 +105,21 @@ function readRalphUnifiedState(projectDir) {
 import * as fs from "fs";
 import * as path from "path";
 import { homedir as homedir2 } from "node:os";
+var IDENTITY_STOPWORDS = /* @__PURE__ */ new Set([
+  "claude",
+  "continuous",
+  "code",
+  "anthropic",
+  "project",
+  "the",
+  "app",
+  "platform",
+  "engine",
+  "server",
+  "service",
+  "system"
+]);
+var FOREIGN_PROJECT_MARKERS = ["salesforce", "fastmcp"];
 function getProjectIdentity(projectDir) {
   const resolvedDir = path.resolve(projectDir);
   const dirName = path.basename(resolvedDir);
@@ -112,21 +127,28 @@ function getProjectIdentity(projectDir) {
     dirName,
     registryName: null,
     packageName: null,
+    projectPath: resolvedDir,
     keywords: [],
-    otherProjects: []
+    distinctiveKeywords: [],
+    otherProjects: [],
+    otherProjectTokens: []
   };
-  const dirKeywords = dirName.toLowerCase().split(/[-_\s]+/).filter((w) => w.length > 1);
+  const dirKeywords = tokenize(dirName);
   const keywordSet = new Set(dirKeywords);
+  keywordSet.add(dirName.toLowerCase());
+  const otherTokenSet = /* @__PURE__ */ new Set();
   const registry = readRegistry(resolvedDir);
   if (registry) {
     for (const project of registry.projects) {
       const projectPath = path.resolve(project.path);
       if (projectPath === resolvedDir) {
         identity.registryName = project.name;
-        const nameWords = project.name.toLowerCase().split(/[-_\s]+/).filter((w) => w.length > 1);
-        for (const w of nameWords) keywordSet.add(w);
+        for (const w of tokenize(project.name)) keywordSet.add(w);
       } else {
         identity.otherProjects.push(project.name);
+        for (const w of tokenize(project.name)) {
+          if (!IDENTITY_STOPWORDS.has(w)) otherTokenSet.add(w);
+        }
       }
     }
   }
@@ -137,8 +159,8 @@ function getProjectIdentity(projectDir) {
     if (pkg.name && typeof pkg.name === "string") {
       identity.packageName = pkg.name;
       const cleanName = pkg.name.replace(/^@[^/]+\//, "");
-      const pkgWords = cleanName.toLowerCase().split(/[-_\s]+/).filter((w) => w.length > 1);
-      for (const w of pkgWords) keywordSet.add(w);
+      for (const w of tokenize(cleanName)) keywordSet.add(w);
+      keywordSet.add(cleanName.toLowerCase());
     }
   } catch {
   }
@@ -146,40 +168,69 @@ function getProjectIdentity(projectDir) {
     keywordSet.add(identity.registryName.toLowerCase());
   }
   identity.keywords = [...keywordSet];
+  identity.distinctiveKeywords = identity.keywords.filter((kw) => !IDENTITY_STOPWORDS.has(kw));
+  identity.otherProjectTokens = [...otherTokenSet];
   return identity;
+}
+function tokenize(name) {
+  return name.toLowerCase().split(/[-_\s]+/).filter((w) => w.length > 1);
+}
+function matchesAsWord(content, term) {
+  if (!term) return false;
+  const escaped = term.replace(/[.*+?^${}()|[\]\\]/g, "\\$&").replace(/[-_\s/]+/g, "[-_\\s/]+");
+  try {
+    return new RegExp(`(^|[^a-z0-9])${escaped}([^a-z0-9]|$)`, "i").test(content);
+  } catch {
+    return content.toLowerCase().includes(term.toLowerCase());
+  }
 }
 function isContentRelevantToProject(content, identity) {
   if (!content || content.length < 50) {
     return { relevant: true, confidence: "low", reason: "content too short" };
   }
-  if (identity.otherProjects.length === 0) {
-    return { relevant: true, confidence: "low", reason: "no registry to compare against" };
+  const distinctiveNames = [identity.registryName, identity.dirName, identity.packageName].filter((n) => !!n);
+  for (const name of distinctiveNames) {
+    if (matchesAsWord(content, name)) {
+      return { relevant: true, confidence: "high", reason: `matches project identity "${name}"` };
+    }
   }
-  const contentLower = content.toLowerCase();
+  for (const kw of identity.distinctiveKeywords) {
+    if (kw.length < 3) continue;
+    if (matchesAsWord(content, kw)) {
+      return { relevant: true, confidence: "high", reason: `matches distinctive keyword "${kw}"` };
+    }
+  }
+  if (identity.projectPath && content.toLowerCase().includes(identity.projectPath.toLowerCase())) {
+    return { relevant: true, confidence: "high", reason: "mentions this project path" };
+  }
   for (const otherName of identity.otherProjects) {
-    const otherLower = otherName.toLowerCase();
-    if (!contentLower.includes(otherLower)) {
-      continue;
-    }
-    let thisProjectMentioned = false;
-    if (identity.registryName && contentLower.includes(identity.registryName.toLowerCase())) {
-      thisProjectMentioned = true;
-    }
-    if (!thisProjectMentioned) {
-      for (const kw of identity.keywords) {
-        if (kw.length < 3) continue;
-        if (contentLower.includes(kw)) {
-          thisProjectMentioned = true;
-          break;
-        }
-      }
-    }
-    if (!thisProjectMentioned) {
+    if (matchesAsWord(content, otherName)) {
       const thisName = identity.registryName || identity.dirName;
       return {
         relevant: false,
         confidence: "high",
         reason: `content mentions "${otherName}" but not "${thisName}"`
+      };
+    }
+  }
+  for (const token of identity.otherProjectTokens) {
+    if (token.length < 3) continue;
+    if (matchesAsWord(content, token)) {
+      const thisName = identity.registryName || identity.dirName;
+      return {
+        relevant: false,
+        confidence: "high",
+        reason: `content mentions foreign project token "${token}" but no "${thisName}" identity`
+      };
+    }
+  }
+  for (const marker of FOREIGN_PROJECT_MARKERS) {
+    if (matchesAsWord(content, marker)) {
+      const thisName = identity.registryName || identity.dirName;
+      return {
+        relevant: false,
+        confidence: "high",
+        reason: `content mentions foreign project "${marker}" but no "${thisName}" identity`
       };
     }
   }
@@ -275,6 +326,19 @@ function extractLedgerSection(handoffContent) {
   return match ? `## Ledger
 ${match[1].trim()}` : null;
 }
+function extractGuardedCurrentFocus(roadmapContent, projectDir) {
+  const currentMatch = roadmapContent.match(/## Current Focus\n([\s\S]*?)(?=\n## |$)/);
+  if (!currentMatch) return null;
+  const currentFocus = currentMatch[1].trim();
+  if (!currentFocus) return null;
+  const identity = getProjectIdentity(projectDir);
+  const relevance = isContentRelevantToProject(currentFocus, identity);
+  if (!relevance.relevant) {
+    console.error(`[session-start-continuity] buildUnifiedContext: ROADMAP focus appears contaminated, skipping: ${relevance.reason}`);
+    return null;
+  }
+  return currentFocus;
+}
 function extractNotesSections(roadmapContent) {
   const HEADERS = ["Notes", "For Next Session", "Scratch"];
   const blocks = [];
@@ -364,10 +428,10 @@ async function buildUnifiedContext(projectDir) {
   if (fs2.existsSync(roadmapPath)) {
     try {
       const roadmap = fs2.readFileSync(roadmapPath, "utf-8");
-      const currentMatch = roadmap.match(/## Current Focus\n([\s\S]*?)(?=\n## |$)/);
-      if (currentMatch) {
+      const guardedFocus = extractGuardedCurrentFocus(roadmap, projectDir);
+      if (guardedFocus) {
         sections.push(`## ROADMAP - Current Focus
-${currentMatch[1].trim().substring(0, 500)}`);
+${guardedFocus.substring(0, 500)}`);
       }
       const sessionMatch = roadmap.match(/### (\d{4}-\d{2}-\d{2}): ([^\n]+)\n([\s\S]*?)(?=\n### |\n## |$)/);
       if (sessionMatch) {
@@ -867,6 +931,7 @@ main().catch((err) => {
 });
 export {
   buildHandoffDirName,
+  extractGuardedCurrentFocus,
   extractLedgerSection,
   extractNotesSections,
   extractYamlFields,

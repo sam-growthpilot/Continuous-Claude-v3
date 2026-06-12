@@ -11,7 +11,7 @@
  */
 
 import { describe, it, expect } from 'vitest';
-import { extractNotesSections } from '../session-start-continuity.js';
+import { extractNotesSections, extractGuardedCurrentFocus } from '../session-start-continuity.js';
 
 describe('extractNotesSections', () => {
   it('finds both ## Notes and ## For Next Session blocks when present', () => {
@@ -77,5 +77,47 @@ describe('extractNotesSections', () => {
   it('skips a notes header that has an empty body', () => {
     const roadmap = ['## Notes', '', '## Completed', '- [x] X'].join('\n');
     expect(extractNotesSections(roadmap)).toEqual([]);
+  });
+});
+
+// D2F-03: the unified-context Current Focus extraction must run through the
+// same cross-project contamination guard, so a foreign focus is not propagated.
+// Uses the real continuous-claude registry on disk (the actual project).
+describe('extractGuardedCurrentFocus (D2F-03)', () => {
+  const CC_DIR = 'C:/Users/david.hayes/continuous-claude';
+
+  it('drops a foreign Salesforce/FastMCP Current Focus (SEED-02 regression)', () => {
+    const roadmap = [
+      '# Project Roadmap',
+      '',
+      '## Current Focus',
+      '**Harden the Alpha and Lay a Solid FastMCP v3 Foundation**',
+      '- Ship the SOQL COUNT fix first; defer the rate limiter — Salesforce upstream limits suffice.',
+      '',
+      '## Completed',
+      '- [x] X (2026-01-01)',
+    ].join('\n');
+    expect(extractGuardedCurrentFocus(roadmap, CC_DIR)).toBeNull();
+  });
+
+  it('keeps a legitimate continuous-claude Current Focus', () => {
+    const roadmap = [
+      '# Project Roadmap',
+      '',
+      '## Current Focus',
+      '**Continuous-claude session 9: wire codegraph behind /code-intel**',
+      '- Reconcile the hooks and memory subsystems; decide the bus-bias lift.',
+      '',
+      '## Completed',
+      '- [x] X (2026-01-01)',
+    ].join('\n');
+    const focus = extractGuardedCurrentFocus(roadmap, CC_DIR);
+    expect(focus).not.toBeNull();
+    expect(focus).toContain('codegraph');
+  });
+
+  it('returns null when there is no Current Focus section', () => {
+    const roadmap = ['# Project Roadmap', '', '## Completed', '- [x] X'].join('\n');
+    expect(extractGuardedCurrentFocus(roadmap, CC_DIR)).toBeNull();
   });
 });
