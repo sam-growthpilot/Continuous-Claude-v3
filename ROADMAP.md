@@ -1,11 +1,22 @@
 # Project Roadmap
 
 ## Current Focus
-**CCv3 Fable-5 Deep Review — "Hone to Elegance" (2026-06-10)**
-- User decisions (locked): (1) **merge PRs #8/#9/#10 first* — review one unified main; (2) **whole-system scope, recent-weighted* (extra depth on the 145 commits since the 2026-05-16 memory-upgrade era); (3) deliver **report + ratified backlog + quick-wins executed* this arc (structural refactors are a later ratified arc).; Push **`fork`* (Rev4nchist), never `origin`. Never change BGE model/dim (`BAAI/bge-large-en-v1.5`, 1024).
-- Started: 2026-06-10
+**CCv3 System Update — execute the ratified deep-review backlog (Wave 1 → Tier 2 → Tier 3 → Deletions)**
+- The Fable-5 deep review is COMPLETE (190 confirmed findings, ratified 4-tier backlog, elegance verdict "mixed"). Wave 0 (3 S0 fixes) SHIPPED. Now executing the rest across coordinated sessions.
+- **Orientation library:** `docs/system-update/` (README → CURRENT-STATE → BACKLOG → RESOURCE-MAP). **Handoff:** `docs/HANDOFF-2026-06-27-ccv3-system-update.md`.
+- **Branch:** `snapshot/ccv3-system-update` (off main; excludes in-progress `feature/cma-integration`). **Live visual:** https://rev4nchist.github.io/ai-enablement-decks/ccv3-state-of-rework/
+- **Next action:** Wave 1, starting with QW-07 (intent-pollution filter). See BACKLOG.md.
+- Constraints: push `fork` not `origin`; never change BGE model/dim (`BAAI/bge-large-en-v1.5`, 1024); Windows-safe; emit-guard 4/4 after hook edits; never full vitest; end goal = elegant CCv3 (design contract = running behavior).
+- Started: 2026-06-27 (review arc started 2026-06-10)
 
 ## Completed
+- [x] docs(system-update): snapshot branch + orientation library (`docs/system-update/`) + handoff for coordinated multi-session backlog execution (2026-06-27)
+- [x] feat(viz): CCv3 state-of-rework deliverable — 4 Excalidraw diagrams + SVGs + briefing + generators (`scripts/viz/`); published as live interactive deck at rev4nchist.github.io/ai-enablement-decks/ccv3-state-of-rework/ (2026-06-27) `359843b`
+- [x] fix(hooks): close ROADMAP cross-project contamination guard — stopword + positive own-plan flip + D2F-03 (QW-03, S0) (2026-06-12) `f7f3eba`
+- [x] fix(hooks): relocate /tmp search-context handshake to os.tmpdir() (QW-02, S0; D2b-05) (2026-06-12) `89c9e5e`
+- [x] fix(security): close store_learning.py shell-injection — execSync->spawnSync argv (QW-01, S0; D5a-01/D2c-04/D2d-06/D3a-01) (2026-06-12) `1788211`
+- [x] review(wf3): Fable-5 deep review COMPLETE — 190 confirmed findings + ratifiable 4-tier backlog + 2 Codex cross-model passes (2026-06-12) `f143e5b`
+- [x] review(wf2): 248 findings verified (190 CONFIRM, 48 DOWNGRADE, 10 KILL) (2026-06-11) `c695c63`
 - [x] P1 — Bus-bias hybrid-recall lift: **KEEP ENABLED** — verified warm gate +7.3%/flat-hit (n=13, corpus 584); +33.6%/63->88% retired as a stale snapshot; tune focus-weighting deferred (2026-06-06)
 - [x] fix(memory): stop test suite from spawning real embedding daemons (herd source #2) (2026-06-05) `c1b110d`
 - [x] fix(memory): herd-proof embedding-daemon spawn — atomic lock + no-shell Windows spawn (2026-06-05) `ea1b03c`
