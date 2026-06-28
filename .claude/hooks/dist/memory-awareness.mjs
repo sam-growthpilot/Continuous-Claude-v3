@@ -257,6 +257,53 @@ function extractIntent(prompt) {
   }
   return intent;
 }
+var SYNTHETIC_TAG = /^<\/?(?:task-notification|system-reminder|local-command-(?:stdout|stderr)|command-(?:name|message|args)|bash-(?:input|stdout|stderr)|user-prompt-submit-hook|[a-z][a-z0-9-]*-hook)\b/i;
+var MAX_HUMAN_PROMPT_LEN = 8e3;
+function isMachineGeneratedPrompt(prompt) {
+  if (typeof prompt !== "string") return false;
+  const t = prompt.trim();
+  if (t.length === 0) return false;
+  if (SYNTHETIC_TAG.test(t)) return true;
+  if (t.includes("<task-notification")) return true;
+  if (t.length > MAX_HUMAN_PROMPT_LEN) return true;
+  const names = /* @__PURE__ */ new Set();
+  for (const m of t.matchAll(/<\/?([a-z][a-z0-9-]*)\b[^>]*>/gi)) {
+    names.add(m[1].toLowerCase());
+    if (names.size >= 3) return true;
+  }
+  return false;
+}
+function expandGitQuery(prompt) {
+  const lower = prompt.toLowerCase().trim();
+  const gitExpansions = {
+    "push": "git push remote fork origin upstream",
+    "git push": "git push remote fork origin upstream",
+    "commit": "git commit message workflow",
+    "git commit": "git commit message workflow",
+    "pr": "pull request pr create review",
+    "create pr": "pull request pr create github",
+    "pull request": "pull request pr create github",
+    "merge": "git merge branch main",
+    "rebase": "git rebase branch workflow",
+    "checkout": "git checkout branch switch",
+    "branch": "git branch create switch",
+    "stash": "git stash save pop",
+    "reset": "git reset hard soft",
+    "force push": "git push force dangerous"
+  };
+  for (const [pattern, expansion] of Object.entries(gitExpansions)) {
+    if (lower === pattern || lower.startsWith(pattern + " ") || lower.endsWith(" " + pattern)) {
+      return expansion;
+    }
+  }
+  const gitKeywords = ["git", "push", "commit", "pr", "merge", "rebase", "branch", "pull"];
+  const words = new Set(lower.split(/[^a-z]+/).filter(Boolean));
+  const hasGitContext = gitKeywords.some((kw) => words.has(kw));
+  if (hasGitContext) {
+    return prompt + " git remote workflow";
+  }
+  return null;
+}
 
 // src/shared/embedding-client.ts
 import {
@@ -1244,36 +1291,6 @@ var LOCAL_SCORE_NORMALIZE = 0.1;
 function readStdin() {
   return readFileSync5(0, "utf-8");
 }
-function expandGitQuery(prompt) {
-  const lower = prompt.toLowerCase().trim();
-  const gitExpansions = {
-    "push": "git push remote fork origin upstream",
-    "git push": "git push remote fork origin upstream",
-    "commit": "git commit message workflow",
-    "git commit": "git commit message workflow",
-    "pr": "pull request pr create review",
-    "create pr": "pull request pr create github",
-    "pull request": "pull request pr create github",
-    "merge": "git merge branch main",
-    "rebase": "git rebase branch workflow",
-    "checkout": "git checkout branch switch",
-    "branch": "git branch create switch",
-    "stash": "git stash save pop",
-    "reset": "git reset hard soft",
-    "force push": "git push force dangerous"
-  };
-  for (const [pattern, expansion] of Object.entries(gitExpansions)) {
-    if (lower === pattern || lower.startsWith(pattern + " ") || lower.endsWith(" " + pattern)) {
-      return expansion;
-    }
-  }
-  const gitKeywords = ["git", "push", "commit", "pr", "merge", "rebase", "branch"];
-  const hasGitContext = gitKeywords.some((kw) => lower.includes(kw));
-  if (hasGitContext) {
-    return prompt + " git remote workflow";
-  }
-  return null;
-}
 function checkLocalMemory(intent, projectDir) {
   const homeDir = process.env.HOME || process.env.USERPROFILE || "";
   const projectMemoryScript = path.join(homeDir, ".claude", "scripts", "core", "project_memory.py");
@@ -1476,6 +1493,10 @@ async function main() {
     return;
   }
   if (input.prompt.trim().startsWith("/")) {
+    outputContinue();
+    return;
+  }
+  if (isMachineGeneratedPrompt(input.prompt)) {
     outputContinue();
     return;
   }

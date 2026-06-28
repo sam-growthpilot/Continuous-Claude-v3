@@ -37,7 +37,7 @@ import { spawnSync } from 'child_process';
 import { getOpcDir } from './shared/opc-path.js';
 import { outputContinue } from './shared/output.js';
 import { logHook } from './shared/session-activity.js';
-import { extractIntent, extractKeywords } from './shared/intent-extractor.js';
+import { extractIntent, extractKeywords, expandGitQuery, isMachineGeneratedPrompt } from './shared/intent-extractor.js';
 import { isDaemonReady, ensureDaemonRunning } from './shared/embedding-client.js';
 import { emitBraintrustScore } from './shared/braintrust-score.js';
 import { sanitizeMemoryContent, wrapMemoryContext } from './shared/memory-sanitize.js';
@@ -84,49 +84,10 @@ function readStdin(): string {
   return readFileSync(0, 'utf-8');
 }
 
-/**
- * Detect git operations and expand query for better memory matching.
- * E.g., "push" → "git push remote fork origin" to catch repo-specific preferences.
- */
-function expandGitQuery(prompt: string): string | null {
-  const lower = prompt.toLowerCase().trim();
-
-  // Git operation patterns and their expanded queries
-  const gitExpansions: Record<string, string> = {
-    'push': 'git push remote fork origin upstream',
-    'git push': 'git push remote fork origin upstream',
-    'commit': 'git commit message workflow',
-    'git commit': 'git commit message workflow',
-    'pr': 'pull request pr create review',
-    'create pr': 'pull request pr create github',
-    'pull request': 'pull request pr create github',
-    'merge': 'git merge branch main',
-    'rebase': 'git rebase branch workflow',
-    'checkout': 'git checkout branch switch',
-    'branch': 'git branch create switch',
-    'stash': 'git stash save pop',
-    'reset': 'git reset hard soft',
-    'force push': 'git push force dangerous',
-  };
-
-  // Check for exact or partial matches
-  for (const [pattern, expansion] of Object.entries(gitExpansions)) {
-    if (lower === pattern || lower.startsWith(pattern + ' ') || lower.endsWith(' ' + pattern)) {
-      return expansion;
-    }
-  }
-
-  // Check if prompt contains git-related words
-  const gitKeywords = ['git', 'push', 'commit', 'pr', 'merge', 'rebase', 'branch'];
-  const hasGitContext = gitKeywords.some(kw => lower.includes(kw));
-
-  if (hasGitContext) {
-    // Add git context to the search
-    return prompt + ' git remote workflow';
-  }
-
-  return null;
-}
+// Note: expandGitQuery now imported from './shared/intent-extractor.js'
+// (QW-07). It was moved out of this module so it can be unit-tested without
+// the stdin/spawn auto-run path; the move also fixed the 'pr' substring
+// collision (whole-word matching). Behavior is otherwise unchanged.
 
 // Note: extractIntent / extractKeywords now imported from
 // './shared/intent-extractor.js' (Wave 2 — kraken-AGENT-RECALL).
@@ -517,6 +478,13 @@ async function main() {
 
   // Skip if prompt is just a slash command
   if (input.prompt.trim().startsWith('/')) {
+    outputContinue();
+    return;
+  }
+
+  // QW-07: drop machine-generated prompts (Claude Code synthetic <task-notification>
+  // blobs etc.) before they ride recall as polluted intent. (D2c-01/D3b-05/D3c-04)
+  if (isMachineGeneratedPrompt(input.prompt)) {
     outputContinue();
     return;
   }
