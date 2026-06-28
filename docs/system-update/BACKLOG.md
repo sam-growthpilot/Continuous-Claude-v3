@@ -42,7 +42,7 @@ S0 remaining: **0**.
 
 | ID | Arc | Closes (theme) | Sequencing |
 |----|-----|----------------|------------|
-| **ST-02** | 7 → 1 canonical `getSessionId` (`shared/session-id.ts`); `getBusId()` its only composer; delete 4 clones; fix the `shared/index.ts` barrel re-export | D7d-01 (corr-null 60.7%) | **prerequisite for ST-01 and SG-04** |
+| **ST-02** | 7 → 1 canonical `getSessionId` (`shared/session-id.ts`); `getBusId()` its only composer; delete 4 clones; fix the `shared/index.ts` barrel re-export. **+ Multi-session extension:** make the canonical identity two-level — `session_id` (terminal) **+** `agent_id` (subagent), so the lock/heartbeat layer can tell sessions AND intra-session fan-out apart. **This is the multi-session foundation** — `file-claims`/`heartbeat`/`isSessionActive` are only reliable once identity is single+consistent. | D7d-01 (corr-null 60.7%) | **prerequisite for ST-01, SG-04, AND the MS-* multi-session arc** |
 | **ST-01** | `SubagentStop` hook + bus symbol writer (commit `proposed_bus_updates`) | D1A-001/D10c-01 (write-dead bus) | after ST-02; **before SG-04** |
 | **ST-05** | Resident recall daemon (kill the per-call uv-run boot tax) | D2b-03 (agent-recall 0-for-78 budget) | **prerequisite for ST-03 and ST-10** |
 | **ST-03** | UserPromptSubmit 13-spawn serial → parallel (the 22–32s wall) | D6a-01 | after ST-05 |
@@ -53,7 +53,23 @@ S0 remaining: **0**.
 | **ST-07** | Memory sanitizer coverage 2 → 5 injectors (route all 5 through `injectRecall()`) | D5b-01 (poison-then-inject) | after ST-02; independent otherwise |
 | **ST-09** | Bus lock + write-amplification hardening (200ms cap redesign) | D4a-02 | after ST-01 (new writer changes contention profile) |
 
-**Dependency summary:** `ST-02 → ST-01 → SG-04` · `ST-05 → ST-03 + ST-10` · `ST-04 before C.5` · `ST-06 → ST-08`.
+**Dependency summary:** `ST-02 → ST-01 → SG-04` · `ST-02 → MS-01/02/03 → SG-04` · `ST-05 → ST-03 + ST-10` · `ST-04 before C.5` · `ST-06 → ST-08`.
+
+---
+
+## Tier 2b — Multi-Session Coordination (MS arc; gated on ST-02; **each needs its own plan + premortem**)
+
+> **Goal:** clear, reliable, **enforceable** guardrails when multiple Claude Code sessions (and their subagent teams) work the same repo and/or branch — in CCv3 **and any repo CCv3 is active in**. Hybrid posture: **HARD-BLOCK** shared infra · **WARN** ordinary project files · **SERIALIZE (queue)** git-index + build/dist. Portable by construction — hooks live in `~/.claude/` (global) and coordination is Postgres-backed + **project-scoped** (`project` column), so cross-repo sessions never false-conflict and no CCv3 paths are hardcoded (the infra-block set is a per-repo setting, default `.claude/**` + repo-critical config).
+>
+> **Current machinery that already FIRES (verified 2026-06-28):** session-register + heartbeat (Postgres `sessions`); `file-claims.ts` (PreToolUse:Edit|Write) hard-blocks edits when another *active* session (heartbeat <5min) holds a `(file_path, project)` claim, takes over stale claims. The MS arc makes that machinery *trustworthy* (ST-02 identity), *complete* (close bypasses), and *posture-correct* (hybrid).
+
+| ID | Arc | Closes / fixes | Posture | Gate |
+|----|-----|----------------|---------|------|
+| **MS-01** | Intra-session file assignment + sub-agent claims — claims keyed by `(file_path, project, session_id, agent_id)`; orchestrator helper declares each fanned-out agent's owned files and warns on same-session collision (systematizes the manual disjoint-file assignment used in Wave 1) | subagents share parent `session_id` → lock layer blind to fan-out | WARN orchestrator | after ST-02 (needs `agent_id` identity) |
+| **MS-02** | Infra lock-bypass guard — HARD-BLOCK cross-session writes to a configurable infra set (default `.claude/hooks/**`, `settings.json`, sync targets) **regardless of write path**; make the **sync script** claim-aware (the Hook Source Regression came through *sync*, dodging the Edit-tool lock) | Hook Source Regression root (multi-session clobber via sync) | HARD BLOCK | after ST-02; **ship first (highest blast radius)** |
+| **MS-03** | Git + build serialization — cross-session advisory mutex (Postgres advisory lock / lockfile) that **queues** git-index ops and `npm run build`/dist writes; + stale-lock auto-recovery for `.git/index.lock` (a 17h-stale one blocked startup 2026-06-28) | concurrent git index.lock race; concurrent dist build race | SERIALIZE (queue) | after ST-02 |
+
+**MS posture table (encoded):** infra (`.claude/**`, settings, sync) → HARD BLOCK · ordinary project files → WARN + show who/what · git-index / build / dist → SERIALIZE (queue) · intra-session fan-out → WARN orchestrator. Tunable: a repo may opt into hard-block-all via the infra-set config.
 
 ---
 
@@ -64,7 +80,7 @@ S0 remaining: **0**.
 | **SG-02** | 3-way settings/template drift reconciliation + source-of-truth enforcement (18 hooks live in active but absent from tracked repo, incl. `package-install-guard`, `permission-auto-allow`); extend `/sync-drift` with a drift gate; fix bootstrap template still registering the deregistered `navigator-safety` | can start **parallel with Wave 1** |
 | **SG-01** | Memory recall floor + corpus-health SLO; re-baseline the 27.4% hit rate after the math fixes + daemon | after QW-06/QW-07 + ST-05 |
 | **SG-03** | Elegance / pruning program — collapse the named duplication clusters; owns the operator-confirm deletion items | after Wave 1 hygiene stabilizes |
-| **SG-04** | Telemetry joinability + intel-bus consumer (build `intel-bus-stats.mjs`, §9 metrics, WRRF weight recalibration from 30 days of `bus-wrrf.jsonl`); re-examine codex-lift ROI with accepted/rejected disposition tracking | after ST-02 + ST-01 (terminal tier) |
+| **SG-04** | Telemetry joinability + intel-bus consumer (build `intel-bus-stats.mjs`, §9 metrics, WRRF weight recalibration from 30 days of `bus-wrrf.jsonl`); re-examine codex-lift ROI with accepted/rejected disposition tracking. **+ Multi-session (SG-04+):** cross-session metrics (active sessions, conflict rate, lock waits) once ST-02 makes ids joinable; a session-start + per-edit **peer-awareness surface** ("Session B active on this branch — editing `foo.ts` 2m ago") = the WARN half of the MS hybrid posture | after ST-02 + ST-01 (terminal tier) |
 
 ---
 

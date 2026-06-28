@@ -8,7 +8,17 @@ The system at a glance: a **sound spine wrapped in a dead/mis-wired periphery.**
 
 1. **The entire agent safety + verification chain (12 hooks) never fires.** All are registered under matcher `'Agent'` while the live Claude Code tool emits `'Task'`. Zero pre-spawn guard, zero post-spawn verification on every subagent spawn. (`D2b-01`, `D10c-02`) — fixed by `QW-04`.
 2. **The context-bus symbol layer is write-dead.** `SubagentStop` has **zero** event registrations anywhere (repo + active + template). codegraph computes `proposed_bus_updates` on every facade call and they are silently dropped. `bus-focus.ts` reads always-empty `focus_symbols` today. (`D1A-001`, `D10c-01`) — fixed by `ST-01`.
-3. **Seven competing `getSessionId` implementations** produce non-joinable telemetry → **60.7% corr-null** on intel-bus rows. The `shared/index.ts` barrel re-exports the wrong ppid-scheme under the canonical name. (`D7d-01`) — fixed by `ST-02`.
+3. **Seven competing `getSessionId` implementations** produce non-joinable telemetry → **60.7% corr-null** on intel-bus rows. The `shared/index.ts` barrel re-exports the wrong ppid-scheme under the canonical name. (`D7d-01`) — fixed by `ST-02`. **This is also the multi-session foundation** (see below).
+
+## Multi-session coordination — machinery exists, gated on ST-02 (added 2026-06-28)
+
+Multiple Claude Code sessions (each with its own subagent team) on the same repo/branch is a first-class concern. The **substrate already FIRES** (verified 2026-06-28): session-register + heartbeat (Postgres `sessions`) and `file-claims.ts` (PreToolUse:Edit|Write) — which hard-blocks an edit when another *active* session (heartbeat <5min) holds a `(file_path, project)` claim, and takes over stale claims. But three structural gaps make it unreliable today:
+
+- **Identity is broken (ST-02).** Locking/heartbeat correctness depends on one consistent `getSessionId`; the 7-impl split-brain makes cross-session conflict detection give false-negatives/positives. **Multi-session safety is gated on ST-02.**
+- **The lock is blind to intra-session fan-out.** Subagents share the parent's `session_id` (RULES.md: "cannot distinguish orchestrator from sub-agents on a shared session_id"), so `file-claims` would NOT catch two of one session's own parallel agents editing the same file (handled manually in Wave 1).
+- **Sync + git writes bypass the lock.** `file-claims` only gates the Edit/Write *tools*; the **Hook Source Regression** clobbered shared hook files via the *sync script*, and concurrent **git** ops race `.git/index.lock`.
+
+→ The plan: **ST-02 reframed as the foundation (+ `agent_id` identity)**, then the **MS-01/02/03 arc** (intra-session claims · infra lock-bypass guard · git+build serialization) under a hybrid posture (block infra · warn project · serialize git/build), folded into **[BACKLOG.md → Tier 2b](./BACKLOG.md)**.
 
 ## The three highest-leverage single fixes
 
