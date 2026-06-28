@@ -2,7 +2,36 @@
 
 // src/git-commit-roadmap.ts
 import * as fs from "fs";
+import * as path2 from "path";
+
+// src/shared/roadmap-sync-guards.ts
 import * as path from "path";
+import { homedir } from "node:os";
+function isPathInsideProject(targetPath, projectDir) {
+  if (!targetPath || !projectDir) return false;
+  const rel = path.relative(path.resolve(projectDir), path.resolve(targetPath));
+  return rel === "" || !rel.startsWith("..") && !path.isAbsolute(rel);
+}
+function extractCdTarget(command) {
+  if (!command) return null;
+  const commitIdx = command.search(/git\s+(?:-[^\s]+\s+)*commit/i);
+  const scope = commitIdx >= 0 ? command.slice(0, commitIdx) : command;
+  const m = scope.match(/(?:^|[;&|]\s*|&&\s*)cd\s+(?:"([^"]+)"|'([^']+)'|([^\s;&|]+))/);
+  if (!m) return null;
+  return m[1] || m[2] || m[3] || null;
+}
+function commitRanInProject(command, projectDir) {
+  const target = extractCdTarget(command);
+  if (!target) return true;
+  let resolved = target;
+  if (resolved === "~" || resolved.startsWith("~/") || resolved.startsWith("~\\")) {
+    resolved = path.join(homedir(), resolved.slice(1));
+  }
+  const abs = path.isAbsolute(resolved) ? path.resolve(resolved) : path.resolve(projectDir, resolved);
+  return isPathInsideProject(abs, projectDir);
+}
+
+// src/git-commit-roadmap.ts
 var COMMIT_PATTERNS = {
   conventional: /^(feat|fix|docs|style|refactor|perf|test|chore|build|ci)(?:\(([^)]+)\))?!?:\s*(.+)$/i,
   commitOutput: /^\[([^\s]+)\s+([a-f0-9]{7,})\]\s+(.+)$/m,
@@ -12,14 +41,14 @@ var COMMIT_PATTERNS = {
 };
 var SKIP_TYPES = /* @__PURE__ */ new Set(["chore", "style", "ci"]);
 function readStdin() {
-  return new Promise((resolve) => {
+  return new Promise((resolve2) => {
     let data = "";
     process.stdin.setEncoding("utf8");
     process.stdin.on("data", (chunk) => {
       data += chunk;
     });
-    process.stdin.on("end", () => resolve(data));
-    setTimeout(() => resolve(data), 1e3);
+    process.stdin.on("end", () => resolve2(data));
+    setTimeout(() => resolve2(data), 1e3);
   });
 }
 function isGitCommitCommand(command) {
@@ -64,9 +93,9 @@ function parseCommitFromOutput(output) {
 }
 function findRoadmapPath(projectDir) {
   const candidates = [
-    path.join(projectDir, "ROADMAP.md"),
-    path.join(projectDir, ".claude", "ROADMAP.md"),
-    path.join(projectDir, "roadmap.md")
+    path2.join(projectDir, "ROADMAP.md"),
+    path2.join(projectDir, ".claude", "ROADMAP.md"),
+    path2.join(projectDir, "roadmap.md")
   ];
   for (const candidate of candidates) {
     if (fs.existsSync(candidate)) {
@@ -189,6 +218,11 @@ async function main() {
     return;
   }
   const projectDir = process.env.CLAUDE_PROJECT_DIR || process.cwd();
+  if (!commitRanInProject(command, projectDir)) {
+    console.error("\u2139 Skipping commit that ran outside this project directory");
+    console.log(JSON.stringify({ result: "continue" }));
+    return;
+  }
   const roadmapPath = findRoadmapPath(projectDir);
   if (!roadmapPath) {
     console.log(JSON.stringify({ result: "continue" }));

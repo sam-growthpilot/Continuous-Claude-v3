@@ -15,6 +15,7 @@
 
 import * as fs from 'fs';
 import * as path from 'path';
+import { commitRanInProject } from './shared/roadmap-sync-guards.js';
 
 interface PostToolUseInput {
   session_id: string;
@@ -263,6 +264,16 @@ async function main() {
   }
 
   const projectDir = process.env.CLAUDE_PROJECT_DIR || process.cwd();
+
+  // D2d-10: verify the commit actually ran in THIS project before recording it.
+  // A `cd <other-repo> && git commit` (routine for ~/.claude quick fixes) must
+  // not write a foreign repo's commit into the session project's ROADMAP.
+  if (!commitRanInProject(command, projectDir)) {
+    console.error('ℹ Skipping commit that ran outside this project directory');
+    console.log(JSON.stringify({ result: 'continue' }));
+    return;
+  }
+
   const roadmapPath = findRoadmapPath(projectDir);
 
   if (!roadmapPath) {

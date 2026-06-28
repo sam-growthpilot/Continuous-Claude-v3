@@ -18,6 +18,7 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import { parseRoadmap, type RoadmapItem as SharedRoadmapItem } from './shared/roadmap-parser.js';
+import { isPathInsideProject, isTasksRelatedToGoal } from './shared/roadmap-sync-guards.js';
 
 interface PostToolUseInput {
   tool_name: string;
@@ -408,7 +409,7 @@ async function handlePRDChange(filePath: string, content: string): Promise<HookO
 
   // Path containment check - don't update ROADMAP for files outside this project
   const projectDir = process.env.CLAUDE_PROJECT_DIR || process.cwd();
-  if (!path.resolve(filePath).startsWith(path.resolve(projectDir))) {
+  if (!isPathInsideProject(filePath, projectDir)) {
     return {
       result: 'continue',
       message: 'PRD file is outside current project directory',
@@ -463,7 +464,7 @@ async function handleTasksChange(filePath: string, content: string): Promise<Hoo
 
   // Path containment check - don't update ROADMAP for files outside this project
   const projectDir = process.env.CLAUDE_PROJECT_DIR || process.cwd();
-  if (!path.resolve(filePath).startsWith(path.resolve(projectDir))) {
+  if (!isPathInsideProject(filePath, projectDir)) {
     return {
       result: 'continue',
       message: 'Tasks file is outside current project directory',
@@ -495,10 +496,23 @@ async function handleTasksChange(filePath: string, content: string): Promise<Hoo
   let message = '';
 
   if (progress.isComplete) {
-    // Move to completed
-    const titleToComplete = roadmap.current?.title || progress.featureName;
-    updated = moveToCompleted(roadmapContent, titleToComplete);
-    message = `ROADMAP updated: "${titleToComplete}" marked complete (100%)`;
+    // D2d-09: only mark the CURRENT goal complete when the tasks file actually
+    // relates to it. A fully-checked but unrelated tasks-*.md must NOT falsely
+    // complete whatever happens to be the current goal.
+    if (roadmap.current) {
+      if (isTasksRelatedToGoal(progress.featureName, roadmap.current.title)) {
+        const titleToComplete = roadmap.current.title;
+        updated = moveToCompleted(roadmapContent, titleToComplete);
+        message = `ROADMAP updated: "${titleToComplete}" marked complete (100%)`;
+      } else {
+        message = `Tasks complete (100%) for "${progress.featureName}" but unrelated to current goal "${roadmap.current.title}" -- ROADMAP completion skipped`;
+      }
+    } else {
+      // No current goal: record the actually-completed feature (not a false
+      // completion of some other goal).
+      updated = moveToCompleted(roadmapContent, progress.featureName);
+      message = `ROADMAP updated: "${progress.featureName}" marked complete (100%)`;
+    }
   } else if (inPlanned && !roadmap.current) {
     // Promote to current if no current goal
     updated = promoteToCurrent(roadmapContent, {
