@@ -1377,7 +1377,12 @@ function checkDbMemory(intent, _projectDir, useHybrid) {
         id: (r.id || "unknown").slice(0, 8),
         type: r.learning_type || r.type || "UNKNOWN",
         content: preview + (content.length > 120 ? "..." : ""),
-        score: r.score || 0
+        // QW-06 Fix A (D3b-01): in hybrid mode, floor on the PRE-decay base RRF
+        // score. recall_learnings.py emits `base_score` (pre-decay); the
+        // decay-adjusted `score` can dip below HYBRID_FLOOR (0.01) purely from
+        // freshness decay, suppressing otherwise-relevant rows. The text-only
+        // path keeps `score` (freshness-discounted vs its 0.05 TEXT_ONLY_FLOOR).
+        score: (useHybrid ? r.base_score ?? r.score : r.score) || 0
       };
     });
     return [results, false];
@@ -1636,9 +1641,11 @@ ${memoryContext}` : memoryContext;
     outputContinue();
   }
 }
-main().catch(() => {
-  outputContinue();
-});
+if (!process.env.VITEST) {
+  main().catch(() => {
+    outputContinue();
+  });
+}
 export {
   HYBRID_FLOOR,
   LOCAL_SCORE_NORMALIZE,

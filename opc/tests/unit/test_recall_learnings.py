@@ -361,6 +361,56 @@ class TestSearchLearningsHybridRRF:
         assert results[0]["similarity"] >= 0.01
 
 
+class TestBuildRrfSql:
+    """QW-06 (D3b-02 + D3b-08): structural assertions on the RRF SQL builder.
+
+    Pure string-shape tests — no DB, no async. They pin the two behavioural
+    changes so a future whole-function regen can't silently revert them:
+      * Fix B: the FTS arm must OR its lexemes (not plainto/websearch, which AND).
+      * Fix C: a positive min_cosine must add an absolute cosine cutoff to the
+        vector CTE; the 0.0 default must leave it effectively ungated.
+    """
+
+    def _sql(self, **kwargs):
+        from db.memory_service_pg import build_rrf_sql
+        params = dict(
+            where_clause="LENGTH(content) >= 50",
+            text_query_param=1,
+            embedding_param=2,
+            rrf_k_param=3,
+            limit_param=4,
+        )
+        params.update(kwargs)
+        return build_rrf_sql(**params)
+
+    def test_fts_arm_uses_or_lexeme_tsquery_not_plainto(self):
+        """Fix B (D3b-02): FTS arm ORs stemmed lexemes; plainto is gone."""
+        sql = self._sql()
+        # OR-lexeme form present (used in BOTH the ts_rank ORDER BY and @@ match).
+        assert "to_tsquery('english', array_to_string(" in sql
+        assert "tsvector_to_array(to_tsvector('english', $1))" in sql
+        assert " | " in sql  # the OR join token between lexemes
+        # plainto_tsquery / websearch_to_tsquery both AND lexemes — must be gone.
+        assert "plainto_tsquery" not in sql
+        assert "websearch_to_tsquery" not in sql
+
+    def test_min_cosine_default_is_off(self):
+        """Default min_cosine=0.0 leaves the vector arm effectively ungated."""
+        sql = self._sql()
+        assert "(1 - (embedding <=> $2::vector)) >= 0.0" in sql
+
+    def test_min_cosine_positive_adds_cosine_cutoff(self):
+        """Fix C (D3b-08): min_cosine>0 gates the vector CTE on cosine sim."""
+        sql = self._sql(min_cosine=0.45)
+        assert "(1 - (embedding <=> $2::vector)) >= 0.45" in sql
+
+    def test_legacy_call_shape_still_accepted(self):
+        """Existing callers (no min_cosine kwarg) keep working — default OFF."""
+        from db.memory_service_pg import build_rrf_sql
+        sql = build_rrf_sql("1=1", 1, 2, 3, 4)
+        assert "fts_ranked" in sql and "vector_ranked" in sql
+
+
 class TestSearchLearningsPostgres:
     """Tests for PostgreSQL vector search."""
 

@@ -67,6 +67,7 @@ def build_rrf_sql(
     rrf_k_param: int,
     limit_param: int,
     extra_select: list[str] | None = None,
+    min_cosine: float = 0.0,
 ) -> str:
     """Build a Reciprocal Rank Fusion SQL query against archival_memory.
 
@@ -111,6 +112,12 @@ def build_rrf_sql(
         limit_param: 1-based parameter index for the LIMIT.
         extra_select: Optional extra columns to project in the final SELECT
             (e.g., ['a.session_id', 'c.fts_rank', 'c.vec_rank']).
+        min_cosine: Optional absolute cosine-similarity cutoff on the vector
+            arm (QW-06 Fix C / D3b-08). Default 0.0 = OFF (clause is always
+            true), so existing callers are unaffected. When > 0, rows whose
+            best cosine similarity (1 - cosine_distance) is below the cutoff
+            are excluded from the vector ranking, gating semantic junk that
+            survives RRF purely because every row gets a vector rank.
 
     Returns:
         Parameterized SQL string. Caller is responsible for binding parameters
@@ -120,6 +127,17 @@ def build_rrf_sql(
     if extra_select:
         extras_sql = ",\n            " + ",\n            ".join(extra_select)
 
+    # QW-06 Fix B (D3b-02): the FTS arm must use OR semantics. plainto_tsquery
+    # (and websearch_to_tsquery) AND all lexemes together, so a multi-word
+    # query matches ~0 rows and the FTS rank silently never contributes to the
+    # fusion. Convert the bound query to its stemmed lexemes and OR them, which
+    # is injection-safe (still a single bound parameter) and restores the FTS
+    # arm (live: 50 matches vs 0 for plainto on a representative query).
+    or_tsquery = (
+        "to_tsquery('english', array_to_string("
+        f"tsvector_to_array(to_tsvector('english', ${text_query_param})), ' | '))"
+    )
+
     return f"""
         WITH fts_ranked AS (
             SELECT
@@ -127,12 +145,12 @@ def build_rrf_sql(
                 ROW_NUMBER() OVER (
                     ORDER BY ts_rank(
                         to_tsvector('english', content),
-                        plainto_tsquery('english', ${text_query_param})
+                        {or_tsquery}
                     ) DESC
                 ) as fts_rank
             FROM archival_memory
             WHERE {where_clause}
-            AND to_tsvector('english', content) @@ plainto_tsquery('english', ${text_query_param})
+            AND to_tsvector('english', content) @@ {or_tsquery}
         ),
         vector_ranked AS (
             SELECT
@@ -141,6 +159,7 @@ def build_rrf_sql(
             FROM archival_memory
             WHERE {where_clause}
             AND embedding IS NOT NULL
+            AND (1 - (embedding <=> ${embedding_param}::vector)) >= {min_cosine}
         ),
         combined AS (
             SELECT

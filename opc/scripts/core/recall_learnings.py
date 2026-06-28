@@ -235,6 +235,22 @@ def _build_scope_clause(
 # bypasses the multiplier.
 DEFAULT_DECAY_LAMBDA = 0.02
 
+# QW-06 Fix C (D3b-08): absolute cosine cutoff on the vector arm of the hybrid
+# RRF query. Without it, every row gets a vector rank (cosine distance always
+# defined), so semantically irrelevant rows survive RRF purely on vector
+# ranking.
+#
+# Calibrated from the live corpus (2026-06-28). BGE-large has a high cosine
+# baseline, so the spec's first-guess 0.45 was BELOW the junk ceiling and did
+# not gate at all:
+#   junk    "banana smoothie recipe ukulele"            top-5 cos = 0.527..0.495
+#   on-topic"memory recall relevance hybrid floor decay" top-5 cos = 0.668..0.630
+#   rows>=0.45: junk 46 / on-topic 330   (0.45 gates NOTHING — junk survives)
+#   rows>=0.55: junk  0 / on-topic  17   (0.55 cleanly separates the two)
+# 0.55 sits above the junk ceiling (0.527) and well below on-topic matches, so
+# junk is gated to zero while on-topic recall keeps a healthy 17-row vector arm.
+VECTOR_MIN_COSINE = 0.55  # TUNABLE — calibrate from memory-recall.jsonl as corpus grows (SG-01)
+
 
 # Task 1.4 (Task #11 Path A): persistent BGE embedding daemon.
 #
@@ -844,6 +860,7 @@ async def search_learnings_hybrid_rrf(
                 "c.fts_rank",
                 "c.vec_rank",
             ],
+            min_cosine=VECTOR_MIN_COSINE,  # QW-06 Fix C (D3b-08): gate vector junk
         )
         rows = await conn.fetch(
             sql,
