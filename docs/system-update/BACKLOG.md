@@ -22,6 +22,20 @@ S0 remaining: **0**.
 
 **Order:** do QW-05/06/07/08/09/11/12 first (no cross-deps); **QW-04 LAST** (gated on QW-01 ✅). QW-07 is highest-priority within the independent group (24.6% pollution feeds every downstream consumer).
 
+### ✅ Shipped 2026-06-28 (the 7 independent quick-wins — all verified + pushed to fork)
+
+| ID | Commit | Closes | Verified by |
+|----|--------|--------|-------------|
+| QW-07 | `b1967ba` | D2c-01/D3b-05/D3c-04 | 21 tests RED→GREEN; live: `<task-notification>` no longer rides recall |
+| QW-05 | `3429858` | D2d-03 | revived end-to-end — **also** fixed the dead output field (`systemPromptSuffix`→`additionalContext`); 2 tests |
+| QW-09 | `90cb2b9` | D8a-02 | dangerous auto-exec rule defused (block reasons = guidance, not authorization) |
+| QW-08 | `f9cdbef` | D7b-01 | 28 ghost entries removed (86→58), each proven no live SKILL.md; both copies |
+| QW-06 | `10ee124` | D3b-01/D3b-02/D3b-08 | live: FTS arm 0→50, junk 3→1, hook now emits `MEMORY MATCH (3)` where it returned `continue` before; pytest + vitest |
+| QW-11 | `a8b10c5` | D2e-02/D2e-08 | real `node tsc` invocation (no `.cmd` shim); bus `'edited'` before both early-returns; 3 tests |
+| QW-12 | `bb96a55` | D2d-09/D2d-10/D2d-13 | relatedness + cwd + path-containment guards (new `shared/roadmap-sync-guards.ts`); 17 tests |
+
+Emit invariant held 4/4 across all. **Remaining in Wave 1:** `QW-04` (matcher flip — LAST), `QW-10` + safe deletions (cleanup batch), and the **D7b-02 / D7b-07 / D8c-06** real-skill follow-ups (split out of QW-08 — they fix *real* skills, not ghosts).
+
 | ID | Action | Files | Closes | Gate |
 |----|--------|-------|--------|------|
 | **QW-07** | `<task-notification>` XML machine-content guard + length cap upstream of `extractIntent`; fix `expandGitQuery` `lower.includes('pr')` substring collision + XML swallow | `memory-awareness` intent path; `expandGitQuery` | D2c-01/D3b-05/D3c-04 | none — **do first** |

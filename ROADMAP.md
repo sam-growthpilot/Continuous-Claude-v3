@@ -3,13 +3,22 @@
 ## Current Focus
 **CCv3 System Update — execute the ratified deep-review backlog (Wave 1 → Tier 2 → Tier 3 → Deletions)**
 - The Fable-5 deep review is COMPLETE (190 confirmed findings, ratified 4-tier backlog, elegance verdict "mixed"). Wave 0 (3 S0 fixes) SHIPPED. Now executing the rest across coordinated sessions.
-- **Orientation library:** `docs/system-update/` (README → CURRENT-STATE → BACKLOG → RESOURCE-MAP). **Handoff:** `docs/HANDOFF-2026-06-27-ccv3-system-update.md`.
+- **Orientation library:** `docs/system-update/` (README → CURRENT-STATE → BACKLOG → RESOURCE-MAP). **Handoff:** `docs/HANDOFF-2026-06-28-ccv3-system-update.md` (latest; supersedes 06-27).
 - **Branch:** `snapshot/ccv3-system-update` (off main; excludes in-progress `feature/cma-integration`). **Live visual:** https://rev4nchist.github.io/ai-enablement-decks/ccv3-state-of-rework/
-- **Next action:** Wave 1, starting with QW-07 (intent-pollution filter). See BACKLOG.md.
+- **Status:** Wave 1 = **7/9 shipped** (QW-05/06/07/08/09/11/12 — all verified + pushed). Tier 2b **multi-session arc** added to BACKLOG (ST-02 foundation + MS-01/02/03 + SG-04+). **Next action:** QW-04 (matcher flip — LAST in Wave 1, atomic across 3 settings surfaces), then Wave-1 cleanup (QW-10 + safe deletions + D7b-02/07 + D8c-06), then Tier 2 (**ST-02 first** — the multi-session foundation). See BACKLOG.md.
 - Constraints: push `fork` not `origin`; never change BGE model/dim (`BAAI/bge-large-en-v1.5`, 1024); Windows-safe; emit-guard 4/4 after hook edits; never full vitest; end goal = elegant CCv3 (design contract = running behavior).
 - Started: 2026-06-27 (review arc started 2026-06-10)
 
 ## Completed
+- [x] perf(sync): incremental forward-sync — copy only changed files, not the full .claude/ mirror (2026-06-28) `9cd77e1`
+- [x] fix(hooks): QW-12 roadmap-sync guards — relatedness, cwd verification, path-containment (2026-06-28) `bb96a55`
+- [x] fix(hooks): QW-11 post-edit-diagnostics — real tsc invocation + bus 'edited' before early-return (2026-06-28) `a8b10c5`
+- [x] fix(memory): QW-06 repair hybrid recall relevance — floor-on-base + OR-FTS + cosine gate (2026-06-28) `10ee124`
+- [x] docs(system-update): fold multi-session coordination into the backlog — ST-02 foundation + MS-01/02/03 arc + SG-04+ (2026-06-28) `aa3f6fa`
+- [x] fix(skills): QW-08 remove 28 ghost skill registrations from skill-rules.json (2026-06-28) `f9cdbef`
+- [x] fix(rules): QW-09 defuse hook-auto-execute — deny reasons are guidance, not authorization (2026-06-28) `90cb2b9`
+- [x] fix(hooks): QW-05 revive epistemic-reminder Grep guard — tool_name + additionalContext (2026-06-28) `3429858`
+- [x] fix(memory): QW-07 intent-pollution filter — drop machine-generated prompts before recall (2026-06-28) `b1967ba`
 - [x] docs(system-update): snapshot branch + orientation library (`docs/system-update/`) + handoff for coordinated multi-session backlog execution (2026-06-27)
 - [x] feat(viz): CCv3 state-of-rework deliverable — 4 Excalidraw diagrams + SVGs + briefing + generators (`scripts/viz/`); published as live interactive deck at rev4nchist.github.io/ai-enablement-decks/ccv3-state-of-rework/ (2026-06-27) `359843b`
 - [x] fix(hooks): close ROADMAP cross-project contamination guard — stopword + positive own-plan flip + D2F-03 (QW-03, S0) (2026-06-12) `f7f3eba`
