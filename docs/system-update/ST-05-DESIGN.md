@@ -111,7 +111,66 @@ Net: a resident recall path removes ~1.5–3.5s of pure overhead per call, leavi
 - Daemon survives `store_learning.py` writing new rows mid-session (R8: new learning recalled without restart).
 - Fallback verified: kill daemon mid-session → recall silently falls back to uv, no error surfaced.
 
+## Premortem-hardened refinements (Codex adversarial pass, 2026-06-29 — v2)
+
+Codex (gpt-5.5 @ xhigh) verdict: needs-attention, 9 findings. All folded in below;
+these are the BINDING implementation contract (supersede the v1 text where they conflict).
+
+**H1 — never let an error masquerade as "no matches" (silent total failure, 0.89).**
+The daemon `recall` handler wraps the whole query in try/except and returns `ok:false`
+on ANY internal exception. `ok:true` is returned ONLY for a genuinely-completed query
+(even if `results:[]`). Response carries `_meta: { vector_count, fts_count, threshold_drops,
+db_error? }`. The TS client treats `ok:false` OR a transport error → uv fallback. (An
+`ok:true, results:[]` is a real "no match" and does NOT fall back — correct behavior.)
+
+**H2 — dead-loop RuntimeError is caught explicitly (R6 was WRONG, 0.88).**
+`asyncio.run_coroutine_threadsafe(...)` raises `RuntimeError` SYNCHRONOUSLY when the loop
+is closed/dead — `fut.result(timeout)` never runs. So wrap the submit AND the `.result()`
+in SEPARATE try/except, catch `RuntimeError` (and `asyncio.TimeoutError`) explicitly →
+clear `recall_ready`, return `ok:false`. `ping` exposes a loop-health bit (watchdog).
+
+**H3 — invalidate the broken connection before retry (R1 insufficient, 0.86).**
+On a stale/closed pooled connection, `conn.close()` / release-as-broken BEFORE re-acquire,
+so the pool does not hand back another dead idle connection from the same batch. asyncpg:
+acquire fresh, retry once; on second failure → `ok:false`.
+
+**H4 — query_vector seam carries query_text too (FTS contract, 0.74/0.81).**
+`do_recall(query_vector, query_text, k, mode)` REQUIRES both: `query_vector` for the
+pgvector leg AND non-empty `query_text` for the FTS leg. Without the text, hybrid silently
+degrades to vector-only. Parity assertion: in hybrid mode both `vector_count>0` reachable
+AND the FTS arm receives the text (assert fts tsquery built from `query_text`).
+
+**H5 — single validated daemon-info read, identity-checked, hard timeout (TOCTOU, 0.78).**
+`isDaemonReady()` returns the validated `{pid, port, started_at}`; that exact tuple is
+passed into `recallViaDaemon(query, k, info)` (no second independent discovery-file read).
+The socket uses a hard connect+read timeout (≤2500ms) so a recycled Windows ephemeral port
+fast-fails → uv fallback (never hangs). Reuse the EXISTING `sendFrame`/`recvFrame`
+exact-length recv loop (don't roll a new recv — partial-read corruption, 0.67).
+
+**H6 — model identity, not just dim (R4 insufficient, 0.81).**
+The daemon recall embeds with its OWN resident model (the same process that serves `embed`),
+and the stored archival vectors come from that same pinned model — so query/stored spaces
+match by construction. Belt-and-suspenders: `ping`/`_meta` expose `model` + `dim`; the
+client already sanity-checks `EXPECTED_MODEL`/`EXPECTED_DIM` before routing. If a future
+change alters model/normalization, the identity check fails → uv fallback (no silent drift).
+
+**H7 — worst-case latency budget under contention (R3 incomplete, 0.82).**
+Budget = embed-lock wait + encode (~30-100ms) + asyncpg fetch (~5-30ms) + framing/net
+(~5ms). The TS client hard-timeout (≤2500ms) bounds the tail: under multi-session embed-lock
+contention the worst case is a timeout → uv fallback for that one prompt (slower once, never
+hangs, never wrong). Verify with a concurrency smoke (several back-to-back recalls).
+
+### Revised done-gates (expanded parity/failure fixtures — R7/H1/H3)
+- Warm hot-path ≤3s; RRF parity (ids + ordering) vs `recall_learnings.py --json` on a
+  **non-empty known-hit** query.
+- Forced-failure fixtures all fall back to uv (no silent empty, no hang): daemon-dead,
+  loop-dead (RuntimeError path), pool-acquire-timeout, server-closed-idle-connection,
+  zero-vector rejection, FTS-empty regression.
+- Emit invariant 4/4; MEMORY MATCH still fires; new learning (via store_learning.py mid-
+  session) is recalled without a daemon restart (R8 live-DB confirmation).
+
 ## Sequencing
-`/plan` (this doc) → `/premortem` (Codex adversarial pass on this doc) → user go/no-go →
-implement (TDD, Python + TS) → verify gates → commit/sync/push. Prereq for ST-03 + ST-10.
-After ST-05, re-baseline memory hit-rate (SG-01).
+`/plan` (this doc) → `/premortem` (Codex) **[DONE 2026-06-29 — v2 above]** → user go/no-go
+**[DONE — "premortem then implement"]** → implement (TDD, Python + TS, per v2 contract) →
+verify gates → commit/sync/push. Prereq for ST-03 + ST-10. After ST-05, re-baseline
+memory hit-rate (SG-01).
