@@ -34,6 +34,24 @@ function templateHookNames(): string[] {
   return names;
 }
 
+/** Map each registered hook name -> the set of "event::matcher" it's registered under. */
+function templateHookRegistrations(): Map<string, Set<string>> {
+  const s = JSON.parse(readFileSync(tplPath, 'utf8'));
+  const reg = new Map<string, Set<string>>();
+  for (const evt of Object.keys(s.hooks || {})) {
+    for (const b of s.hooks[evt]) {
+      const matcher = b.matcher ?? '';
+      for (const h of b.hooks || []) {
+        const m = (h.command || '').match(/dist\/([\w-]+)\.mjs/);
+        if (!m) continue;
+        if (!reg.has(m[1])) reg.set(m[1], new Set());
+        reg.get(m[1])!.add(`${evt}::${matcher}`);
+      }
+    }
+  }
+  return reg;
+}
+
 describe('settings.json.template', () => {
   it('is valid JSON', () => {
     expect(() => JSON.parse(readFileSync(tplPath, 'utf8'))).not.toThrow();
@@ -64,5 +82,38 @@ describe('settings.json.template', () => {
     const placeholders = [...raw.matchAll(/\{\{([A-Z_]+)\}\}/g)].map((m) => m[1]);
     const stray = [...new Set(placeholders.filter((p) => !known.has(p)))];
     expect(stray).toEqual([]);
+  });
+
+  it('registers key hooks under the CORRECT event + matcher (not just dist-exists)', () => {
+    // Verified against the template 2026-06-29. A hook silently moved to the wrong
+    // event/matcher (the QW-04 Agent->Task matcher flip reverted, or a Bash guard
+    // losing its Bash matcher) passes the dist-exists check above but breaks at
+    // runtime — it would never fire on the tool it must gate. This contract catches
+    // that drift. (event::matcher; UserPromptSubmit has no matcher -> empty.)
+    const reg = templateHookRegistrations();
+    const contract: Array<[string, string]> = [
+      ['destructive-command-guard', 'PreToolUse::Bash'],
+      ['package-install-guard', 'PreToolUse::Bash'],
+      ['agent-model-guard', 'PreToolUse::Task'],
+      ['agent-recall-injector', 'PreToolUse::Task'],
+      ['tldr-context-inject', 'PreToolUse::Task'],
+      ['plan-to-ralph-enforcer', 'PreToolUse::Edit|Write'],
+      ['memory-awareness', 'UserPromptSubmit::'],
+      ['post-edit-diagnostics', 'PostToolUse::Edit|Write'],
+      ['agent-error-capture', 'PostToolUse::Task'],
+      ['agent-verification', 'PostToolUse::Task'],
+      ['ralph-task-monitor', 'PostToolUse::Task'],
+      ['telemetry-tracker', 'PostToolUse::Skill|Task'],
+      ['plan-exit-tracker', 'PostToolUse::ExitPlanMode'],
+      ['epistemic-reminder', 'PostToolUse::Grep|Read'],
+    ];
+    for (const [name, expected] of contract) {
+      const got = reg.get(name);
+      expect(got, `${name} must be registered in the template`).toBeDefined();
+      expect(
+        [...(got ?? [])],
+        `${name} must be under ${expected} (got: ${[...(got ?? [])].join(', ') || 'none'})`,
+      ).toContain(expected);
+    }
   });
 });
