@@ -94,16 +94,66 @@ not a quick edit.
 **Phases 0, 1, 2, 3 are DONE (2026-06-29).** Phase 3 shipped: 3a `task-hooks-integration.test.ts`
 (14 Task-matcher hooks, 18/18) + 3b settings event+matcher contract (`90f8d7a`); 3c dead-code
 (checkLocalMemory + LOCAL_SCORE_NORMALIZE) + memory-sanitize header (6 sites) + agent-model-guard
-misnomer note (`44c2653`). Remaining for next session:
-- **host-memory-pressure RESTORE** (investigated 2026-06-29 → it is a REGRESSION, not aspirational):
-  `d71e9ad` shipped the feature — `shared/host-ram.ts` probe (STILL PRESENT; its 22 tests PASS) +
-  ~119 lines of wiring in `memory-awareness.ts`; the wiring was lost in a later overwrite (no
-  intentional-removal commit). Restore = re-wire the surviving probe, INTEGRATED with ST-05's new
-  `probeDaemon` flow (skip probe/recall → text-only when free RAM is low) + re-add the
-  `host_memory_pressure`/`free_ram_bytes`/`embed_fallback_reason` log fields so the 3 RED
-  `memory-awareness-host-ram.test.ts` go green.
-- **tldr-context-inject latency** (NEW, found by 3a): runs a ~10-15s `tldr structure` on EVERY Task
-  spawn (occasionally >15s). QW-04 put it on the Task matcher deliberately (Agent→Task rename), so
-  it IS per-agent context injection — decide if it's worth the cold start: cache the result, route
-  through a resident tldr daemon, or narrow the matcher. Documented in the 3a test (FINDING + 20s budget).
-- **SG-01**: re-baseline memory hit-rate now that recall is resident. Revisit ST-03/ST-10 (ST-05 prereq).
+misnomer note (`44c2653`). The original "Remaining" items are now addressed — see
+**Foundation Hardening (Session 2)** below.
+
+## Foundation Hardening — Session 2 (2026-06-29) ✅ SHIPPED
+
+Reframed goal: make the foundation safe to run UNATTENDED for weeks. Preflight found the
+core sound (branch synced, Postgres up, daemon live + routing recall, reverse-sync is the
+only auto-writer, no stray Ralph loop — `.ralph/state.json` was inert from May 31, archived).
+Shipped + pushed `fork` (`237c72e`, `501365e`, `1fd155c`):
+
+- **A1–A4 daemon multi-week resilience** (`237c72e`, Python; 41 tests; live-verified after a real
+  daemon restart → recall_ready+loop_ok in ~12s, socket recall ok:true both legs):
+  - **A1** explicit `max_inactive_connection_lifetime=300` in the asyncpg pool. NOTE: verified
+    asyncpg 0.31.0 ALREADY defaults to 300.0 (idle conns auto-evict) — the scout's "never evicts /
+    permadegrade" premise was WRONG; this is future-proofing, not a live-bug fix.
+  - **A2** `_recycle_pool_best_effort()` (`Pool.expire_connections`) before the H3 retry → a full
+    Postgres restart (all pooled conns dead) recovers immediately, not gradually.
+  - **A3** in-process recall-loop watchdog (daemon thread, 60s): H2 only DETECTED a dead loop;
+    the watchdog RESTARTS it (idempotent) so the resident fast path self-heals over a long uptime.
+  - **A4** `_acquire_startup_slot()` checks for a healthy peer before contending the OS lock.
+    **VERIFIED the OS lock already guarantees ≤1 model-loading daemon** (msvcrt LK_NBLCK repro:
+    1 ACQUIRED / 2 BLOCKED; committed-mem confirmed only the lock holder loads the 2.8 GB model).
+    The observed 10-daemon "storm" was cheap transient `uv run` husks, NOT multiple resident
+    models — the catastrophic case cannot happen. Killed the surplus operationally.
+- **B host-memory-pressure gate RESTORED** (`501365e`, `memory-awareness.ts`, 4 targeted edits;
+  3 RED tests → green, 22 host-ram unit tests green, 16/16 memory-awareness no-regression, emit 4/4).
+  Correction: the wiring was NEVER committed (not "lost in an overwrite"). Integrated with ST-05:
+  the RAM gate sits BEFORE `probeDaemon` → under pressure it skips the probe AND the spawn (never
+  thrashes the ~1.3 GB model), forces text-only, logs `host_memory_pressure`/`free_ram_bytes`/
+  `embed_fallback_reason`. Fail-open (+Infinity on probe failure).
+- **A6 auto-start/recovery hardening** (system config): disabled the dead `ClaudeMemoryDaemon`
+  scheduled task (its target `.claude\scripts\core\core\memory_daemon.py` does not exist) +
+  registered `CCv3-Embedding-Daemon-Daily` (idempotent backstop; verified no-op when healthy).
+  Auto-recovery is now three-layered: logon trigger + lazy `ensureDaemonRunning` + A3 watchdog,
+  with the daily task as belt-and-suspenders.
+- **D tldr-context-inject latency** (`1fd155c`, 8/8 tests): subagent_type narrow (skip non-code
+  agents) + git-freshness cache (HEAD sha + dirty marker + query; cold-start paid once per
+  working-tree state) + guarded module-level `main()` so the file is importable (fixed a
+  pre-existing vitest hang).
+- **SG-01 re-baseline (partial)**: hit-rate 27.4% (review) → **32.8% all-time, 40% last-50** (the
+  QW-06/07 math fixes worked). The uv-subprocess era shows p50 11.6 s / 40% `db_subprocess_timed_out`;
+  the resident-daemon era is only n=2 logged so far (3.4 s, 100% hit, 0% timeout — strong but tiny
+  sample). Full re-baseline needs the daemon era to accumulate.
+
+## Remaining for next session
+
+- **SG-01 full re-baseline** — re-run the `memory-recall.jsonl` analysis after ~50+
+  `recall_via:daemon` events accumulate; confirm the daemon hit-rate/latency holds, then unblock
+  **ST-03** (UPS 13-spawn serial→parallel) and **ST-10** (agent-recall-injector 0-for-78) which
+  are gated on ST-05.
+- **tldr daemon stays-up** (health-check `tldr-daemon-running` HIGH: `tldr daemon status` times
+  out 5 s). D's cache/narrow cut the per-Task cold-start but did NOT fix the daemon not persisting.
+  Root-cause why `tldr daemon` won't stay resident on Windows (DEFER option from the D recon) — or
+  make the health check tolerate its absence. See BACKLOG.
+- **Backlog (unchanged):** the Tier-2/2b/3 structural arcs (ST-02 identity, ST-01 bus writer, the
+  MS-01/02/03 multi-session arc, SG-02/03/04) remain in [`BACKLOG.md`](./BACKLOG.md).
+
+## Known-good / no-action (verified this session)
+- init-project "broken ref" (`references/sdk-setup.md`) is a **health-check false positive** — the
+  ref points to `.claude/skills/sentry-cli/references/sdk-setup.md`, which EXISTS; the checker
+  resolves cross-skill paths against the wrong dir.
+- Failing weekly scheduled tasks (`CCv3-Health-Check` = the tldr-daemon HIGH above; `CCv3-Judge-Batch`
+  = Braintrust observability) are tangential to the daemon/memory/sync foundation — triage later.

@@ -114,3 +114,25 @@ Flip `code-intel-enforcer` to **deny-mode** only when **all three** are green:
 3. `intel-bus-stats.mjs` built and computing §9 metrics (real denominator, not zero).
 
 Only then is the facade-bypass rate an enforced invariant.
+
+---
+
+## Foundation Hardening — Session 2 (2026-06-29)
+
+Stability-first pass to make the system run UNATTENDED for weeks. Full record in
+[`NEXT-SESSION-PLAN.md`](./NEXT-SESSION-PLAN.md) → "Foundation Hardening — Session 2".
+
+**Shipped + pushed `fork`:** A1–A4 daemon multi-week resilience (`237c72e`: explicit asyncpg
+idle-lifetime, `expire_connections` retry-recycle, in-process recall-loop watchdog, cheap
+redundant-spawn exit — with the **verified** finding that the OS lock already caps resident
+daemons at 1, so the multi-daemon "storm" was cheap husks, not multiple 2.8 GB models) · **B**
+host-memory-pressure gate restored + integrated with ST-05 `probeDaemon` (`501365e`) · **A6**
+disabled dead `ClaudeMemoryDaemon` task + added idempotent daily daemon backstop · **D**
+tldr-context-inject git-freshness cache + code-agent narrow (`1fd155c`).
+
+**New follow-ups (not in the original deep-review backlog):**
+
+| ID | Item | Notes |
+|----|------|-------|
+| **FH-01** | **tldr daemon won't stay resident** (health-check `tldr-daemon-running` HIGH: `tldr daemon status` times out 5 s) | D's cache/narrow cut the per-Task cold-start but the daemon still doesn't persist on Windows. Root-cause `tldr daemon` lifecycle (DEFER option from D recon) OR make the health check tolerate its absence. |
+| **FH-02** | **SG-01 full re-baseline** | Hit-rate is 27.4%→32.8% all-time / 40% last-50 (math fixes). Resident-daemon era is only n=2 logged (3.4 s, 100% hit, 0% timeout). Re-run the `memory-recall.jsonl` analysis after ~50+ `recall_via:daemon` events; then unblock **ST-03** + **ST-10** (ST-05-gated). Supersedes the SG-01 stub above. |
