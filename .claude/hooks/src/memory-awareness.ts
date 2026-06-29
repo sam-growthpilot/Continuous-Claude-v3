@@ -48,16 +48,6 @@ import { extractBusFocus, buildFocusBlock } from './shared/bus-focus.js';
 const TEXT_ONLY_FLOOR = 0.05;  // FTS ts_rank scores: 0.05-0.5 typical
 const HYBRID_FLOOR = 0.01;     // RRF fused scores: 0.01-0.03 typical
 
-/**
- * Score-scale normalization for local results.
- *
- * Local index returns cosine-ish similarity (~0.5 typical) while the DB path
- * returns ts_rank (0.0001–0.1) plus a 0.1 ILIKE fallback. Multiplying local
- * scores by this factor brings them into the ts_rank range so the merge sort
- * and floor filter behave consistently across both sources.
- */
-const LOCAL_SCORE_NORMALIZE = 0.1;
-
 interface UserPromptSubmitInput {
   session_id: string;
   hook_event_name: string;
@@ -93,52 +83,6 @@ function readStdin(): string {
 // './shared/intent-extractor.js' (Wave 2 — kraken-AGENT-RECALL).
 // The implementations there are byte-identical to the previous inline
 // versions; behavior is unchanged.
-
-/**
- * Check local project memory index first (topic keyword match).
- * Returns results from .claude/memory/index.json if available.
- *
- * NOTE: scores from this path are similarity-style (~0.5). The caller
- * normalizes them via LOCAL_SCORE_NORMALIZE before merging with DB results
- * so the merge sort + floor filter behave consistently.
- */
-function checkLocalMemory(intent: string, projectDir: string): LearningResult[] {
-  const homeDir = process.env.HOME || process.env.USERPROFILE || '';
-  const projectMemoryScript = path.join(homeDir, '.claude', 'scripts', 'core', 'project_memory.py');
-
-  if (!existsSync(projectMemoryScript)) return [];
-
-  try {
-    const result = spawnSync('uv', [
-      'run', 'python', projectMemoryScript,
-      'query', intent,
-      '--project-dir', projectDir,
-      '-k', '3',
-      '--json'
-    ], {
-      encoding: 'utf-8',
-      cwd: path.join(homeDir, '.claude', 'scripts', 'core'),
-      timeout: 2000,
-      killSignal: 'SIGKILL',
-    });
-
-    if (result.status !== 0 || !result.stdout) return [];
-
-    const data = JSON.parse(result.stdout);
-    if (!data.results || data.results.length === 0) return [];
-
-    return data.results.slice(0, 3).map((r: any) => ({
-      id: r.task_id || r.id || 'local',
-      type: 'LOCAL_HANDOFF',
-      content: r.summary || r.content || '',
-      // Normalize local similarity (~0.5) into ts_rank range so the merge
-      // sort/floor doesn't unfairly favor local rows.
-      score: (r.similarity || 0.5) * LOCAL_SCORE_NORMALIZE,
-    }));
-  } catch {
-    return [];
-  }
-}
 
 /**
  * Normalize a raw intent into the DB search term: drop underscores/slashes,
@@ -760,7 +704,6 @@ export {
   applyFloor,
   TEXT_ONLY_FLOOR,
   HYBRID_FLOOR,
-  LOCAL_SCORE_NORMALIZE,
 };
 export type { LearningResult, MemoryMatch, MemorySource };
 // Also re-export the shared helpers so callers don't need to know they were

@@ -1339,7 +1339,6 @@ function buildFocusBlock(terms) {
 // src/memory-awareness.ts
 var TEXT_ONLY_FLOOR = 0.05;
 var HYBRID_FLOOR = 0.01;
-var LOCAL_SCORE_NORMALIZE = 0.1;
 function readStdin() {
   return readFileSync5(0, "utf-8");
 }
@@ -1684,7 +1683,6 @@ if (!process.env.VITEST) {
 }
 export {
   HYBRID_FLOOR,
-  LOCAL_SCORE_NORMALIZE,
   TEXT_ONLY_FLOOR,
   applyFloor,
   extractIntent,

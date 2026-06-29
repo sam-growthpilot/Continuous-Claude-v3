@@ -4,6 +4,11 @@
  *
  * Validates that agent definition files exist before spawning.
  * Prevents runtime errors from missing agent types.
+ *
+ * NOTE: the filename `agent-model-guard` is a historical MISNOMER — this hook
+ * guards agent EXISTENCE (hard-deny on a missing agent definition), NOT model
+ * selection. Kept under the old name to avoid churning settings.json + the dist
+ * + the sync; this docstring is the source of truth for what it actually does.
  */
 
 import { readFileSync, existsSync, readdirSync } from 'fs';
