@@ -10,20 +10,15 @@
 > (must be `Found: 4 | Invariant: 4`) → commit with **`git commit -F <file>`** (NEVER backtick
 > `-m` — see the incident in the handoff) → sync the changed dist to active → push `fork`.
 
-## Phase 0 — F4 interactive-gate smoke test (do FIRST, default mode, ~1 min)
+## Phase 0 — F4 interactive-gate smoke test ✅ DONE 2026-06-29 (default mode)
 
-The destructive-command-guard returns `permissionDecision: 'ask'` interactively. We must
+The destructive-command-guard returns `permissionDecision: 'ask'` interactively. We needed to
 confirm that `ask` actually surfaces a prompt and isn't swallowed by `permission-auto-allow`.
 
-Test command (harmless — `git clean` dry-run; guard-flagged but NOT in settings deny):
-`git clean -fdn`  (the `-n` makes it dry-run = lists only, deletes nothing)
-
-- **Prompt appears** → SAFE confirmed for interactive. Mark F4 done; re-word the handoff's
-  "interactive pending" note to "verified".
-- **No prompt, it just runs** → gate is swallowed. Deeper fix: make `permission-auto-allow`
-  return no-decision for Bash unconditionally (already done) AND verify Claude Code routes a
-  PreToolUse `ask` through PermissionRequest; if not, the guard must `deny`-with-instructions
-  instead of `ask` for the interactive destructive case.
+**Result: PASS.** Ran `git clean -fdn` in a default-mode session; a permission PROMPT appeared
+(not a silent auto-approve) and the command completed with no output (no untracked files; `-n`
+is dry-run). This also confirms the F3 split-flag fix (`-fdn`). SAFE fully confirmed for the
+interactive path — no deeper `permission-auto-allow` / PermissionRequest fix needed.
 
 ## Phase 1 — Quick S2 hardening (small, high-value; SAFE + USABLE)
 

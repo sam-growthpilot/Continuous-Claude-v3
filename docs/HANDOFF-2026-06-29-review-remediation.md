@@ -47,19 +47,18 @@ context-breakout and only wraps untrusted recall, leaving trusted local files un
   on a Windows drive root (live on every Task spawn after QW-04, ~5s hang). Now terminates on
   `dirname(current)===current`. Verified: terminates in ~1ms.
 - **F4 (S1/HONEST)** — `permission-auto-allow` no longer blanket-allows Bash, so the guard's
-  interactive `ask` is not auto-swallowed. Overclaims corrected here. ⚠️ **STILL NEEDS a
-  default-mode smoke test** (see loose ends).
+  interactive `ask` is not auto-swallowed. Overclaims corrected here. ✅ **VERIFIED 2026-06-29**
+  in a default-mode session: `git clean -fdn` surfaced a real permission PROMPT (not a silent
+  auto-approve), which also confirms the F3 split-flag fix (`-fdn`). SAFE fully confirmed.
 
 Tests added/updated: `buildDaemonInvocation` (2), destructive-guard split-flag + leading-SKIP
 (75 total), `tldr-context-inject` termination. Emit invariant 4/4 throughout.
 
 ## START HERE — remaining loose ends
 
-1. **F4 interactive-gate smoke test (needs a human, ~1 min).** Run Claude Code in **default
-   (non-bypass) mode**, attempt `rm -rf <throwaway-dir>`, and confirm a permission PROMPT
-   appears (not silent auto-approve). The fix is in place; only interactive verification
-   remains. If it still auto-approves, the deeper fix is to stop `permission-auto-allow`
-   firing on the guard's ask path.
+1. ~~**F4 interactive-gate smoke test (needs a human, ~1 min).**~~ ✅ **DONE 2026-06-29.** Ran
+   `git clean -fdn` in a default-mode session; a permission PROMPT appeared (not a silent
+   auto-approve). SAFE confirmed for the interactive path. No deeper fix needed.
 2. **ST-05 resident recall daemon** — the only path to the USABLE ≤3s target (the ~10s
    memory hot-path is the per-call `uv`+python boot; F5 removed the separate ~5s tldr hang).
 3. **Guard backlog (S2/S3, from the review):** `bash -c "rm -rf /"` / backtick-wrapped
