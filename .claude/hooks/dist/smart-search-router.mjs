@@ -1,6 +1,6 @@
 // src/smart-search-router.ts
 import { existsSync as existsSync3, mkdirSync as mkdirSync3, writeFileSync as writeFileSync3 } from "fs";
-import { execSync as execSync2 } from "child_process";
+import { spawnSync as spawnSync2 } from "child_process";
 import { join as join4 } from "path";
 
 // src/daemon-client.ts
@@ -357,14 +357,28 @@ function tldrSearch(pattern, projectDir = ".") {
     return ripgrepFallback(pattern, projectDir);
   }
 }
+function buildRipgrepArgs(pattern, projectDir) {
+  return [
+    "-e",
+    pattern,
+    "--type",
+    "py",
+    "--line-number",
+    "--max-count",
+    "10",
+    "--",
+    projectDir
+  ];
+}
 function ripgrepFallback(pattern, projectDir) {
   try {
-    const escaped = pattern.replace(/"/g, '\\"').replace(/\$/g, "\\$");
-    const result = execSync2(
-      `rg "${escaped}" "${projectDir}" --type py --line-number --max-count 10 2>/dev/null`,
-      { encoding: "utf-8", timeout: 3e3 }
-    );
-    return result.trim().split("\n").filter((l) => l).slice(0, 10).map((line) => {
+    const result = spawnSync2("rg", buildRipgrepArgs(pattern, projectDir), {
+      encoding: "utf-8",
+      timeout: 3e3,
+      shell: false
+    });
+    if (result.status !== 0 || !result.stdout) return [];
+    return result.stdout.trim().split("\n").filter((l) => l).slice(0, 10).map((line) => {
       const match = line.match(/^([^:]+):(\d+):(.*)$/);
       if (match) {
         return { file: match[1], line: parseInt(match[2], 10), content: match[3] };
@@ -726,3 +740,6 @@ No code semantically similar to "${pattern}" found in the index.
   console.log(JSON.stringify(output));
 }
 main().catch(console.error);
+export {
+  buildRipgrepArgs
+};

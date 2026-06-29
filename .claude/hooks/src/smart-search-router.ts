@@ -10,7 +10,7 @@
  */
 
 import { existsSync, mkdirSync, writeFileSync, readFileSync } from 'fs';
-import { execSync } from 'child_process';
+import { spawnSync } from 'child_process';
 import { join } from 'path';
 import { queryDaemonSync, DaemonResponse, trackHookActivitySync } from './daemon-client.js';
 import { logHook } from './shared/session-activity.js';
@@ -95,17 +95,41 @@ function tldrSearch(pattern: string, projectDir: string = '.'): TLDRSearchResult
 }
 
 /**
+ * Build the ripgrep argv. Injection-safe by construction (ST-08 slice /
+ * D2b-10 / GAP4-01): the model-controlled `pattern` is passed via `-e <pattern>`
+ * so a leading-dash pattern is treated as a literal search pattern, never a flag
+ * (Codex #1), and `--` terminates flag parsing before the path operand. Consumed
+ * by spawnSync(..., {shell:false}) so no shell ever interprets metacharacters.
+ */
+export function buildRipgrepArgs(pattern: string, projectDir: string): string[] {
+  return [
+    '-e', pattern,
+    '--type', 'py',
+    '--line-number',
+    '--max-count', '10',
+    '--', projectDir,
+  ];
+}
+
+/**
  * Ripgrep fallback for when daemon is unavailable.
  */
 function ripgrepFallback(pattern: string, projectDir: string): TLDRSearchResult[] {
   try {
-    const escaped = pattern.replace(/"/g, '\\"').replace(/\$/g, '\\$');
-    const result = execSync(
-      `rg "${escaped}" "${projectDir}" --type py --line-number --max-count 10 2>/dev/null`,
-      { encoding: 'utf-8', timeout: 3000 }
-    );
+    // ST-08 slice (D2b-10/GAP4-01): argv spawn with shell:false. The prior
+    // execSync(`rg "${escaped}" ...`) interpolated a model-controlled pattern
+    // into a shell command string with only naive `"`/`$` escaping — a real
+    // RCE surface. spawnSync hands every token to rg verbatim with no shell.
+    const result = spawnSync('rg', buildRipgrepArgs(pattern, projectDir), {
+      encoding: 'utf-8',
+      timeout: 3000,
+      shell: false,
+    });
+    // rg exits 0=match, 1=no-match, 2=error; treat anything non-zero (or no
+    // output) as "no results", matching the prior catch-on-throw behavior.
+    if (result.status !== 0 || !result.stdout) return [];
     // Parse ripgrep output: file:line:content
-    return result.trim().split('\n').filter(l => l).slice(0, 10).map(line => {
+    return result.stdout.trim().split('\n').filter(l => l).slice(0, 10).map(line => {
       const match = line.match(/^([^:]+):(\d+):(.*)$/);
       if (match) {
         return { file: match[1], line: parseInt(match[2], 10), content: match[3] };
