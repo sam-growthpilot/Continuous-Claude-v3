@@ -348,7 +348,8 @@ function checkMemoryRelevance(
 ): MemoryMatch | null {
   if (!intent || intent.length < 3) return null;
 
-  const local = checkLocalMemory(intent, projectDir);
+  // Phase 3 / D3b-04: local-memory probe removed (near-always SIGKILLs; see main()).
+  const local: LearningResult[] = [];
   const [db] = checkDbMemory(intent, projectDir, useHybrid);
 
   const merged = mergeResults(local, db);
@@ -556,7 +557,13 @@ async function main() {
   // Hybrid RRF scores (0.01-0.03) require a lower floor than text-only
   // FTS ts_rank scores (0.05-0.5); using the wrong floor silently drops
   // all daemon-returned matches.
-  const local = checkLocalMemory(recallQuery, projectDir);
+  // Phase 3 / D3b-04: checkLocalMemory removed from the hot path. Its 2000ms
+  // spawn cap is BELOW `uv run` cold-start (~2.2s on Windows), so it near-always
+  // SIGKILLs and returns [] — ~2s of guaranteed-wasted latency per prompt for
+  // zero contribution. Recall now comes from the DB path only. (The remaining
+  // hot-path cost is checkDbMemory's per-call uv+python boot; the real fix is the
+  // ST-05 resident recall daemon — backlog, not this change.)
+  const local: LearningResult[] = [];
   const [db, dbTimedOut] = checkDbMemory(recallQuery, projectDir, daemonReady);
   const mergedRaw = mergeResults(local, db);
   const floorApplied = daemonReady ? HYBRID_FLOOR : TEXT_ONLY_FLOOR;

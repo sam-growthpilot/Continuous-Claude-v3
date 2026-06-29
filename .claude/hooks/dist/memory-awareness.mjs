@@ -1291,43 +1291,6 @@ var LOCAL_SCORE_NORMALIZE = 0.1;
 function readStdin() {
   return readFileSync5(0, "utf-8");
 }
-function checkLocalMemory(intent, projectDir) {
-  const homeDir = process.env.HOME || process.env.USERPROFILE || "";
-  const projectMemoryScript = path.join(homeDir, ".claude", "scripts", "core", "project_memory.py");
-  if (!existsSync6(projectMemoryScript)) return [];
-  try {
-    const result = spawnSync("uv", [
-      "run",
-      "python",
-      projectMemoryScript,
-      "query",
-      intent,
-      "--project-dir",
-      projectDir,
-      "-k",
-      "3",
-      "--json"
-    ], {
-      encoding: "utf-8",
-      cwd: path.join(homeDir, ".claude", "scripts", "core"),
-      timeout: 2e3,
-      killSignal: "SIGKILL"
-    });
-    if (result.status !== 0 || !result.stdout) return [];
-    const data = JSON.parse(result.stdout);
-    if (!data.results || data.results.length === 0) return [];
-    return data.results.slice(0, 3).map((r) => ({
-      id: r.task_id || r.id || "local",
-      type: "LOCAL_HANDOFF",
-      content: r.summary || r.content || "",
-      // Normalize local similarity (~0.5) into ts_rank range so the merge
-      // sort/floor doesn't unfairly favor local rows.
-      score: (r.similarity || 0.5) * LOCAL_SCORE_NORMALIZE
-    }));
-  } catch {
-    return [];
-  }
-}
 function checkDbMemory(intent, _projectDir, useHybrid) {
   const opcDir = getOpcDir();
   if (!opcDir) return [[], false];
@@ -1539,7 +1502,7 @@ async function main() {
   }
   const queryBiased = focusTerms.length > 0 && daemonReady;
   const recallQuery = queryBiased ? `${intent} ${focusTerms.join(" ")}` : intent;
-  const local = checkLocalMemory(recallQuery, projectDir);
+  const local = [];
   const [db, dbTimedOut] = checkDbMemory(recallQuery, projectDir, daemonReady);
   const mergedRaw = mergeResults(local, db);
   const floorApplied = daemonReady ? HYBRID_FLOOR : TEXT_ONLY_FLOOR;
