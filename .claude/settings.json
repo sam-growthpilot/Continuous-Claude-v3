@@ -131,6 +131,16 @@
             "timeout": 5000
           }
         ]
+      },
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node C:/Users/david.hayes/.claude/hooks/dist/destructive-command-guard.mjs",
+            "timeout": 5000
+          }
+        ]
       }
     ],
     "UserPromptSubmit": [

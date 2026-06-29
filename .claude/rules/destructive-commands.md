@@ -2,6 +2,17 @@
 
 **NEVER run destructive commands without explicit user confirmation.**
 
+## Now ENFORCED by a hook (not just advisory)
+
+The `destructive-command-guard` PreToolUse:Bash hook (`.claude/hooks/src/destructive-command-guard.ts`) enforces this rule mechanically:
+- **Interactive** (permission_mode default/acceptEdits/plan) → destructive commands return `permissionDecision: 'ask'` so the human is prompted.
+- **Unattended** (bypassPermissions, a subagent `CLAUDE_AGENT_ID`, or CI) → destructive commands `deny` (fail-closed; an interactive prompt would hang a headless/autonomous run).
+- Scope = UNQUOTED shell ops, curated HIGH blast radius + LOW false-positive: recursive `rm` (incl. `sudo rm -rf`), `git reset --hard`/force-push/`clean -f`/`checkout --`/`branch -D`/`rebase`/`reflog expire`/`gc --prune`/`filter-branch`, `find -delete`/`-exec rm`, `dd`/`mkfs`/`shred`/`truncate -s 0`, write-to-block-device, `docker prune`/`volume rm`/force-rm. Compound `X && rm -rf Y` is caught; single-file `rm -f file` is NOT gated.
+- It scans the command AFTER stripping quoted strings, so destructive keywords inside a commit message / echo / diagnostic do NOT false-trigger. Consequence: DB `DROP`/`TRUNCATE` and PowerShell `Remove-Item` (whose payload is inherently quoted, e.g. `psql -c "DROP TABLE"`) are deliberately NOT gated here — they stay covered by the `neonctl *delete*` deny rule, the per-tool safety rules (neonctl/kusto/databases), and the confirm-first convention. Known gap: a destructive op wrapped in `bash -c "rm -rf /"` is not seen.
+- Fail-OPEN on any error (a guard bug never bricks Bash). **Override** for a known-good run: prefix `SKIP_DESTRUCTIVE_GUARD=1 <command>` (detected in the command string — a PreToolUse hook does not inherit the command's inline env).
+
+The lists below remain the authoritative human rule; the hook is the backstop that makes it actually fire.
+
 ## Deletion Commands (ALWAYS ASK FIRST)
 
 Before running ANY of these, ask the user:
