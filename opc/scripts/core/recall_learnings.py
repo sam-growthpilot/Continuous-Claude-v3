@@ -761,6 +761,8 @@ async def search_learnings_hybrid_rrf(
     include_superseded: bool = False,
     decay_lambda: float = DEFAULT_DECAY_LAMBDA,
     embed_meta_out: dict[str, Any] | None = None,
+    query_vector: list[float] | None = None,
+    stats_out: dict[str, Any] | None = None,
 ) -> list[dict[str, Any]]:
     """Hybrid RRF search combining text and vector rankings.
 
@@ -781,6 +783,16 @@ async def search_learnings_hybrid_rrf(
             valid_until has passed.
         decay_lambda: Exponential decay constant (per day). 0.02 -> half-life
             ~35 days. Set to 0 to disable.
+        query_vector: ST-05 seam. When provided (by the resident recall
+            daemon, which already embedded the query with its own pinned
+            model), the internal ``_embed_query_with_daemon`` call is SKIPPED
+            and this vector drives the pgvector leg directly. The FTS leg
+            still uses ``query`` text (H4 — hybrid must not silently degrade
+            to vector-only). The CLI passes ``None`` and is unchanged.
+        stats_out: ST-05 seam. Optional diagnostics sink (mutated in place):
+            ``vector_count`` / ``fts_count`` (arm participation across the
+            fetched candidate rows) and ``threshold_drops`` (rows below
+            ``similarity_threshold``). ``None`` on the CLI path -> no-op.
 
     Returns:
         List of learnings with RRF + decay-adjusted scores. Each row has
@@ -805,11 +817,19 @@ async def search_learnings_hybrid_rrf(
     # daemon when alive, else fall back to in-process. Diagnostics land
     # in embed_meta_out (mutated dict), which main() merges into the
     # JSON `_meta` block.
-    query_embedding = await _embed_query_with_daemon(
-        query=query,
-        provider=provider,
-        meta_out=embed_meta_out,
-    )
+    #
+    # ST-05 seam: when the caller (resident recall daemon) already embedded
+    # the query with its OWN resident model, thread that vector straight into
+    # the pgvector leg and skip the embed round-trip entirely. `query` text
+    # is still passed to the FTS leg below (H4). CLI path: query_vector=None.
+    if query_vector is not None:
+        query_embedding = query_vector
+    else:
+        query_embedding = await _embed_query_with_daemon(
+            query=query,
+            provider=provider,
+            meta_out=embed_meta_out,
+        )
 
     # Filter to learning-typed entries (or untyped legacy rows), with content
     # length and a known agent-failure exclusion. Phase 3B: WHERE-only fragment;
@@ -884,10 +904,21 @@ async def search_learnings_hybrid_rrf(
         row_d = dict(row) if not isinstance(row, dict) else row
         rrf_score = float(row_d["rrf_score"])
 
+        # ST-05: arm-participation diagnostics across ALL fetched rows (before
+        # the threshold filter). Guarded by stats_out so the CLI path is
+        # untouched.
+        if stats_out is not None:
+            if row_d.get("vec_rank") is not None:
+                stats_out["vector_count"] = stats_out.get("vector_count", 0) + 1
+            if row_d.get("fts_rank") is not None:
+                stats_out["fts_count"] = stats_out.get("fts_count", 0) + 1
+
         # Threshold applies to the base RRF score, not the decay-adjusted one.
         # That keeps the threshold semantics stable (it's about ranking
         # quality, not freshness).
         if similarity_threshold > 0 and rrf_score < similarity_threshold:
+            if stats_out is not None:
+                stats_out["threshold_drops"] = stats_out.get("threshold_drops", 0) + 1
             continue
 
         metadata = row_d["metadata"]
@@ -925,6 +956,7 @@ async def search_learnings_postgres(
     include_superseded: bool = False,
     decay_lambda: float = DEFAULT_DECAY_LAMBDA,
     embed_meta_out: dict[str, Any] | None = None,
+    query_vector: list[float] | None = None,
 ) -> list[dict[str, Any]]:
     """Search learnings using PostgreSQL (vector similarity or text fallback).
 
@@ -995,11 +1027,16 @@ async def search_learnings_postgres(
     if has_embeddings:
         # Vector similarity search. Task 1.4: route through the embedding
         # daemon when alive, else fall back to in-process.
-        query_embedding = await _embed_query_with_daemon(
-            query=query,
-            provider=provider,
-            meta_out=embed_meta_out,
-        )
+        # ST-05 seam: a precomputed query_vector (from the resident recall
+        # daemon) skips the embed entirely. CLI path: query_vector=None.
+        if query_vector is not None:
+            query_embedding = query_vector
+        else:
+            query_embedding = await _embed_query_with_daemon(
+                query=query,
+                provider=provider,
+                meta_out=embed_meta_out,
+            )
 
         async with pool.acquire() as conn:
             from db.postgres_pool import init_pgvector
@@ -1215,6 +1252,7 @@ async def search_learnings(
     include_superseded: bool = False,
     decay_lambda: float = DEFAULT_DECAY_LAMBDA,
     embed_meta_out: dict[str, Any] | None = None,
+    query_vector: list[float] | None = None,
 ) -> list[dict[str, Any]]:
     """Search archival_memory for session learnings.
 
@@ -1258,6 +1296,7 @@ async def search_learnings(
             include_superseded=include_superseded,
             decay_lambda=decay_lambda,
             embed_meta_out=embed_meta_out,
+            query_vector=query_vector,
         )
 
 
@@ -1469,6 +1508,215 @@ def _apply_rerank(
         "rerank_model": "BAAI/bge-reranker-v2-m3",
     }
     return hydrated, meta
+
+
+def _serialize_results_json(results: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Serialize recall results to the ``--json`` wire shape.
+
+    Single source of truth for the JSON result-entry shape, shared by the
+    ``--json`` CLI serializer in ``main()`` and the ST-05 daemon ``do_recall``
+    path so the two can never drift (premortem R7/H1 parity). Mirrors the
+    archival_memory recall contract::
+
+        {id, score, base_score, decay_weight, final_score, age_days,
+         session_id, content, created_at, rerank_score?, valid_from?, valid_until?}
+
+    ``rerank_score`` / ``valid_from`` / ``valid_until`` are included only when
+    present on the source row, exactly as the CLI path does.
+    """
+    json_results: list[dict[str, Any]] = []
+    for result in results:
+        created_at = result["created_at"]
+        if isinstance(created_at, datetime):
+            created_str = created_at.isoformat()
+        else:
+            created_str = str(created_at)
+
+        entry: dict[str, Any] = {
+            "id": result.get("id"),
+            "score": result["similarity"],
+            "base_score": result.get("base_score"),
+            "decay_weight": result.get("decay_weight"),
+            "final_score": result.get("final_score", result["similarity"]),
+            "age_days": result.get("age_days"),
+            "session_id": result["session_id"],
+            "content": result["content"],
+            "created_at": created_str,
+        }
+
+        # Phase 2 (Task 1.3): surface the cross-encoder score when rerank ran.
+        if "rerank_score" in result:
+            entry["rerank_score"] = result["rerank_score"]
+
+        # Include temporal fields when available (postgres-only).
+        valid_from = result.get("valid_from")
+        valid_until = result.get("valid_until")
+        if isinstance(valid_from, datetime):
+            entry["valid_from"] = valid_from.isoformat()
+        elif valid_from is not None:
+            entry["valid_from"] = str(valid_from)
+        if isinstance(valid_until, datetime):
+            entry["valid_until"] = valid_until.isoformat()
+        elif valid_until is not None:
+            entry["valid_until"] = str(valid_until)
+
+        json_results.append(entry)
+    return json_results
+
+
+async def do_recall(
+    query_vector: list[float],
+    query_text: str,
+    k: int = 5,
+    mode: str = "hybrid",
+    *,
+    project_id: str | None = None,
+    scope_mode: str | None = None,
+) -> dict[str, Any]:
+    """Daemon-facing recall (ST-05). Reuses the same search functions + JSON
+    serializer the CLI uses, so results are identical to ``recall_learnings.py
+    --json`` for the same query/k AND the same scope.
+
+    The query is embedded by the CALLER (the resident BGE daemon, with its own
+    pinned model) and the precomputed ``query_vector`` is threaded into the
+    pgvector leg; ``query_text`` drives the FTS leg (H4 — hybrid must NOT
+    silently degrade to vector-only). This avoids a second ``EmbeddingService``
+    load inside the daemon (the 30-45s cold-load trap, premortem R5).
+
+    SCOPE PARITY (cross-project correctness — ST-05 review fix):
+        Project-scoped recall depends on ``resolve_recall_scope``, which keys
+        off the *current working directory*. The resident daemon's CWD is its
+        LAUNCH directory (e.g. repoRoot), which is NOT where the uv fallback
+        runs: ``memory-awareness.checkDbMemory`` invokes ``recall_learnings.py``
+        with ``cwd=<opc>`` and no ``--project-dir``. If do_recall used the
+        daemon's ambient CWD it would derive a DIFFERENT ``project_id`` and
+        silently return a different PROJECT-scoped result set than its own
+        fallback (a real, deterministic ranking divergence — root-caused via
+        a project-scope diff with an identical query vector).
+
+        So when the caller does not forward an explicit scope, do_recall
+        resolves scope from the OPC dir (``__file__.parents[2]``) — the same
+        fixed location the uv path uses as its CWD — NOT the ambient daemon
+        CWD. A caller (the TS ``recallViaDaemon`` client) MAY forward the fully
+        resolved ``project_id`` + ``scope_mode`` to pin per-project scope
+        exactly; when BOTH are provided they are used verbatim (no
+        ``resolve_recall_scope`` call, no env/CWD dependence).
+
+    Returns the SAME dict the ``--json`` serializer builds, plus a recall
+    ``_meta`` block::
+
+        {"results": [ ...--json entries... ],
+         "_meta": {"vector_count", "fts_count", "threshold_drops",
+                   "scope_mode", "project_id", "db_error"?}}
+
+    The daemon handler adds ``model`` + ``dim`` to ``_meta`` (H6) and wraps the
+    payload with ``ok`` / ``elapsed_ms``. This function never adds an ``ok``
+    field; it returns a completed result or RAISES (the daemon handler maps any
+    exception to ``ok:false`` — H1).
+
+    Args:
+        query_vector: Precomputed 1024-dim query embedding from the resident
+            model. Required (and must be non-zero) for ``hybrid`` / ``vector``.
+        query_text: Original query text. Required (non-empty) for ``hybrid`` /
+            ``text`` (the FTS leg).
+        k: Number of results.
+        mode: ``"hybrid"`` (default), ``"vector"`` or ``"text"``.
+        project_id: Caller-forwarded project hash. When BOTH this and
+            ``scope_mode`` are given, scope is used verbatim (TS client path).
+        scope_mode: Caller-forwarded scope ('project' | 'global_only' | 'all').
+
+    Raises:
+        ValueError: invalid inputs (H4 / zero-vector rejection).
+        Exception: a non-recoverable DB error after one retry (H3); propagated
+            so the daemon handler returns ``ok:false`` rather than empty
+            results (H1).
+    """
+    import asyncpg  # lazy: only needed when the daemon path is exercised
+
+    if not isinstance(k, int) or k <= 0:
+        k = 5
+    if mode not in ("hybrid", "vector", "text"):
+        mode = "hybrid"
+
+    # H4 + zero-vector rejection: both legs must have valid inputs.
+    if mode in ("hybrid", "vector"):
+        if not query_vector or not any(query_vector):
+            raise ValueError("do_recall: query_vector required and must be non-zero")
+    if mode in ("hybrid", "text"):
+        if not query_text or not query_text.strip():
+            raise ValueError("do_recall: query_text required for the FTS leg")
+
+    # Scope resolution (see SCOPE PARITY in the docstring).
+    if project_id is not None and scope_mode is not None:
+        # Caller forwarded the resolved scope — honor it verbatim.
+        pass
+    else:
+        # Resolve from the OPC dir (NOT the ambient daemon CWD) so the daemon
+        # recall scopes IDENTICALLY to the uv fallback (which runs with
+        # cwd=<opc>). resolve_recall_scope still honors a CLAUDE_PROJECT_ID env
+        # override first, matching a uv call from the same environment.
+        opc_dir = str(Path(__file__).resolve().parents[2])
+        project_id, scope_mode = resolve_recall_scope(project_dir=opc_dir)
+    stats: dict[str, Any] = {}
+
+    async def _run() -> list[dict[str, Any]]:
+        if mode == "text":
+            return await search_learnings_text_only_postgres(
+                query_text, k,
+                project_id=project_id, scope_mode=scope_mode,
+            )
+        if mode == "vector":
+            # Mirror the CLI ``--vector-only`` defaults (threshold 0.2,
+            # recency 0.1) but skip the embed via the query_vector seam.
+            return await search_learnings(
+                query=query_text, k=k,
+                similarity_threshold=0.2,
+                recency_weight=0.1,
+                project_id=project_id, scope_mode=scope_mode,
+                query_vector=query_vector,
+            )
+        # hybrid (default): mirror the CLI default ``--json`` hybrid path,
+        # whose threshold is ``args.threshold(0.2) * 0.01`` (RRF scores are
+        # in the ~0.01-0.03 range).
+        return await search_learnings_hybrid_rrf(
+            query=query_text, k=k,
+            similarity_threshold=0.2 * 0.01,
+            project_id=project_id, scope_mode=scope_mode,
+            query_vector=query_vector,
+            stats_out=stats,
+        )
+
+    # H3: a stale/closed pooled connection (Postgres server-side idle close)
+    # surfaces as one of these on first use. asyncpg discards the broken
+    # connection when it is released back to the pool, so a second acquire
+    # returns a fresh one — retry exactly once. A second failure propagates
+    # (the daemon handler maps it to ok:false, never a silent empty list).
+    retryable = (
+        asyncpg.exceptions.ConnectionDoesNotExistError,
+        asyncpg.exceptions.InterfaceError,
+        asyncpg.exceptions.PostgresConnectionError,
+        ConnectionResetError,
+    )
+    db_error: str | None = None
+    try:
+        results = await _run()
+    except retryable as exc:
+        db_error = f"retry_after:{type(exc).__name__}"
+        stats.clear()
+        results = await _run()
+
+    meta: dict[str, Any] = {
+        "vector_count": stats.get("vector_count", 0),
+        "fts_count": stats.get("fts_count", 0),
+        "threshold_drops": stats.get("threshold_drops", 0),
+        # Observable scope so a caller can confirm the daemon recall scoped the
+        # same way as the uv fallback (cross-project parity check).
+        "scope_mode": scope_mode,
+        "project_id": project_id,
+    }
+    if db_error is not None:
+        meta["db_error"] = db_error
+    return {"results": _serialize_results_json(results), "_meta": meta}
 
 
 async def main() -> int:
@@ -1811,43 +2059,10 @@ async def main() -> int:
 
     # JSON output mode
     if args.json:
-        json_results = []
-        for result in results:
-            created_at = result["created_at"]
-            if isinstance(created_at, datetime):
-                created_str = created_at.isoformat()
-            else:
-                created_str = str(created_at)
-
-            entry = {
-                "id": result.get("id"),
-                "score": result["similarity"],
-                "base_score": result.get("base_score"),
-                "decay_weight": result.get("decay_weight"),
-                "final_score": result.get("final_score", result["similarity"]),
-                "age_days": result.get("age_days"),
-                "session_id": result["session_id"],
-                "content": result["content"],
-                "created_at": created_str,
-            }
-
-            # Phase 2 (Task 1.3): surface the cross-encoder score when rerank ran.
-            if "rerank_score" in result:
-                entry["rerank_score"] = result["rerank_score"]
-
-            # Include temporal fields when available (postgres-only)
-            valid_from = result.get("valid_from")
-            valid_until = result.get("valid_until")
-            if isinstance(valid_from, datetime):
-                entry["valid_from"] = valid_from.isoformat()
-            elif valid_from is not None:
-                entry["valid_from"] = str(valid_from)
-            if isinstance(valid_until, datetime):
-                entry["valid_until"] = valid_until.isoformat()
-            elif valid_until is not None:
-                entry["valid_until"] = str(valid_until)
-
-            json_results.append(entry)
+        # ST-05: the per-entry shape is now produced by the shared
+        # _serialize_results_json helper (single source of truth, also used by
+        # the daemon do_recall path) so the two cannot drift.
+        json_results = _serialize_results_json(results)
         # Phase 2 (Task 1.3): include _meta block carrying rerank diagnostics
         # when --rerank was used. Task 1.4: also surface embedding-path
         # diagnostics (embed_used_daemon, embed_elapsed_ms) when the path

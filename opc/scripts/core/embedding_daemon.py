@@ -51,7 +51,9 @@ Usage::
 from __future__ import annotations
 
 import argparse
+import asyncio
 import atexit
+import concurrent.futures as _cf
 import json
 import math
 import os
@@ -73,6 +75,14 @@ _MODEL_LOCK = threading.Lock()
 
 MODEL_NAME = "BAAI/bge-large-en-v1.5"
 EMBEDDING_DIM = 1024
+
+# ST-05: resident recall op timeouts. The recall query runs on a background
+# asyncio loop (in a daemon thread) that owns the asyncpg pool; these bounds
+# guarantee the socketserver thread never blocks indefinitely (premortem
+# R6/H2/H7). RECALL_TIMEOUT_S mirrors the TS client's hard budget so a slow /
+# contended call times out here and the client falls back to the uv path.
+RECALL_TIMEOUT_S = 2.5
+RECALL_POOL_INIT_TIMEOUT_S = 10.0
 
 # Canonical rendezvous directory for the discovery + lock files.
 #
@@ -261,6 +271,258 @@ def _model_ready() -> bool:
     return _MODEL is not None
 
 
+# ---------------------------------------------------------------------------
+# ST-05: resident recall runtime (background asyncio loop + asyncpg pool)
+# ---------------------------------------------------------------------------
+#
+# ADDITIVE-ONLY. The `recall` op embeds the query IN-PROCESS with the resident
+# model (H6 — same vector space as `embed`), then runs the EXISTING hybrid RRF
+# (recall_learnings.do_recall) on a background event loop that exclusively owns
+# the asyncpg pool (via db.postgres_pool.get_pool() — NO second pool, NO second
+# model). embed / embed_batch / ping / shutdown are untouched. If the pool
+# never comes up, _RECALL_READY stays False and the daemon still serves
+# embedding normally; recall callers fall back to the uv path (R2/R9).
+
+_RECALL_LOOP: asyncio.AbstractEventLoop | None = None
+_RECALL_THREAD: threading.Thread | None = None
+_RECALL_POOL: Any = None
+_RECALL_READY: bool = False
+_RECALL_RUNTIME_LOCK = threading.Lock()
+
+
+def _recall_loop_ok() -> bool:
+    """True iff the background recall loop is live (running and not closed)."""
+    loop = _RECALL_LOOP
+    return bool(loop is not None and loop.is_running() and not loop.is_closed())
+
+
+def _set_recall_ready(value: bool) -> None:
+    """Set the recall-ready flag (the H2 watchdog clears it on a dead loop)."""
+    global _RECALL_READY
+    _RECALL_READY = value
+
+
+def _get_do_recall():
+    """Resolve ``recall_learnings.do_recall``.
+
+    Indirected so the recall handler does not hard-bind the import path and so
+    tests can patch this seam without depending on how ``core.*`` resolves in
+    the daemon process. Uses the established ``core.`` package convention
+    (same as recall_learnings' ``from core import embedding_daemon``); verified
+    importable in the real ``uv run --project opc`` launch context.
+    """
+    from core.recall_learnings import do_recall  # noqa: PLC0415
+    return do_recall
+
+
+def _start_recall_loop() -> asyncio.AbstractEventLoop:
+    """Start the background asyncio loop in a daemon thread (idempotent)."""
+    global _RECALL_LOOP, _RECALL_THREAD
+    if _RECALL_THREAD is not None and _RECALL_THREAD.is_alive() and _recall_loop_ok():
+        return _RECALL_LOOP  # type: ignore[return-value]
+    loop = asyncio.new_event_loop()
+
+    def _run() -> None:
+        asyncio.set_event_loop(loop)
+        loop.run_forever()
+
+    thread = threading.Thread(target=_run, name="ccv3-recall-loop", daemon=True)
+    thread.start()
+    # Wait briefly for the loop to actually start running before we submit to it.
+    for _ in range(200):
+        if loop.is_running():
+            break
+        time.sleep(0.005)
+    _RECALL_LOOP = loop
+    _RECALL_THREAD = thread
+    return loop
+
+
+def _init_recall_pool(timeout_s: float = RECALL_POOL_INIT_TIMEOUT_S) -> bool:
+    """Create + hold the asyncpg pool on the recall loop; set ``_RECALL_READY``.
+
+    Reuses the process-singleton ``db.postgres_pool.get_pool()`` — no second
+    pool. Returns True iff the pool is live. On ANY failure leaves
+    ``_RECALL_READY=False`` and returns False (embed/ping keep working — the
+    recall op is purely additive).
+    """
+    global _RECALL_POOL
+    loop = _RECALL_LOOP
+    if loop is None or not _recall_loop_ok():
+        _set_recall_ready(False)
+        return False
+
+    async def _make_pool() -> Any:
+        from db.postgres_pool import get_pool  # noqa: PLC0415
+        return await get_pool()
+
+    try:
+        fut = asyncio.run_coroutine_threadsafe(_make_pool(), loop)
+        pool = fut.result(timeout=timeout_s)
+    except Exception as exc:  # noqa: BLE001
+        print(
+            f"[embedding] daemon: recall pool init failed "
+            f"({type(exc).__name__}: {exc}) — recall disabled, embed/ping unaffected",
+            file=sys.stderr,
+            flush=True,
+        )
+        _set_recall_ready(False)
+        return False
+
+    _RECALL_POOL = pool
+    _set_recall_ready(True)
+    print("[embedding] daemon: recall ready (asyncpg pool live)", file=sys.stderr, flush=True)
+    return True
+
+
+def _start_recall_runtime() -> bool:
+    """Stand up the recall loop + pool. Called once, AFTER model warmup.
+
+    Idempotent + serialized. Best-effort: a failure to create the pool does
+    NOT break the daemon (embed/ping/shutdown unaffected; R9 fallback intact).
+    """
+    with _RECALL_RUNTIME_LOCK:
+        try:
+            _start_recall_loop()
+            return _init_recall_pool()
+        except Exception as exc:  # noqa: BLE001
+            print(
+                f"[embedding] daemon: recall runtime start failed "
+                f"({type(exc).__name__}: {exc}) — recall disabled",
+                file=sys.stderr,
+                flush=True,
+            )
+            _set_recall_ready(False)
+            return False
+
+
+def _stop_recall_runtime() -> None:
+    """Best-effort, non-blocking stop of the recall loop (on daemon shutdown).
+
+    The loop thread is a daemon thread, so process exit also reclaims it; this
+    just clears the ready flag and asks the loop to stop. Never raises.
+    """
+    _set_recall_ready(False)
+    loop = _RECALL_LOOP
+    if loop is not None:
+        try:
+            loop.call_soon_threadsafe(loop.stop)
+        except Exception:  # noqa: BLE001
+            pass
+
+
+def _build_ping_response() -> dict[str, Any]:
+    """Build the ``ping`` reply.
+
+    BACKWARD-COMPATIBLE (ST-05): the legacy ``ok`` / ``ready`` / ``model`` /
+    ``dim`` fields are unchanged; this ONLY ADDS ``recall_ready`` + ``loop_ok``
+    so a client can route a recall precisely (and watchdog a dead loop).
+    """
+    return {
+        "ok": True,
+        "ready": _model_ready(),
+        "model": MODEL_NAME,
+        "dim": EMBEDDING_DIM,
+        "recall_ready": bool(_RECALL_READY),
+        "loop_ok": _recall_loop_ok(),
+    }
+
+
+def _handle_recall_request(req: dict[str, Any]) -> dict[str, Any]:
+    """Process a ``recall`` request; return the full response payload dict.
+
+    H1: the WHOLE body is wrapped in try/except — ANY internal error returns
+    ``{ok:false, error}``. ``ok:true`` is returned ONLY for a genuinely
+    completed query (even when ``results == []``). An error NEVER masquerades
+    as a "no match".
+
+    Response (success)::
+
+        {ok:true, results:[...--json entries...],
+         _meta:{vector_count, fts_count, threshold_drops, model, dim, db_error?},
+         elapsed_ms}
+
+    Response (failure)::
+
+        {ok:false, error:"<reason>"}
+    """
+    t0 = time.perf_counter()
+    try:
+        query = req.get("query", "")
+        if not isinstance(query, str) or not query.strip():
+            return {"ok": False, "error": "query must be a non-empty string"}
+        try:
+            k = int(req.get("k", 5))
+        except (TypeError, ValueError):
+            k = 5
+        mode = req.get("mode", "hybrid")
+        if not isinstance(mode, str):
+            mode = "hybrid"
+        # Optional caller-forwarded scope (ST-05 cross-project parity). The TS
+        # client SHOULD pass these so the daemon recall scopes to the CALLER's
+        # project rather than the daemon's launch CWD. When absent, do_recall
+        # falls back to opc-dir scope (matching the uv fallback's cwd=<opc>).
+        req_project_id = req.get("project_id")
+        req_scope_mode = req.get("scope_mode")
+        if not isinstance(req_project_id, str):
+            req_project_id = None
+        if not isinstance(req_scope_mode, str):
+            req_scope_mode = None
+
+        # R2: never serve recall before the pool is live.
+        if not _RECALL_READY:
+            return {"ok": False, "error": "recall_not_ready"}
+        loop = _RECALL_LOOP
+        if loop is None or not _recall_loop_ok():
+            _set_recall_ready(False)  # H2 watchdog
+            return {"ok": False, "error": "recall_loop_dead"}
+
+        # H6: embed IN-PROCESS with the resident model (same vector space as
+        # `embed`). Serialized by _EMBED_CALL_LOCK (model is not thread-safe).
+        with _EMBED_CALL_LOCK:
+            query_vector = embed(query, model=None)
+
+        do_recall = _get_do_recall()
+
+        # H2: run_coroutine_threadsafe raises RuntimeError SYNCHRONOUSLY when
+        # the loop is closed/dead — wrap the SUBMIT separately from the wait.
+        try:
+            fut = asyncio.run_coroutine_threadsafe(
+                do_recall(query_vector, query, k, mode,
+                          project_id=req_project_id, scope_mode=req_scope_mode),
+                loop,
+            )
+        except RuntimeError as exc:
+            _set_recall_ready(False)
+            return {"ok": False, "error": f"recall_submit_failed: {exc}"}
+
+        # H2: bound the wait — a dead loop or slow/contended query must not
+        # hang the socketserver thread. concurrent.futures.TimeoutError on
+        # timeout; RuntimeError if the loop dies while we wait.
+        try:
+            result = fut.result(timeout=RECALL_TIMEOUT_S)
+        except (_cf.TimeoutError, asyncio.TimeoutError):
+            return {"ok": False, "error": "recall_timeout"}
+        except RuntimeError as exc:
+            _set_recall_ready(False)
+            return {"ok": False, "error": f"recall_loop_died: {exc}"}
+
+        elapsed_ms = (time.perf_counter() - t0) * 1000
+        # H6: stamp the resident model identity + dim onto _meta so the client
+        # can sanity-check vector-space parity before trusting the results.
+        meta = dict(result.get("_meta", {}))
+        meta["model"] = MODEL_NAME
+        meta["dim"] = EMBEDDING_DIM
+        return {
+            "ok": True,
+            "results": result.get("results", []),
+            "_meta": meta,
+            "elapsed_ms": elapsed_ms,
+        }
+    except Exception as exc:  # noqa: BLE001  # H1: any error -> ok:false
+        return {"ok": False, "error": f"{type(exc).__name__}: {exc}"}
+
+
 class _EmbeddingHandler(socketserver.BaseRequestHandler):
     """Handle one embedding request per connection."""
 
@@ -273,12 +535,14 @@ class _EmbeddingHandler(socketserver.BaseRequestHandler):
             req = _recv_frame(self.request)
             cmd = req.get("cmd", "embed")
             if cmd == "ping":
-                _send_frame(self.request, {
-                    "ok": True,
-                    "ready": _model_ready(),
-                    "model": MODEL_NAME,
-                    "dim": EMBEDDING_DIM,
-                })
+                # ST-05: backward-compatible — adds recall_ready + loop_ok only.
+                _send_frame(self.request, _build_ping_response())
+                return
+            if cmd == "recall":
+                # ST-05: resident recall op. Self-contained, never raises
+                # (H1) — returns {ok:false, error} on any failure so the
+                # client falls back to the uv path without hanging.
+                _send_frame(self.request, _handle_recall_request(req))
                 return
             if cmd == "shutdown":
                 _send_frame(self.request, {"ok": True})
@@ -569,6 +833,12 @@ def _run_daemon(port: int) -> int:
         flush=True,
     )
 
+    # ST-05: stand up the resident recall runtime AFTER the model warmup
+    # (background asyncio loop + asyncpg pool). Best-effort + additive — a
+    # failure here disables recall (recall_ready stays False) but leaves
+    # embed / embed_batch / ping / shutdown fully functional.
+    _start_recall_runtime()
+
     server = _ThreadingTCPServer(("127.0.0.1", port), _EmbeddingHandler)
     actual_port = server.server_address[1]
     pid = os.getpid()
@@ -607,6 +877,8 @@ def _run_daemon(port: int) -> int:
     try:
         server.serve_forever(poll_interval=0.5)
     finally:
+        # ST-05: best-effort, non-blocking stop of the recall loop.
+        _stop_recall_runtime()
         try:
             server.server_close()
         finally:
