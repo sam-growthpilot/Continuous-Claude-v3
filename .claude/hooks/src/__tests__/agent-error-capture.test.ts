@@ -58,7 +58,7 @@ describe('storeLearning — non-blocking detached spawn (QW-04 hot-path fix)', (
       existsFn: () => true,
     });
     expect(spawnFn).toHaveBeenCalledTimes(1);
-    const opts = spawnFn.mock.calls[0][2] as { detached?: boolean; stdio?: string; shell?: boolean };
+    const opts = (spawnFn.mock.calls[0] as any[])[2] as { detached?: boolean; stdio?: string; shell?: boolean };
     expect(opts.detached).toBe(true);
     expect(opts.stdio).toBe('ignore');
     expect(opts.shell).toBe(false);

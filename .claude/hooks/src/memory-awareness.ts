@@ -38,7 +38,7 @@ import { getOpcDir } from './shared/opc-path.js';
 import { outputContinue } from './shared/output.js';
 import { logHook } from './shared/session-activity.js';
 import { extractIntent, extractKeywords, expandGitQuery, isMachineGeneratedPrompt } from './shared/intent-extractor.js';
-import { isDaemonReady, ensureDaemonRunning } from './shared/embedding-client.js';
+import { probeDaemon, recallViaDaemon, ensureDaemonRunning } from './shared/embedding-client.js';
 import { emitBraintrustScore } from './shared/braintrust-score.js';
 import { sanitizeMemoryContent, wrapMemoryContext } from './shared/memory-sanitize.js';
 import { readBus } from './shared/context-bus.js';
@@ -141,6 +141,43 @@ function checkLocalMemory(intent: string, projectDir: string): LearningResult[] 
 }
 
 /**
+ * Normalize a raw intent into the DB search term: drop underscores/slashes,
+ * strip 1-2 char noise words, collapse whitespace. Extracted (ST-05) so the
+ * resident daemon recall path and the uv fallback query with the IDENTICAL term.
+ */
+function cleanSearchTerm(intent: string): string {
+  return intent
+    .replace(/[_\/]/g, ' ')
+    .replace(/\b\w{1,2}\b/g, '')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+/**
+ * Map a recall_learnings.py --json ``results[]`` array into LearningResult[].
+ * Extracted (ST-05) so the uv path (checkDbMemory) and the resident daemon recall
+ * path produce byte-identical rows. In hybrid mode the score is the PRE-decay base
+ * RRF score (QW-06 Fix A / D3b-01); text-only keeps the freshness-discounted score.
+ */
+function mapDbResults(rawResults: any[], useHybrid: boolean): LearningResult[] {
+  return (rawResults || []).map((r: any) => {
+    const content = r.content || '';
+    const preview = content
+      .split('\n')
+      .filter((l: string) => l.trim().length > 0)
+      .map((l: string) => l.trim())
+      .join(' ')
+      .slice(0, 120);
+    return {
+      id: (r.id || 'unknown').slice(0, 8),
+      type: r.learning_type || r.type || 'UNKNOWN',
+      content: preview + (content.length > 120 ? '...' : ''),
+      score: (useHybrid ? (r.base_score ?? r.score) : r.score) || 0,
+    };
+  });
+}
+
+/**
  * Query the global archival memory DB via recall_learnings.py.
  * Returns the raw (unfiltered) result list — caller applies floor + merge.
  *
@@ -163,11 +200,7 @@ function checkDbMemory(
   const opcDir = getOpcDir();
   if (!opcDir) return [[], false];
 
-  const searchTerm = intent
-    .replace(/[_\/]/g, ' ')
-    .replace(/\b\w{1,2}\b/g, '')
-    .replace(/\s+/g, ' ')
-    .trim();
+  const searchTerm = cleanSearchTerm(intent);
 
   const args = [
     'run', 'python', 'scripts/core/recall_learnings.py',
@@ -214,27 +247,7 @@ function checkDbMemory(
       return [[], false];
     }
 
-    const results = (data.results || []).map((r: any) => {
-      const content = r.content || '';
-      const preview = content
-        .split('\n')
-        .filter((l: string) => l.trim().length > 0)
-        .map((l: string) => l.trim())
-        .join(' ')
-        .slice(0, 120);
-
-      return {
-        id: (r.id || 'unknown').slice(0, 8),
-        type: r.learning_type || r.type || 'UNKNOWN',
-        content: preview + (content.length > 120 ? '...' : ''),
-        // QW-06 Fix A (D3b-01): in hybrid mode, floor on the PRE-decay base RRF
-        // score. recall_learnings.py emits `base_score` (pre-decay); the
-        // decay-adjusted `score` can dip below HYBRID_FLOOR (0.01) purely from
-        // freshness decay, suppressing otherwise-relevant rows. The text-only
-        // path keeps `score` (freshness-discounted vs its 0.05 TEXT_ONLY_FLOOR).
-        score: (useHybrid ? (r.base_score ?? r.score) : r.score) || 0,
-      };
-    });
+    const results = mapDbResults(data.results, useHybrid);
     return [results, false];
   } catch {
     return [[], false];
@@ -380,6 +393,9 @@ interface RecallLogEntry {
   // "no matches found". true = subprocess was killed before returning output;
   // false = subprocess completed (even if results_count is 0).
   db_subprocess_timed_out?: boolean;
+  // ST-05: which recall path served this fire — 'daemon' (resident in-process
+  // recall) or 'uv' (subprocess fallback). Lets /memory-stats measure the hit rate.
+  recall_via?: 'daemon' | 'uv';
 }
 
 function getRecallLogPath(projectDir: string): string {
@@ -532,12 +548,17 @@ async function main() {
   //
   // The probe is bounded by DEFAULT_PING_TIMEOUT_MS (currently 1500ms in
   // embedding-client.ts) so daemon liveness checks stay within a tight budget.
-  let daemonReady = false;
+  // ST-05: a SINGLE probe returns the validated daemon handle + both readiness
+  // flags. `ready` gates hybrid-vs-text uv mode (unchanged semantics); the
+  // validated `info` + `recallReady` drive the resident recall op at the seam below
+  // (one discovery read — H5 TOCTOU guard).
+  let probe: Awaited<ReturnType<typeof probeDaemon>> = null;
   try {
-    daemonReady = await isDaemonReady();
+    probe = await probeDaemon();
   } catch {
-    daemonReady = false;
+    probe = null;
   }
+  const daemonReady = !!probe?.ready;
   const mode: 'hybrid' | 'text-only' = daemonReady ? 'hybrid' : 'text-only';
   if (!daemonReady) {
     // Best-effort: warm the daemon for next prompt. Detached spawn -- this
@@ -561,10 +582,31 @@ async function main() {
   // spawn cap is BELOW `uv run` cold-start (~2.2s on Windows), so it near-always
   // SIGKILLs and returns [] — ~2s of guaranteed-wasted latency per prompt for
   // zero contribution. Recall now comes from the DB path only. (The remaining
-  // hot-path cost is checkDbMemory's per-call uv+python boot; the real fix is the
-  // ST-05 resident recall daemon — backlog, not this change.)
+  // hot-path cost was checkDbMemory's per-call uv+python boot; ST-05 (below) now
+  // routes recall through the resident daemon when ready, with uv as the fallback.)
   const local: LearningResult[] = [];
-  const [db, dbTimedOut] = checkDbMemory(recallQuery, projectDir, daemonReady);
+  // ST-05 seam: resident recall FIRST (warm ~tens of ms vs uv+python boot), uv
+  // fallback on ANY non-success. recallViaDaemon returns null on ok:false /
+  // timeout / transport, so the fallback path stays byte-identical to pre-ST-05
+  // (no recall regression). The cleaned search term is shared so both query alike.
+  let db: LearningResult[];
+  let dbTimedOut: boolean;
+  let recallVia: 'daemon' | 'uv' = 'uv';
+  let daemonRows: any[] | null = null;
+  if (probe?.recallReady) {
+    try {
+      daemonRows = await recallViaDaemon(probe.info, cleanSearchTerm(recallQuery), 3);
+    } catch {
+      daemonRows = null;
+    }
+  }
+  if (daemonRows !== null) {
+    db = mapDbResults(daemonRows, true); // daemon recall is always hybrid RRF
+    dbTimedOut = false;
+    recallVia = 'daemon';
+  } else {
+    [db, dbTimedOut] = checkDbMemory(recallQuery, projectDir, daemonReady);
+  }
   const mergedRaw = mergeResults(local, db);
   const floorApplied = daemonReady ? HYBRID_FLOOR : TEXT_ONLY_FLOOR;
   const match = applyFloor(mergedRaw, floorApplied);
@@ -592,6 +634,8 @@ async function main() {
     // MEDIUM-2 (arbiter 2.1): true = subprocess SIGKILLed before returning
     // output; false = completed normally (even if results_count is 0).
     db_subprocess_timed_out: dbTimedOut,
+    // ST-05: 'daemon' when the resident recall op served this fire, else 'uv'.
+    recall_via: recallVia,
   };
   logRecallFire(logEntry, projectDir);
 
