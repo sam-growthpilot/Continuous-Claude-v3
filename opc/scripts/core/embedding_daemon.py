@@ -403,6 +403,62 @@ def _start_recall_runtime() -> bool:
             return False
 
 
+# A3 (2026-06-29): in-process recall-loop watchdog. H2 clears _RECALL_READY on a
+# dead loop at REQUEST time (clients then fall back to the uv path), but nothing
+# RESTARTS the loop short of a full daemon restart. Over a weeks-long unattended
+# uptime the loop could die (or Postgres could bounce, leaving the pool down at
+# launch) and the resident fast path would stay degraded until the next daemon
+# restart. This watchdog PROACTIVELY re-stands-up the runtime so it self-heals.
+_RECALL_WATCHDOG_STARTED = False
+
+
+def _recall_watchdog_tick(was_ready: bool) -> bool:
+    """One watchdog iteration: if the recall runtime is down, restart it.
+
+    ``_start_recall_runtime`` is idempotent + lock-serialized, so re-invoking it
+    is always safe. Logs ONLY on health transitions (avoids per-minute log spam
+    over a long uptime). Never raises. Returns the new ``was_ready`` state.
+    """
+    try:
+        if _recall_loop_ok() and _RECALL_READY:
+            if not was_ready:
+                print(
+                    "[embedding] daemon: recall watchdog — runtime healthy again",
+                    file=sys.stderr,
+                    flush=True,
+                )
+            return True
+        if was_ready:
+            print(
+                "[embedding] daemon: recall watchdog — runtime down, restarting",
+                file=sys.stderr,
+                flush=True,
+            )
+        _start_recall_runtime()
+        return False
+    except Exception:  # noqa: BLE001 — a watchdog must never crash the daemon
+        return False
+
+
+def _recall_watchdog(interval_s: float = 60.0) -> None:
+    """Background loop: re-check + heal the recall runtime every ``interval_s``."""
+    was_ready = True
+    while True:
+        time.sleep(interval_s)
+        was_ready = _recall_watchdog_tick(was_ready)
+
+
+def _start_recall_watchdog() -> None:
+    """Start the recall watchdog daemon thread once (idempotent)."""
+    global _RECALL_WATCHDOG_STARTED
+    if _RECALL_WATCHDOG_STARTED:
+        return
+    _RECALL_WATCHDOG_STARTED = True
+    threading.Thread(
+        target=_recall_watchdog, name="ccv3-recall-watchdog", daemon=True
+    ).start()
+
+
 def _stop_recall_runtime() -> None:
     """Best-effort, non-blocking stop of the recall loop (on daemon shutdown).
 
@@ -800,29 +856,49 @@ def _hide_own_console_on_windows() -> None:
         pass
 
 
+def _acquire_startup_slot() -> int | None:
+    """Return a held exclusive-lock fd if THIS process should become the
+    daemon, or ``None`` if it should exit cleanly WITHOUT loading the model.
+
+    Order (storm hardening, 2026-06-29): check for an existing HEALTHY peer
+    FIRST via the cheap ``_check_existing_daemon`` ping, so a redundant spawn
+    -- the common case when a hook fires ``ensureDaemonRunning`` while the
+    daemon is already up -- exits without opening or contending for the OS
+    lock file. Only a genuine cold start (no healthy peer) proceeds to
+    ``_acquire_exclusive_lock``, which stays the authoritative anti-double-load
+    guard: a cold-start race still resolves to exactly one model-loading
+    daemon (losers get ``None`` and exit before the ~30s model load).
+
+    Verified 2026-06-29: the OS lock serializes correctly on Windows
+    (``msvcrt.locking`` LK_NBLCK -- 1 ACQUIRED / 2 BLOCKED under 3 concurrent
+    acquirers), so this function can NEVER hand a second process a slot while
+    a model-loading daemon holds the lock. The bounded residual is a redundant
+    ``uv run`` startup under a concurrency burst, which exits here cheaply.
+    """
+    if _check_existing_daemon():
+        return None
+    return _acquire_exclusive_lock()
+
+
 def _run_daemon(port: int) -> int:
     """Run the embedding daemon on 127.0.0.1:port (port=0 means pick free)."""
     # UX: hide our console window on Windows regardless of who spawned us.
     _hide_own_console_on_windows()
 
-    # BLOCKER-1: cross-process exclusive lock. Two spawners that both pass
-    # _check_existing_daemon() at the same instant would race and end up
-    # with two model-load processes. The TS spawn lock covers the hook
-    # path; this covers non-TS spawners (Task Scheduler, direct CLI).
-    # We keep the fd alive for the daemon's lifetime — closing it (via
-    # atexit) releases the OS-level lock automatically.
-    _lock_fd = _acquire_exclusive_lock()
+    # Startup slot (storm hardening): check for a healthy peer FIRST (cheap
+    # ping -> redundant spawns exit before touching the lock), THEN contend for
+    # the cross-process exclusive lock. The lock stays the authoritative
+    # anti-double-load guard (BLOCKER-1): two cold-start spawners still collapse
+    # to exactly one model-loading daemon. We keep the fd alive for the daemon's
+    # lifetime -- closing it (via atexit) releases the OS-level lock.
+    _lock_fd = _acquire_startup_slot()
     if _lock_fd is None:
         print(
-            "[embedding] daemon: another daemon holds the startup lock — exiting",
+            "[embedding] daemon: another daemon serves or holds the startup "
+            "lock — exiting",
             file=sys.stderr,
             flush=True,
         )
-        return 0
-
-    # Defense-in-depth: if another daemon is already running (and healthy),
-    # exit before paying the 30s model-load cost.
-    if _check_existing_daemon():
         return 0
 
     # Pre-load the model BEFORE binding the port AND BEFORE writing the
@@ -845,6 +921,9 @@ def _run_daemon(port: int) -> int:
     # failure here disables recall (recall_ready stays False) but leaves
     # embed / embed_batch / ping / shutdown fully functional.
     _start_recall_runtime()
+    # A3: keep the resident recall runtime healthy over a long uptime (restart a
+    # dead loop / bring the pool up if Postgres was down at launch). Idempotent.
+    _start_recall_watchdog()
 
     server = _ThreadingTCPServer(("127.0.0.1", port), _EmbeddingHandler)
     actual_port = server.server_address[1]

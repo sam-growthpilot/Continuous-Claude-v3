@@ -1564,6 +1564,26 @@ def _serialize_results_json(results: list[dict[str, Any]]) -> list[dict[str, Any
     return json_results
 
 
+async def _recycle_pool_best_effort() -> None:
+    """Discard all idle pooled connections so the next acquire reconnects fresh.
+
+    Used by ``do_recall``'s H3 retry to recover IMMEDIATELY from a Postgres
+    restart (which leaves every pooled connection dead at once) instead of
+    healing gradually over several calls. Dual-import for the script-vs-pytest
+    context (the ST-05 import-context lesson). Best-effort: any failure here is
+    swallowed so the hardening can never break the retry path itself. Exposed as
+    a module-level seam so tests can assert it is called between retry attempts.
+    """
+    try:
+        try:
+            from db.postgres_pool import get_pool  # script ctx (live daemon)
+        except ModuleNotFoundError:
+            from core.db.postgres_pool import get_pool  # package ctx (pytest)
+        await (await get_pool()).expire_connections()
+    except Exception:
+        pass
+
+
 async def do_recall(
     query_vector: list[float],
     query_text: str,
@@ -1703,6 +1723,12 @@ async def do_recall(
     except retryable as exc:
         db_error = f"retry_after:{type(exc).__name__}"
         stats.clear()
+        # H3 hardening: a Postgres restart / network drop can leave EVERY pooled
+        # connection dead at once, so a plain re-acquire may return another
+        # broken one. Recycle idle pooled connections before the single retry so
+        # it reconnects fresh (immediate recovery instead of gradual self-heal
+        # over several calls). Best-effort helper — never breaks the retry path.
+        await _recycle_pool_best_effort()
         results = await _run()
 
     meta: dict[str, Any] = {

@@ -241,3 +241,51 @@ class TestRecallHandler:
             assert elapsed < 2.0   # bounded by the timeout, not the 5s sleep
         finally:
             _stop_bg_loop(loop)
+
+
+# ---------------------------------------------------------------------------
+# A3: recall-loop watchdog (in-process self-heal over a long uptime)
+# ---------------------------------------------------------------------------
+
+class TestRecallWatchdog:
+    def test_tick_healthy_no_restart(self):
+        """Loop live + pool ready -> stay ready, never restart."""
+        with patch.object(ed, "_recall_loop_ok", return_value=True), \
+             patch.object(ed, "_start_recall_runtime") as restart:
+            ed._RECALL_READY = True
+            assert ed._recall_watchdog_tick(True) is True
+        restart.assert_not_called()
+
+    def test_tick_dead_loop_restarts(self):
+        """Dead loop -> attempt an (idempotent) restart, report not-ready."""
+        with patch.object(ed, "_recall_loop_ok", return_value=False), \
+             patch.object(ed, "_start_recall_runtime") as restart:
+            ed._RECALL_READY = False
+            assert ed._recall_watchdog_tick(True) is False
+        restart.assert_called_once()
+
+    def test_tick_pool_down_restarts_even_if_loop_ok(self):
+        """Loop ok but pool not ready (e.g. Postgres was down at launch) ->
+        restart so recall comes up when Postgres returns."""
+        with patch.object(ed, "_recall_loop_ok", return_value=True), \
+             patch.object(ed, "_start_recall_runtime") as restart:
+            ed._RECALL_READY = False
+            assert ed._recall_watchdog_tick(True) is False
+        restart.assert_called_once()
+
+    def test_tick_never_raises(self):
+        """A watchdog must never crash the daemon -> swallow + report not-ready."""
+        with patch.object(ed, "_recall_loop_ok", side_effect=RuntimeError("boom")), \
+             patch.object(ed, "_start_recall_runtime"):
+            assert ed._recall_watchdog_tick(True) is False
+
+    def test_start_watchdog_is_idempotent(self):
+        """_start_recall_watchdog spawns the thread at most once."""
+        ed._RECALL_WATCHDOG_STARTED = False
+        try:
+            with patch.object(ed.threading, "Thread") as MockThread:
+                ed._start_recall_watchdog()
+                ed._start_recall_watchdog()
+            assert MockThread.call_count == 1
+        finally:
+            ed._RECALL_WATCHDOG_STARTED = False
