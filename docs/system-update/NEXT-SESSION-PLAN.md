@@ -20,7 +20,17 @@ confirm that `ask` actually surfaces a prompt and isn't swallowed by `permission
 is dry-run). This also confirms the F3 split-flag fix (`-fdn`). SAFE fully confirmed for the
 interactive path — no deeper `permission-auto-allow` / PermissionRequest fix needed.
 
-## Phase 1 — Quick S2 hardening (small, high-value; SAFE + USABLE)
+## Phase 1 — Quick S2 hardening ✅ DONE 2026-06-29
+
+Shipped: `09ba655` (agent-error-capture fire-and-forget + tightened trigger), `5a9abe5`
+(destructive-guard wrapper/substitution recursion + xargs rm), then a white-box adversarial
+verify sweep → round-2 remediation `3707420` (guard FPs fixed: `rm --force`/`git rebase
+--abort`/`git branch -d`/`shred`-as-arg; + new coverage: rsync --delete, find -execdir, git
+push --mirror/:refspec, git restore/switch/worktree, Windows rd/del, wipefs/blkdiscard,
+env -i prefix; + documented accepted limitations) and `a2b211f` (capture crash-regex +
+ECONNRESET). All tested, emit 4/4, LIVE-verified. Original sub-items (now done) below.
+
+## Phase 1 (original sub-items — all addressed above)
 
 1. **agent-error-capture → fire-and-forget** (USABLE; review S2). QW-04 made it live on every
    Task completion with a synchronous 10s-timeout store to archival_memory. Make the store
@@ -32,7 +42,17 @@ interactive path — no deeper `permission-auto-allow` / PermissionRequest fix n
    accepted. Add `find … | xargs rm` and remaining split-flag git/docker forms. Extend
    `destructive-command-guard.test.ts`. File: `.claude/hooks/src/destructive-command-guard.ts`.
 
-## Phase 2 — ST-05 resident recall daemon (the big arc — own plan + premortem)
+## Phase 2 — ST-05 resident recall daemon ✅ SHIPPED + VERIFIED 2026-06-29
+
+Done: `/plan` → `/premortem` (Codex, 9 findings folded into v2) → implement (kraken Python
+layer + orchestrator TS layer) → end-to-end verified on the live daemon. Commits `a9dd226`
+(Python recall op + query_vector seam), `624c876` (TS probeDaemon + recallViaDaemon +
+memory-awareness routing), `31ffd8d` (live-script import fix the e2e gate caught). Warm
+recall **136ms** (was ~10s), daemon ids == uv ids exactly, emit 4/4. Full record +
+premortem v2 + the import-fix lesson in [`ST-05-DESIGN.md`](./ST-05-DESIGN.md). Original
+arc notes below.
+
+## Phase 2 (original arc notes — completed above)
 
 **Why:** the only path to the USABLE ≤3s target. The memory hot-path is ~10s because
 `memory-awareness.checkDbMemory` spawns `uv run python recall_learnings.py` per prompt
@@ -71,6 +91,15 @@ not a quick edit.
 
 ## Sequencing
 
-Phase 0 (gate test) → Phase 1 (quick S2) → Phase 2 (ST-05, the headline) → Phase 3 (polish).
-Phases 0/1/3 are session-sized; Phase 2 (ST-05) likely spans its own focused session with a
-premortem. After ST-05, re-baseline the memory hit-rate (SG-01) and revisit ST-03/ST-10.
+**Phases 0, 1, 2 are DONE (2026-06-29).** Remaining:
+- **Phase 3 — S3 polish + regression insurance** (below): (3a) integration test replaying
+  real PreToolUse/PostToolUse:Task events through the 12 revived Task hooks; (3b)
+  settings-template event+matcher assertions; (3c) dead-code (checkLocalMemory; verify
+  checkMemoryRelevance + the exported LOCAL_SCORE_NORMALIZE before removing) + the
+  memory-sanitize header + agent-model-guard rename.
+- **BLOCKER-2 host-memory-pressure** (NEW, found 2026-06-29): `memory-awareness-host-ram.test.ts`
+  is RED at HEAD — it expects `host_memory_pressure`/`free_ram_bytes`/`embed_fallback_reason`
+  log fields + RAM-pressure mode-gating that are absent from `memory-awareness.ts`. Decide:
+  implement the host-RAM gate, or retire the aspirational tests.
+- **SG-01**: re-baseline memory hit-rate now that recall is resident (ST-05 done). Revisit
+  ST-03/ST-10 (ST-05 was their prereq).

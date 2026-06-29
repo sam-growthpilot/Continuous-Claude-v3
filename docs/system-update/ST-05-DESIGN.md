@@ -1,6 +1,8 @@
-# ST-05 — Resident Recall Daemon (design proposal)
+# ST-05 — Resident Recall Daemon (design + SHIPPED)
 
-> Status: **DESIGN — gated on user go/no-go + Codex premortem.** Not yet implemented.
+> Status: **SHIPPED + VERIFIED end-to-end (2026-06-29).** Commits `a9dd226` (Python
+> layer) + `624c876` (TS layer) + `31ffd8d` (live-script import fix). All v2 done-gates
+> green — see "End-to-end verification" at the bottom.
 > Branch `snapshot/ccv3-system-update`. Companion: [`NEXT-SESSION-PLAN.md`](./NEXT-SESSION-PLAN.md) Phase 2.
 > Recon: read-only 4-lens workflow (2026-06-29), all facts below cite verified file:line.
 
@@ -171,6 +173,40 @@ hangs, never wrong). Verify with a concurrency smoke (several back-to-back recal
 
 ## Sequencing
 `/plan` (this doc) → `/premortem` (Codex) **[DONE 2026-06-29 — v2 above]** → user go/no-go
-**[DONE — "premortem then implement"]** → implement (TDD, Python + TS, per v2 contract) →
-verify gates → commit/sync/push. Prereq for ST-03 + ST-10. After ST-05, re-baseline
-memory hit-rate (SG-01).
+**[DONE — "premortem then implement"]** → implement (TDD, Python + TS, per v2 contract)
+**[DONE]** → verify gates **[DONE — see below]** → commit/sync/push **[DONE]**. Prereq for
+ST-03 + ST-10. After ST-05, re-baseline memory hit-rate (SG-01) — still TODO.
+
+## End-to-end verification (2026-06-29 — all v2 gates GREEN)
+
+Restarted the live daemon with the new code (0 active peer sessions) and drove a real
+recall over the real socket against live Postgres:
+
+| Gate | Result |
+|------|--------|
+| `recall_ready` + `loop_ok` | ✅ true (~12s after launch; model warmup + pool init) |
+| Real-socket recall | ✅ `ok:true`, 3 results, `_meta.vector_count=6` + `fts_count=6` (hybrid uses BOTH legs) |
+| RRF parity vs `recall_learnings.py --json` | ✅ daemon ids == uv ids EXACTLY (`09e92f6b,b5b8d645,f15ceedc`) |
+| Warm latency | ✅ **136ms** (gate ≤3s; the uv path was ~10s — ~70× faster, the USABLE win) |
+| Emit invariant / MEMORY MATCH | ✅ 4/4; `recall_via` logged to memory-recall.jsonl |
+| Fallback safety | unit-verified (daemon-dead / ok:false / timeout → `recallViaDaemon` null → uv path) |
+
+Tests: 22 Python (seam, handler H1/H2/H6, scope) + parity 3× deterministic; 45
+embedding-client TS (incl. probeDaemon×4, recallViaDaemon×6 vs a protocol-faithful mock).
+
+**Lesson — what the end-to-end gate caught that 22 unit + parity tests did not:** the
+live daemon runs as a SCRIPT (`sys.path[0]=opc/scripts/core`), so `_get_do_recall`'s
+`from core.recall_learnings import do_recall` raised `ModuleNotFoundError: No module
+named 'core'` at recall time → `ok:false` → silent uv fallback (ST-05 inert). The unit
+tests patch that seam and the integration test ran under `PYTHONPATH=opc/scripts`, so
+both missed it. Fix (`31ffd8d`): sibling import first (matching `_init_recall_pool`'s
+`from db.postgres_pool import`), `core.` fallback for pytest. **Always exercise the real
+launch context** — a passing unit suite is not a deploy gate for a process-launch path.
+
+## Known follow-ups (out of ST-05 scope, surfaced this session)
+- **BLOCKER-2 host-memory-pressure** (`memory-awareness-host-ram.test.ts`): 3 tests
+  expect `host_memory_pressure` / `free_ram_bytes` / `embed_fallback_reason` log fields +
+  RAM-pressure mode-gating. Verified ABSENT in HEAD `memory-awareness.ts` — the feature is
+  unimplemented (or regressed) and these tests are RED at HEAD, independent of ST-05.
+  Decision needed: implement the host-RAM gate, or retire the aspirational tests.
+- **SG-01**: re-baseline memory hit-rate now that recall is resident.
