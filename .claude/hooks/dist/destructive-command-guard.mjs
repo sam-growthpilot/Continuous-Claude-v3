@@ -8,6 +8,9 @@ var DESTRUCTIVE_PATTERNS = [
   { name: "recursive rm", re: /\brm(?:\s+-{1,2}[^\s]+)*\s+-{1,2}[^\s]*[rR][^\s]*/i },
   { name: "find -delete", re: /\bfind\b[^&|;]*-delete\b/i },
   { name: "find -exec rm", re: /\bfind\b[^&|;]*-exec\s+rm\b/i },
+  // bulk delete via xargs — e.g. `find … | xargs rm`. Catches the non-recursive
+  // form too (plain `xargs rm`), which the recursive-rm pattern alone misses.
+  { name: "xargs rm", re: /\bxargs\b[^|&;]*\brm\b/i },
   { name: "dd to/from device", re: /\bdd\s+[^&|;]*\b(if|of)=/i },
   { name: "mkfs", re: /\bmkfs(\.\w+)?\b/i },
   { name: "shred", re: /\bshred\b/i },
@@ -19,7 +22,7 @@ var DESTRUCTIVE_PATTERNS = [
   { name: "git push --delete", re: /\bgit\s+push\b[^&|;]*(--delete|\s-d\b)/i },
   { name: "git clean -f", re: /\bgit\s+clean(?:\s+-{1,2}[^\s]+)*\s+-{1,2}[^\s]*f[^\s]*/i },
   { name: "git checkout discard", re: /\bgit\s+checkout\s+(--|\.)/i },
-  { name: "git branch -D", re: /\bgit\s+branch\s+(-D\b|--delete\s+--force|-\w*D\w*\s)/i },
+  { name: "git branch -D", re: /\bgit\s+branch\s+(-D\b|--delete\s+--force|--force\s+--delete|-\w*D\w*\s)/i },
   { name: "git rebase", re: /\bgit\s+rebase\b/i },
   { name: "git stash clear/drop", re: /\bgit\s+stash\s+(clear|drop)\b/i },
   { name: "git update-ref -d", re: /\bgit\s+update-ref\s+-d\b/i },
@@ -34,11 +37,224 @@ var DESTRUCTIVE_PATTERNS = [
 function stripQuotedStrings(command) {
   return command.replace(/"(?:[^"\\]|\\.)*"/g, '""').replace(/'(?:[^'\\]|\\.)*'/g, "''");
 }
-function classifyDestructive(command) {
+function parseExecutable(command) {
+  const segments = [];
+  const substitutions = [];
+  let seg = "";
+  let inSingle = false;
+  let inDouble = false;
+  const n = command.length;
+  let i = 0;
+  const pushSeg = () => {
+    const t = seg.trim();
+    if (t) segments.push(t);
+    seg = "";
+  };
+  while (i < n) {
+    const c = command[i];
+    const next = command[i + 1];
+    if (inSingle) {
+      seg += c;
+      if (c === "'") inSingle = false;
+      i++;
+      continue;
+    }
+    if (inDouble) {
+      if (c === "\\" && next !== void 0) {
+        seg += c + next;
+        i += 2;
+        continue;
+      }
+      if (c === '"') {
+        inDouble = false;
+        seg += c;
+        i++;
+        continue;
+      }
+      if (c === "$" && next === "(") {
+        const { inner, end } = readBalanced(command, i + 2, "(", ")");
+        substitutions.push(inner);
+        seg += command.slice(i, end);
+        i = end;
+        continue;
+      }
+      if (c === "`") {
+        const { inner, end } = readBacktick(command, i + 1);
+        substitutions.push(inner);
+        seg += command.slice(i, end);
+        i = end;
+        continue;
+      }
+      seg += c;
+      i++;
+      continue;
+    }
+    if (c === "\\" && next !== void 0) {
+      seg += c + next;
+      i += 2;
+      continue;
+    }
+    if (c === "'") {
+      inSingle = true;
+      seg += c;
+      i++;
+      continue;
+    }
+    if (c === '"') {
+      inDouble = true;
+      seg += c;
+      i++;
+      continue;
+    }
+    if (c === "$" && next === "(") {
+      const { inner, end } = readBalanced(command, i + 2, "(", ")");
+      substitutions.push(inner);
+      seg += command.slice(i, end);
+      i = end;
+      continue;
+    }
+    if (c === "`") {
+      const { inner, end } = readBacktick(command, i + 1);
+      substitutions.push(inner);
+      seg += command.slice(i, end);
+      i = end;
+      continue;
+    }
+    if (c === ";" || c === "\n") {
+      pushSeg();
+      i++;
+      continue;
+    }
+    if (c === "&" && next === "&" || c === "|" && next === "|") {
+      pushSeg();
+      i += 2;
+      continue;
+    }
+    if (c === "|" || c === "&") {
+      pushSeg();
+      i++;
+      continue;
+    }
+    seg += c;
+    i++;
+  }
+  pushSeg();
+  return { segments, substitutions };
+}
+function readBalanced(s, start, open, close) {
+  let depth = 1;
+  let i = start;
+  let inS = false;
+  let inD = false;
+  while (i < s.length) {
+    const c = s[i];
+    if (inS) {
+      if (c === "'") inS = false;
+      i++;
+      continue;
+    }
+    if (inD) {
+      if (c === "\\") {
+        i += 2;
+        continue;
+      }
+      if (c === '"') inD = false;
+      i++;
+      continue;
+    }
+    if (c === "'") {
+      inS = true;
+      i++;
+      continue;
+    }
+    if (c === '"') {
+      inD = true;
+      i++;
+      continue;
+    }
+    if (c === "$" && s[i + 1] === open) {
+      depth++;
+      i += 2;
+      continue;
+    }
+    if (c === open) {
+      depth++;
+      i++;
+      continue;
+    }
+    if (c === close) {
+      depth--;
+      if (depth === 0) return { inner: s.slice(start, i), end: i + 1 };
+      i++;
+      continue;
+    }
+    i++;
+  }
+  return { inner: s.slice(start), end: s.length };
+}
+function readBacktick(s, start) {
+  let i = start;
+  while (i < s.length) {
+    if (s[i] === "\\") {
+      i += 2;
+      continue;
+    }
+    if (s[i] === "`") return { inner: s.slice(start, i), end: i + 1 };
+    i++;
+  }
+  return { inner: s.slice(start), end: s.length };
+}
+var WRAPPER_RES = [
+  // POSIX shells: bash|sh|zsh|dash|ksh|ash ... -c|-...c "<payload>"
+  /^(?:(?:sudo|env|nohup|time)\s+|[^\s=]+=\S+\s+)*(?:bash|sh|zsh|dash|ksh|ash)\b[^'"]*?\s-[a-z]*c\b\s*("(?:[^"\\]|\\.)*"|'[^']*'|\S.*)$/i,
+  // PowerShell: powershell|pwsh ... -c|-Command "<payload>"
+  /^(?:(?:sudo|env)\s+)?(?:powershell|pwsh)(?:\.exe)?\b[^'"]*?\s-c(?:ommand)?\b\s*("(?:[^"\\]|\\.)*"|'[^']*'|\S.*)$/i,
+  // cmd: cmd[.exe] /c|/k "<payload>"
+  /^(?:(?:sudo|env)\s+)?cmd(?:\.exe)?\b[^'"]*?\s\/[ck]\b\s*("(?:[^"\\]|\\.)*"|'[^']*'|\S.*)$/i
+];
+function unwrapPayload(raw) {
+  let s = raw.trim();
+  if (s.startsWith('"') && s.endsWith('"') || s.startsWith("'") && s.endsWith("'")) {
+    s = s.slice(1, -1);
+  }
+  return s.replace(/\\(["'`$\\])/g, "$1");
+}
+function wrapperPayloadsFromSegments(segments) {
+  const out = [];
+  for (const seg of segments) {
+    for (const re of WRAPPER_RES) {
+      const m = seg.match(re);
+      if (m && m[1]) {
+        out.push(unwrapPayload(m[1]));
+        break;
+      }
+    }
+  }
+  return out;
+}
+function extractShellWrapperPayloads(command) {
+  try {
+    return wrapperPayloadsFromSegments(parseExecutable(command).segments);
+  } catch {
+    return [];
+  }
+}
+function classifyDestructive(command, depth = 0) {
   if (!command || typeof command !== "string") return null;
   const scan = stripQuotedStrings(command);
   for (const p of DESTRUCTIVE_PATTERNS) {
     if (p.re.test(scan)) return p.name;
+  }
+  if (depth < 4) {
+    try {
+      const { segments, substitutions } = parseExecutable(command);
+      const payloads = [...wrapperPayloadsFromSegments(segments), ...substitutions];
+      for (const payload of payloads) {
+        const inner = classifyDestructive(payload, depth + 1);
+        if (inner) return inner;
+      }
+    } catch {
+    }
   }
   return null;
 }
@@ -108,6 +324,8 @@ if (!process.env.VITEST) {
 export {
   classifyDestructive,
   decide,
+  extractShellWrapperPayloads,
   isUnattended,
+  parseExecutable,
   stripQuotedStrings
 };

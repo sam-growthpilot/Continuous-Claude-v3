@@ -7,7 +7,14 @@
  * interactive; (5) SKIP_DESTRUCTIVE_GUARD override.
  */
 import { describe, it, expect } from 'vitest';
-import { classifyDestructive, isUnattended, decide, stripQuotedStrings } from '../destructive-command-guard.js';
+import {
+  classifyDestructive,
+  isUnattended,
+  decide,
+  stripQuotedStrings,
+  parseExecutable,
+  extractShellWrapperPayloads,
+} from '../destructive-command-guard.js';
 
 describe('no false-positive on destructive keywords inside string literals', () => {
   it('git commit -m with destructive words in the message → allow', () => {
@@ -168,5 +175,101 @@ describe('F2 — SKIP override only as a LEADING prefix, never a substring', () 
   it('substring elsewhere does NOT bypass (the exploit)', () => {
     expect(decide('echo SKIP_DESTRUCTIVE_GUARD=1 && rm -rf build', { permission_mode: 'bypassPermissions' }, {}).decision).toBe('deny');
     expect(decide('rm -rf build # SKIP_DESTRUCTIVE_GUARD=1', { permission_mode: 'bypassPermissions' }, {}).decision).toBe('deny');
+  });
+});
+
+describe('Phase 1b — shell-wrapper recursion (closes the stripQuotedStrings blind spot)', () => {
+  const wrapped = [
+    'bash -c "rm -rf /tmp/x"',
+    "bash -c 'rm -rf build'",
+    'sh -c "rm -rf node_modules"',
+    'bash -lc "git reset --hard HEAD~2"',          // combined flag cluster ending in c
+    'bash --norc -c "git push --force origin main"',
+    'sudo bash -c "rm -rf /var/x"',
+    'powershell -Command "rm -rf C:/tmp/x"',
+    'pwsh -c "rm -rf /x"',
+    'cmd /c "rm -rf build"',
+    'cmd.exe /c "git clean -fdx"',
+    'cd /tmp && bash -c "rm -rf y"',               // wrapper in a later segment
+    'bash -c "cd src && rm -rf dist"',             // destructive inside the payload
+    'bash -c "bash -c \\"rm -rf deep\\""',         // nested wrapper (depth recursion)
+  ];
+  for (const cmd of wrapped) {
+    it(`flags wrapped: ${cmd.slice(0, 44)}`, () => {
+      expect(classifyDestructive(cmd)).not.toBeNull();
+    });
+  }
+});
+
+describe('Phase 1b — command-substitution recursion (the commit-message backtick incident class)', () => {
+  const subst = [
+    'git commit -m "deploy $(rm -rf build)"',      // $() in double quotes EXECUTES
+    'echo "cleanup `git reset --hard`"',           // backtick in double quotes EXECUTES
+    'x=$(rm -rf build)',
+    'VAR="$(git push --force origin main)"',
+  ];
+  for (const cmd of subst) {
+    it(`flags substitution: ${cmd.slice(0, 44)}`, () => {
+      expect(classifyDestructive(cmd)).not.toBeNull();
+    });
+  }
+});
+
+describe('Phase 1b — find … | xargs rm (bulk delete, even without a recursive flag)', () => {
+  it('flags find … | xargs rm -rf', () => {
+    expect(classifyDestructive('find . -name "*.tmp" | xargs rm -rf')).not.toBeNull();
+  });
+  it('flags find … -print0 | xargs -0 rm (no -rf — the real gap)', () => {
+    expect(classifyDestructive('find . -type f -print0 | xargs -0 rm')).not.toBeNull();
+  });
+  it('does NOT flag xargs without rm', () => {
+    expect(classifyDestructive('ls | xargs echo')).toBeNull();
+    expect(classifyDestructive('find . -name x | xargs grep foo')).toBeNull();
+  });
+});
+
+describe('Phase 1b — recursion does NOT reintroduce string-literal false-positives', () => {
+  const safe = [
+    'git commit -m "fix: explain bash -c usage and rm -rf semantics"',  // wrapper TEXT in a message
+    `echo 'run: bash -c "rm -rf x"'`,                                   // single-quoted literal, not a command position
+    `git commit -m 'note: $(rm -rf x) is dangerous'`,                   // $() in SINGLE quotes does NOT execute
+    `echo 'do not run: \`git reset --hard\`'`,                          // backtick in SINGLE quotes does NOT execute
+    'node -e "console.log(\'rm -rf and git push --force\')"',           // node -e is JS, not a shell wrapper
+    'docker exec pg psql -c "SELECT 1"',                                // psql -c is not a shell wrapper
+    'bash scripts/sync-to-active.sh',                                   // bash <script> has no -c flag
+  ];
+  for (const cmd of safe) {
+    it(`allows: ${cmd.slice(0, 44)}`, () => {
+      expect(classifyDestructive(cmd)).toBeNull();
+    });
+  }
+});
+
+describe('parseExecutable — quote-aware segmentation + substitution extraction', () => {
+  it('splits on unquoted separators', () => {
+    expect(parseExecutable('a && b; c | d || e').segments).toEqual(['a', 'b', 'c', 'd', 'e']);
+  });
+  it('does not split on separators inside quotes', () => {
+    expect(parseExecutable('echo "a; b && c"').segments).toEqual(['echo "a; b && c"']);
+  });
+  it('extracts $() and backtick substitutions OUTSIDE single quotes', () => {
+    expect(parseExecutable('x=$(rm -rf a)').substitutions).toContain('rm -rf a');
+    expect(parseExecutable('echo "`git reset --hard`"').substitutions).toContain('git reset --hard');
+  });
+  it('does NOT extract substitutions inside single quotes (bash treats them literally)', () => {
+    expect(parseExecutable("echo '$(rm -rf a)'").substitutions).toEqual([]);
+    expect(parseExecutable("echo '`rm -rf a`'").substitutions).toEqual([]);
+  });
+});
+
+describe('extractShellWrapperPayloads — only real wrappers at a command position', () => {
+  it('extracts the payload of bash -c', () => {
+    expect(extractShellWrapperPayloads('bash -c "rm -rf x"')).toEqual(['rm -rf x']);
+  });
+  it('extracts across a compound command', () => {
+    expect(extractShellWrapperPayloads('cd /tmp && bash -c "rm -rf y"')).toEqual(['rm -rf y']);
+  });
+  it('does NOT treat "bash -c" text inside a quoted arg as a wrapper', () => {
+    expect(extractShellWrapperPayloads('echo "bash -c rm -rf"')).toEqual([]);
   });
 });
