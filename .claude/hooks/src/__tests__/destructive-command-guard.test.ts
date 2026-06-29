@@ -273,3 +273,102 @@ describe('extractShellWrapperPayloads — only real wrappers at a command positi
     expect(extractShellWrapperPayloads('echo "bash -c rm -rf"')).toEqual([]);
   });
 });
+
+// ---------------------------------------------------------------------------
+// Round-2 — remediation of the white-box verify sweep (2026-06-29).
+// ---------------------------------------------------------------------------
+
+describe('Round-2: fixed false positives (these gate routine dev — must allow)', () => {
+  const nowSafe = [
+    'rm --force file.txt',         // long -f, NON-recursive (was flagged: "force" contains r)
+    'rm --verbose file.txt',       // "verbose" contains r, but not recursive
+    'rm --interactive file.txt',   // "interactive" contains r, but not recursive
+    'git rebase --abort',          // recovery, UNDOES a rewrite
+    'git rebase --continue',
+    'git rebase --skip',
+    'git rebase --quit',
+    'git branch -d feature-branch', // lowercase = merged-only delete (safe)
+    'echo shred',                   // shred as an echo argument, not the command
+    'grep -r shred .',              // shred as a search term
+  ];
+  for (const cmd of nowSafe) {
+    it(`now allows (was FP): ${cmd.slice(0, 40)}`, () => {
+      expect(classifyDestructive(cmd)).toBeNull();
+    });
+  }
+  it('but still flags the dangerous siblings', () => {
+    expect(classifyDestructive('rm -rf build')).not.toBeNull();
+    expect(classifyDestructive('rm --force --recursive build')).not.toBeNull();
+    expect(classifyDestructive('rm -f -r build')).not.toBeNull();
+    expect(classifyDestructive('git rebase main')).not.toBeNull();
+    expect(classifyDestructive('git rebase -i HEAD~3')).not.toBeNull();
+    expect(classifyDestructive('git branch -D feature-x')).not.toBeNull();
+    expect(classifyDestructive('shred -u secrets.txt')).not.toBeNull();
+  });
+});
+
+describe('Round-2: newly covered destructive ops (unambiguous, low false-positive)', () => {
+  const destructive = [
+    'find . -name "*.tmp" -execdir rm -f {} \\;', // -execdir (was only -exec)
+    'rsync -a --delete emptied/ target/',
+    'rsync --delete -r src/ dst/',
+    'git push --mirror origin',
+    'git push origin :branch-to-delete',           // colon-refspec delete
+    'git push origin :refs/tags/v1.0',
+    'git worktree remove --force wt/feature',
+    'git worktree remove -f wt/feature',
+    'git switch --discard-changes main',
+    'git restore .',                                // whole-tree discard
+    'git restore --worktree src/app.ts',
+    'git submodule deinit -f --all',
+    'rd /s /q C:/Users/x',
+    'rmdir /s /q build',
+    'del /f /s /q C:/tmp/x',
+    'cmd /c rd /s /q C:/Users/victim',              // via cmd-wrapper recursion
+    'cmd /c del /f /s /q C:/tmp/x',
+    'wipefs /dev/sda',
+    'blkdiscard /dev/sdb',
+    'env -i sh -c "rm -rf /tmp/x"',                 // env-flag prefix before wrapper
+    'sudo -E bash -c "rm -rf /var/x"',              // sudo-flag prefix before wrapper
+  ];
+  for (const cmd of destructive) {
+    it(`flags: ${cmd.slice(0, 44)}`, () => {
+      expect(classifyDestructive(cmd)).not.toBeNull();
+    });
+  }
+  it('does NOT over-gate the safe siblings', () => {
+    expect(classifyDestructive('git restore --staged file.txt')).toBeNull(); // unstage only
+    expect(classifyDestructive('rsync -a src/ dst/')).toBeNull();            // no --delete
+    expect(classifyDestructive('git push origin main')).toBeNull();          // normal push
+    expect(classifyDestructive('git switch main')).toBeNull();               // normal switch
+    expect(classifyDestructive('rmdir build')).toBeNull();                   // POSIX empty-dir rmdir (no /s)
+    expect(classifyDestructive('del file.txt')).toBeNull();                  // single del (no /f|/s)
+    expect(classifyDestructive('git worktree list')).toBeNull();
+    expect(classifyDestructive('git restore file.txt')).toBeNull();          // single-file (accepted gap)
+    expect(classifyDestructive('git submodule update --init')).toBeNull();
+  });
+});
+
+describe('Round-2: documented ACCEPTED limitations (backstop, not a sandbox)', () => {
+  // UNMATCHED by design — closing them risks false-positives or is an infinite
+  // tail of shell-construction evasion. The guard is a backstop; human confirm-first
+  // + settings deny + per-tool rules also apply. Asserting toBeNull() tracks the
+  // gap so a future close flips the test and forces a header/doc update.
+  const acceptedGaps = [
+    '"rm" -rf /tmp/x',                     // quoted command name
+    "'rm' -rf /tmp/x",
+    'r\\m -rf /tmp/x',                     // backslash in name
+    'rm${IFS}-rf /tmp/x',                  // IFS separator
+    "printf 'rm -rf /tmp/x' | sh",         // dynamic payload to shell
+    "bash <<< 'rm -rf /tmp/x'",            // here-string
+    "bash <(echo 'rm -rf /tmp/x')",        // process substitution
+    '$(echo rm) -rf /tmp/x',               // substitution-constructed command name
+    'chmod -R 000 /var/data',              // too common to gate (chmod -R 755 is routine)
+    'powershell -EncodedCommand cgBtAA==', // PowerShell reduced-scope (Remove-Item out)
+  ];
+  for (const cmd of acceptedGaps) {
+    it(`[ACCEPTED GAP] not matched: ${cmd.slice(0, 38)}`, () => {
+      expect(classifyDestructive(cmd)).toBeNull();
+    });
+  }
+});
