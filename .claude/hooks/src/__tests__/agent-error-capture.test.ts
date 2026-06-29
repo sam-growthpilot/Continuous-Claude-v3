@@ -1,0 +1,107 @@
+/**
+ * agent-error-capture — Phase 1a (USABLE / review S2) tests.
+ *
+ * Verifies the QW-04 hot-path fix: the archival store is FIRE-AND-FORGET
+ * (detached async spawn + unref, never a synchronous 10s spawnSync that blocks
+ * Task completion) and the trigger is TIGHTENED to structured error signals so
+ * bare "error"/"failed" prose no longer pollutes recall. Deps are injected so
+ * these are pure unit tests (no real fs / scorer / child process).
+ */
+import { describe, it, expect, vi } from 'vitest';
+import {
+  buildStoreInvocation,
+  storeLearning,
+  hasStructuredError,
+} from '../agent-error-capture.js';
+
+describe('buildStoreInvocation — argv shape + fire-and-forget options', () => {
+  it('passes content/context/tags verbatim as separate argv (no shell injection surface)', () => {
+    const inv = buildStoreInvocation(
+      '/opc',
+      'sess-1',
+      "Agent 'kraken' error: boom",
+      'Failed agent invocation: kraken',
+      'auto_captured,agent:kraken',
+    );
+    expect(inv.cmd).toBe('uv');
+    expect(inv.args).toEqual([
+      'run', 'python', 'scripts/core/store_learning.py',
+      '--session-id', 'sess-1',
+      '--type', 'FAILED_APPROACH',
+      '--content', "Agent 'kraken' error: boom",
+      '--context', 'Failed agent invocation: kraken',
+      '--tags', 'auto_captured,agent:kraken',
+      '--confidence', 'medium',
+    ]);
+  });
+
+  it('detached + ignored stdio + no shell (so the store outlives the hook process)', () => {
+    const inv = buildStoreInvocation('/opc', 's', 'c', 'ctx', 't');
+    expect(inv.options.shell).toBe(false);
+    expect(inv.options.detached).toBe(true);
+    expect(inv.options.stdio).toBe('ignore');
+    expect(inv.options.windowsHide).toBe(true);
+    expect(inv.options.cwd).toBe('/opc');
+  });
+});
+
+describe('storeLearning — non-blocking detached spawn (QW-04 hot-path fix)', () => {
+  const fakeChild = () => ({ unref: vi.fn() } as never);
+  const okScore = () => ({ classification: 'SIGNAL', score: 7, reasons: [] } as never);
+
+  it('spawns async + detached + unref (never spawnSync, never awaits the store)', () => {
+    const child = { unref: vi.fn() };
+    const spawnFn = vi.fn(() => child as never);
+    storeLearning('s', 'kraken', 'p', 'TypeError: boom', {
+      spawnFn,
+      scoreFn: okScore,
+      existsFn: () => true,
+    });
+    expect(spawnFn).toHaveBeenCalledTimes(1);
+    const opts = spawnFn.mock.calls[0][2] as { detached?: boolean; stdio?: string; shell?: boolean };
+    expect(opts.detached).toBe(true);
+    expect(opts.stdio).toBe('ignore');
+    expect(opts.shell).toBe(false);
+    expect(child.unref).toHaveBeenCalledTimes(1);
+  });
+
+  it('drops NOISE-scored content WITHOUT spawning (recall not polluted)', () => {
+    const spawnFn = vi.fn(() => fakeChild());
+    storeLearning('s', 'kraken', 'p', 'something happened', {
+      spawnFn,
+      scoreFn: () => ({ classification: 'NOISE', score: 1, reasons: ['low signal'] } as never),
+      existsFn: () => true,
+    });
+    expect(spawnFn).not.toHaveBeenCalled();
+  });
+
+  it('missing store_learning.py → no spawn (graceful, no throw)', () => {
+    const spawnFn = vi.fn(() => fakeChild());
+    expect(() =>
+      storeLearning('s', 'kraken', 'p', 'TypeError: boom', {
+        spawnFn,
+        scoreFn: okScore,
+        existsFn: () => false,
+      }),
+    ).not.toThrow();
+    expect(spawnFn).not.toHaveBeenCalled();
+  });
+});
+
+describe('hasStructuredError — tightened trigger (structured only, not bare error/failed)', () => {
+  it('structured signals trigger a capture', () => {
+    expect(hasStructuredError('TypeError: x is not a function')).toBe(true);
+    expect(hasStructuredError('ENOENT: no such file or directory')).toBe(true);
+    expect(hasStructuredError('Traceback (most recent call last):')).toBe(true);
+    expect(hasStructuredError('panic: runtime error: index out of range')).toBe(true);
+    expect(hasStructuredError('    at processData (/app/src/index.ts:42:10)')).toBe(true);
+    expect(hasStructuredError('the agent crashed unexpectedly')).toBe(true);
+  });
+
+  it('bare / benign error words do NOT trigger (the noise source)', () => {
+    expect(hasStructuredError('0 errors, build succeeded')).toBe(false);
+    expect(hasStructuredError('the test that failed earlier now passes')).toBe(false);
+    expect(hasStructuredError('completed with no failures')).toBe(false);
+    expect(hasStructuredError('timeout was increased to 30s and it worked')).toBe(false);
+  });
+});

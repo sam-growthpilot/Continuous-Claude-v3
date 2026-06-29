@@ -2,7 +2,7 @@
 
 // src/agent-error-capture.ts
 import { readFileSync, existsSync } from "fs";
-import { spawnSync } from "child_process";
+import { spawn } from "child_process";
 import { join } from "path";
 
 // src/shared/memory-quality-scorer.ts
@@ -143,17 +143,11 @@ function scoreExtraction(content, context) {
 }
 
 // src/agent-error-capture.ts
-var ERROR_PATTERNS = [
-  /\berror\b/i,
-  /\bfailed\b/i,
-  /\bexception\b/i,
-  /\bfailure\b/i,
-  /\bcrashed?\b/i,
-  /\btimeout\b/i,
+var STRUCTURED_ERROR_PATTERNS = [
   /\bTraceback\s+\(most recent/i,
   // Python stack trace
   /\bat\s+\S+\s+\(\S+:\d+:\d+\)/,
-  // JS stack trace
+  // JS stack trace frame
   /\bpanic:/i,
   // Go panic
   /\bRuntimeError\b/i,
@@ -164,18 +158,17 @@ var ERROR_PATTERNS = [
   /\bConnectionRefused\b/i,
   /\bENOENT\b/i,
   /\bEPERM\b/i,
-  /\bEACCES\b/i
+  /\bEACCES\b/i,
+  /\bcrashed?\b/i
 ];
-var FAILURE_INDICATORS = [
-  /\bcould not\b/i,
-  /\bunable to\b/i,
-  /\bI couldn't\b/i,
-  /\bI was unable\b/i,
-  /\bI failed to\b/i,
-  /\bwas not able to\b/i,
-  /\bdidn't work\b/i,
-  /\bdoesn't work\b/i
+var GENERIC_ERROR_PATTERNS = [
+  /\berror\b/i,
+  /\bfailed\b/i,
+  /\bexception\b/i,
+  /\bfailure\b/i,
+  /\btimeout\b/i
 ];
+var ERROR_PATTERNS = [...STRUCTURED_ERROR_PATTERNS, ...GENERIC_ERROR_PATTERNS];
 function readStdin() {
   return readFileSync(0, "utf-8");
 }
@@ -194,11 +187,8 @@ function responseToString(response) {
     return String(response);
   }
 }
-function hasErrorPattern(text) {
-  return ERROR_PATTERNS.some((p) => p.test(text));
-}
-function hasFailureIndicator(text) {
-  return FAILURE_INDICATORS.some((p) => p.test(text));
+function hasStructuredError(text) {
+  return STRUCTURED_ERROR_PATTERNS.some((p) => p.test(text));
 }
 function extractErrorContext(response, maxLen = 500) {
   const lines = response.split("\n");
@@ -218,15 +208,41 @@ function extractErrorContext(response, maxLen = 500) {
   if (response.length <= maxLen) return response;
   return response.substring(0, maxLen / 2) + "\n...\n" + response.substring(response.length - maxLen / 2);
 }
-function storeLearning(sessionId, agentType, prompt, errorContext) {
+function buildStoreInvocation(opcDir, sessionId, content, contextStr, tagsStr) {
+  return {
+    cmd: "uv",
+    args: [
+      "run",
+      "python",
+      "scripts/core/store_learning.py",
+      "--session-id",
+      sessionId,
+      "--type",
+      "FAILED_APPROACH",
+      "--content",
+      content,
+      "--context",
+      contextStr,
+      "--tags",
+      tagsStr,
+      "--confidence",
+      "medium"
+    ],
+    options: { cwd: opcDir, shell: false, detached: true, stdio: "ignore", windowsHide: true }
+  };
+}
+function storeLearning(sessionId, agentType, prompt, errorContext, deps = {}) {
+  const spawnFn = deps.spawnFn ?? spawn;
+  const scoreFn = deps.scoreFn ?? scoreExtraction;
+  const existsFn = deps.existsFn ?? existsSync;
   const opcDir = getOpcDir();
   const storeScript = join(opcDir, "scripts", "core", "store_learning.py");
-  if (!existsSync(storeScript)) {
+  if (!existsFn(storeScript)) {
     console.error("[AgentErrorCapture] store_learning.py not found");
     return;
   }
   const content = `Agent '${agentType}' error: ${errorContext}`;
-  const score = scoreExtraction(content, `Failed agent invocation: ${agentType}`);
+  const score = scoreFn(content, `Failed agent invocation: ${agentType}`);
   if (score.classification === "NOISE") {
     console.error(
       `[AgentErrorCapture] Skipped NOISE (score=${score.score}) for agent '${agentType}': ` + score.reasons.join("; ")
@@ -242,32 +258,18 @@ function storeLearning(sessionId, agentType, prompt, errorContext) {
     `score:${score.score}`
   ];
   try {
-    const contextStr = `Failed agent invocation: ${agentType}`;
-    const tagsStr = tags.join(",");
-    spawnSync(
-      "uv",
-      [
-        "run",
-        "python",
-        "scripts/core/store_learning.py",
-        "--session-id",
-        sessionId,
-        "--type",
-        "FAILED_APPROACH",
-        "--content",
-        content,
-        "--context",
-        contextStr,
-        "--tags",
-        tagsStr,
-        "--confidence",
-        "medium"
-      ],
-      { cwd: opcDir, shell: false, encoding: "utf-8", timeout: 1e4, stdio: ["pipe", "pipe", "pipe"] }
+    const { cmd, args, options } = buildStoreInvocation(
+      opcDir,
+      sessionId,
+      content,
+      `Failed agent invocation: ${agentType}`,
+      tags.join(",")
     );
-    console.error(`[AgentErrorCapture] Stored failure learning for agent '${agentType}'`);
+    const child = spawnFn(cmd, args, options);
+    child.unref();
+    console.error(`[AgentErrorCapture] Dispatched (detached) failure learning for agent '${agentType}'`);
   } catch (err) {
-    console.error(`[AgentErrorCapture] Failed to store learning: ${err}`);
+    console.error(`[AgentErrorCapture] Failed to dispatch learning: ${err}`);
   }
 }
 async function main() {
@@ -291,11 +293,9 @@ async function main() {
     const agentType = input.tool_input.subagent_type || "unknown";
     const prompt = input.tool_input.prompt || input.tool_input.description || "";
     const responseStr = responseToString(input.tool_response);
-    const hasError = hasErrorPattern(responseStr);
-    const hasFailure = hasFailureIndicator(responseStr);
-    if (hasError) {
+    if (hasStructuredError(responseStr)) {
       const errorContext = extractErrorContext(responseStr);
-      console.error(`[AgentErrorCapture] Detected error in ${agentType} agent response`);
+      console.error(`[AgentErrorCapture] Detected structured error in ${agentType} agent response`);
       storeLearning(
         input.session_id,
         agentType,
@@ -313,5 +313,7 @@ if (process.argv[1] && process.argv[1].includes("agent-error-capture")) {
   main();
 }
 export {
+  buildStoreInvocation,
+  hasStructuredError,
   storeLearning
 };
