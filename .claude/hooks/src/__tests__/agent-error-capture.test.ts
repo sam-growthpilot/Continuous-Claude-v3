@@ -96,6 +96,9 @@ describe('hasStructuredError — tightened trigger (structured only, not bare er
     expect(hasStructuredError('panic: runtime error: index out of range')).toBe(true);
     expect(hasStructuredError('    at processData (/app/src/index.ts:42:10)')).toBe(true);
     expect(hasStructuredError('the agent crashed unexpectedly')).toBe(true);
+    expect(hasStructuredError('the process will crash on startup')).toBe(true);  // bare "crash"
+    expect(hasStructuredError('the worker crashes repeatedly')).toBe(true);      // "crashes"
+    expect(hasStructuredError('socket hangup: ECONNRESET')).toBe(true);
   });
 
   it('bare / benign error words do NOT trigger (the noise source)', () => {

@@ -156,10 +156,13 @@ var STRUCTURED_ERROR_PATTERNS = [
   /\bImportError\b/i,
   /\bModuleNotFoundError\b/i,
   /\bConnectionRefused\b/i,
+  /\bECONNRESET\b/i,
+  /\bETIMEDOUT\b/i,
   /\bENOENT\b/i,
   /\bEPERM\b/i,
   /\bEACCES\b/i,
-  /\bcrashed?\b/i
+  /\bcrash(?:ed|es)?\b/i
+  // crash / crashed / crashes (was /crashed?/ which required the 'e')
 ];
 var GENERIC_ERROR_PATTERNS = [
   /\berror\b/i,
