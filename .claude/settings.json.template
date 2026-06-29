@@ -64,6 +64,11 @@
             "type": "command",
             "command": "node {{CLAUDE_HOME}}/hooks/dist/tldr-context-inject.mjs",
             "timeout": 5000
+          },
+          {
+            "type": "command",
+            "command": "node {{CLAUDE_HOME}}/hooks/dist/agent-recall-injector.mjs",
+            "timeout": 3000
           }
         ]
       },
@@ -102,13 +107,13 @@
         "hooks": [
           {
             "type": "command",
-            "command": "node {{CLAUDE_HOME}}/hooks/dist/navigator-safety.mjs",
-            "timeout": 3000
+            "command": "node {{CLAUDE_HOME}}/hooks/dist/package-install-guard.mjs",
+            "timeout": 10000
           },
           {
             "type": "command",
-            "command": "node {{CLAUDE_HOME}}/hooks/dist/package-install-guard.mjs",
-            "timeout": 10000
+            "command": "node {{CLAUDE_HOME}}/hooks/dist/destructive-command-guard.mjs",
+            "timeout": 5000
           }
         ]
       },
@@ -138,8 +143,14 @@
         ]
       },
       {
-        "matcher": "Skill",
-        "hooks": []
+        "matcher": "ExitPlanMode",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node {{CLAUDE_HOME}}/hooks/dist/plan-mode-approval-gate.mjs",
+            "timeout": 5000
+          }
+        ]
       }
     ],
     "UserPromptSubmit": [
@@ -169,11 +180,6 @@
             "type": "command",
             "command": "node {{CLAUDE_HOME}}/hooks/dist/memory-awareness.mjs",
             "timeout": 10000
-          },
-          {
-            "type": "command",
-            "command": "node {{CLAUDE_HOME}}/hooks/dist/pageindex-navigator.mjs",
-            "timeout": 5000
           },
           {
             "type": "command",
@@ -250,6 +256,20 @@
             "type": "command",
             "command": "node {{CLAUDE_HOME}}/hooks/dist/roadmap-reconcile.mjs",
             "timeout": 10000
+          },
+          {
+            "type": "command",
+            "command": "node {{CLAUDE_HOME}}/hooks/dist/hook-health-monitor.mjs"
+          },
+          {
+            "type": "command",
+            "command": "node {{CLAUDE_HOME}}/hooks/dist/session-start-context-loaders.mjs",
+            "timeout": 20000
+          },
+          {
+            "type": "command",
+            "command": "node {{CLAUDE_HOME}}/hooks/dist/session-start-memory-loaders.mjs",
+            "timeout": 15000
           }
         ]
       }
@@ -297,6 +317,11 @@
             "type": "command",
             "command": "node {{CLAUDE_HOME}}/hooks/dist/session-outcome.mjs",
             "timeout": 10000
+          },
+          {
+            "type": "command",
+            "command": "node {{CLAUDE_HOME}}/hooks/dist/session-end-handoff-indexer.mjs",
+            "timeout": 15000
           }
         ]
       }
@@ -352,6 +377,11 @@
           {
             "type": "command",
             "command": "node {{CLAUDE_HOME}}/hooks/dist/plan-exit-tracker.mjs",
+            "timeout": 5000
+          },
+          {
+            "type": "command",
+            "command": "node {{CLAUDE_HOME}}/hooks/dist/plan-exit-premortem-prompt.mjs",
             "timeout": 5000
           }
         ]
@@ -416,11 +446,6 @@
           },
           {
             "type": "command",
-            "command": "node {{CLAUDE_HOME}}/hooks/dist/sync-to-repo.mjs",
-            "timeout": 15000
-          },
-          {
-            "type": "command",
             "command": "node {{CLAUDE_HOME}}/hooks/dist/git-auto-commit.mjs",
             "timeout": 10000
           },
@@ -433,11 +458,6 @@
             "type": "command",
             "command": "node {{CLAUDE_HOME}}/hooks/dist/pageindex-watch.mjs",
             "timeout": 5000
-          },
-          {
-            "type": "command",
-            "command": "node {{CLAUDE_HOME}}/hooks/dist/auto-build.mjs",
-            "timeout": 10000
           }
         ]
       },
@@ -448,15 +468,30 @@
             "type": "command",
             "command": "node {{CLAUDE_HOME}}/hooks/dist/import-validator.mjs",
             "timeout": 10000
+          },
+          {
+            "type": "command",
+            "command": "node {{CLAUDE_HOME}}/hooks/dist/post-edit-diagnostics.mjs",
+            "timeout": 35000
           }
         ]
       },
       {
+        "matcher": "Skill|Task",
         "hooks": [
           {
             "type": "command",
-            "command": "node {{CLAUDE_HOME}}/hooks/dist/periodic-extract.mjs",
-            "timeout": 2000
+            "command": "node {{CLAUDE_HOME}}/hooks/dist/telemetry-tracker.mjs"
+          }
+        ]
+      },
+      {
+        "matcher": "WebFetch|WebSearch",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node {{CLAUDE_HOME}}/hooks/dist/web-lookup-advisor.mjs",
+            "timeout": 5000
           }
         ]
       }
