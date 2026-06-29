@@ -39,6 +39,7 @@ import { outputContinue } from './shared/output.js';
 import { logHook } from './shared/session-activity.js';
 import { extractIntent, extractKeywords, expandGitQuery, isMachineGeneratedPrompt } from './shared/intent-extractor.js';
 import { probeDaemon, recallViaDaemon, ensureDaemonRunning } from './shared/embedding-client.js';
+import { getFreeRamBytes, isHostMemoryPressured, getHostRamFloorBytes } from './shared/host-ram.js';
 import { emitBraintrustScore } from './shared/braintrust-score.js';
 import { sanitizeMemoryContent, wrapMemoryContext } from './shared/memory-sanitize.js';
 import { readBus } from './shared/context-bus.js';
@@ -340,6 +341,14 @@ interface RecallLogEntry {
   // ST-05: which recall path served this fire — 'daemon' (resident in-process
   // recall) or 'uv' (subprocess fallback). Lets /memory-stats measure the hit rate.
   recall_via?: 'daemon' | 'uv';
+  // BLOCKER-2 (host-memory-pressure): host_memory_pressure=true when free RAM was
+  // below the floor, so the hook forced text-only recall and SKIPPED the daemon
+  // probe + spawn (avoids paging-thrashing the ~1.3GB model). free_ram_bytes is
+  // the raw probe value (+Infinity on a fail-open probe failure);
+  // embed_fallback_reason names the gate that forced the fallback (or null).
+  host_memory_pressure: boolean;
+  free_ram_bytes: number;
+  embed_fallback_reason: string | null;
 }
 
 function getRecallLogPath(projectDir: string): string {
@@ -486,9 +495,27 @@ async function main() {
   const focusTerms = busFocus.terms;
   const focusBlock = buildFocusBlock(focusTerms);
 
+  // BLOCKER-2 (host-memory-pressure, restored 2026-06-29 + integrated with ST-05):
+  // before any daemon work, check host free RAM. Under pressure the resident
+  // BGE-large model (~1.3GB) competes with browser/Docker, gets paged out, and
+  // every embed pays ~10x page-fault latency — the 2026-05-20 RED incident. So
+  // when free RAM is below the floor we SKIP the daemon probe AND the model
+  // spawn, force text-only recall, and log a clear reason. The gate sits BEFORE
+  // probeDaemon so we never wake/thrash the model under pressure. Fail-open:
+  // getFreeRamBytes returns +Infinity on a probe failure, so a broken probe can
+  // never take recall offline.
+  const freeRamBytes = getFreeRamBytes();
+  const hostMemoryPressured = isHostMemoryPressured(freeRamBytes, getHostRamFloorBytes());
+  if (hostMemoryPressured) {
+    process.stderr.write(
+      '[memory-awareness] host RAM low: skipping daemon probe + spawn, text-only fallback\n',
+    );
+  }
+
   // Task 1.3: probe BGE embedding daemon. If ready, use hybrid (vector +
   // FTS) recall; otherwise fall back to text-only and fire-and-forget the
-  // daemon spawn so the NEXT prompt benefits.
+  // daemon spawn so the NEXT prompt benefits. SKIPPED entirely under RAM
+  // pressure (above) so we neither probe nor spawn the model when memory is tight.
   //
   // The probe is bounded by DEFAULT_PING_TIMEOUT_MS (currently 1500ms in
   // embedding-client.ts) so daemon liveness checks stay within a tight budget.
@@ -497,16 +524,19 @@ async function main() {
   // validated `info` + `recallReady` drive the resident recall op at the seam below
   // (one discovery read — H5 TOCTOU guard).
   let probe: Awaited<ReturnType<typeof probeDaemon>> = null;
-  try {
-    probe = await probeDaemon();
-  } catch {
-    probe = null;
+  if (!hostMemoryPressured) {
+    try {
+      probe = await probeDaemon();
+    } catch {
+      probe = null;
+    }
   }
-  const daemonReady = !!probe?.ready;
+  const daemonReady = !hostMemoryPressured && !!probe?.ready;
   const mode: 'hybrid' | 'text-only' = daemonReady ? 'hybrid' : 'text-only';
-  if (!daemonReady) {
+  if (!hostMemoryPressured && !daemonReady) {
     // Best-effort: warm the daemon for next prompt. Detached spawn -- this
-    // returns immediately and does NOT block this prompt.
+    // returns immediately and does NOT block this prompt. Gated on
+    // !hostMemoryPressured: we must NOT spawn the ~1.3GB model when RAM is tight.
     try { ensureDaemonRunning(); } catch { /* fail-open */ }
   }
 
@@ -580,6 +610,11 @@ async function main() {
     db_subprocess_timed_out: dbTimedOut,
     // ST-05: 'daemon' when the resident recall op served this fire, else 'uv'.
     recall_via: recallVia,
+    // BLOCKER-2: host-memory-pressure telemetry. host_memory_pressure=true means
+    // we forced text-only + skipped the daemon to avoid thrashing the model.
+    host_memory_pressure: hostMemoryPressured,
+    free_ram_bytes: freeRamBytes,
+    embed_fallback_reason: hostMemoryPressured ? 'host_memory_pressure' : null,
   };
   logRecallFire(logEntry, projectDir);
 

@@ -724,6 +724,61 @@ function _acquireSpawnLock(lockPath) {
   }
 }
 
+// src/shared/host-ram.ts
+import { spawnSync as defaultSpawnSync } from "child_process";
+import { readFileSync as defaultReadFileSync } from "fs";
+var HOST_RAM_FLOOR_BYTES = 2 * 1024 * 1024 * 1024;
+function getHostRamFloorBytes() {
+  const raw = process.env.CCV3_HOST_RAM_FLOOR_BYTES;
+  if (!raw) return HOST_RAM_FLOOR_BYTES;
+  const parsed = parseInt(raw, 10);
+  if (Number.isNaN(parsed) || parsed <= 0) return HOST_RAM_FLOOR_BYTES;
+  return parsed;
+}
+var PROBE_TIMEOUT_MS = 1500;
+function getFreeRamBytes(spawnFn = defaultSpawnSync, readFileFn = defaultReadFileSync, platform = process.platform) {
+  const override = process.env.CCV3_HOST_RAM_OVERRIDE_BYTES;
+  if (override) {
+    const parsed = parseInt(override, 10);
+    if (!Number.isNaN(parsed) && parsed > 0) return parsed;
+  }
+  try {
+    if (platform === "win32") {
+      const result = spawnFn(
+        "powershell",
+        [
+          "-NoProfile",
+          "-NonInteractive",
+          "-Command",
+          "(Get-CimInstance Win32_OperatingSystem).FreePhysicalMemory"
+        ],
+        { timeout: PROBE_TIMEOUT_MS, encoding: "utf-8" }
+      );
+      const out = typeof result.stdout === "string" ? result.stdout : result.stdout?.toString("utf-8") ?? "";
+      const kb2 = parseInt(out.trim(), 10);
+      if (Number.isNaN(kb2) || kb2 <= 0) {
+        return Number.POSITIVE_INFINITY;
+      }
+      return kb2 * 1024;
+    }
+    const meminfo = readFileFn("/proc/meminfo", "utf-8");
+    const match = meminfo.match(/^MemAvailable:\s+(\d+)\s+kB/m);
+    if (!match) {
+      return Number.POSITIVE_INFINITY;
+    }
+    const kb = parseInt(match[1], 10);
+    if (Number.isNaN(kb) || kb <= 0) {
+      return Number.POSITIVE_INFINITY;
+    }
+    return kb * 1024;
+  } catch {
+    return Number.POSITIVE_INFINITY;
+  }
+}
+function isHostMemoryPressured(freeRamBytes = getFreeRamBytes(), floor = getHostRamFloorBytes()) {
+  return freeRamBytes < floor;
+}
+
 // src/shared/braintrust-score.ts
 var BRAINTRUST_FEEDBACK_TIMEOUT_MS = 2e3;
 var DEFAULT_API_URL = "https://api.braintrust.dev";
@@ -1539,15 +1594,24 @@ async function main() {
   }
   const focusTerms = busFocus.terms;
   const focusBlock = buildFocusBlock(focusTerms);
-  let probe = null;
-  try {
-    probe = await probeDaemon();
-  } catch {
-    probe = null;
+  const freeRamBytes = getFreeRamBytes();
+  const hostMemoryPressured = isHostMemoryPressured(freeRamBytes, getHostRamFloorBytes());
+  if (hostMemoryPressured) {
+    process.stderr.write(
+      "[memory-awareness] host RAM low: skipping daemon probe + spawn, text-only fallback\n"
+    );
   }
-  const daemonReady = !!probe?.ready;
+  let probe = null;
+  if (!hostMemoryPressured) {
+    try {
+      probe = await probeDaemon();
+    } catch {
+      probe = null;
+    }
+  }
+  const daemonReady = !hostMemoryPressured && !!probe?.ready;
   const mode = daemonReady ? "hybrid" : "text-only";
-  if (!daemonReady) {
+  if (!hostMemoryPressured && !daemonReady) {
     try {
       ensureDaemonRunning();
     } catch {
@@ -1595,7 +1659,12 @@ async function main() {
     // output; false = completed normally (even if results_count is 0).
     db_subprocess_timed_out: dbTimedOut,
     // ST-05: 'daemon' when the resident recall op served this fire, else 'uv'.
-    recall_via: recallVia
+    recall_via: recallVia,
+    // BLOCKER-2: host-memory-pressure telemetry. host_memory_pressure=true means
+    // we forced text-only + skipped the daemon to avoid thrashing the model.
+    host_memory_pressure: hostMemoryPressured,
+    free_ram_bytes: freeRamBytes,
+    embed_fallback_reason: hostMemoryPressured ? "host_memory_pressure" : null
   };
   logRecallFire(logEntry, projectDir);
   try {
