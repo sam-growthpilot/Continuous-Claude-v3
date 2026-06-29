@@ -91,15 +91,19 @@ not a quick edit.
 
 ## Sequencing
 
-**Phases 0, 1, 2 are DONE (2026-06-29).** Remaining:
-- **Phase 3 — S3 polish + regression insurance** (below): (3a) integration test replaying
-  real PreToolUse/PostToolUse:Task events through the 12 revived Task hooks; (3b)
-  settings-template event+matcher assertions; (3c) dead-code (checkLocalMemory; verify
-  checkMemoryRelevance + the exported LOCAL_SCORE_NORMALIZE before removing) + the
-  memory-sanitize header + agent-model-guard rename.
-- **BLOCKER-2 host-memory-pressure** (NEW, found 2026-06-29): `memory-awareness-host-ram.test.ts`
-  is RED at HEAD — it expects `host_memory_pressure`/`free_ram_bytes`/`embed_fallback_reason`
-  log fields + RAM-pressure mode-gating that are absent from `memory-awareness.ts`. Decide:
-  implement the host-RAM gate, or retire the aspirational tests.
-- **SG-01**: re-baseline memory hit-rate now that recall is resident (ST-05 done). Revisit
-  ST-03/ST-10 (ST-05 was their prereq).
+**Phases 0, 1, 2, 3 are DONE (2026-06-29).** Phase 3 shipped: 3a `task-hooks-integration.test.ts`
+(14 Task-matcher hooks, 18/18) + 3b settings event+matcher contract (`90f8d7a`); 3c dead-code
+(checkLocalMemory + LOCAL_SCORE_NORMALIZE) + memory-sanitize header (6 sites) + agent-model-guard
+misnomer note (`44c2653`). Remaining for next session:
+- **host-memory-pressure RESTORE** (investigated 2026-06-29 → it is a REGRESSION, not aspirational):
+  `d71e9ad` shipped the feature — `shared/host-ram.ts` probe (STILL PRESENT; its 22 tests PASS) +
+  ~119 lines of wiring in `memory-awareness.ts`; the wiring was lost in a later overwrite (no
+  intentional-removal commit). Restore = re-wire the surviving probe, INTEGRATED with ST-05's new
+  `probeDaemon` flow (skip probe/recall → text-only when free RAM is low) + re-add the
+  `host_memory_pressure`/`free_ram_bytes`/`embed_fallback_reason` log fields so the 3 RED
+  `memory-awareness-host-ram.test.ts` go green.
+- **tldr-context-inject latency** (NEW, found by 3a): runs a ~10-15s `tldr structure` on EVERY Task
+  spawn (occasionally >15s). QW-04 put it on the Task matcher deliberately (Agent→Task rename), so
+  it IS per-agent context injection — decide if it's worth the cold start: cache the result, route
+  through a resident tldr daemon, or narrow the matcher. Documented in the 3a test (FINDING + 20s budget).
+- **SG-01**: re-baseline memory hit-rate now that recall is resident. Revisit ST-03/ST-10 (ST-05 prereq).
