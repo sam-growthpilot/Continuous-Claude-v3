@@ -54,8 +54,10 @@ interface HookOutput {
 // force-push only, not plain push; DB drops only inside a DB-CLI invocation).
 interface DPattern { name: string; re: RegExp; }
 const DESTRUCTIVE_PATTERNS: DPattern[] = [
-  // filesystem — recursive/forced deletion only (single-file `rm -f x` is allowed)
-  { name: 'recursive rm', re: /\brm\s+(-\w*r\w*|--recursive)/i },
+  // filesystem — recursive deletion only (single-file `rm -f x` is allowed).
+  // Scans across SPLIT flag tokens so `rm -f -r x` / `rm --force --recursive x`
+  // are caught, not just `rm -rf` (F3: the prior /-\w*r\w*/ only saw the 1st flag).
+  { name: 'recursive rm', re: /\brm(?:\s+-{1,2}[^\s]+)*\s+-{1,2}[^\s]*[rR][^\s]*/i },
   { name: 'find -delete', re: /\bfind\b[^&|;]*-delete\b/i },
   { name: 'find -exec rm', re: /\bfind\b[^&|;]*-exec\s+rm\b/i },
   { name: 'dd to/from device', re: /\bdd\s+[^&|;]*\b(if|of)=/i },
@@ -67,7 +69,7 @@ const DESTRUCTIVE_PATTERNS: DPattern[] = [
   { name: 'git reset --hard', re: /\bgit\s+reset\s+--hard\b/i },
   { name: 'git push --force', re: /\bgit\s+push\b[^&|;]*(--force(-with-lease)?|\s-f\b)/i },
   { name: 'git push --delete', re: /\bgit\s+push\b[^&|;]*(--delete|\s-d\b)/i },
-  { name: 'git clean -f', re: /\bgit\s+clean\s+-\w*f/i },
+  { name: 'git clean -f', re: /\bgit\s+clean(?:\s+-{1,2}[^\s]+)*\s+-{1,2}[^\s]*f[^\s]*/i },
   { name: 'git checkout discard', re: /\bgit\s+checkout\s+(--|\.)/i },
   { name: 'git branch -D', re: /\bgit\s+branch\s+(-D\b|--delete\s+--force|-\w*D\w*\s)/i },
   { name: 'git rebase', re: /\bgit\s+rebase\b/i },
@@ -79,7 +81,7 @@ const DESTRUCTIVE_PATTERNS: DPattern[] = [
   // docker — volume/image/system destruction
   { name: 'docker prune', re: /\bdocker\s+(system|volume|network|container|image)\s+prune\b/i },
   { name: 'docker volume rm', re: /\bdocker\s+volume\s+rm\b/i },
-  { name: 'docker force rm', re: /\bdocker\s+(rm|rmi)\s+[^&|;]*-f\b/i },
+  { name: 'docker force rm', re: /\bdocker\s+(rm|rmi)\s+[^&|;]*(--force|-f\b|-\w*f\b)/i },
 ];
 // NOTE: DB drops (psql/sqlite3 -c "DROP TABLE …") and PowerShell Remove-Item are
 // intentionally NOT gated here. Their payload is inherently inside quotes, which
@@ -140,7 +142,10 @@ export type Decision = { decision: 'allow' | 'ask' | 'deny'; pattern?: string };
  * as a fallback in case the parent process exports it.
  */
 export function decide(command: string, input: HookInput, env: NodeJS.ProcessEnv = process.env): Decision {
-  if (env.SKIP_DESTRUCTIVE_GUARD === '1' || /\bSKIP_DESTRUCTIVE_GUARD=1\b/.test(command)) {
+  // F2: the override is only honored as a LEADING command prefix (the env-var
+  // form the user actually types), NOT as a substring anywhere — otherwise
+  // `echo SKIP_DESTRUCTIVE_GUARD=1 && rm -rf x` would disable the guard.
+  if (env.SKIP_DESTRUCTIVE_GUARD === '1' || /^\s*SKIP_DESTRUCTIVE_GUARD=1\s+/.test(command)) {
     return { decision: 'allow' };
   }
   const pattern = classifyDestructive(command);

@@ -133,7 +133,40 @@ describe('decide — ask interactive, deny unattended, never hang', () => {
     expect(decide('git status', { permission_mode: 'default' }, {}).decision).toBe('allow');
     expect(decide('git status', { permission_mode: 'bypassPermissions' }, {}).decision).toBe('allow');
   });
-  it('SKIP_DESTRUCTIVE_GUARD=1 → allow even destructive', () => {
+  it('SKIP_DESTRUCTIVE_GUARD=1 env → allow even destructive', () => {
     expect(decide('rm -rf x', { permission_mode: 'default' }, { SKIP_DESTRUCTIVE_GUARD: '1' }).decision).toBe('allow');
+  });
+});
+
+describe('F3 — split-flag recursive deletion is caught (not just -rf)', () => {
+  const splitDestructive = [
+    'rm -f -r build',
+    'rm -i -r build',
+    'rm --force --recursive build',
+    'rm --force -r build',
+    'sudo rm -f -r /var/x',
+    'cd x && rm -f -r y',
+    'git clean -d -f',
+    'git clean -x -d -f',
+    'docker rm --force mycontainer',
+  ];
+  for (const cmd of splitDestructive) {
+    it(`flags split-flag: ${cmd.slice(0, 40)}`, () => {
+      expect(classifyDestructive(cmd)).not.toBeNull();
+    });
+  }
+  it('still does NOT flag non-recursive single-file rm', () => {
+    expect(classifyDestructive('rm -f .git/index.lock')).toBeNull();
+    expect(classifyDestructive('rm -i config.json')).toBeNull();
+  });
+});
+
+describe('F2 — SKIP override only as a LEADING prefix, never a substring', () => {
+  it('leading prefix → allow', () => {
+    expect(decide('SKIP_DESTRUCTIVE_GUARD=1 rm -rf build', { permission_mode: 'bypassPermissions' }, {}).decision).toBe('allow');
+  });
+  it('substring elsewhere does NOT bypass (the exploit)', () => {
+    expect(decide('echo SKIP_DESTRUCTIVE_GUARD=1 && rm -rf build', { permission_mode: 'bypassPermissions' }, {}).decision).toBe('deny');
+    expect(decide('rm -rf build # SKIP_DESTRUCTIVE_GUARD=1', { permission_mode: 'bypassPermissions' }, {}).decision).toBe('deny');
   });
 });

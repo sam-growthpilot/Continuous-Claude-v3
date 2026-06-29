@@ -394,18 +394,25 @@ function getTldrContext(
   }
 }
 
-// Find project root
-function findProjectRoot(startPath: string): string {
+// Find project root.
+// F5: terminate at the filesystem root cross-platform. The prior `while
+// (current !== '/')` NEVER terminated on a Windows drive root (dirname('C:/')
+// === 'C:/', never '/'), so once QW-04 made this hook live on PreToolUse:Task it
+// spun to the hook timeout (~5s) on every code-related spawn. dirname(root)===root
+// on every platform, so the parent-stops-changing check is the correct terminator.
+export function findProjectRoot(startPath: string): string {
   let current = startPath;
   const markers = ['.git', 'pyproject.toml', 'package.json', 'Cargo.toml', 'go.mod'];
 
-  while (current !== '/') {
+  while (true) {
     for (const marker of markers) {
       if (existsSync(join(current, marker))) {
         return current;
       }
     }
-    current = dirname(current);
+    const parent = dirname(current);
+    if (parent === current) break; // reached filesystem root (POSIX '/' or Windows 'C:\')
+    current = parent;
   }
   return startPath;
 }
