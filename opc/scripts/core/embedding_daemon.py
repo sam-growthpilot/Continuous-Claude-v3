@@ -306,12 +306,19 @@ def _get_do_recall():
     """Resolve ``recall_learnings.do_recall``.
 
     Indirected so the recall handler does not hard-bind the import path and so
-    tests can patch this seam without depending on how ``core.*`` resolves in
-    the daemon process. Uses the established ``core.`` package convention
-    (same as recall_learnings' ``from core import embedding_daemon``); verified
-    importable in the real ``uv run --project opc`` launch context.
+    tests can patch this seam. The LIVE daemon runs as a SCRIPT
+    (``sys.path[0] == .../opc/scripts/core``), so the sibling form resolves —
+    the SAME style as _init_recall_pool's ``from db.postgres_pool import …`` and
+    recall_learnings' own ``from db.…`` imports. The pytest context imports the
+    daemon as ``core.embedding_daemon`` with opc/scripts on the path, where only
+    the ``core.`` package form resolves. Try the sibling form first, fall back to
+    the package form (fixes ModuleNotFoundError: No module named 'core' in the
+    real ``uv run --project opc`` launch — the earlier claim was test-context only).
     """
-    from core.recall_learnings import do_recall  # noqa: PLC0415
+    try:
+        from recall_learnings import do_recall  # noqa: PLC0415  (script context — live daemon)
+    except ModuleNotFoundError:
+        from core.recall_learnings import do_recall  # noqa: PLC0415  (package context — pytest)
     return do_recall
 
 
