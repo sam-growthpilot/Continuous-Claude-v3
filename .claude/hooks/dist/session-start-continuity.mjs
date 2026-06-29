@@ -255,6 +255,24 @@ function readRegistry(projectDir) {
   return null;
 }
 
+// src/shared/memory-sanitize.ts
+function sanitizeMemoryContent(content, cap = 500) {
+  if (typeof content !== "string" || content.length === 0) {
+    return "";
+  }
+  let out = content.replace(/[\x00-\x08\x0b\x0c\x0e-\x1f\x7f-\x9f]/g, "");
+  if (out.length > cap) {
+    out = out.slice(0, cap) + "...(truncated)";
+  }
+  out = out.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+  return out;
+}
+function wrapMemoryContext(body) {
+  return `<context source="memory" trust="data-only">
+${body}
+</context>`;
+}
+
 // src/session-start-continuity.ts
 var STALE_THRESHOLD_DAYS = 7;
 var STALE_THRESHOLD_MS = STALE_THRESHOLD_DAYS * 24 * 60 * 60 * 1e3;
@@ -495,8 +513,8 @@ ${entries}`);
       });
       const result = proc.stdout || "";
       if (result && !result.includes("No results") && result.trim().length > 20) {
-        sections.push(`## Relevant Memories
-${result.substring(0, 600)}`);
+        sections.push(wrapMemoryContext(`## Relevant Memories
+${sanitizeMemoryContent(result, 600)}`));
       }
     } catch (error) {
     }

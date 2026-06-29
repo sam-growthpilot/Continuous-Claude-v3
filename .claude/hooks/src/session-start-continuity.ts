@@ -3,6 +3,7 @@ import * as path from 'path';
 import { execSync, spawnSync } from 'child_process';
 import { readRalphUnifiedState, RalphUnifiedState } from './shared/state-schema.js';
 import { getProjectIdentity, isContentRelevantToProject } from './shared/project-relevance.js';
+import { sanitizeMemoryContent, wrapMemoryContext } from './shared/memory-sanitize.js';
 
 interface SessionStartInput {
   type?: 'startup' | 'resume' | 'clear' | 'compact';  // Legacy field
@@ -430,7 +431,11 @@ async function buildUnifiedContext(projectDir: string): Promise<string> {
 
       const result = proc.stdout || '';
       if (result && !result.includes('No results') && result.trim().length > 20) {
-        sections.push(`## Relevant Memories\n${result.substring(0, 600)}`);
+        // D5b-01: archival_memory recall is untrusted (auto-extracted; can be
+        // poisoned). Sanitize + wrap as data-only before injecting at session
+        // start. Only the recall result is wrapped — the handoff/ledger/ROADMAP
+        // sections are the user's OWN trusted files and are left intact.
+        sections.push(wrapMemoryContext(`## Relevant Memories\n${sanitizeMemoryContent(result, 600)}`));
       }
     } catch (error) {
       // Memory recall failed, continue without it
