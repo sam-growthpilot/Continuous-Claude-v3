@@ -10,6 +10,7 @@
 - Started: 2026-06-27 (review arc started 2026-06-10)
 
 ## Completed
+- [x] feat(memory-awareness): FH-02 recall_ready telemetry + record data-gated re-baseline (2026-06-30) `0368785`
 - [x] fix(hooks,health): FH-01 warm tldr daemon at session start + health-check tolerates on-demand absence (2026-06-30) `80b1b0f`
 - [x] docs(handoff): FINAL-session materials cleanup + archive superseded handoffs (2026-06-30) `965a5d1`
 - [x] docs(handoff): add canonical FINAL SESSION directive to NEXT-SESSION-PLAN (cycle wrap-up) (2026-06-30) `9ac76d2`
