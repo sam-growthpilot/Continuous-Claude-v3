@@ -10,6 +10,8 @@
 - Started: 2026-06-27 (review arc started 2026-06-10)
 
 ## Completed
+- [x] fix(hooks,health): FH-01 warm tldr daemon at session start + health-check tolerates on-demand absence (2026-06-30) `80b1b0f`
+- [x] docs(handoff): FINAL-session materials cleanup + archive superseded handoffs (2026-06-30) `965a5d1`
 - [x] docs(handoff): add canonical FINAL SESSION directive to NEXT-SESSION-PLAN (cycle wrap-up) (2026-06-30) `9ac76d2`
 - [x] docs(foundation): record Session 2 foundation-hardening (A1-A4/B/A6/D/SG-01) + follow-ups (2026-06-29) `dfaab16`
 - [x] perf(tldr-context-inject): git-freshness cache + narrow to code agents (D) (2026-06-29) `1fd155c`

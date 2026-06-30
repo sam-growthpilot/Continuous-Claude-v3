@@ -331,6 +331,13 @@ interface RecallLogEntry {
   // Task 1.3 diagnostics: track daemon-routing decisions for observability.
   mode: 'hybrid' | 'text-only';
   daemon_ready: boolean;
+  // FH-02 (re-baseline telemetry): recall_ready = probe.recallReady (the RECALL
+  // pool/path is live), DISTINCT from daemon_ready (= probe.ready, the model is
+  // loaded). This disambiguates a uv fallback: daemon_ready:true + recall_ready:
+  // false + recall_via:'uv' is the recall path warming up (expected fallback);
+  // daemon_ready:true + recall_ready:true + recall_via:'uv' is a real daemon-recall
+  // failure worth investigating. Without it, SG-01 cannot attribute uv fallbacks.
+  recall_ready: boolean;
   total_elapsed_ms: number;
   // Task 1.3a: record which floor was applied so /memory-stats can verify.
   floor_applied: number;
@@ -603,6 +610,7 @@ async function main() {
     source: match ? match.source : (mergedRaw ? mergedRaw.source : 'empty'),
     mode,
     daemon_ready: daemonReady,
+    recall_ready: !!probe?.recallReady,
     total_elapsed_ms: Date.now() - t0,
     floor_applied: floorApplied,
     // MEDIUM-2 (arbiter 2.1): true = subprocess SIGKILLed before returning
@@ -672,6 +680,8 @@ async function main() {
           kept_after_floor: logEntry.kept_after_floor,
           mode: logEntry.mode,
           daemon_ready: logEntry.daemon_ready,
+          recall_ready: logEntry.recall_ready,
+          recall_via: logEntry.recall_via,
           total_elapsed_ms: logEntry.total_elapsed_ms,
           intent: logEntry.intent,
           floor_applied: logEntry.floor_applied,

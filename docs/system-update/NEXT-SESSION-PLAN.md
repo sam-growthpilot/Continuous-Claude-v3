@@ -1,6 +1,6 @@
 # Next-Session Plan — ST-05 + S2/S3 backlog (post review-remediation)
 
-> ## ▶ FINAL SESSION — START HERE (planned 2026-06-29, approved)
+> ## ▶ FINAL SESSION — START HERE (planned 2026-06-29, approved) · ✅ EXECUTED 2026-06-30 (see "FINAL SESSION — EXECUTED" below)
 >
 > This is the **last session of the CCv3 system-update cycle**. The code foundation is hardened
 > and live (Session 2, below). One task remains: **bring the handoff materials to a clean,
@@ -42,6 +42,23 @@
 > to `memory-awareness.ts` (overwrite history). **Preflight:** ping the daemon
 > (`~/.claude/run/ccv3-embedding.json` → port) for `recall_ready:true, loop_ok:true`; branch synced
 > to `fork` at `dfaab16`+.
+
+## FINAL SESSION — EXECUTED (2026-06-30)
+
+All FINAL-session deliverables shipped + pushed `fork` (commits `965a5d1` docs/archive · `80b1b0f` FH-01 · `eaa5b43` viz · + the FH-02 telemetry commit below).
+
+1. **Materials cleanup ✓** — README/ROADMAP/CURRENT-STATE/RESOURCE-MAP rewired so `NEXT-SESSION-PLAN.md` is the single canonical entry; the 3 superseded handoffs (06-27, both 06-28) moved to `docs/handoffs-archive/`; RESOURCE-MAP gained the "Resident recall daemon (the foundation)" group.
+2. **FH-01 ✓** — `session-start-init-check.warmTldrDaemon` fire-and-forget warms `tldr daemon start --project <dir>` each startup (critic-approved 0-critical, 8/8 tests, real warm → `status: ready`). `health_check.check_tldr_daemon_running` now CATCHES the `subprocess.TimeoutExpired` that made it crash → FAIL/HIGH and reports the on-demand daemon as **INFO** (verified WARN/INFO). No path can reach FAIL/HIGH.
+3. **Judge-Batch (FH-03) ✓** — root cause = a **missed schedule** (Event 153), not a script error; enabled `StartWhenAvailable` (`False → True` verified). The separate 6/28 `0x80070001` one-off is deferred (6/20–6/27 all ran exit 0).
+4. **viz commit ✓** — `architecture.json` + `index.html` committed; tree clean.
+5. **FH-02 re-baseline — DATA-GATED → ST-03/ST-10 stay GATED (NOT unblocked).** Re-running `memory-recall.jsonl` (395 events) shows the `recall_via` instrumentation is still new: only **4 of 395** events carry it — **2 daemon, 2 uv** — far below the ≥50-daemon threshold. Evidence:
+   - **Daemon legs (n=2, 06-29):** 1.7 s & 3.4 s, both hit (kept 3/3), 0 timeout.
+   - **Live socket probe THIS session:** warm daemon recall **~160–250 ms** (cold first-call ~4.7 s); `recall_ready:true, loop_ok:true`, model/dim correct — the ST-05 ≤3 s / ~136 ms warm target HOLDS.
+   - **Anomaly root-caused (NOT a regression):** the 2 recalls today logged `daemon_ready:true` + `recall_via:uv` + ~20 s timeout. `daemon_ready` logs `probe.ready` (model loaded); routing uses `probe.recallReady` (recall pool). At those moments `recallReady` was false (pool re-warming after a daemon restart) → correct uv fallback. The log couldn't distinguish "recall pool cold" from "daemon recall errored."
+   - **Fix shipped this session:** added a `recall_ready` field to the recall log + Braintrust metadata (`memory-awareness.ts`; build OK, 16/16 tests, emit 4/4) so the NEXT re-baseline can attribute every uv fallback.
+   - **Next session:** accumulate ≥50 `recall_via:daemon` events, confirm `daemon_ready:true + recall_ready:true + recall_via:uv` NEVER appears (that would be a real routing bug), then unblock **ST-03** + **ST-10**.
+
+**Cycle status: WRAPPED on code + materials.** The only open thread is the data-gated FH-02 re-baseline (ST-03/ST-10), now instrumented to be measurable.
 
 > Branch `snapshot/ccv3-system-update`, tip `39379ac`. Read first:
 > [`../HANDOFF-2026-06-29-review-remediation.md`](../HANDOFF-2026-06-29-review-remediation.md).
@@ -183,10 +200,12 @@ Shipped + pushed `fork` (`237c72e`, `501365e`, `1fd155c`):
 
 ## Remaining for next session
 
-- **SG-01 full re-baseline** — re-run the `memory-recall.jsonl` analysis after ~50+
-  `recall_via:daemon` events accumulate; confirm the daemon hit-rate/latency holds, then unblock
-  **ST-03** (UPS 13-spawn serial→parallel) and **ST-10** (agent-recall-injector 0-for-78) which
-  are gated on ST-05.
+- **SG-01 / FH-02 full re-baseline — DATA-GATED (updated 2026-06-30, see "FINAL SESSION — EXECUTED").**
+  The FINAL session re-ran the analysis: still only **2 `recall_via:daemon` events** logged (live socket
+  probe confirmed warm daemon recall ~160-250 ms — ST-05 target holds). Added the `recall_ready` log
+  field so uv fallbacks are now attributable. NEXT: accumulate ≥50 `recall_via:daemon` events, confirm
+  no `daemon_ready:true + recall_ready:true + recall_via:uv` rows (a real routing bug), then unblock
+  **ST-03** (UPS 13-spawn serial→parallel) and **ST-10** (agent-recall-injector 0-for-78), both ST-05-gated.
 - **tldr daemon stays-up** (health-check `tldr-daemon-running` HIGH: `tldr daemon status` times
   out 5 s). D's cache/narrow cut the per-Task cold-start but did NOT fix the daemon not persisting.
   Root-cause why `tldr daemon` won't stay resident on Windows (DEFER option from the D recon) — or
