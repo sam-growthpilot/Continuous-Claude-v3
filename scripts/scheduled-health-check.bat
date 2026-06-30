@@ -10,7 +10,10 @@ set PYTHONPATH=.
 
 echo [%date% %time%] Starting CCv3 weekly health check...
 
-call uv run python scripts\health_check.py
+REM --skip-slow --quiet is the documented scheduled form: the full run's slow checks + the
+REM trailing claude -p step blew the 15-min ExecutionTimeLimit, so the scheduler killed the task
+REM (0x41306 SCHED_S_TASK_TERMINATED). Skipping the slow checks keeps the run well inside budget.
+call uv run python scripts\health_check.py --skip-slow --quiet
 set EXIT_CODE=%ERRORLEVEL%
 
 echo [%date% %time%] Health check finished. exit=%EXIT_CODE%
@@ -26,6 +29,9 @@ set NOTION_PROMPT=scripts\notion-health-prompt.md
 
 if exist %NOTION_PROMPT% (
     echo [%date% %time%] Posting results to Notion dashboard...
+    REM claude -p must auth via the claude.ai subscription login, NOT the invalid ANTHROPIC_API_KEY
+    REM in the environment (it 401s and takes precedence). Clear it for this process only.
+    set "ANTHROPIC_API_KEY="
     type %NOTION_PROMPT% | call claude -p --output-format text
     echo [%date% %time%] Notion update step finished.
 ) else (
