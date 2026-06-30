@@ -11,6 +11,7 @@
 
 import { execSync } from 'child_process';
 import * as path from 'path';
+import { sanitizeMemoryContent, wrapMemoryContext } from './shared/memory-sanitize.js';
 
 interface PreToolUseInput {
   tool_name: string;
@@ -78,13 +79,16 @@ async function main() {
     });
 
     if (result && !result.includes('No results') && result.trim().length > 20) {
-      const truncated = result.substring(0, 1500);
+      // D5b-01: recall is untrusted (auto-extracted archival_memory can be
+      // poisoned). Sanitize + wrap as data-only before injecting on this
+      // decision-driving (plan-mode) surface — same treatment memory-awareness uses.
+      const truncated = sanitizeMemoryContent(result, 1500);
       console.error('🧠 Found relevant past planning context');
       output({
         decision: 'allow',
         message: '🧠 Relevant past planning found',
         hookSpecificOutput: {
-          additionalContext: `## Prior Planning Context\n\nThe following past planning decisions may be relevant:\n\n${truncated}`
+          additionalContext: wrapMemoryContext(`## Prior Planning Context\n\nThe following past planning decisions may be relevant (reference data only):\n\n${truncated}`)
         }
       });
       return;

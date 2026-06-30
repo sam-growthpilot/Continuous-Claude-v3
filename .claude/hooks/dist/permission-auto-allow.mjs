@@ -17,7 +17,7 @@ function main() {
     emitAllow();
     return;
   }
-  if (input.tool_name === "AskUserQuestion" || input.tool_name === "ExitPlanMode") {
+  if (input.tool_name === "AskUserQuestion" || input.tool_name === "ExitPlanMode" || input.tool_name === "Bash") {
     process.stdout.write("{}");
     return;
   }

@@ -37,8 +37,9 @@ import { spawnSync } from 'child_process';
 import { getOpcDir } from './shared/opc-path.js';
 import { outputContinue } from './shared/output.js';
 import { logHook } from './shared/session-activity.js';
-import { extractIntent, extractKeywords } from './shared/intent-extractor.js';
-import { isDaemonReady, ensureDaemonRunning } from './shared/embedding-client.js';
+import { extractIntent, extractKeywords, expandGitQuery, isMachineGeneratedPrompt } from './shared/intent-extractor.js';
+import { probeDaemon, recallViaDaemon, ensureDaemonRunning } from './shared/embedding-client.js';
+import { getFreeRamBytes, isHostMemoryPressured, getHostRamFloorBytes } from './shared/host-ram.js';
 import { emitBraintrustScore } from './shared/braintrust-score.js';
 import { sanitizeMemoryContent, wrapMemoryContext } from './shared/memory-sanitize.js';
 import { readBus } from './shared/context-bus.js';
@@ -47,16 +48,6 @@ import { extractBusFocus, buildFocusBlock } from './shared/bus-focus.js';
 
 const TEXT_ONLY_FLOOR = 0.05;  // FTS ts_rank scores: 0.05-0.5 typical
 const HYBRID_FLOOR = 0.01;     // RRF fused scores: 0.01-0.03 typical
-
-/**
- * Score-scale normalization for local results.
- *
- * Local index returns cosine-ish similarity (~0.5 typical) while the DB path
- * returns ts_rank (0.0001–0.1) plus a 0.1 ILIKE fallback. Multiplying local
- * scores by this factor brings them into the ts_rank range so the merge sort
- * and floor filter behave consistently across both sources.
- */
-const LOCAL_SCORE_NORMALIZE = 0.1;
 
 interface UserPromptSubmitInput {
   session_id: string;
@@ -84,49 +75,10 @@ function readStdin(): string {
   return readFileSync(0, 'utf-8');
 }
 
-/**
- * Detect git operations and expand query for better memory matching.
- * E.g., "push" → "git push remote fork origin" to catch repo-specific preferences.
- */
-function expandGitQuery(prompt: string): string | null {
-  const lower = prompt.toLowerCase().trim();
-
-  // Git operation patterns and their expanded queries
-  const gitExpansions: Record<string, string> = {
-    'push': 'git push remote fork origin upstream',
-    'git push': 'git push remote fork origin upstream',
-    'commit': 'git commit message workflow',
-    'git commit': 'git commit message workflow',
-    'pr': 'pull request pr create review',
-    'create pr': 'pull request pr create github',
-    'pull request': 'pull request pr create github',
-    'merge': 'git merge branch main',
-    'rebase': 'git rebase branch workflow',
-    'checkout': 'git checkout branch switch',
-    'branch': 'git branch create switch',
-    'stash': 'git stash save pop',
-    'reset': 'git reset hard soft',
-    'force push': 'git push force dangerous',
-  };
-
-  // Check for exact or partial matches
-  for (const [pattern, expansion] of Object.entries(gitExpansions)) {
-    if (lower === pattern || lower.startsWith(pattern + ' ') || lower.endsWith(' ' + pattern)) {
-      return expansion;
-    }
-  }
-
-  // Check if prompt contains git-related words
-  const gitKeywords = ['git', 'push', 'commit', 'pr', 'merge', 'rebase', 'branch'];
-  const hasGitContext = gitKeywords.some(kw => lower.includes(kw));
-
-  if (hasGitContext) {
-    // Add git context to the search
-    return prompt + ' git remote workflow';
-  }
-
-  return null;
-}
+// Note: expandGitQuery now imported from './shared/intent-extractor.js'
+// (QW-07). It was moved out of this module so it can be unit-tested without
+// the stdin/spawn auto-run path; the move also fixed the 'pr' substring
+// collision (whole-word matching). Behavior is otherwise unchanged.
 
 // Note: extractIntent / extractKeywords now imported from
 // './shared/intent-extractor.js' (Wave 2 — kraken-AGENT-RECALL).
@@ -134,49 +86,40 @@ function expandGitQuery(prompt: string): string | null {
 // versions; behavior is unchanged.
 
 /**
- * Check local project memory index first (topic keyword match).
- * Returns results from .claude/memory/index.json if available.
- *
- * NOTE: scores from this path are similarity-style (~0.5). The caller
- * normalizes them via LOCAL_SCORE_NORMALIZE before merging with DB results
- * so the merge sort + floor filter behave consistently.
+ * Normalize a raw intent into the DB search term: drop underscores/slashes,
+ * strip 1-2 char noise words, collapse whitespace. Extracted (ST-05) so the
+ * resident daemon recall path and the uv fallback query with the IDENTICAL term.
  */
-function checkLocalMemory(intent: string, projectDir: string): LearningResult[] {
-  const homeDir = process.env.HOME || process.env.USERPROFILE || '';
-  const projectMemoryScript = path.join(homeDir, '.claude', 'scripts', 'core', 'project_memory.py');
+function cleanSearchTerm(intent: string): string {
+  return intent
+    .replace(/[_\/]/g, ' ')
+    .replace(/\b\w{1,2}\b/g, '')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
 
-  if (!existsSync(projectMemoryScript)) return [];
-
-  try {
-    const result = spawnSync('uv', [
-      'run', 'python', projectMemoryScript,
-      'query', intent,
-      '--project-dir', projectDir,
-      '-k', '3',
-      '--json'
-    ], {
-      encoding: 'utf-8',
-      cwd: path.join(homeDir, '.claude', 'scripts', 'core'),
-      timeout: 2000,
-      killSignal: 'SIGKILL',
-    });
-
-    if (result.status !== 0 || !result.stdout) return [];
-
-    const data = JSON.parse(result.stdout);
-    if (!data.results || data.results.length === 0) return [];
-
-    return data.results.slice(0, 3).map((r: any) => ({
-      id: r.task_id || r.id || 'local',
-      type: 'LOCAL_HANDOFF',
-      content: r.summary || r.content || '',
-      // Normalize local similarity (~0.5) into ts_rank range so the merge
-      // sort/floor doesn't unfairly favor local rows.
-      score: (r.similarity || 0.5) * LOCAL_SCORE_NORMALIZE,
-    }));
-  } catch {
-    return [];
-  }
+/**
+ * Map a recall_learnings.py --json ``results[]`` array into LearningResult[].
+ * Extracted (ST-05) so the uv path (checkDbMemory) and the resident daemon recall
+ * path produce byte-identical rows. In hybrid mode the score is the PRE-decay base
+ * RRF score (QW-06 Fix A / D3b-01); text-only keeps the freshness-discounted score.
+ */
+function mapDbResults(rawResults: any[], useHybrid: boolean): LearningResult[] {
+  return (rawResults || []).map((r: any) => {
+    const content = r.content || '';
+    const preview = content
+      .split('\n')
+      .filter((l: string) => l.trim().length > 0)
+      .map((l: string) => l.trim())
+      .join(' ')
+      .slice(0, 120);
+    return {
+      id: (r.id || 'unknown').slice(0, 8),
+      type: r.learning_type || r.type || 'UNKNOWN',
+      content: preview + (content.length > 120 ? '...' : ''),
+      score: (useHybrid ? (r.base_score ?? r.score) : r.score) || 0,
+    };
+  });
 }
 
 /**
@@ -202,11 +145,7 @@ function checkDbMemory(
   const opcDir = getOpcDir();
   if (!opcDir) return [[], false];
 
-  const searchTerm = intent
-    .replace(/[_\/]/g, ' ')
-    .replace(/\b\w{1,2}\b/g, '')
-    .replace(/\s+/g, ' ')
-    .trim();
+  const searchTerm = cleanSearchTerm(intent);
 
   const args = [
     'run', 'python', 'scripts/core/recall_learnings.py',
@@ -253,22 +192,7 @@ function checkDbMemory(
       return [[], false];
     }
 
-    const results = (data.results || []).map((r: any) => {
-      const content = r.content || '';
-      const preview = content
-        .split('\n')
-        .filter((l: string) => l.trim().length > 0)
-        .map((l: string) => l.trim())
-        .join(' ')
-        .slice(0, 120);
-
-      return {
-        id: (r.id || 'unknown').slice(0, 8),
-        type: r.learning_type || r.type || 'UNKNOWN',
-        content: preview + (content.length > 120 ? '...' : ''),
-        score: r.score || 0,
-      };
-    });
+    const results = mapDbResults(data.results, useHybrid);
     return [results, false];
   } catch {
     return [[], false];
@@ -382,7 +306,8 @@ function checkMemoryRelevance(
 ): MemoryMatch | null {
   if (!intent || intent.length < 3) return null;
 
-  const local = checkLocalMemory(intent, projectDir);
+  // Phase 3 / D3b-04: local-memory probe removed (near-always SIGKILLs; see main()).
+  const local: LearningResult[] = [];
   const [db] = checkDbMemory(intent, projectDir, useHybrid);
 
   const merged = mergeResults(local, db);
@@ -406,6 +331,13 @@ interface RecallLogEntry {
   // Task 1.3 diagnostics: track daemon-routing decisions for observability.
   mode: 'hybrid' | 'text-only';
   daemon_ready: boolean;
+  // FH-02 (re-baseline telemetry): recall_ready = probe.recallReady (the RECALL
+  // pool/path is live), DISTINCT from daemon_ready (= probe.ready, the model is
+  // loaded). This disambiguates a uv fallback: daemon_ready:true + recall_ready:
+  // false + recall_via:'uv' is the recall path warming up (expected fallback);
+  // daemon_ready:true + recall_ready:true + recall_via:'uv' is a real daemon-recall
+  // failure worth investigating. Without it, SG-01 cannot attribute uv fallbacks.
+  recall_ready: boolean;
   total_elapsed_ms: number;
   // Task 1.3a: record which floor was applied so /memory-stats can verify.
   floor_applied: number;
@@ -413,6 +345,17 @@ interface RecallLogEntry {
   // "no matches found". true = subprocess was killed before returning output;
   // false = subprocess completed (even if results_count is 0).
   db_subprocess_timed_out?: boolean;
+  // ST-05: which recall path served this fire — 'daemon' (resident in-process
+  // recall) or 'uv' (subprocess fallback). Lets /memory-stats measure the hit rate.
+  recall_via?: 'daemon' | 'uv';
+  // BLOCKER-2 (host-memory-pressure): host_memory_pressure=true when free RAM was
+  // below the floor, so the hook forced text-only recall and SKIPPED the daemon
+  // probe + spawn (avoids paging-thrashing the ~1.3GB model). free_ram_bytes is
+  // the raw probe value (+Infinity on a fail-open probe failure);
+  // embed_fallback_reason names the gate that forced the fallback (or null).
+  host_memory_pressure: boolean;
+  free_ram_bytes: number;
+  embed_fallback_reason: string | null;
 }
 
 function getRecallLogPath(projectDir: string): string {
@@ -521,6 +464,13 @@ async function main() {
     return;
   }
 
+  // QW-07: drop machine-generated prompts (Claude Code synthetic <task-notification>
+  // blobs etc.) before they ride recall as polluted intent. (D2c-01/D3b-05/D3c-04)
+  if (isMachineGeneratedPrompt(input.prompt)) {
+    outputContinue();
+    return;
+  }
+
   // Check for git operations first - expand query for better matching
   const gitExpanded = expandGitQuery(input.prompt);
 
@@ -552,22 +502,48 @@ async function main() {
   const focusTerms = busFocus.terms;
   const focusBlock = buildFocusBlock(focusTerms);
 
+  // BLOCKER-2 (host-memory-pressure, restored 2026-06-29 + integrated with ST-05):
+  // before any daemon work, check host free RAM. Under pressure the resident
+  // BGE-large model (~1.3GB) competes with browser/Docker, gets paged out, and
+  // every embed pays ~10x page-fault latency — the 2026-05-20 RED incident. So
+  // when free RAM is below the floor we SKIP the daemon probe AND the model
+  // spawn, force text-only recall, and log a clear reason. The gate sits BEFORE
+  // probeDaemon so we never wake/thrash the model under pressure. Fail-open:
+  // getFreeRamBytes returns +Infinity on a probe failure, so a broken probe can
+  // never take recall offline.
+  const freeRamBytes = getFreeRamBytes();
+  const hostMemoryPressured = isHostMemoryPressured(freeRamBytes, getHostRamFloorBytes());
+  if (hostMemoryPressured) {
+    process.stderr.write(
+      '[memory-awareness] host RAM low: skipping daemon probe + spawn, text-only fallback\n',
+    );
+  }
+
   // Task 1.3: probe BGE embedding daemon. If ready, use hybrid (vector +
   // FTS) recall; otherwise fall back to text-only and fire-and-forget the
-  // daemon spawn so the NEXT prompt benefits.
+  // daemon spawn so the NEXT prompt benefits. SKIPPED entirely under RAM
+  // pressure (above) so we neither probe nor spawn the model when memory is tight.
   //
   // The probe is bounded by DEFAULT_PING_TIMEOUT_MS (currently 1500ms in
   // embedding-client.ts) so daemon liveness checks stay within a tight budget.
-  let daemonReady = false;
-  try {
-    daemonReady = await isDaemonReady();
-  } catch {
-    daemonReady = false;
+  // ST-05: a SINGLE probe returns the validated daemon handle + both readiness
+  // flags. `ready` gates hybrid-vs-text uv mode (unchanged semantics); the
+  // validated `info` + `recallReady` drive the resident recall op at the seam below
+  // (one discovery read — H5 TOCTOU guard).
+  let probe: Awaited<ReturnType<typeof probeDaemon>> = null;
+  if (!hostMemoryPressured) {
+    try {
+      probe = await probeDaemon();
+    } catch {
+      probe = null;
+    }
   }
+  const daemonReady = !hostMemoryPressured && !!probe?.ready;
   const mode: 'hybrid' | 'text-only' = daemonReady ? 'hybrid' : 'text-only';
-  if (!daemonReady) {
+  if (!hostMemoryPressured && !daemonReady) {
     // Best-effort: warm the daemon for next prompt. Detached spawn -- this
-    // returns immediately and does NOT block this prompt.
+    // returns immediately and does NOT block this prompt. Gated on
+    // !hostMemoryPressured: we must NOT spawn the ~1.3GB model when RAM is tight.
     try { ensureDaemonRunning(); } catch { /* fail-open */ }
   }
 
@@ -583,8 +559,35 @@ async function main() {
   // Hybrid RRF scores (0.01-0.03) require a lower floor than text-only
   // FTS ts_rank scores (0.05-0.5); using the wrong floor silently drops
   // all daemon-returned matches.
-  const local = checkLocalMemory(recallQuery, projectDir);
-  const [db, dbTimedOut] = checkDbMemory(recallQuery, projectDir, daemonReady);
+  // Phase 3 / D3b-04: checkLocalMemory removed from the hot path. Its 2000ms
+  // spawn cap is BELOW `uv run` cold-start (~2.2s on Windows), so it near-always
+  // SIGKILLs and returns [] — ~2s of guaranteed-wasted latency per prompt for
+  // zero contribution. Recall now comes from the DB path only. (The remaining
+  // hot-path cost was checkDbMemory's per-call uv+python boot; ST-05 (below) now
+  // routes recall through the resident daemon when ready, with uv as the fallback.)
+  const local: LearningResult[] = [];
+  // ST-05 seam: resident recall FIRST (warm ~tens of ms vs uv+python boot), uv
+  // fallback on ANY non-success. recallViaDaemon returns null on ok:false /
+  // timeout / transport, so the fallback path stays byte-identical to pre-ST-05
+  // (no recall regression). The cleaned search term is shared so both query alike.
+  let db: LearningResult[];
+  let dbTimedOut: boolean;
+  let recallVia: 'daemon' | 'uv' = 'uv';
+  let daemonRows: any[] | null = null;
+  if (probe?.recallReady) {
+    try {
+      daemonRows = await recallViaDaemon(probe.info, cleanSearchTerm(recallQuery), 3);
+    } catch {
+      daemonRows = null;
+    }
+  }
+  if (daemonRows !== null) {
+    db = mapDbResults(daemonRows, true); // daemon recall is always hybrid RRF
+    dbTimedOut = false;
+    recallVia = 'daemon';
+  } else {
+    [db, dbTimedOut] = checkDbMemory(recallQuery, projectDir, daemonReady);
+  }
   const mergedRaw = mergeResults(local, db);
   const floorApplied = daemonReady ? HYBRID_FLOOR : TEXT_ONLY_FLOOR;
   const match = applyFloor(mergedRaw, floorApplied);
@@ -607,11 +610,19 @@ async function main() {
     source: match ? match.source : (mergedRaw ? mergedRaw.source : 'empty'),
     mode,
     daemon_ready: daemonReady,
+    recall_ready: !!probe?.recallReady,
     total_elapsed_ms: Date.now() - t0,
     floor_applied: floorApplied,
     // MEDIUM-2 (arbiter 2.1): true = subprocess SIGKILLed before returning
     // output; false = completed normally (even if results_count is 0).
     db_subprocess_timed_out: dbTimedOut,
+    // ST-05: 'daemon' when the resident recall op served this fire, else 'uv'.
+    recall_via: recallVia,
+    // BLOCKER-2: host-memory-pressure telemetry. host_memory_pressure=true means
+    // we forced text-only + skipped the daemon to avoid thrashing the model.
+    host_memory_pressure: hostMemoryPressured,
+    free_ram_bytes: freeRamBytes,
+    embed_fallback_reason: hostMemoryPressured ? 'host_memory_pressure' : null,
   };
   logRecallFire(logEntry, projectDir);
 
@@ -669,6 +680,8 @@ async function main() {
           kept_after_floor: logEntry.kept_after_floor,
           mode: logEntry.mode,
           daemon_ready: logEntry.daemon_ready,
+          recall_ready: logEntry.recall_ready,
+          recall_via: logEntry.recall_via,
           total_elapsed_ms: logEntry.total_elapsed_ms,
           intent: logEntry.intent,
           floor_applied: logEntry.floor_applied,
@@ -717,10 +730,17 @@ async function main() {
   }
 }
 
-main().catch(() => {
-  // Silent fail - don't block user prompts
-  outputContinue();
-});
+// Auto-run only when executed as a hook. Guard the on-import auto-run (QW-06)
+// so unit tests can import the exported helpers (applyFloor/HYBRID_FLOOR)
+// in-process without main() blocking on readStdin(). The real hook is spawned
+// with VITEST unset (see memory-awareness.test.ts runHook env strip), so this
+// does not change runtime behavior. Matches the guard used by 18 sibling hooks.
+if (!process.env.VITEST) {
+  main().catch(() => {
+    // Silent fail - don't block user prompts
+    outputContinue();
+  });
+}
 
 // Exports for testability — Wave 3 introduces these so future tests can pin
 // the merge & floor behavior without going through the stdin/spawn path.
@@ -729,7 +749,6 @@ export {
   applyFloor,
   TEXT_ONLY_FLOOR,
   HYBRID_FLOOR,
-  LOCAL_SCORE_NORMALIZE,
 };
 export type { LearningResult, MemoryMatch, MemorySource };
 // Also re-export the shared helpers so callers don't need to know they were

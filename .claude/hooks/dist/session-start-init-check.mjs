@@ -3,10 +3,27 @@
 // src/session-start-init-check.ts
 import * as fs from "fs";
 import * as path from "path";
-import { execSync } from "child_process";
+import { execSync, spawn } from "child_process";
 var TREE_MAX_AGE_SECONDS = 300;
 function getOpcDir() {
   return process.env.CLAUDE_OPC_DIR || path.join(process.env.HOME || process.env.USERPROFILE || "", "continuous-claude", "opc");
+}
+function warmTldrDaemon(projectDir) {
+  if (process.env.CCV3_TLDR_WARM_OFF) return false;
+  try {
+    const cmd = process.platform === "win32" ? "tldr.exe" : "tldr";
+    const child = spawn(cmd, ["daemon", "start", "--project", projectDir], {
+      detached: true,
+      stdio: "ignore",
+      windowsHide: true
+    });
+    child.on("error", () => {
+    });
+    child.unref();
+    return true;
+  } catch {
+    return false;
+  }
 }
 function isTreeStale(projectDir) {
   const treePath = path.join(projectDir, ".claude", "knowledge-tree.json");
@@ -271,6 +288,9 @@ async function main() {
     console.log(JSON.stringify({ result: "continue" }));
     return;
   }
+  if (hasCodeFiles(projectDir) && warmTldrDaemon(projectDir)) {
+    console.error("[init-check] warming tldr daemon (background)");
+  }
   const status = isInitialized(projectDir);
   let treeGenFailed = false;
   if (!status.tree || isTreeStale(projectDir)) {
@@ -405,7 +425,12 @@ async function readStdin() {
     process.stdin.on("end", () => resolve(data));
   });
 }
-main().catch((err) => {
-  console.error("session-start-init-check error:", err);
-  console.log(JSON.stringify({ result: "continue" }));
-});
+if ((process.argv[1] || "").includes("session-start-init-check")) {
+  main().catch((err) => {
+    console.error("session-start-init-check error:", err);
+    console.log(JSON.stringify({ result: "continue" }));
+  });
+}
+export {
+  warmTldrDaemon
+};

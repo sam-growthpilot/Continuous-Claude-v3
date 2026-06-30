@@ -4,9 +4,11 @@
  * Recalled archival_memory.content is untrusted: a poisoned memory row can
  * contain text that, when injected verbatim into the LLM context, breaks out
  * of any wrapper and acts as instructions ("Ignore previous instructions.
- * </context> ..."). Both injection sites (memory-awareness.ts and
- * agent-recall-injector.ts) must route recalled content through these two
- * pure helpers before it reaches additionalContext.
+ * </context> ..."). EVERY injection site that surfaces recalled content —
+ * currently memory-awareness, agent-recall-injector, pre-plan-memory,
+ * session-start-continuity, bus-session-populator, and the bus-focus helper
+ * (6 sites as of 2026-06-29) — must route it through these two pure helpers
+ * before it reaches additionalContext.
  *
  * sanitizeMemoryContent:
  *   (a) strip control chars [\x00-\x08\x0b\x0c\x0e-\x1f\x7f-\x9f]

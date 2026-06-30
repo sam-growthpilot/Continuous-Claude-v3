@@ -20,6 +20,7 @@ import pytest
 # ---------------------------------------------------------------------------
 from scripts.core.embedding_daemon import (
     MODEL_NAME,
+    _acquire_startup_slot,
     _check_existing_daemon,
     _hide_own_console_on_windows,
 )
@@ -180,6 +181,49 @@ def test_connection_refused_returns_false():
         result = _check_existing_daemon()
 
     assert result is False
+
+
+# ---------------------------------------------------------------------------
+# _acquire_startup_slot() — storm hardening (2026-06-29)
+# check healthy peer FIRST (cheap exit), THEN contend for the exclusive lock.
+# ---------------------------------------------------------------------------
+
+def test_startup_slot_defers_to_healthy_peer_without_locking():
+    """A healthy peer -> return None and NEVER touch the exclusive lock.
+
+    This is the redundant-spawn fast path: a hook fired ensureDaemonRunning
+    while the daemon is already up; we must exit before opening/contending the
+    OS lock file (avoids lock churn under a spawn burst).
+    """
+    acquire = MagicMock()
+    with patch(
+        "scripts.core.embedding_daemon._check_existing_daemon", return_value=True
+    ), patch(
+        "scripts.core.embedding_daemon._acquire_exclusive_lock", acquire
+    ):
+        assert _acquire_startup_slot() is None
+    acquire.assert_not_called()
+
+
+def test_startup_slot_acquires_lock_on_cold_start():
+    """No healthy peer + lock won -> return the held fd (proceed to load)."""
+    with patch(
+        "scripts.core.embedding_daemon._check_existing_daemon", return_value=False
+    ), patch(
+        "scripts.core.embedding_daemon._acquire_exclusive_lock", return_value=42
+    ):
+        assert _acquire_startup_slot() == 42
+
+
+def test_startup_slot_returns_none_when_lock_lost():
+    """No peer but lock lost (concurrent cold-start race) -> None (exit before
+    the model load; the lock winner becomes the single daemon)."""
+    with patch(
+        "scripts.core.embedding_daemon._check_existing_daemon", return_value=False
+    ), patch(
+        "scripts.core.embedding_daemon._acquire_exclusive_lock", return_value=None
+    ):
+        assert _acquire_startup_slot() is None
 
 
 # ---------------------------------------------------------------------------

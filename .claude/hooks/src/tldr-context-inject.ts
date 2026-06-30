@@ -11,8 +11,11 @@
  * Uses TLDR daemon for fast cached responses (50ms vs 500ms CLI).
  */
 
-import { readFileSync, existsSync } from 'fs';
+import { readFileSync, existsSync, mkdirSync, writeFileSync, readdirSync, statSync, unlinkSync } from 'fs';
 import { join, dirname } from 'path';
+import { spawnSync } from 'child_process';
+import { createHash } from 'crypto';
+import { tmpdir } from 'os';
 import {
   queryDaemonSync,
   contextDaemon,
@@ -394,20 +397,111 @@ function getTldrContext(
   }
 }
 
-// Find project root
-function findProjectRoot(startPath: string): string {
+// Find project root.
+// F5: terminate at the filesystem root cross-platform. The prior `while
+// (current !== '/')` NEVER terminated on a Windows drive root (dirname('C:/')
+// === 'C:/', never '/'), so once QW-04 made this hook live on PreToolUse:Task it
+// spun to the hook timeout (~5s) on every code-related spawn. dirname(root)===root
+// on every platform, so the parent-stops-changing check is the correct terminator.
+export function findProjectRoot(startPath: string): string {
   let current = startPath;
   const markers = ['.git', 'pyproject.toml', 'package.json', 'Cargo.toml', 'go.mod'];
 
-  while (current !== '/') {
+  while (true) {
     for (const marker of markers) {
       if (existsSync(join(current, marker))) {
         return current;
       }
     }
-    current = dirname(current);
+    const parent = dirname(current);
+    if (parent === current) break; // reached filesystem root (POSIX '/' or Windows 'C:\')
+    current = parent;
   }
   return startPath;
+}
+
+// ---------------------------------------------------------------------------
+// D (2026-06-29): agent narrowing + per-(project, git-freshness, query) cache.
+// The tldr daemon cold-start (~10-15s when the daemon is down) otherwise repeats
+// on EVERY Task spawn that names a code symbol. tldr structure/context is
+// deterministic for a given working-tree state, so we cache the rendered context
+// keyed by HEAD sha + a dirty marker (uncommitted edits never serve stale
+// context). All cache I/O is fail-open: any error falls through to the live path.
+// ---------------------------------------------------------------------------
+
+/** Agents that do NOT analyze code structure -> skip the tldr path entirely. */
+const TLDR_SKIP_AGENTS = new Set<string>([
+  'oracle', 'deployer', 'scribe', 'herald', 'agent-factory', 'statusline-setup',
+  'plan-reviewer', 'validate-agent', 'braintrust-analyst', 'session-analyst',
+  'chronicler', 'context-query-agent', 'claude-code-guide',
+]);
+
+/** True when this agent type benefits from AST/call-graph context injection. */
+export function isTldrEligibleAgent(subagentType: string | undefined): boolean {
+  return !TLDR_SKIP_AGENTS.has((subagentType || '').trim());
+}
+
+const TLDR_CACHE_DIR = join(tmpdir(), 'ccv3-tldr-cache');
+const TLDR_CACHE_TTL_MS = 24 * 60 * 60 * 1000; // 1 day
+
+/**
+ * HEAD sha + working-tree dirty marker, or null if not a git repo / git is
+ * unavailable (caller then skips caching and runs live). Bounded so a slow git
+ * never blows the hook budget.
+ */
+export function gitFreshnessKey(projectRoot: string): string | null {
+  try {
+    const sha = spawnSync('git', ['rev-parse', 'HEAD'], { cwd: projectRoot, encoding: 'utf-8', timeout: 1500 });
+    if (sha.status !== 0 || !sha.stdout) return null;
+    const dirty = spawnSync('git', ['status', '--porcelain'], { cwd: projectRoot, encoding: 'utf-8', timeout: 2500 });
+    const dirtyHash = createHash('md5').update(dirty.stdout || '').digest('hex').slice(0, 8);
+    return `${sha.stdout.trim().slice(0, 12)}-${dirtyHash}`;
+  } catch {
+    return null;
+  }
+}
+
+/** Deterministic cache key for a (project, freshness, query) tuple. */
+export function tldrCacheKey(projectRoot: string, freshness: string, query: unknown): string {
+  const proj = createHash('md5').update(projectRoot).digest('hex').slice(0, 8);
+  const q = createHash('md5').update(JSON.stringify(query)).digest('hex').slice(0, 16);
+  return `${proj}-${freshness}-${q}`;
+}
+
+export function readTldrCache(key: string): { tldrContext: string; usedTarget: string } | null {
+  try {
+    const f = join(TLDR_CACHE_DIR, `${key}.json`);
+    if (!existsSync(f)) return null;
+    if (Date.now() - statSync(f).mtimeMs > TLDR_CACHE_TTL_MS) return null;
+    const v = JSON.parse(readFileSync(f, 'utf-8'));
+    if (typeof v?.tldrContext === 'string' && typeof v?.usedTarget === 'string') return v;
+    return null;
+  } catch {
+    return null;
+  }
+}
+
+export function writeTldrCache(key: string, value: { tldrContext: string; usedTarget: string }): void {
+  try {
+    mkdirSync(TLDR_CACHE_DIR, { recursive: true });
+    writeFileSync(join(TLDR_CACHE_DIR, `${key}.json`), JSON.stringify(value));
+    pruneTldrCache();
+  } catch {
+    /* fail-open: a cache write must never break the hook */
+  }
+}
+
+/** Drop cache entries older than the TTL so the dir can't grow unbounded. */
+function pruneTldrCache(): void {
+  try {
+    const now = Date.now();
+    for (const f of readdirSync(TLDR_CACHE_DIR)) {
+      const p = join(TLDR_CACHE_DIR, f);
+      try { if (now - statSync(p).mtimeMs > TLDR_CACHE_TTL_MS) unlinkSync(p); } catch { /* ignore */ }
+    }
+  } catch {
+    /* ignore */
+  }
 }
 
 function readStdin(): string {
@@ -418,6 +512,13 @@ async function main() {
   const input: HookInput = JSON.parse(readStdin());
 
   if (input.tool_name !== 'Task') {
+    console.log('{}');
+    return;
+  }
+
+  // D: skip the tldr path for agent types that don't analyze code structure
+  // (research / ops / meta agents) BEFORE any daemon or git work.
+  if (!isTldrEligibleAgent(input.tool_input.subagent_type)) {
     console.log('{}');
     return;
   }
@@ -449,21 +550,41 @@ async function main() {
   const projectRoot = findProjectRoot(input.cwd);
   const language = detectLanguage(projectRoot);
 
+  // D: cache the rendered context per (project, git-freshness, query) so the
+  // tldr daemon cold-start is paid at most once per working-tree state instead
+  // of on every Task spawn. Fail-open: no git / cache error -> live path.
+  const freshness = gitFreshnessKey(projectRoot);
+  const cacheKey = freshness
+    ? tldrCacheKey(projectRoot, freshness, {
+        entryPoints: entryPoints.slice(0, 3), layers, language, lineNumber, varName,
+      })
+    : null;
+
   // Get TLDR context for the appropriate layers
   let tldrContext: string | null = null;
   let usedTarget: string = varName || entryPoints[0] || `line ${lineNumber}`;
 
-  for (const entryPoint of entryPoints.slice(0, 3)) {
-    tldrContext = getTldrContext(projectRoot, entryPoint, language, layers, lineNumber, varName);
-    if (tldrContext) {
-      usedTarget = entryPoint;
-      break;
+  const cached = cacheKey ? readTldrCache(cacheKey) : null;
+  if (cached) {
+    tldrContext = cached.tldrContext;
+    usedTarget = cached.usedTarget;
+  } else {
+    for (const entryPoint of entryPoints.slice(0, 3)) {
+      tldrContext = getTldrContext(projectRoot, entryPoint, language, layers, lineNumber, varName);
+      if (tldrContext) {
+        usedTarget = entryPoint;
+        break;
+      }
     }
-  }
 
-  // Fallback: try with varName if we have it
-  if (!tldrContext && varName) {
-    tldrContext = getTldrContext(projectRoot, varName, language, layers, lineNumber, varName);
+    // Fallback: try with varName if we have it
+    if (!tldrContext && varName) {
+      tldrContext = getTldrContext(projectRoot, varName, language, layers, lineNumber, varName);
+    }
+
+    if (tldrContext && cacheKey) {
+      writeTldrCache(cacheKey, { tldrContext, usedTarget });
+    }
   }
 
   if (!tldrContext) {
@@ -501,7 +622,14 @@ ${prompt}`;
   console.log(JSON.stringify(output));
 }
 
-main().catch((err) => {
-  console.error(`TLDR hook error: ${err.message}`);
-  console.log('{}');
-});
+// Auto-run ONLY when invoked directly as the hook (argv[1] is this script).
+// When a unit test imports this module, vitest sets argv[1] to its own runner,
+// so main() — whose readStdin() would block on an empty worker stdin — does NOT
+// run. Production is unchanged: the hook is always executed as
+// `node dist/tldr-context-inject.mjs`, whose argv[1] contains this name.
+if ((process.argv[1] || '').includes('tldr-context-inject')) {
+  main().catch((err) => {
+    console.error(`TLDR hook error: ${err.message}`);
+    console.log('{}');
+  });
+}

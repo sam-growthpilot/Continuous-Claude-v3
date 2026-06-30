@@ -91,12 +91,28 @@ def _get_pool_config() -> dict:
     # Scale min_size with max_size (20% of max, minimum 2)
     min_size = max(2, max_size // 5)
 
+    # Idle-connection lifetime (multi-week resilience). asyncpg closes + replaces
+    # a pooled connection that has been inactive longer than this, so a days-long
+    # unattended pool never hands back a connection the Postgres server has since
+    # closed on the idle path. We set it EXPLICITLY rather than relying on
+    # asyncpg's library default (also 300.0 as of asyncpg 0.31.0) so the
+    # freshness guarantee survives a future default change. Env-overridable;
+    # a negative value falls back to the 300s default (0 disables, per asyncpg).
+    idle_s_str = os.environ.get("AGENTICA_POOL_MAX_IDLE_S", "300")
+    try:
+        max_inactive = float(idle_s_str)
+        if max_inactive < 0:
+            max_inactive = 300.0
+    except ValueError:
+        max_inactive = 300.0
+
     # Note: acquire_timeout is for pool.acquire(), not create_pool()
     # command_timeout is passed as a connect_kwarg
     return {
         "min_size": min_size,
         "max_size": max_size,
         "command_timeout": 60,
+        "max_inactive_connection_lifetime": max_inactive,
     }
 
 

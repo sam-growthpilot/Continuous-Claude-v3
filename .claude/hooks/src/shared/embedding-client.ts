@@ -129,6 +129,15 @@ const DEFAULT_PING_TIMEOUT_MS = 1500;
 /** Default embed timeout: 1500ms (hot encode is ~30-100ms, slack for cold cases). */
 const DEFAULT_EMBED_TIMEOUT_MS = 1500;
 
+/**
+ * Default recall timeout: 3000ms (ST-05). Deliberately ABOVE the daemon's own
+ * internal recall cap (RECALL_TIMEOUT_S = 2.5s) so a daemon-side slow query
+ * returns a structured {ok:false} (clean uv fallback) rather than tripping a raw
+ * socket timeout here. Warm recall is ~tens of ms; this is only the ceiling. The
+ * rare slow path (daemon up AND DB stalled) falls back to uv and never hangs.
+ */
+const DEFAULT_RECALL_TIMEOUT_MS = 3000;
+
 /** Expected model + dim for sanity-check. */
 const EXPECTED_MODEL = 'BAAI/bge-large-en-v1.5';
 const EXPECTED_DIM = 1024;
@@ -157,6 +166,23 @@ export interface PingResponse {
   ready: boolean;
   model?: string;
   dim?: number;
+  /** ST-05: true when the resident recall op (asyncpg pool) is initialized. */
+  recall_ready?: boolean;
+  /** ST-05: false signals a dead/closed background asyncio loop (H2 watchdog). */
+  loop_ok?: boolean;
+}
+
+/**
+ * ST-05: validated handle for routing a resident recall. `info` is the
+ * discovery tuple that has ALREADY passed file/PID/model/dim validation + a live
+ * ping, so `recallViaDaemon` reuses it WITHOUT a second discovery read (H5 TOCTOU
+ * guard). `ready` = embed-ready (gates hybrid-vs-text uv mode); `recallReady` =
+ * the resident recall op is up AND the background loop is healthy.
+ */
+export interface RecallProbe {
+  info: DaemonInfo;
+  ready: boolean;
+  recallReady: boolean;
 }
 
 // ---------------------------------------------------------------------------
@@ -507,6 +533,132 @@ export async function isDaemonReady(): Promise<boolean> {
   if (reply.model && reply.model !== EXPECTED_MODEL) return false;
   if (reply.dim && reply.dim !== EXPECTED_DIM) return false;
   return true;
+}
+
+/**
+ * ST-05: one-shot probe that returns the VALIDATED daemon handle plus both
+ * readiness flags (embed-ready + recall-ready) from a SINGLE ping. The returned
+ * `info` is what `recallViaDaemon` should be handed (H5: avoids a second
+ * discovery-file read that could race a daemon restart onto a recycled port).
+ *
+ * Returns null on the same conditions `isDaemonReady` returns false (missing/
+ * dead/wrong-model daemon, or ping failure). `recallReady` is true ONLY when the
+ * daemon reports `recall_ready` AND a healthy loop (`loop_ok !== false`) — so a
+ * daemon whose recall pool failed to init, or whose background loop died, routes
+ * recall to the uv fallback. Kept SEPARATE from isDaemonReady (which has its own
+ * test suite) to avoid disturbing that surface.
+ */
+export async function probeDaemon(): Promise<RecallProbe | null> {
+  const info = readDaemonInfo();
+  if (!info) return null;
+  if (!isDaemonAlive(info)) {
+    _cleanupDiscoveryFile();
+    return null;
+  }
+  if (info.model !== EXPECTED_MODEL || info.dim !== EXPECTED_DIM) return null;
+  const reply = await pingDaemon(info);
+  if (!reply || !reply.ok || !reply.ready) return null;
+  if (reply.model && reply.model !== EXPECTED_MODEL) return null;
+  if (reply.dim && reply.dim !== EXPECTED_DIM) return null;
+  const recallReady = reply.recall_ready === true && reply.loop_ok !== false;
+  return { info, ready: reply.ready, recallReady };
+}
+
+/**
+ * ST-05: run a full hybrid-RRF recall on the resident daemon. Returns the raw
+ * results array (the same shape `recall_learnings.py --json` emits, so the caller
+ * maps it identically to the uv path) or `null` to signal "fall back to uv".
+ *
+ * `info` MUST be the validated handle from `probeDaemon` (H5). We reuse the
+ * existing length-prefixed sendFrame/recvFrame (exact-length recv — H9) and a
+ * single hard timeout (connect+send+recv). Fallback rules (H1):
+ *   - `ok === true` + array results  -> return results (an EMPTY array is a real
+ *     "no match" and is returned as-is; the caller does NOT fall back on empty).
+ *   - `ok !== true` / malformed / transport error / timeout -> return null (the
+ *     caller falls back to the uv path). An error NEVER masquerades as "no match".
+ *   - H6: if `_meta` reports a model/dim other than expected, reject -> null.
+ * Scope: we send NO project_id/scope_mode, so the daemon defaults to opc-dir
+ * scope — byte-identical to what the uv `checkDbMemory` fallback does today.
+ */
+export async function recallViaDaemon(
+  info: DaemonInfo,
+  query: string,
+  k: number,
+  opts: { timeoutMs?: number; mode?: string } = {},
+): Promise<any[] | null> {
+  const timeoutMs = opts.timeoutMs ?? DEFAULT_RECALL_TIMEOUT_MS;
+  const mode = opts.mode ?? 'hybrid';
+  if (!query || !query.trim()) return null;
+
+  return new Promise<any[] | null>((res) => {
+    const sock = new net.Socket();
+    let settled = false;
+
+    const cleanup = (val: any[] | null) => {
+      if (settled) return;
+      settled = true;
+      try {
+        sock.setTimeout(0);
+        sock.destroy();
+      } catch {
+        /* socket already closed */
+      }
+      res(val);
+    };
+
+    // Single overall timer covering connect + send + recv (mirrors embedText).
+    const overallTimer = setTimeout(() => cleanup(null), timeoutMs);
+
+    sock.once('error', () => {
+      clearTimeout(overallTimer);
+      cleanup(null);
+    });
+
+    sock.connect(info.port, '127.0.0.1', () => {
+      try {
+        sock.setNoDelay(true);
+      } catch {
+        /* ignore */
+      }
+      try {
+        sendFrame(sock, { cmd: 'recall', query, k, mode });
+      } catch {
+        clearTimeout(overallTimer);
+        cleanup(null);
+        return;
+      }
+      recvFrame(sock, 0)
+        .then((reply) => {
+          clearTimeout(overallTimer);
+          if (
+            reply &&
+            typeof reply === 'object' &&
+            reply.ok === true &&
+            Array.isArray(reply.results)
+          ) {
+            // H6 belt-and-suspenders: reject a wrong-model/dim daemon response.
+            const meta = reply._meta;
+            if (
+              meta &&
+              typeof meta === 'object' &&
+              ((meta.model && meta.model !== EXPECTED_MODEL) ||
+                (meta.dim && meta.dim !== EXPECTED_DIM))
+            ) {
+              cleanup(null);
+              return;
+            }
+            cleanup(reply.results as any[]);
+          } else {
+            // ok:false / malformed -> fall back to uv (never treat as "no match").
+            cleanup(null);
+          }
+        })
+        .catch(() => {
+          clearTimeout(overallTimer);
+          cleanup(null);
+        });
+    });
+  });
 }
 
 // ---------------------------------------------------------------------------

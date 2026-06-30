@@ -21,9 +21,33 @@ import {
   queryDaemon,
   queryDaemonSync,
   getConnectionInfo,
+  buildDaemonInvocation,
   DaemonQuery,
   DaemonResponse,
 } from '../daemon-client.js';
+
+describe('buildDaemonInvocation — GAP4-02 injection-safety (payload via stdin, not shell)', () => {
+  const payload = JSON.stringify({ cmd: 'search', pattern: `x"; calc & rm -rf / ; $(id) \`whoami\` '` });
+
+  it('TCP (Windows): payload is on stdin, NEVER in file/args; no execSync shell string', () => {
+    const inv = buildDaemonInvocation({ type: 'tcp', host: '127.0.0.1', port: 50000 }, payload);
+    expect(inv.file).toBe('powershell');
+    expect(inv.stdin).toBe(payload);
+    // the model-controlled payload must not appear in any argv element
+    expect(inv.args.some((a) => a.includes(payload))).toBe(false);
+    expect(inv.args.some((a) => a.includes('calc') || a.includes('rm -rf'))).toBe(false);
+    // the PS script reads from stdin, it does not embed the payload
+    expect(inv.args.join(' ')).toContain('[Console]::In.ReadLine()');
+  });
+
+  it('Unix: nc reads stdin; payload not interpolated into args', () => {
+    const inv = buildDaemonInvocation({ type: 'unix', path: '/tmp/tldr-abc.sock' }, payload);
+    expect(inv.file).toBe('nc');
+    expect(inv.args).toEqual(['-U', '/tmp/tldr-abc.sock']);
+    expect(inv.stdin).toBe(payload);
+    expect(inv.args.some((a) => a.includes(payload))).toBe(false);
+  });
+});
 
 // Test fixtures — use platform temp dir
 const TEST_PROJECT_DIR = join(tmpdir(), 'daemon-client-test');

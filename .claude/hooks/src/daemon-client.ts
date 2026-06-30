@@ -541,6 +541,42 @@ export function queryDaemon(query: DaemonQuery, projectDir: string): Promise<Dae
  * @param projectDir - Project directory path
  * @returns Daemon response
  */
+export interface DaemonInvocation {
+  file: string;
+  args: string[];
+  stdin: string;
+}
+
+/**
+ * Build the daemon spawn invocation. SECURITY (GAP4-02 / ST-08 cluster): the
+ * model-controlled query (its `pattern` etc.) is delivered via STDIN, never
+ * interpolated into a shell string — so it cannot break out into a shell the
+ * way the prior `execSync(`echo '${'$'}{input}' | nc ...`)` / `powershell
+ * -Command "...${'$'}{input}..."` forms could. Only host/port/path (from the
+ * daemon's own trusted conn file, NOT model data) are interpolated. Consumed by
+ * spawnSync(file, args, {input, shell:false}).
+ */
+export function buildDaemonInvocation(connInfo: ConnectionInfo, input: string): DaemonInvocation {
+  if (connInfo.type === 'tcp') {
+    const psScript = [
+      '$ErrorActionPreference = "Stop"',
+      '$payload = [Console]::In.ReadLine()',
+      `$client = New-Object System.Net.Sockets.TcpClient('${connInfo.host}', ${connInfo.port})`,
+      '$stream = $client.GetStream()',
+      '$writer = New-Object System.IO.StreamWriter($stream)',
+      '$reader = New-Object System.IO.StreamReader($stream)',
+      '$writer.WriteLine($payload)',
+      '$writer.Flush()',
+      '$response = $reader.ReadLine()',
+      '$client.Close()',
+      'Write-Output $response',
+    ].join('; ');
+    return { file: 'powershell', args: ['-NoProfile', '-NonInteractive', '-Command', psScript], stdin: input };
+  }
+  // Unix: nc reads the payload from stdin (was `echo '<input>' | nc`).
+  return { file: 'nc', args: ['-U', connInfo.path || ''], stdin: input };
+}
+
 export function queryDaemonSync(query: DaemonQuery, projectDir: string): DaemonResponse {
   // Check if indexing - return early with indexing flag
   if (isIndexing(projectDir)) {
@@ -563,36 +599,29 @@ export function queryDaemonSync(query: DaemonQuery, projectDir: string): DaemonR
 
   try {
     const input = JSON.stringify(query);
-    let result: string;
+    // GAP4-02: argv spawn with the payload on STDIN (no shell). The prior
+    // execSync forms interpolated the model-controlled pattern into a shell
+    // string — a live injection on the daemon-UP path (every intercepted Grep).
+    const inv = buildDaemonInvocation(connInfo, input);
+    const r = spawnSync(inv.file, inv.args, {
+      input: inv.stdin,
+      encoding: 'utf-8',
+      timeout: QUERY_TIMEOUT,
+      shell: false,
+    });
 
-    if (connInfo.type === 'tcp') {
-      // Windows: Use PowerShell to communicate with TCP socket
-      const psCommand = `
-        $client = New-Object System.Net.Sockets.TcpClient('${connInfo.host}', ${connInfo.port})
-        $stream = $client.GetStream()
-        $writer = New-Object System.IO.StreamWriter($stream)
-        $reader = New-Object System.IO.StreamReader($stream)
-        $writer.WriteLine('${input.replace(/'/g, "''")}')
-        $writer.Flush()
-        $response = $reader.ReadLine()
-        $client.Close()
-        Write-Output $response
-      `.trim();
-
-      result = execSync(`powershell -Command "${psCommand.replace(/"/g, '\\"')}"`, {
-        encoding: 'utf-8',
-        timeout: QUERY_TIMEOUT,
-      });
-    } else {
-      // Unix: Use nc (netcat) to communicate with Unix socket
-      // echo '{"cmd":"ping"}' | nc -U /tmp/tldr-xxx.sock
-      result = execSync(`echo '${input}' | nc -U "${connInfo.path}"`, {
-        encoding: 'utf-8',
-        timeout: QUERY_TIMEOUT,
-      });
+    if (r.error) {
+      const code = (r.error as NodeJS.ErrnoException).code;
+      if (code === 'ETIMEDOUT') return { status: 'error', error: 'timeout' };
+      if (code === 'ENOENT') return { status: 'unavailable', error: 'Daemon transport not available' };
+      return { status: 'error', error: r.error.message };
     }
-
-    return JSON.parse(result.trim());
+    if (r.signal) return { status: 'error', error: 'timeout' }; // killed by timeout
+    const out = (r.stdout || '').trim();
+    if (r.status !== 0 || !out) {
+      return { status: 'unavailable', error: 'Daemon not running' };
+    }
+    return JSON.parse(out);
   } catch (err: any) {
     if (err.killed) {
       return { status: 'error', error: 'timeout' };

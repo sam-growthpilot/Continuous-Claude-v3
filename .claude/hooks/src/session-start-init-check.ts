@@ -11,7 +11,7 @@
 
 import * as fs from 'fs';
 import * as path from 'path';
-import { execSync } from 'child_process';
+import { execSync, spawn } from 'child_process';
 
 interface SessionStartInput {
   type?: 'startup' | 'resume' | 'clear' | 'compact';
@@ -50,6 +50,49 @@ const TREE_MAX_AGE_SECONDS = 300; // 5 minutes
 
 function getOpcDir(): string {
   return process.env.CLAUDE_OPC_DIR || path.join(process.env.HOME || process.env.USERPROFILE || '', 'continuous-claude', 'opc');
+}
+
+/**
+ * FH-01a: fire-and-forget warm of the tldr code-analysis daemon at session
+ * start. Returns true if a warm was attempted, false if skipped/failed.
+ *
+ * Idempotent via the daemon's OWN pidfile lock (msvcrt LK_NBLCK / fcntl
+ * LOCK_NB): a second `start` while one is already running self-terminates, and
+ * it correctly (re)starts when the prior daemon died — the tldr daemon is known
+ * not to persist reliably on Windows, so re-warming each session is the intent.
+ * No TS-side pidfile/hash check (that would false-skip on a stale pidfile after
+ * the daemon died); the daemon's lock is the single source of truth.
+ *
+ * If a daemon is already alive for a DIFFERENT project, this start self-
+ * terminates and that project's daemon keeps running — this session's tldr
+ * queries then fall through to on-demand rather than benefiting from the warm.
+ * That is NOT a regression: without warming they would be cold anyway, and the
+ * non-persistence means the prior-project daemon has usually already died by
+ * the time a new session starts, so the warm fires fresh in practice.
+ *
+ * Detached + unref'd + stdio:'ignore' so it adds ZERO latency to session start
+ * and never blocks. `tldr` is a real .exe on Windows (NOT a .cmd shim), so a
+ * direct array-arg spawn is safe without shell:true (no spaced-path /
+ * CVE-2024-27980 hardening issue). Kill-switch: CCV3_TLDR_WARM_OFF.
+ */
+export function warmTldrDaemon(projectDir: string): boolean {
+  if (process.env.CCV3_TLDR_WARM_OFF) return false;
+  try {
+    const cmd = process.platform === 'win32' ? 'tldr.exe' : 'tldr';
+    const child = spawn(cmd, ['daemon', 'start', '--project', projectDir], {
+      detached: true,
+      stdio: 'ignore',
+      windowsHide: true,
+    });
+    // Without an 'error' handler a missing `tldr` throws asynchronously and
+    // could crash the hook process. Swallow it — warming is best-effort.
+    child.on('error', () => { /* tldr not installed / spawn failed — ignore */ });
+    child.unref();
+    return true;
+  } catch {
+    // Never block session start on a warm failure.
+    return false;
+  }
 }
 
 function isTreeStale(projectDir: string): boolean {
@@ -359,6 +402,13 @@ async function main() {
     return;
   }
 
+  // FH-01a: warm the tldr code-analysis daemon for code projects on startup
+  // (fire-and-forget — never blocks; see warmTldrDaemon for the idempotency
+  // contract). Best-effort: a warm failure is silent and non-fatal.
+  if (hasCodeFiles(projectDir) && warmTldrDaemon(projectDir)) {
+    console.error('[init-check] warming tldr daemon (background)');
+  }
+
   const status = isInitialized(projectDir);
   let treeGenFailed = false;
 
@@ -515,7 +565,14 @@ async function readStdin(): Promise<string> {
   });
 }
 
-main().catch(err => {
-  console.error('session-start-init-check error:', err);
-  console.log(JSON.stringify({ result: 'continue' }));
-});
+// Auto-run ONLY when invoked directly as the hook (argv[1] is this script).
+// When a unit test imports this module (to test warmTldrDaemon), vitest sets
+// argv[1] to its own runner, so main() — whose readStdin() would block — does
+// NOT run. Production is unchanged: the hook is always executed as
+// `node dist/session-start-init-check.mjs`, whose argv[1] contains this name.
+if ((process.argv[1] || '').includes('session-start-init-check')) {
+  main().catch(err => {
+    console.error('session-start-init-check error:', err);
+    console.log(JSON.stringify({ result: 'continue' }));
+  });
+}

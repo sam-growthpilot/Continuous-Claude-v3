@@ -21,7 +21,7 @@
  */
 
 import { readFileSync, existsSync } from 'fs';
-import { spawnSync } from 'child_process';
+import { spawn } from 'child_process';
 import { join } from 'path';
 import { scoreExtraction } from './shared/memory-quality-scorer.js';
 
@@ -36,16 +36,13 @@ interface PostToolUseInput {
   tool_response: unknown;
 }
 
-// Error patterns to detect failures
-const ERROR_PATTERNS = [
-  /\berror\b/i,
-  /\bfailed\b/i,
-  /\bexception\b/i,
-  /\bfailure\b/i,
-  /\bcrashed?\b/i,
-  /\btimeout\b/i,
+// Structured / strong error signals — a genuine agent failure almost always
+// emits one of these (named exceptions, stack traces, OS errno, panic, crash).
+// These are the ONLY patterns that TRIGGER a capture (see hasStructuredError),
+// which keeps low-signal "error"/"failed" prose out of recall (review S2).
+const STRUCTURED_ERROR_PATTERNS = [
   /\bTraceback\s+\(most recent/i,  // Python stack trace
-  /\bat\s+\S+\s+\(\S+:\d+:\d+\)/,   // JS stack trace
+  /\bat\s+\S+\s+\(\S+:\d+:\d+\)/,   // JS stack trace frame
   /\bpanic:/i,                       // Go panic
   /\bRuntimeError\b/i,
   /\bTypeError\b/i,
@@ -53,22 +50,27 @@ const ERROR_PATTERNS = [
   /\bImportError\b/i,
   /\bModuleNotFoundError\b/i,
   /\bConnectionRefused\b/i,
+  /\bECONNRESET\b/i,
+  /\bETIMEDOUT\b/i,
   /\bENOENT\b/i,
   /\bEPERM\b/i,
   /\bEACCES\b/i,
+  /\bcrash(?:ed|es)?\b/i,   // crash / crashed / crashes (was /crashed?/ which required the 'e')
 ];
 
-// Patterns that indicate agent explicitly reported failure
-const FAILURE_INDICATORS = [
-  /\bcould not\b/i,
-  /\bunable to\b/i,
-  /\bI couldn't\b/i,
-  /\bI was unable\b/i,
-  /\bI failed to\b/i,
-  /\bwas not able to\b/i,
-  /\bdidn't work\b/i,
-  /\bdoesn't work\b/i,
+// Generic / weak words — too noisy to trigger a store on their own ("0 errors",
+// "the test that failed now passes", "timeout increased and it worked"). Kept
+// ONLY to widen the context window in extractErrorContext, never as a trigger.
+const GENERIC_ERROR_PATTERNS = [
+  /\berror\b/i,
+  /\bfailed\b/i,
+  /\bexception\b/i,
+  /\bfailure\b/i,
+  /\btimeout\b/i,
 ];
+
+// Union — used by extractErrorContext to locate the relevant region of output.
+const ERROR_PATTERNS = [...STRUCTURED_ERROR_PATTERNS, ...GENERIC_ERROR_PATTERNS];
 
 function readStdin(): string {
   return readFileSync(0, 'utf-8');
@@ -92,12 +94,13 @@ function responseToString(response: unknown): string {
   }
 }
 
-function hasErrorPattern(text: string): boolean {
-  return ERROR_PATTERNS.some(p => p.test(text));
-}
-
-function hasFailureIndicator(text: string): boolean {
-  return FAILURE_INDICATORS.some(p => p.test(text));
+/**
+ * The TRIGGER predicate: only structured/strong signals warrant a capture.
+ * Generic words alone ("error", "failed") are intentionally NOT enough — they
+ * are the dominant false-positive / recall-pollution source (review S2).
+ */
+export function hasStructuredError(text: string): boolean {
+  return STRUCTURED_ERROR_PATTERNS.some(p => p.test(text));
 }
 
 function extractErrorContext(response: string, maxLen = 500): string {
@@ -126,38 +129,90 @@ function extractErrorContext(response: string, maxLen = 500): string {
   return response.substring(0, maxLen / 2) + '\n...\n' + response.substring(response.length - maxLen / 2);
 }
 
+export interface StoreInvocation {
+  cmd: string;
+  args: string[];
+  options: {
+    cwd: string;
+    shell: false;
+    detached: true;
+    stdio: 'ignore';
+    windowsHide: true;
+  };
+}
+
+/**
+ * Pure builder for the store_learning.py invocation (mirrors F1's
+ * buildDaemonInvocation pattern). shell:false + per-arg argv = no shell, so the
+ * content is handed to Python verbatim with zero injection surface. detached +
+ * stdio:'ignore' make it FIRE-AND-FORGET so the store can outlive this
+ * short-lived hook process.
+ */
+export function buildStoreInvocation(
+  opcDir: string,
+  sessionId: string,
+  content: string,
+  contextStr: string,
+  tagsStr: string,
+): StoreInvocation {
+  return {
+    cmd: 'uv',
+    args: [
+      'run', 'python', 'scripts/core/store_learning.py',
+      '--session-id', sessionId,
+      '--type', 'FAILED_APPROACH',
+      '--content', content,
+      '--context', contextStr,
+      '--tags', tagsStr,
+      '--confidence', 'medium',
+    ],
+    options: { cwd: opcDir, shell: false, detached: true, stdio: 'ignore', windowsHide: true },
+  };
+}
+
+/** Injectable seams so storeLearning is unit-testable without fs/scorer/child_process. */
+interface StoreDeps {
+  spawnFn?: typeof spawn;
+  scoreFn?: typeof scoreExtraction;
+  existsFn?: (p: string) => boolean;
+}
+
 export function storeLearning(
   sessionId: string,
   agentType: string,
   prompt: string,
-  errorContext: string
+  errorContext: string,
+  deps: StoreDeps = {},
 ): void {
+  const spawnFn = deps.spawnFn ?? spawn;
+  const scoreFn = deps.scoreFn ?? scoreExtraction;
+  const existsFn = deps.existsFn ?? existsSync;
+
   const opcDir = getOpcDir();
   const storeScript = join(opcDir, 'scripts', 'core', 'store_learning.py');
 
-  if (!existsSync(storeScript)) {
+  if (!existsFn(storeScript)) {
     console.error('[AgentErrorCapture] store_learning.py not found');
     return;
   }
 
-  // Build content for the learning
+  // Build content for the learning.
   const content = `Agent '${agentType}' error: ${errorContext}`;
 
-  // G3 / Task #6: gate the store with the TypeScript memory-quality-scorer
-  // BEFORE shelling out to Python. Previously this hook bypassed the scorer
-  // entirely; any "Agent 'foo' error: ..." dump would land in archival_memory
-  // regardless of signal density. Now we only proceed for SIGNAL (>=5) or
-  // BORDERLINE (3-4); NOISE (<3) is dropped with a stderr log for visibility.
-  const score = scoreExtraction(content, `Failed agent invocation: ${agentType}`);
+  // G3 / Task #6: gate the store with the TypeScript memory-quality-scorer BEFORE
+  // spawning. NOISE (<3) is dropped with a stderr log; SIGNAL (>=5) / BORDERLINE
+  // (3-4) proceed. prompt is intentionally not stored (the error context is the
+  // signal; the prompt is often large and low-value for recall).
+  void prompt;
+  const score = scoreFn(content, `Failed agent invocation: ${agentType}`);
   if (score.classification === 'NOISE') {
     console.error(
       `[AgentErrorCapture] Skipped NOISE (score=${score.score}) for agent '${agentType}': ` +
-      score.reasons.join('; ')
+      score.reasons.join('; '),
     );
     return;
   }
 
-  // Build tags
   const tags = [
     'auto_captured',
     'agent_failure',
@@ -168,29 +223,22 @@ export function storeLearning(
   ];
 
   try {
-    // QW-01: spawn with no shell — pass each argument as a separate argv element.
-    // The raw content is handed to Python verbatim (no shell = no injection),
-    // so the previous sh-style double-quote escaping is removed entirely.
-    const contextStr = `Failed agent invocation: ${agentType}`;
-    const tagsStr = tags.join(',');
-
-    spawnSync(
-      'uv',
-      [
-        'run', 'python', 'scripts/core/store_learning.py',
-        '--session-id', sessionId,
-        '--type', 'FAILED_APPROACH',
-        '--content', content,
-        '--context', contextStr,
-        '--tags', tagsStr,
-        '--confidence', 'medium',
-      ],
-      { cwd: opcDir, shell: false, encoding: 'utf-8', timeout: 10000, stdio: ['pipe', 'pipe', 'pipe'] }
+    // QW-04 hot-path fix: FIRE-AND-FORGET. The previous spawnSync blocked Task
+    // completion for up to 10s (uv+python+psycopg boot) on EVERY captured failure.
+    // Now spawn detached with ignored stdio + unref() so the store runs in the
+    // background and never delays the agent's return. QW-01 no-shell safety kept.
+    const { cmd, args, options } = buildStoreInvocation(
+      opcDir,
+      sessionId,
+      content,
+      `Failed agent invocation: ${agentType}`,
+      tags.join(','),
     );
-
-    console.error(`[AgentErrorCapture] Stored failure learning for agent '${agentType}'`);
+    const child = spawnFn(cmd, args, options);
+    child.unref();
+    console.error(`[AgentErrorCapture] Dispatched (detached) failure learning for agent '${agentType}'`);
   } catch (err) {
-    console.error(`[AgentErrorCapture] Failed to store learning: ${err}`);
+    console.error(`[AgentErrorCapture] Failed to dispatch learning: ${err}`);
   }
 }
 
@@ -220,23 +268,20 @@ async function main() {
     const prompt = input.tool_input.prompt || input.tool_input.description || '';
     const responseStr = responseToString(input.tool_response);
 
-    // Check if response indicates failure
-    const hasError = hasErrorPattern(responseStr);
-    const hasFailure = hasFailureIndicator(responseStr);
-
-    if (hasError) {
-      // Only store on actual error patterns (TypeError, ENOENT, etc.)
-      // Soft failure language ("could not", "unable to") is not worth storing
+    // Trigger ONLY on structured error signals (named exceptions, stack traces,
+    // errno, panic, crash). Bare "error"/"failed" prose is intentionally ignored
+    // — it is the dominant recall-pollution source (review S2).
+    if (hasStructuredError(responseStr)) {
       const errorContext = extractErrorContext(responseStr);
 
-      console.error(`[AgentErrorCapture] Detected error in ${agentType} agent response`);
+      console.error(`[AgentErrorCapture] Detected structured error in ${agentType} agent response`);
 
-      // Store the learning
+      // Fire-and-forget store (detached) — does not block Task completion.
       storeLearning(
         input.session_id,
         agentType,
         prompt,
-        errorContext
+        errorContext,
       );
     }
 

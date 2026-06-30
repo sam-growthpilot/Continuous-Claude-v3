@@ -1,6 +1,9 @@
 // src/tldr-context-inject.ts
-import { readFileSync as readFileSync2, existsSync as existsSync2 } from "fs";
+import { readFileSync as readFileSync2, existsSync as existsSync2, mkdirSync as mkdirSync2, writeFileSync as writeFileSync2, readdirSync, statSync, unlinkSync as unlinkSync2 } from "fs";
 import { join as join2, dirname } from "path";
+import { spawnSync as spawnSync2 } from "child_process";
+import { createHash as createHash2 } from "crypto";
+import { tmpdir as tmpdir2 } from "os";
 
 // src/daemon-client.ts
 import { existsSync, readFileSync, writeFileSync, unlinkSync, mkdirSync } from "fs";
@@ -200,6 +203,25 @@ function tryStartDaemon(projectDir) {
     return false;
   }
 }
+function buildDaemonInvocation(connInfo, input) {
+  if (connInfo.type === "tcp") {
+    const psScript = [
+      '$ErrorActionPreference = "Stop"',
+      "$payload = [Console]::In.ReadLine()",
+      `$client = New-Object System.Net.Sockets.TcpClient('${connInfo.host}', ${connInfo.port})`,
+      "$stream = $client.GetStream()",
+      "$writer = New-Object System.IO.StreamWriter($stream)",
+      "$reader = New-Object System.IO.StreamReader($stream)",
+      "$writer.WriteLine($payload)",
+      "$writer.Flush()",
+      "$response = $reader.ReadLine()",
+      "$client.Close()",
+      "Write-Output $response"
+    ].join("; ");
+    return { file: "powershell", args: ["-NoProfile", "-NonInteractive", "-Command", psScript], stdin: input };
+  }
+  return { file: "nc", args: ["-U", connInfo.path || ""], stdin: input };
+}
 function queryDaemonSync(query, projectDir) {
   if (isIndexing(projectDir)) {
     return {
@@ -216,30 +238,25 @@ function queryDaemonSync(query, projectDir) {
   }
   try {
     const input = JSON.stringify(query);
-    let result;
-    if (connInfo.type === "tcp") {
-      const psCommand = `
-        $client = New-Object System.Net.Sockets.TcpClient('${connInfo.host}', ${connInfo.port})
-        $stream = $client.GetStream()
-        $writer = New-Object System.IO.StreamWriter($stream)
-        $reader = New-Object System.IO.StreamReader($stream)
-        $writer.WriteLine('${input.replace(/'/g, "''")}')
-        $writer.Flush()
-        $response = $reader.ReadLine()
-        $client.Close()
-        Write-Output $response
-      `.trim();
-      result = execSync(`powershell -Command "${psCommand.replace(/"/g, '\\"')}"`, {
-        encoding: "utf-8",
-        timeout: QUERY_TIMEOUT
-      });
-    } else {
-      result = execSync(`echo '${input}' | nc -U "${connInfo.path}"`, {
-        encoding: "utf-8",
-        timeout: QUERY_TIMEOUT
-      });
+    const inv = buildDaemonInvocation(connInfo, input);
+    const r = spawnSync(inv.file, inv.args, {
+      input: inv.stdin,
+      encoding: "utf-8",
+      timeout: QUERY_TIMEOUT,
+      shell: false
+    });
+    if (r.error) {
+      const code = r.error.code;
+      if (code === "ETIMEDOUT") return { status: "error", error: "timeout" };
+      if (code === "ENOENT") return { status: "unavailable", error: "Daemon transport not available" };
+      return { status: "error", error: r.error.message };
     }
-    return JSON.parse(result.trim());
+    if (r.signal) return { status: "error", error: "timeout" };
+    const out = (r.stdout || "").trim();
+    if (r.status !== 0 || !out) {
+      return { status: "unavailable", error: "Daemon not running" };
+    }
+    return JSON.parse(out);
   } catch (err) {
     if (err.killed) {
       return { status: "error", error: "timeout" };
@@ -612,15 +629,86 @@ Called by:`);
 function findProjectRoot(startPath) {
   let current = startPath;
   const markers = [".git", "pyproject.toml", "package.json", "Cargo.toml", "go.mod"];
-  while (current !== "/") {
+  while (true) {
     for (const marker of markers) {
       if (existsSync2(join2(current, marker))) {
         return current;
       }
     }
-    current = dirname(current);
+    const parent = dirname(current);
+    if (parent === current) break;
+    current = parent;
   }
   return startPath;
+}
+var TLDR_SKIP_AGENTS = /* @__PURE__ */ new Set([
+  "oracle",
+  "deployer",
+  "scribe",
+  "herald",
+  "agent-factory",
+  "statusline-setup",
+  "plan-reviewer",
+  "validate-agent",
+  "braintrust-analyst",
+  "session-analyst",
+  "chronicler",
+  "context-query-agent",
+  "claude-code-guide"
+]);
+function isTldrEligibleAgent(subagentType) {
+  return !TLDR_SKIP_AGENTS.has((subagentType || "").trim());
+}
+var TLDR_CACHE_DIR = join2(tmpdir2(), "ccv3-tldr-cache");
+var TLDR_CACHE_TTL_MS = 24 * 60 * 60 * 1e3;
+function gitFreshnessKey(projectRoot) {
+  try {
+    const sha = spawnSync2("git", ["rev-parse", "HEAD"], { cwd: projectRoot, encoding: "utf-8", timeout: 1500 });
+    if (sha.status !== 0 || !sha.stdout) return null;
+    const dirty = spawnSync2("git", ["status", "--porcelain"], { cwd: projectRoot, encoding: "utf-8", timeout: 2500 });
+    const dirtyHash = createHash2("md5").update(dirty.stdout || "").digest("hex").slice(0, 8);
+    return `${sha.stdout.trim().slice(0, 12)}-${dirtyHash}`;
+  } catch {
+    return null;
+  }
+}
+function tldrCacheKey(projectRoot, freshness, query) {
+  const proj = createHash2("md5").update(projectRoot).digest("hex").slice(0, 8);
+  const q = createHash2("md5").update(JSON.stringify(query)).digest("hex").slice(0, 16);
+  return `${proj}-${freshness}-${q}`;
+}
+function readTldrCache(key) {
+  try {
+    const f = join2(TLDR_CACHE_DIR, `${key}.json`);
+    if (!existsSync2(f)) return null;
+    if (Date.now() - statSync(f).mtimeMs > TLDR_CACHE_TTL_MS) return null;
+    const v = JSON.parse(readFileSync2(f, "utf-8"));
+    if (typeof v?.tldrContext === "string" && typeof v?.usedTarget === "string") return v;
+    return null;
+  } catch {
+    return null;
+  }
+}
+function writeTldrCache(key, value) {
+  try {
+    mkdirSync2(TLDR_CACHE_DIR, { recursive: true });
+    writeFileSync2(join2(TLDR_CACHE_DIR, `${key}.json`), JSON.stringify(value));
+    pruneTldrCache();
+  } catch {
+  }
+}
+function pruneTldrCache() {
+  try {
+    const now = Date.now();
+    for (const f of readdirSync(TLDR_CACHE_DIR)) {
+      const p = join2(TLDR_CACHE_DIR, f);
+      try {
+        if (now - statSync(p).mtimeMs > TLDR_CACHE_TTL_MS) unlinkSync2(p);
+      } catch {
+      }
+    }
+  } catch {
+  }
 }
 function readStdin() {
   return readFileSync2(0, "utf-8");
@@ -628,6 +716,10 @@ function readStdin() {
 async function main() {
   const input = JSON.parse(readStdin());
   if (input.tool_name !== "Task") {
+    console.log("{}");
+    return;
+  }
+  if (!isTldrEligibleAgent(input.tool_input.subagent_type)) {
     console.log("{}");
     return;
   }
@@ -648,17 +740,34 @@ async function main() {
   }
   const projectRoot = findProjectRoot(input.cwd);
   const language = detectLanguage(projectRoot);
+  const freshness = gitFreshnessKey(projectRoot);
+  const cacheKey = freshness ? tldrCacheKey(projectRoot, freshness, {
+    entryPoints: entryPoints.slice(0, 3),
+    layers,
+    language,
+    lineNumber,
+    varName
+  }) : null;
   let tldrContext = null;
   let usedTarget = varName || entryPoints[0] || `line ${lineNumber}`;
-  for (const entryPoint of entryPoints.slice(0, 3)) {
-    tldrContext = getTldrContext(projectRoot, entryPoint, language, layers, lineNumber, varName);
-    if (tldrContext) {
-      usedTarget = entryPoint;
-      break;
+  const cached = cacheKey ? readTldrCache(cacheKey) : null;
+  if (cached) {
+    tldrContext = cached.tldrContext;
+    usedTarget = cached.usedTarget;
+  } else {
+    for (const entryPoint of entryPoints.slice(0, 3)) {
+      tldrContext = getTldrContext(projectRoot, entryPoint, language, layers, lineNumber, varName);
+      if (tldrContext) {
+        usedTarget = entryPoint;
+        break;
+      }
     }
-  }
-  if (!tldrContext && varName) {
-    tldrContext = getTldrContext(projectRoot, varName, language, layers, lineNumber, varName);
+    if (!tldrContext && varName) {
+      tldrContext = getTldrContext(projectRoot, varName, language, layers, lineNumber, varName);
+    }
+    if (tldrContext && cacheKey) {
+      writeTldrCache(cacheKey, { tldrContext, usedTarget });
+    }
   }
   if (!tldrContext) {
     console.log("{}");
@@ -688,7 +797,17 @@ ${prompt}`;
   });
   console.log(JSON.stringify(output));
 }
-main().catch((err) => {
-  console.error(`TLDR hook error: ${err.message}`);
-  console.log("{}");
-});
+if ((process.argv[1] || "").includes("tldr-context-inject")) {
+  main().catch((err) => {
+    console.error(`TLDR hook error: ${err.message}`);
+    console.log("{}");
+  });
+}
+export {
+  findProjectRoot,
+  gitFreshnessKey,
+  isTldrEligibleAgent,
+  readTldrCache,
+  tldrCacheKey,
+  writeTldrCache
+};

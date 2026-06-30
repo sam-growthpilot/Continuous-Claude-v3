@@ -8,7 +8,7 @@
  */
 
 interface HookInput {
-  tool?: string;
+  tool_name?: string;
   tool_input?: Record<string, unknown>;
   tool_result?: {
     content?: string;
@@ -19,7 +19,7 @@ interface HookInput {
 interface HookOutput {
   hookSpecificOutput?: {
     hookEventName: string;
-    systemPromptSuffix?: string;
+    additionalContext?: string;
   };
 }
 
@@ -41,7 +41,7 @@ async function main(): Promise<void> {
     return;
   }
 
-  const tool = input.tool;
+  const tool = input.tool_name;
 
   // Only add reminder for Grep results (Read results are more reliable)
   if (tool !== 'Grep') {
@@ -66,7 +66,7 @@ Common false patterns:
   const output: HookOutput = {
     hookSpecificOutput: {
       hookEventName: 'PostToolUse',
-      systemPromptSuffix: reminder,
+      additionalContext: reminder,
     },
   };
 

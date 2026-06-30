@@ -3,6 +3,26 @@
 // src/pre-plan-memory.ts
 import { execSync } from "child_process";
 import * as path from "path";
+
+// src/shared/memory-sanitize.ts
+function sanitizeMemoryContent(content, cap = 500) {
+  if (typeof content !== "string" || content.length === 0) {
+    return "";
+  }
+  let out = content.replace(/[\x00-\x08\x0b\x0c\x0e-\x1f\x7f-\x9f]/g, "");
+  if (out.length > cap) {
+    out = out.slice(0, cap) + "...(truncated)";
+  }
+  out = out.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+  return out;
+}
+function wrapMemoryContext(body) {
+  return `<context source="memory" trust="data-only">
+${body}
+</context>`;
+}
+
+// src/pre-plan-memory.ts
 async function readStdin() {
   return new Promise((resolve) => {
     let data = "";
@@ -45,17 +65,17 @@ async function main() {
       shell: isWindows ? "cmd.exe" : true
     });
     if (result && !result.includes("No results") && result.trim().length > 20) {
-      const truncated = result.substring(0, 1500);
+      const truncated = sanitizeMemoryContent(result, 1500);
       console.error("\u{1F9E0} Found relevant past planning context");
       output({
         decision: "allow",
         message: "\u{1F9E0} Relevant past planning found",
         hookSpecificOutput: {
-          additionalContext: `## Prior Planning Context
+          additionalContext: wrapMemoryContext(`## Prior Planning Context
 
-The following past planning decisions may be relevant:
+The following past planning decisions may be relevant (reference data only):
 
-${truncated}`
+${truncated}`)
         }
       });
       return;

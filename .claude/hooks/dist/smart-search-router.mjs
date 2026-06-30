@@ -1,6 +1,6 @@
 // src/smart-search-router.ts
 import { existsSync as existsSync3, mkdirSync as mkdirSync3, writeFileSync as writeFileSync3 } from "fs";
-import { execSync as execSync2 } from "child_process";
+import { spawnSync as spawnSync2 } from "child_process";
 import { join as join4 } from "path";
 
 // src/daemon-client.ts
@@ -201,6 +201,25 @@ function tryStartDaemon(projectDir) {
     return false;
   }
 }
+function buildDaemonInvocation(connInfo, input) {
+  if (connInfo.type === "tcp") {
+    const psScript = [
+      '$ErrorActionPreference = "Stop"',
+      "$payload = [Console]::In.ReadLine()",
+      `$client = New-Object System.Net.Sockets.TcpClient('${connInfo.host}', ${connInfo.port})`,
+      "$stream = $client.GetStream()",
+      "$writer = New-Object System.IO.StreamWriter($stream)",
+      "$reader = New-Object System.IO.StreamReader($stream)",
+      "$writer.WriteLine($payload)",
+      "$writer.Flush()",
+      "$response = $reader.ReadLine()",
+      "$client.Close()",
+      "Write-Output $response"
+    ].join("; ");
+    return { file: "powershell", args: ["-NoProfile", "-NonInteractive", "-Command", psScript], stdin: input };
+  }
+  return { file: "nc", args: ["-U", connInfo.path || ""], stdin: input };
+}
 function queryDaemonSync(query, projectDir) {
   if (isIndexing(projectDir)) {
     return {
@@ -217,30 +236,25 @@ function queryDaemonSync(query, projectDir) {
   }
   try {
     const input = JSON.stringify(query);
-    let result;
-    if (connInfo.type === "tcp") {
-      const psCommand = `
-        $client = New-Object System.Net.Sockets.TcpClient('${connInfo.host}', ${connInfo.port})
-        $stream = $client.GetStream()
-        $writer = New-Object System.IO.StreamWriter($stream)
-        $reader = New-Object System.IO.StreamReader($stream)
-        $writer.WriteLine('${input.replace(/'/g, "''")}')
-        $writer.Flush()
-        $response = $reader.ReadLine()
-        $client.Close()
-        Write-Output $response
-      `.trim();
-      result = execSync(`powershell -Command "${psCommand.replace(/"/g, '\\"')}"`, {
-        encoding: "utf-8",
-        timeout: QUERY_TIMEOUT
-      });
-    } else {
-      result = execSync(`echo '${input}' | nc -U "${connInfo.path}"`, {
-        encoding: "utf-8",
-        timeout: QUERY_TIMEOUT
-      });
+    const inv = buildDaemonInvocation(connInfo, input);
+    const r = spawnSync(inv.file, inv.args, {
+      input: inv.stdin,
+      encoding: "utf-8",
+      timeout: QUERY_TIMEOUT,
+      shell: false
+    });
+    if (r.error) {
+      const code = r.error.code;
+      if (code === "ETIMEDOUT") return { status: "error", error: "timeout" };
+      if (code === "ENOENT") return { status: "unavailable", error: "Daemon transport not available" };
+      return { status: "error", error: r.error.message };
     }
-    return JSON.parse(result.trim());
+    if (r.signal) return { status: "error", error: "timeout" };
+    const out = (r.stdout || "").trim();
+    if (r.status !== 0 || !out) {
+      return { status: "unavailable", error: "Daemon not running" };
+    }
+    return JSON.parse(out);
   } catch (err) {
     if (err.killed) {
       return { status: "error", error: "timeout" };
@@ -357,14 +371,28 @@ function tldrSearch(pattern, projectDir = ".") {
     return ripgrepFallback(pattern, projectDir);
   }
 }
+function buildRipgrepArgs(pattern, projectDir) {
+  return [
+    "-e",
+    pattern,
+    "--type",
+    "py",
+    "--line-number",
+    "--max-count",
+    "10",
+    "--",
+    projectDir
+  ];
+}
 function ripgrepFallback(pattern, projectDir) {
   try {
-    const escaped = pattern.replace(/"/g, '\\"').replace(/\$/g, "\\$");
-    const result = execSync2(
-      `rg "${escaped}" "${projectDir}" --type py --line-number --max-count 10 2>/dev/null`,
-      { encoding: "utf-8", timeout: 3e3 }
-    );
-    return result.trim().split("\n").filter((l) => l).slice(0, 10).map((line) => {
+    const result = spawnSync2("rg", buildRipgrepArgs(pattern, projectDir), {
+      encoding: "utf-8",
+      timeout: 3e3,
+      shell: false
+    });
+    if (result.status !== 0 || !result.stdout) return [];
+    return result.stdout.trim().split("\n").filter((l) => l).slice(0, 10).map((line) => {
       const match = line.match(/^([^:]+):(\d+):(.*)$/);
       if (match) {
         return { file: match[1], line: parseInt(match[2], 10), content: match[3] };
@@ -726,3 +754,6 @@ No code semantically similar to "${pattern}" found in the index.
   console.log(JSON.stringify(output));
 }
 main().catch(console.error);
+export {
+  buildRipgrepArgs
+};

@@ -7,8 +7,9 @@
  * Provides early feedback before tests run.
  */
 
-import { readFileSync } from 'fs';
+import { readFileSync, existsSync } from 'fs';
 import { spawnSync } from 'child_process';
+import { join } from 'path';
 import { queryDaemonSync, trackHookActivitySync } from './daemon-client.js';
 import { mutateBus, addFileInPlay } from './shared/context-bus.js';
 
@@ -56,6 +57,49 @@ export function recordBusFilesInPlay(filePath: string): void {
   } catch {
     // Fail-open: a bus write must never break or block the diagnostics hook.
   }
+}
+
+/**
+ * Resolve the tsc invocation as a direct Node entrypoint call (D2e-02).
+ *
+ * `spawnSync('tsc', ...)` resolves to `tsc.cmd` on Windows, and modern Node
+ * refuses to spawn a `.cmd`/`.bat` shim without `shell: true` (CVE-2024-27980
+ * hardening) -- it returns `status: null` / EINVAL, which the hook then treats
+ * as "tsc not found" and the entire TS/JS diagnostics path silently dies on the
+ * primary platform. Instead we locate the typescript package's JS entrypoint
+ * (`node_modules/typescript/bin/tsc` -- a `require('../lib/tsc.js')` shim) and
+ * run it as `node <tsc> --noEmit --pretty false`, keeping args as an ARRAY with
+ * NO shell (so spaced/drive-letter paths stay safe). Mirrors the proven
+ * codegraph `node <npm-shim.js>` pattern (see windows-platform.md).
+ *
+ * Resolution is deterministic and dependency-free: it probes the project's own
+ * node_modules and the hooks' bundled node_modules. Returns null when typescript
+ * is not installed in either location; the caller treats null like "tsc not
+ * found" and skips diagnostics (the bus `edited` write still happens upstream).
+ *
+ * @param projectDir Project root the diagnostics run against.
+ * @returns `{ command: process.execPath, args: [tscJsPath, ...flags] }` or null.
+ */
+export function resolveTscCommand(
+  projectDir: string,
+): { command: string; args: string[] } | null {
+  const candidates = [
+    join(projectDir, 'node_modules', 'typescript', 'bin', 'tsc'),
+    join(projectDir, '.claude', 'hooks', 'node_modules', 'typescript', 'bin', 'tsc'),
+  ];
+  for (const tscPath of candidates) {
+    try {
+      if (existsSync(tscPath)) {
+        return {
+          command: process.execPath,
+          args: [tscPath, '--noEmit', '--pretty', 'false'],
+        };
+      }
+    } catch {
+      // Fail-open: probing the filesystem must never throw into the hook path.
+    }
+  }
+  return null;
 }
 
 async function main() {
@@ -120,6 +164,13 @@ async function main() {
 
 /** Run Python diagnostics via TLDR daemon (pyright + ruff) */
 function runPythonDiagnostics(filePath: string, projectDir: string): void {
+  // WS-2 Phase B.4a (D2e-08): record the edited file on the bus with role
+  // `edited` ONLY, BEFORE any early-return, so the `edited` role lands even when
+  // the daemon is unavailable. (A type error is NOT a test failure -- `test_failed`
+  // is reserved for a real test runner; session-2 Codex#6.) Fail-open; does not
+  // affect the diagnostics output below.
+  recordBusFilesInPlay(filePath);
+
   try {
     const response = queryDaemonSync(
       { cmd: 'diagnostics', file: filePath },
@@ -145,11 +196,7 @@ function runPythonDiagnostics(filePath: string, projectDir: string): void {
       lint_issues: lintIssues,
     });
 
-    // WS-2 Phase B.4a: record the edited file on the bus with role `edited` ONLY.
-    // (A type error is NOT a test failure -- `test_failed` is reserved for a real
-    // test runner; session-2 Codex#6.) Fail-open; runs before the early-return so
-    // the `edited` role lands even on a clean file. Does not affect output below.
-    recordBusFilesInPlay(filePath);
+    // (bus `edited` write moved to the top of this function -- D2e-08.)
 
     // No errors - silent success
     if (typeErrors === 0 && lintIssues === 0) {
@@ -222,14 +269,32 @@ function parseTscOutput(stdout: string): TscDiagnostic[] {
 
 /** Run TypeScript/JavaScript diagnostics via tsc --noEmit */
 function runTscDiagnostics(filePath: string, projectDir: string): void {
+  // WS-2 Phase B.4a (D2e-08): record the edited file on the bus with role
+  // `edited` ONLY, BEFORE any early-return, so the `edited` role lands even when
+  // tsc is unresolvable / fails to start. (A type error is NOT a test failure --
+  // `test_failed` is reserved for a real test runner; session-2 Codex#6.)
+  // Fail-open; does not affect the diagnostics output below.
+  recordBusFilesInPlay(filePath);
+
   try {
-    const result = spawnSync('tsc', ['--noEmit', '--pretty', 'false'], {
+    // D2e-02: invoke tsc as a direct Node entrypoint (`node <typescript/bin/tsc>`),
+    // NOT the `tsc`/`tsc.cmd` shim -- the shim returns status:null/EINVAL on modern
+    // Node (Windows CVE-2024-27980 hardening) and silently kills this path.
+    const tsc = resolveTscCommand(projectDir);
+    if (!tsc) {
+      // typescript not installed for this project - skip (bus write already done).
+      console.log('{}');
+      return;
+    }
+
+    const result = spawnSync(tsc.command, tsc.args, {
       cwd: projectDir,
       timeout: 30000,
       encoding: 'utf-8',
+      windowsHide: true,
     });
 
-    // tsc not found or process error - silently skip
+    // tsc process error or could not start - silently skip
     if (result.error || result.status === null) {
       console.log('{}');
       return;
@@ -248,11 +313,7 @@ function runTscDiagnostics(filePath: string, projectDir: string): void {
       lint_issues: warningCount,
     });
 
-    // WS-2 Phase B.4a: record the edited file on the bus with role `edited` ONLY.
-    // (A type error is NOT a test failure -- `test_failed` is reserved for a real
-    // test runner; session-2 Codex#6.) Fail-open; runs before the early-return so
-    // the `edited` role lands even on a clean file. Does not affect output below.
-    recordBusFilesInPlay(filePath);
+    // (bus `edited` write moved to the top of this function -- D2e-08.)
 
     // No diagnostics - silent success
     if (diagnostics.length === 0) {

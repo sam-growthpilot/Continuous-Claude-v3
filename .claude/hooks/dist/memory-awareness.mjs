@@ -257,6 +257,53 @@ function extractIntent(prompt) {
   }
   return intent;
 }
+var SYNTHETIC_TAG = /^<\/?(?:task-notification|system-reminder|local-command-(?:stdout|stderr)|command-(?:name|message|args)|bash-(?:input|stdout|stderr)|user-prompt-submit-hook|[a-z][a-z0-9-]*-hook)\b/i;
+var MAX_HUMAN_PROMPT_LEN = 8e3;
+function isMachineGeneratedPrompt(prompt) {
+  if (typeof prompt !== "string") return false;
+  const t = prompt.trim();
+  if (t.length === 0) return false;
+  if (SYNTHETIC_TAG.test(t)) return true;
+  if (t.includes("<task-notification")) return true;
+  if (t.length > MAX_HUMAN_PROMPT_LEN) return true;
+  const names = /* @__PURE__ */ new Set();
+  for (const m of t.matchAll(/<\/?([a-z][a-z0-9-]*)\b[^>]*>/gi)) {
+    names.add(m[1].toLowerCase());
+    if (names.size >= 3) return true;
+  }
+  return false;
+}
+function expandGitQuery(prompt) {
+  const lower = prompt.toLowerCase().trim();
+  const gitExpansions = {
+    "push": "git push remote fork origin upstream",
+    "git push": "git push remote fork origin upstream",
+    "commit": "git commit message workflow",
+    "git commit": "git commit message workflow",
+    "pr": "pull request pr create review",
+    "create pr": "pull request pr create github",
+    "pull request": "pull request pr create github",
+    "merge": "git merge branch main",
+    "rebase": "git rebase branch workflow",
+    "checkout": "git checkout branch switch",
+    "branch": "git branch create switch",
+    "stash": "git stash save pop",
+    "reset": "git reset hard soft",
+    "force push": "git push force dangerous"
+  };
+  for (const [pattern, expansion] of Object.entries(gitExpansions)) {
+    if (lower === pattern || lower.startsWith(pattern + " ") || lower.endsWith(" " + pattern)) {
+      return expansion;
+    }
+  }
+  const gitKeywords = ["git", "push", "commit", "pr", "merge", "rebase", "branch", "pull"];
+  const words = new Set(lower.split(/[^a-z]+/).filter(Boolean));
+  const hasGitContext = gitKeywords.some((kw) => words.has(kw));
+  if (hasGitContext) {
+    return prompt + " git remote workflow";
+  }
+  return null;
+}
 
 // src/shared/embedding-client.ts
 import {
@@ -288,6 +335,7 @@ function _spawnLockPath() {
 var SPAWN_LOCK_TTL_MS = 6e4;
 var FRAME_SIZE_CAP_BYTES = 100 * 1024 * 1024;
 var DEFAULT_PING_TIMEOUT_MS = 1500;
+var DEFAULT_RECALL_TIMEOUT_MS = 3e3;
 var EXPECTED_MODEL = "BAAI/bge-large-en-v1.5";
 var EXPECTED_DIM = 1024;
 function sendFrame(sock, obj) {
@@ -422,22 +470,73 @@ function _cleanupDiscoveryFile() {
   } catch {
   }
 }
-async function isDaemonReady() {
+async function probeDaemon() {
   const info = readDaemonInfo();
-  if (!info) return false;
+  if (!info) return null;
   if (!isDaemonAlive(info)) {
     _cleanupDiscoveryFile();
-    return false;
+    return null;
   }
-  if (info.model !== EXPECTED_MODEL || info.dim !== EXPECTED_DIM) return false;
+  if (info.model !== EXPECTED_MODEL || info.dim !== EXPECTED_DIM) return null;
   const reply = await pingDaemon(info);
-  if (!reply) {
-    return false;
-  }
-  if (!reply.ok || !reply.ready) return false;
-  if (reply.model && reply.model !== EXPECTED_MODEL) return false;
-  if (reply.dim && reply.dim !== EXPECTED_DIM) return false;
-  return true;
+  if (!reply || !reply.ok || !reply.ready) return null;
+  if (reply.model && reply.model !== EXPECTED_MODEL) return null;
+  if (reply.dim && reply.dim !== EXPECTED_DIM) return null;
+  const recallReady = reply.recall_ready === true && reply.loop_ok !== false;
+  return { info, ready: reply.ready, recallReady };
+}
+async function recallViaDaemon(info, query, k, opts = {}) {
+  const timeoutMs = opts.timeoutMs ?? DEFAULT_RECALL_TIMEOUT_MS;
+  const mode = opts.mode ?? "hybrid";
+  if (!query || !query.trim()) return null;
+  return new Promise((res) => {
+    const sock = new net.Socket();
+    let settled = false;
+    const cleanup = (val) => {
+      if (settled) return;
+      settled = true;
+      try {
+        sock.setTimeout(0);
+        sock.destroy();
+      } catch {
+      }
+      res(val);
+    };
+    const overallTimer = setTimeout(() => cleanup(null), timeoutMs);
+    sock.once("error", () => {
+      clearTimeout(overallTimer);
+      cleanup(null);
+    });
+    sock.connect(info.port, "127.0.0.1", () => {
+      try {
+        sock.setNoDelay(true);
+      } catch {
+      }
+      try {
+        sendFrame(sock, { cmd: "recall", query, k, mode });
+      } catch {
+        clearTimeout(overallTimer);
+        cleanup(null);
+        return;
+      }
+      recvFrame(sock, 0).then((reply) => {
+        clearTimeout(overallTimer);
+        if (reply && typeof reply === "object" && reply.ok === true && Array.isArray(reply.results)) {
+          const meta = reply._meta;
+          if (meta && typeof meta === "object" && (meta.model && meta.model !== EXPECTED_MODEL || meta.dim && meta.dim !== EXPECTED_DIM)) {
+            cleanup(null);
+            return;
+          }
+          cleanup(reply.results);
+        } else {
+          cleanup(null);
+        }
+      }).catch(() => {
+        clearTimeout(overallTimer);
+        cleanup(null);
+      });
+    });
+  });
 }
 function resolveRepoRoot() {
   const envDir = process.env.CLAUDE_PROJECT_DIR;
@@ -623,6 +722,61 @@ function _acquireSpawnLock(lockPath) {
     if (err3?.code === "EEXIST") return false;
     throw err3;
   }
+}
+
+// src/shared/host-ram.ts
+import { spawnSync as defaultSpawnSync } from "child_process";
+import { readFileSync as defaultReadFileSync } from "fs";
+var HOST_RAM_FLOOR_BYTES = 2 * 1024 * 1024 * 1024;
+function getHostRamFloorBytes() {
+  const raw = process.env.CCV3_HOST_RAM_FLOOR_BYTES;
+  if (!raw) return HOST_RAM_FLOOR_BYTES;
+  const parsed = parseInt(raw, 10);
+  if (Number.isNaN(parsed) || parsed <= 0) return HOST_RAM_FLOOR_BYTES;
+  return parsed;
+}
+var PROBE_TIMEOUT_MS = 1500;
+function getFreeRamBytes(spawnFn = defaultSpawnSync, readFileFn = defaultReadFileSync, platform = process.platform) {
+  const override = process.env.CCV3_HOST_RAM_OVERRIDE_BYTES;
+  if (override) {
+    const parsed = parseInt(override, 10);
+    if (!Number.isNaN(parsed) && parsed > 0) return parsed;
+  }
+  try {
+    if (platform === "win32") {
+      const result = spawnFn(
+        "powershell",
+        [
+          "-NoProfile",
+          "-NonInteractive",
+          "-Command",
+          "(Get-CimInstance Win32_OperatingSystem).FreePhysicalMemory"
+        ],
+        { timeout: PROBE_TIMEOUT_MS, encoding: "utf-8" }
+      );
+      const out = typeof result.stdout === "string" ? result.stdout : result.stdout?.toString("utf-8") ?? "";
+      const kb2 = parseInt(out.trim(), 10);
+      if (Number.isNaN(kb2) || kb2 <= 0) {
+        return Number.POSITIVE_INFINITY;
+      }
+      return kb2 * 1024;
+    }
+    const meminfo = readFileFn("/proc/meminfo", "utf-8");
+    const match = meminfo.match(/^MemAvailable:\s+(\d+)\s+kB/m);
+    if (!match) {
+      return Number.POSITIVE_INFINITY;
+    }
+    const kb = parseInt(match[1], 10);
+    if (Number.isNaN(kb) || kb <= 0) {
+      return Number.POSITIVE_INFINITY;
+    }
+    return kb * 1024;
+  } catch {
+    return Number.POSITIVE_INFINITY;
+  }
+}
+function isHostMemoryPressured(freeRamBytes = getFreeRamBytes(), floor = getHostRamFloorBytes()) {
+  return freeRamBytes < floor;
 }
 
 // src/shared/braintrust-score.ts
@@ -1240,81 +1394,28 @@ function buildFocusBlock(terms) {
 // src/memory-awareness.ts
 var TEXT_ONLY_FLOOR = 0.05;
 var HYBRID_FLOOR = 0.01;
-var LOCAL_SCORE_NORMALIZE = 0.1;
 function readStdin() {
   return readFileSync5(0, "utf-8");
 }
-function expandGitQuery(prompt) {
-  const lower = prompt.toLowerCase().trim();
-  const gitExpansions = {
-    "push": "git push remote fork origin upstream",
-    "git push": "git push remote fork origin upstream",
-    "commit": "git commit message workflow",
-    "git commit": "git commit message workflow",
-    "pr": "pull request pr create review",
-    "create pr": "pull request pr create github",
-    "pull request": "pull request pr create github",
-    "merge": "git merge branch main",
-    "rebase": "git rebase branch workflow",
-    "checkout": "git checkout branch switch",
-    "branch": "git branch create switch",
-    "stash": "git stash save pop",
-    "reset": "git reset hard soft",
-    "force push": "git push force dangerous"
-  };
-  for (const [pattern, expansion] of Object.entries(gitExpansions)) {
-    if (lower === pattern || lower.startsWith(pattern + " ") || lower.endsWith(" " + pattern)) {
-      return expansion;
-    }
-  }
-  const gitKeywords = ["git", "push", "commit", "pr", "merge", "rebase", "branch"];
-  const hasGitContext = gitKeywords.some((kw) => lower.includes(kw));
-  if (hasGitContext) {
-    return prompt + " git remote workflow";
-  }
-  return null;
+function cleanSearchTerm(intent) {
+  return intent.replace(/[_\/]/g, " ").replace(/\b\w{1,2}\b/g, "").replace(/\s+/g, " ").trim();
 }
-function checkLocalMemory(intent, projectDir) {
-  const homeDir = process.env.HOME || process.env.USERPROFILE || "";
-  const projectMemoryScript = path.join(homeDir, ".claude", "scripts", "core", "project_memory.py");
-  if (!existsSync6(projectMemoryScript)) return [];
-  try {
-    const result = spawnSync("uv", [
-      "run",
-      "python",
-      projectMemoryScript,
-      "query",
-      intent,
-      "--project-dir",
-      projectDir,
-      "-k",
-      "3",
-      "--json"
-    ], {
-      encoding: "utf-8",
-      cwd: path.join(homeDir, ".claude", "scripts", "core"),
-      timeout: 2e3,
-      killSignal: "SIGKILL"
-    });
-    if (result.status !== 0 || !result.stdout) return [];
-    const data = JSON.parse(result.stdout);
-    if (!data.results || data.results.length === 0) return [];
-    return data.results.slice(0, 3).map((r) => ({
-      id: r.task_id || r.id || "local",
-      type: "LOCAL_HANDOFF",
-      content: r.summary || r.content || "",
-      // Normalize local similarity (~0.5) into ts_rank range so the merge
-      // sort/floor doesn't unfairly favor local rows.
-      score: (r.similarity || 0.5) * LOCAL_SCORE_NORMALIZE
-    }));
-  } catch {
-    return [];
-  }
+function mapDbResults(rawResults, useHybrid) {
+  return (rawResults || []).map((r) => {
+    const content = r.content || "";
+    const preview = content.split("\n").filter((l) => l.trim().length > 0).map((l) => l.trim()).join(" ").slice(0, 120);
+    return {
+      id: (r.id || "unknown").slice(0, 8),
+      type: r.learning_type || r.type || "UNKNOWN",
+      content: preview + (content.length > 120 ? "..." : ""),
+      score: (useHybrid ? r.base_score ?? r.score : r.score) || 0
+    };
+  });
 }
 function checkDbMemory(intent, _projectDir, useHybrid) {
   const opcDir = getOpcDir();
   if (!opcDir) return [[], false];
-  const searchTerm = intent.replace(/[_\/]/g, " ").replace(/\b\w{1,2}\b/g, "").replace(/\s+/g, " ").trim();
+  const searchTerm = cleanSearchTerm(intent);
   const args = [
     "run",
     "python",
@@ -1353,16 +1454,7 @@ function checkDbMemory(intent, _projectDir, useHybrid) {
     if (!data.results || data.results.length === 0) {
       return [[], false];
     }
-    const results = (data.results || []).map((r) => {
-      const content = r.content || "";
-      const preview = content.split("\n").filter((l) => l.trim().length > 0).map((l) => l.trim()).join(" ").slice(0, 120);
-      return {
-        id: (r.id || "unknown").slice(0, 8),
-        type: r.learning_type || r.type || "UNKNOWN",
-        content: preview + (content.length > 120 ? "..." : ""),
-        score: r.score || 0
-      };
-    });
+    const results = mapDbResults(data.results, useHybrid);
     return [results, false];
   } catch {
     return [[], false];
@@ -1479,6 +1571,10 @@ async function main() {
     outputContinue();
     return;
   }
+  if (isMachineGeneratedPrompt(input.prompt)) {
+    outputContinue();
+    return;
+  }
   const gitExpanded = expandGitQuery(input.prompt);
   const intent = gitExpanded || extractIntent(input.prompt);
   if (intent.length < 3) {
@@ -1498,14 +1594,24 @@ async function main() {
   }
   const focusTerms = busFocus.terms;
   const focusBlock = buildFocusBlock(focusTerms);
-  let daemonReady = false;
-  try {
-    daemonReady = await isDaemonReady();
-  } catch {
-    daemonReady = false;
+  const freeRamBytes = getFreeRamBytes();
+  const hostMemoryPressured = isHostMemoryPressured(freeRamBytes, getHostRamFloorBytes());
+  if (hostMemoryPressured) {
+    process.stderr.write(
+      "[memory-awareness] host RAM low: skipping daemon probe + spawn, text-only fallback\n"
+    );
   }
+  let probe = null;
+  if (!hostMemoryPressured) {
+    try {
+      probe = await probeDaemon();
+    } catch {
+      probe = null;
+    }
+  }
+  const daemonReady = !hostMemoryPressured && !!probe?.ready;
   const mode = daemonReady ? "hybrid" : "text-only";
-  if (!daemonReady) {
+  if (!hostMemoryPressured && !daemonReady) {
     try {
       ensureDaemonRunning();
     } catch {
@@ -1513,8 +1619,25 @@ async function main() {
   }
   const queryBiased = focusTerms.length > 0 && daemonReady;
   const recallQuery = queryBiased ? `${intent} ${focusTerms.join(" ")}` : intent;
-  const local = checkLocalMemory(recallQuery, projectDir);
-  const [db, dbTimedOut] = checkDbMemory(recallQuery, projectDir, daemonReady);
+  const local = [];
+  let db;
+  let dbTimedOut;
+  let recallVia = "uv";
+  let daemonRows = null;
+  if (probe?.recallReady) {
+    try {
+      daemonRows = await recallViaDaemon(probe.info, cleanSearchTerm(recallQuery), 3);
+    } catch {
+      daemonRows = null;
+    }
+  }
+  if (daemonRows !== null) {
+    db = mapDbResults(daemonRows, true);
+    dbTimedOut = false;
+    recallVia = "daemon";
+  } else {
+    [db, dbTimedOut] = checkDbMemory(recallQuery, projectDir, daemonReady);
+  }
   const mergedRaw = mergeResults(local, db);
   const floorApplied = daemonReady ? HYBRID_FLOOR : TEXT_ONLY_FLOOR;
   const match = applyFloor(mergedRaw, floorApplied);
@@ -1530,11 +1653,19 @@ async function main() {
     source: match ? match.source : mergedRaw ? mergedRaw.source : "empty",
     mode,
     daemon_ready: daemonReady,
+    recall_ready: !!probe?.recallReady,
     total_elapsed_ms: Date.now() - t0,
     floor_applied: floorApplied,
     // MEDIUM-2 (arbiter 2.1): true = subprocess SIGKILLed before returning
     // output; false = completed normally (even if results_count is 0).
-    db_subprocess_timed_out: dbTimedOut
+    db_subprocess_timed_out: dbTimedOut,
+    // ST-05: 'daemon' when the resident recall op served this fire, else 'uv'.
+    recall_via: recallVia,
+    // BLOCKER-2: host-memory-pressure telemetry. host_memory_pressure=true means
+    // we forced text-only + skipped the daemon to avoid thrashing the model.
+    host_memory_pressure: hostMemoryPressured,
+    free_ram_bytes: freeRamBytes,
+    embed_fallback_reason: hostMemoryPressured ? "host_memory_pressure" : null
   };
   logRecallFire(logEntry, projectDir);
   try {
@@ -1575,6 +1706,8 @@ async function main() {
           kept_after_floor: logEntry.kept_after_floor,
           mode: logEntry.mode,
           daemon_ready: logEntry.daemon_ready,
+          recall_ready: logEntry.recall_ready,
+          recall_via: logEntry.recall_via,
           total_elapsed_ms: logEntry.total_elapsed_ms,
           intent: logEntry.intent,
           floor_applied: logEntry.floor_applied
@@ -1615,12 +1748,13 @@ ${memoryContext}` : memoryContext;
     outputContinue();
   }
 }
-main().catch(() => {
-  outputContinue();
-});
+if (!process.env.VITEST) {
+  main().catch(() => {
+    outputContinue();
+  });
+}
 export {
   HYBRID_FLOOR,
-  LOCAL_SCORE_NORMALIZE,
   TEXT_ONLY_FLOOR,
   applyFloor,
   extractIntent,

@@ -200,6 +200,25 @@ function tryStartDaemon(projectDir) {
     return false;
   }
 }
+function buildDaemonInvocation(connInfo, input) {
+  if (connInfo.type === "tcp") {
+    const psScript = [
+      '$ErrorActionPreference = "Stop"',
+      "$payload = [Console]::In.ReadLine()",
+      `$client = New-Object System.Net.Sockets.TcpClient('${connInfo.host}', ${connInfo.port})`,
+      "$stream = $client.GetStream()",
+      "$writer = New-Object System.IO.StreamWriter($stream)",
+      "$reader = New-Object System.IO.StreamReader($stream)",
+      "$writer.WriteLine($payload)",
+      "$writer.Flush()",
+      "$response = $reader.ReadLine()",
+      "$client.Close()",
+      "Write-Output $response"
+    ].join("; ");
+    return { file: "powershell", args: ["-NoProfile", "-NonInteractive", "-Command", psScript], stdin: input };
+  }
+  return { file: "nc", args: ["-U", connInfo.path || ""], stdin: input };
+}
 function queryDaemonSync(query, projectDir) {
   if (isIndexing(projectDir)) {
     return {
@@ -216,30 +235,25 @@ function queryDaemonSync(query, projectDir) {
   }
   try {
     const input = JSON.stringify(query);
-    let result;
-    if (connInfo.type === "tcp") {
-      const psCommand = `
-        $client = New-Object System.Net.Sockets.TcpClient('${connInfo.host}', ${connInfo.port})
-        $stream = $client.GetStream()
-        $writer = New-Object System.IO.StreamWriter($stream)
-        $reader = New-Object System.IO.StreamReader($stream)
-        $writer.WriteLine('${input.replace(/'/g, "''")}')
-        $writer.Flush()
-        $response = $reader.ReadLine()
-        $client.Close()
-        Write-Output $response
-      `.trim();
-      result = execSync(`powershell -Command "${psCommand.replace(/"/g, '\\"')}"`, {
-        encoding: "utf-8",
-        timeout: QUERY_TIMEOUT
-      });
-    } else {
-      result = execSync(`echo '${input}' | nc -U "${connInfo.path}"`, {
-        encoding: "utf-8",
-        timeout: QUERY_TIMEOUT
-      });
+    const inv = buildDaemonInvocation(connInfo, input);
+    const r = spawnSync(inv.file, inv.args, {
+      input: inv.stdin,
+      encoding: "utf-8",
+      timeout: QUERY_TIMEOUT,
+      shell: false
+    });
+    if (r.error) {
+      const code = r.error.code;
+      if (code === "ETIMEDOUT") return { status: "error", error: "timeout" };
+      if (code === "ENOENT") return { status: "unavailable", error: "Daemon transport not available" };
+      return { status: "error", error: r.error.message };
     }
-    return JSON.parse(result.trim());
+    if (r.signal) return { status: "error", error: "timeout" };
+    const out = (r.stdout || "").trim();
+    if (r.status !== 0 || !out) {
+      return { status: "unavailable", error: "Daemon not running" };
+    }
+    return JSON.parse(out);
   } catch (err) {
     if (err.killed) {
       return { status: "error", error: "timeout" };

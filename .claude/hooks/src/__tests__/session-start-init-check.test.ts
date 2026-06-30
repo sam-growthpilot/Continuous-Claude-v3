@@ -48,6 +48,8 @@ function runHook(projectDir: string): HookResult {
     env: {
       ...cleanEnv,
       CLAUDE_PROJECT_DIR: projectDir,
+      // FH-01a: do not spawn a real tldr daemon for the throwaway temp project.
+      CCV3_TLDR_WARM_OFF: '1',
     },
     stdio: ['pipe', 'pipe', 'pipe'],
   });

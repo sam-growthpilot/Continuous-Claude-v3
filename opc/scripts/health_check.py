@@ -576,9 +576,38 @@ def check_tldr_daemon_running() -> CheckResult:
 
     Note: `tldr daemon status` exits 0 in both running and not-running
     states, so we parse the output text rather than the return code.
+
+    FH-01b: the tldr daemon is ON-DEMAND, not a service. It is warmed
+    per-session by the session-start hook (`warmTldrDaemon`); the WEEKLY
+    SCHEDULED health check has no session to warm it, so "not running" (and a
+    cold/slow `status` that exceeds the 5s probe) are EXPECTED here, not
+    failures. We therefore (a) catch the `TimeoutExpired` that `_run` raises on
+    a hung probe — previously this propagated and the harness marked the whole
+    check FAIL/HIGH — and (b) report not-running / timeout as INFO. Only a
+    genuinely broken `tldr` CLI (non-zero exit / unrunnable) stays LOW.
     """
     start = time.perf_counter()
-    p = _run(["tldr", "daemon", "status"], timeout=5)
+    try:
+        p = _run(["tldr", "daemon", "status"], timeout=5)
+    except subprocess.TimeoutExpired:
+        dur = int((time.perf_counter() - start) * 1000)
+        return _warn(
+            "tldr-daemon-running", "infrastructure",
+            "tldr daemon status timed out after 5s (on-demand daemon, not "
+            "warmed in this context) -- informational, not a failure",
+            severity="INFO",
+            remediation="tldr daemon start  (warmed automatically at session start)",
+            duration_ms=dur,
+        )
+    except Exception as exc:  # noqa: BLE001 -- never let the probe crash the check
+        dur = int((time.perf_counter() - start) * 1000)
+        return _warn(
+            "tldr-daemon-running", "infrastructure",
+            f"could not run `tldr daemon status`: {type(exc).__name__}: {exc}",
+            severity="LOW",
+            remediation="pip install --upgrade tldr",
+            duration_ms=dur,
+        )
     dur = int((time.perf_counter() - start) * 1000)
     if p.returncode != 0:
         return _warn(
@@ -592,10 +621,11 @@ def check_tldr_daemon_running() -> CheckResult:
     out = (p.stdout or "").strip()
     low = out.lower()
     if "not running" in low or "stopped" in low:
+        # On-demand daemon -- not-running is normal (warmed at session start).
         return _warn(
             "tldr-daemon-running", "infrastructure",
-            f"tldr daemon is not running: {out[:200]}",
-            severity="LOW",
+            f"tldr daemon is not running (on-demand; warmed at session start): {out[:200]}",
+            severity="INFO",
             remediation="tldr daemon start",
             duration_ms=dur,
         )
@@ -609,7 +639,7 @@ def check_tldr_daemon_running() -> CheckResult:
     return _warn(
         "tldr-daemon-running", "infrastructure",
         f"unrecognized tldr daemon status output: {out[:200]}",
-        severity="LOW",
+        severity="INFO",
         duration_ms=dur,
     )
 

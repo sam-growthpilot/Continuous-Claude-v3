@@ -15,6 +15,17 @@
 
 "I can't" is not in the vocabulary. Before claiming impossible: try 3 approaches, document why each failed. If Plan A fails, try B through Z.
 
+### Quick Wins (passive friction-hunting)
+
+While doing daily work, passively watch for "quick awesome wins" — small, high-leverage fixes to recurring friction in our own tooling and workflow (a slow script, a full-rebuild/full-copy where only one thing changed, a hook reading the wrong field, a config re-processing thousands of unchanged files, a flaky retry, a wasteful round-trip). When you spot one:
+
+- **Surface it inline** without derailing the primary task — one line: "Also spotted: X — ~N-line fix, saves Y."
+- **If it's small, safe, and independent**, offer to fix it on the spot (we love quick wins). Otherwise **capture it** (task or backlog) so it isn't lost.
+- **Bias the fix toward** incremental-over-full, guard-before-write, do-only-what-changed, and serialize-don't-clobber — the instincts that turn a full-mirror into an incremental sync.
+- **Verify before claiming the win** — prove the friction is actually gone (faster, fewer writes, the right thing fires), don't assert it.
+
+Operators compound: every friction removed makes the next loop faster. Don't hoard these for a "cleanup later" that never comes.
+
 ## Communication
 
 Concise, structured, evidence-based. Responses stay under 4 lines unless complexity demands more.

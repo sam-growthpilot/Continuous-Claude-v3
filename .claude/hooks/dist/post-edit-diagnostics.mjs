@@ -1,6 +1,7 @@
 // src/post-edit-diagnostics.ts
-import { readFileSync as readFileSync5 } from "fs";
+import { readFileSync as readFileSync5, existsSync as existsSync6 } from "fs";
 import { spawnSync as spawnSync2 } from "child_process";
+import { join as join7 } from "path";
 
 // src/daemon-client.ts
 import { existsSync, readFileSync, writeFileSync, unlinkSync, mkdirSync } from "fs";
@@ -200,6 +201,25 @@ function tryStartDaemon(projectDir) {
     return false;
   }
 }
+function buildDaemonInvocation(connInfo, input) {
+  if (connInfo.type === "tcp") {
+    const psScript = [
+      '$ErrorActionPreference = "Stop"',
+      "$payload = [Console]::In.ReadLine()",
+      `$client = New-Object System.Net.Sockets.TcpClient('${connInfo.host}', ${connInfo.port})`,
+      "$stream = $client.GetStream()",
+      "$writer = New-Object System.IO.StreamWriter($stream)",
+      "$reader = New-Object System.IO.StreamReader($stream)",
+      "$writer.WriteLine($payload)",
+      "$writer.Flush()",
+      "$response = $reader.ReadLine()",
+      "$client.Close()",
+      "Write-Output $response"
+    ].join("; ");
+    return { file: "powershell", args: ["-NoProfile", "-NonInteractive", "-Command", psScript], stdin: input };
+  }
+  return { file: "nc", args: ["-U", connInfo.path || ""], stdin: input };
+}
 function queryDaemonSync(query, projectDir) {
   if (isIndexing(projectDir)) {
     return {
@@ -216,30 +236,25 @@ function queryDaemonSync(query, projectDir) {
   }
   try {
     const input = JSON.stringify(query);
-    let result;
-    if (connInfo.type === "tcp") {
-      const psCommand = `
-        $client = New-Object System.Net.Sockets.TcpClient('${connInfo.host}', ${connInfo.port})
-        $stream = $client.GetStream()
-        $writer = New-Object System.IO.StreamWriter($stream)
-        $reader = New-Object System.IO.StreamReader($stream)
-        $writer.WriteLine('${input.replace(/'/g, "''")}')
-        $writer.Flush()
-        $response = $reader.ReadLine()
-        $client.Close()
-        Write-Output $response
-      `.trim();
-      result = execSync(`powershell -Command "${psCommand.replace(/"/g, '\\"')}"`, {
-        encoding: "utf-8",
-        timeout: QUERY_TIMEOUT
-      });
-    } else {
-      result = execSync(`echo '${input}' | nc -U "${connInfo.path}"`, {
-        encoding: "utf-8",
-        timeout: QUERY_TIMEOUT
-      });
+    const inv = buildDaemonInvocation(connInfo, input);
+    const r = spawnSync(inv.file, inv.args, {
+      input: inv.stdin,
+      encoding: "utf-8",
+      timeout: QUERY_TIMEOUT,
+      shell: false
+    });
+    if (r.error) {
+      const code = r.error.code;
+      if (code === "ETIMEDOUT") return { status: "error", error: "timeout" };
+      if (code === "ENOENT") return { status: "unavailable", error: "Daemon transport not available" };
+      return { status: "error", error: r.error.message };
     }
-    return JSON.parse(result.trim());
+    if (r.signal) return { status: "error", error: "timeout" };
+    const out = (r.stdout || "").trim();
+    if (r.status !== 0 || !out) {
+      return { status: "unavailable", error: "Daemon not running" };
+    }
+    return JSON.parse(out);
   } catch (err) {
     if (err.killed) {
       return { status: "error", error: "timeout" };
@@ -1030,6 +1045,24 @@ function recordBusFilesInPlay(filePath) {
   } catch {
   }
 }
+function resolveTscCommand(projectDir) {
+  const candidates = [
+    join7(projectDir, "node_modules", "typescript", "bin", "tsc"),
+    join7(projectDir, ".claude", "hooks", "node_modules", "typescript", "bin", "tsc")
+  ];
+  for (const tscPath of candidates) {
+    try {
+      if (existsSync6(tscPath)) {
+        return {
+          command: process.execPath,
+          args: [tscPath, "--noEmit", "--pretty", "false"]
+        };
+      }
+    } catch {
+    }
+  }
+  return null;
+}
 async function main() {
   const input = JSON.parse(readFileSync5(0, "utf-8"));
   if (input.tool_name !== "Edit" && input.tool_name !== "Write") {
@@ -1089,6 +1122,7 @@ async function main() {
   }
 }
 function runPythonDiagnostics(filePath, projectDir) {
+  recordBusFilesInPlay(filePath);
   try {
     const response = queryDaemonSync(
       { cmd: "diagnostics", file: filePath },
@@ -1107,7 +1141,6 @@ function runPythonDiagnostics(filePath, projectDir) {
       type_errors: typeErrors,
       lint_issues: lintIssues
     });
-    recordBusFilesInPlay(filePath);
     if (typeErrors === 0 && lintIssues === 0) {
       console.log("{}");
       return;
@@ -1154,11 +1187,18 @@ function parseTscOutput(stdout) {
   return diagnostics;
 }
 function runTscDiagnostics(filePath, projectDir) {
+  recordBusFilesInPlay(filePath);
   try {
-    const result = spawnSync2("tsc", ["--noEmit", "--pretty", "false"], {
+    const tsc = resolveTscCommand(projectDir);
+    if (!tsc) {
+      console.log("{}");
+      return;
+    }
+    const result = spawnSync2(tsc.command, tsc.args, {
       cwd: projectDir,
       timeout: 3e4,
-      encoding: "utf-8"
+      encoding: "utf-8",
+      windowsHide: true
     });
     if (result.error || result.status === null) {
       console.log("{}");
@@ -1172,7 +1212,6 @@ function runTscDiagnostics(filePath, projectDir) {
       type_errors: errorCount,
       lint_issues: warningCount
     });
-    recordBusFilesInPlay(filePath);
     if (diagnostics.length === 0) {
       console.log("{}");
       return;
@@ -1213,5 +1252,6 @@ if (isDirectInvocation) {
 var __isDirectInvocation = isDirectInvocation;
 export {
   __isDirectInvocation,
-  recordBusFilesInPlay
+  recordBusFilesInPlay,
+  resolveTscCommand
 };

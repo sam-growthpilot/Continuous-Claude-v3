@@ -1,11 +1,58 @@
 # Project Roadmap
 
 ## Current Focus
-**CCv3 Fable-5 Deep Review — "Hone to Elegance" (2026-06-10)**
-- User decisions (locked): (1) **merge PRs #8/#9/#10 first* — review one unified main; (2) **whole-system scope, recent-weighted* (extra depth on the 145 commits since the 2026-05-16 memory-upgrade era); (3) deliver **report + ratified backlog + quick-wins executed* this arc (structural refactors are a later ratified arc).; Push **`fork`* (Rev4nchist), never `origin`. Never change BGE model/dim (`BAAI/bge-large-en-v1.5`, 1024).
-- Started: 2026-06-10
+**CCv3 System Update — execute the ratified deep-review backlog (Wave 1 → Tier 2 → Tier 3 → Deletions)**
+- The Fable-5 deep review is COMPLETE (190 confirmed findings, ratified 4-tier backlog, elegance verdict "mixed"). Wave 0 (3 S0 fixes) SHIPPED. Now executing the rest across coordinated sessions.
+- **Orientation library:** `docs/system-update/` (README → NEXT-SESSION-PLAN → BACKLOG → RESOURCE-MAP). **Canonical handoff:** `docs/system-update/NEXT-SESSION-PLAN.md` (live; supersedes all dated `HANDOFF-*`, now archived under `docs/handoffs-archive/`).
+- **Branch:** `snapshot/ccv3-system-update` (off main; excludes in-progress `feature/cma-integration`). **Live visual:** https://rev4nchist.github.io/ai-enablement-decks/ccv3-state-of-rework/
+- **Status:** Wave 0 ✓ · Wave 1 ✓ · ST-05 ✓ (resident recall daemon, warm recall ~136ms) · Session-2 foundation hardening ✓ (daemon multi-week resilience A1-A4, host-RAM gate, three-layer auto-start, tldr latency) — all pushed to `fork`. **Next action:** the FINAL session (`docs/system-update/NEXT-SESSION-PLAN.md` → "▶ FINAL SESSION"), then the net-new Tier-2/3 structural arcs (ST-01 bus writer, ST-02 session-id, MS multi-session arc, SG-02/03/04) in BACKLOG.md.
+- Constraints: push `fork` not `origin`; never change BGE model/dim (`BAAI/bge-large-en-v1.5`, 1024); Windows-safe; emit-guard 4/4 after hook edits; never full vitest; end goal = elegant CCv3 (design contract = running behavior).
+- Started: 2026-06-27 (review arc started 2026-06-10)
 
 ## Completed
+- [x] feat(memory-awareness): FH-02 recall_ready telemetry + record data-gated re-baseline (2026-06-30) `0368785`
+- [x] fix(hooks,health): FH-01 warm tldr daemon at session start + health-check tolerates on-demand absence (2026-06-30) `80b1b0f`
+- [x] docs(handoff): FINAL-session materials cleanup + archive superseded handoffs (2026-06-30) `965a5d1`
+- [x] docs(handoff): add canonical FINAL SESSION directive to NEXT-SESSION-PLAN (cycle wrap-up) (2026-06-30) `9ac76d2`
+- [x] docs(foundation): record Session 2 foundation-hardening (A1-A4/B/A6/D/SG-01) + follow-ups (2026-06-29) `dfaab16`
+- [x] perf(tldr-context-inject): git-freshness cache + narrow to code agents (D) (2026-06-29) `1fd155c`
+- [x] fix(memory-awareness): restore host-memory-pressure degradation gate, integrated with ST-05 probeDaemon (BLOCKER-2) (2026-06-29) `501365e`
+- [x] fix(daemon): multi-week resilience hardening (A1-A4) — recall-loop watchdog, explicit idle-conn lifetime, stale-conn retry recycle, cheap redundant-spawn exit (2026-06-29) `237c72e`
+- [x] docs(plan): Phase 3 DONE; record host-ram regression + tldr-context-inject finding for next session (2026-06-29) `110e423`
+- [x] docs(st-05): mark ST-05 shipped + verified; record e2e + import-fix lesson; update plan (2026-06-29) `3fbdf9f`
+- [x] fix(opc): ST-05 daemon recall import -- resolve do_recall in the live script context (2026-06-29) `31ffd8d`
+- [x] feat(opc): ST-05 resident recall daemon -- Python recall op + query_vector seam (2026-06-29) `a9dd226`
+- [x] docs(st-05): fold Codex premortem into design (v2 hardened) + go-decision (2026-06-29) `b67e5c2`
+- [x] docs(st-05): resident recall daemon design proposal + premortem register (2026-06-29) `aa6c982`
+- [x] fix(hooks): destructive-guard round-2 -- fix FPs + close verify-sweep holes (2026-06-29) `3707420`
+- [x] fix(hooks): destructive-guard recurses into wrapper + substitution payloads (Phase 1b) (2026-06-29) `5a9abe5`
+- [x] fix(hooks): agent-error-capture fire-and-forget + tightened trigger (Phase 1a) (2026-06-29) `09ba655`
+- [x] docs(handoff): F4 interactive-gate verified — SAFE fully confirmed (2026-06-29) `9568ae5`
+- [x] docs(handoff): 2026-06-29 review + remediation — closed 4 review-found SAFE S1 gaps (2026-06-29) `39379ac`
+- [x] fix(hooks): close 4 review-found SAFE gaps (RCE daemon path, guard bypasses, Windows loop) (2026-06-29) `9613d3c`
+- [x] docs(handoff): 2026-06-28 threshold-execution — LIVE/SAFE/HONEST shipped, USABLE partial (2026-06-29) `52de54d`
+- [x] fix(settings): Phase 2 / SG-02 — reconcile fresh-install template + add validation guard (2026-06-29) `b219109`
+- [x] fix(hooks): D5b-01 — sanitize raw recall in the 2 remaining injectors (poison-then-inject) (2026-06-29) `83c3f17`
+- [x] perf(hooks): Phase 3 — drop dead checkLocalMemory from the recall hot path (D3b-04) (2026-06-29) `3201760`
+- [x] fix(settings): QW-04 — flip agent safety+verification chain matcher Agent->Task (2026-06-29) `574e7f5`
+- [x] fix(hooks): Phase 1b — argv-ify smart-search-router ripgrep fallback (close RCE) (2026-06-29) `4dab9f8`
+- [x] docs(handoff): 2026-06-28 session close — Wave 1 7/9 + multi-session arc + incremental sync (2026-06-28) `b895010`
+- [x] perf(sync): incremental forward-sync — copy only changed files, not the full .claude/ mirror (2026-06-28) `9cd77e1`
+- [x] fix(hooks): QW-12 roadmap-sync guards — relatedness, cwd verification, path-containment (2026-06-28) `bb96a55`
+- [x] fix(hooks): QW-11 post-edit-diagnostics — real tsc invocation + bus 'edited' before early-return (2026-06-28) `a8b10c5`
+- [x] fix(memory): QW-06 repair hybrid recall relevance — floor-on-base + OR-FTS + cosine gate (2026-06-28) `10ee124`
+- [x] docs(system-update): fold multi-session coordination into the backlog — ST-02 foundation + MS-01/02/03 arc + SG-04+ (2026-06-28) `aa3f6fa`
+- [x] fix(skills): QW-08 remove 28 ghost skill registrations from skill-rules.json (2026-06-28) `f9cdbef`
+- [x] fix(rules): QW-09 defuse hook-auto-execute — deny reasons are guidance, not authorization (2026-06-28) `90cb2b9`
+- [x] fix(hooks): QW-05 revive epistemic-reminder Grep guard — tool_name + additionalContext (2026-06-28) `3429858`
+- [x] fix(memory): QW-07 intent-pollution filter — drop machine-generated prompts before recall (2026-06-28) `b1967ba`
+- [x] docs(system-update): snapshot branch + orientation library (`docs/system-update/`) + handoff for coordinated multi-session backlog execution (2026-06-27)
+- [x] feat(viz): CCv3 state-of-rework deliverable — 4 Excalidraw diagrams + SVGs + briefing + generators (`scripts/viz/`); published as live interactive deck at rev4nchist.github.io/ai-enablement-decks/ccv3-state-of-rework/ (2026-06-27) `359843b`
+- [x] fix(hooks): close ROADMAP cross-project contamination guard — stopword + positive own-plan flip + D2F-03 (QW-03, S0) (2026-06-12) `f7f3eba`
+- [x] fix(hooks): relocate /tmp search-context handshake to os.tmpdir() (QW-02, S0; D2b-05) (2026-06-12) `89c9e5e`
+- [x] fix(security): close store_learning.py shell-injection — execSync->spawnSync argv (QW-01, S0; D5a-01/D2c-04/D2d-06/D3a-01) (2026-06-12) `1788211`
+- [x] review(wf3): Fable-5 deep review COMPLETE — 190 confirmed findings + ratifiable 4-tier backlog + 2 Codex cross-model passes (2026-06-12) `f143e5b`
+- [x] review(wf2): 248 findings verified (190 CONFIRM, 48 DOWNGRADE, 10 KILL) (2026-06-11) `c695c63`
 - [x] P1 — Bus-bias hybrid-recall lift: **KEEP ENABLED** — verified warm gate +7.3%/flat-hit (n=13, corpus 584); +33.6%/63->88% retired as a stale snapshot; tune focus-weighting deferred (2026-06-06)
 - [x] fix(memory): stop test suite from spawning real embedding daemons (herd source #2) (2026-06-05) `c1b110d`
 - [x] fix(memory): herd-proof embedding-daemon spawn — atomic lock + no-shell Windows spawn (2026-06-05) `ea1b03c`

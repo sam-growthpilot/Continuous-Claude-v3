@@ -2,7 +2,7 @@
 
 // src/prd-roadmap-sync.ts
 import * as fs from "fs";
-import * as path from "path";
+import * as path2 from "path";
 
 // src/shared/roadmap-parser.ts
 var SECTION_PREFIXES = [
@@ -139,24 +139,70 @@ function parseRoadmap(content) {
   return result;
 }
 
+// src/shared/roadmap-sync-guards.ts
+import * as path from "path";
+var GOAL_STOPWORDS = /* @__PURE__ */ new Set([
+  "system",
+  "app",
+  "platform",
+  "engine",
+  "server",
+  "service",
+  "module",
+  "project",
+  "feature",
+  "support",
+  "the",
+  "and",
+  "for",
+  "with",
+  "new",
+  "update",
+  "fix",
+  "add"
+]);
+function distinctiveTokens(text) {
+  return new Set(
+    (text || "").toLowerCase().split(/[^a-z0-9]+/).filter((w) => w.length >= 3 && !GOAL_STOPWORDS.has(w))
+  );
+}
+function isTasksRelatedToGoal(featureName, goalTitle) {
+  const f = (featureName || "").toLowerCase().trim();
+  const g = (goalTitle || "").toLowerCase().trim();
+  if (!f || !g) return false;
+  if (g.includes(f) || f.includes(g)) return true;
+  const featureTokens = distinctiveTokens(featureName);
+  const goalTokens = distinctiveTokens(goalTitle);
+  if (featureTokens.size === 0 || goalTokens.size === 0) return false;
+  for (const t of goalTokens) {
+    if (featureTokens.has(t)) return true;
+  }
+  return false;
+}
+function isPathInsideProject(targetPath, projectDir) {
+  if (!targetPath || !projectDir) return false;
+  const rel = path.relative(path.resolve(projectDir), path.resolve(targetPath));
+  return rel === "" || !rel.startsWith("..") && !path.isAbsolute(rel);
+}
+
 // src/prd-roadmap-sync.ts
 function readStdin() {
-  return new Promise((resolve2) => {
+  return new Promise((resolve3) => {
     let data = "";
     process.stdin.setEncoding("utf8");
     process.stdin.on("data", (chunk) => {
       data += chunk;
     });
-    process.stdin.on("end", () => resolve2(data));
-    setTimeout(() => resolve2(data), 100);
+    process.stdin.on("end", () => resolve3(data));
+    setTimeout(() => resolve3(data), 100);
   });
 }
 function isPRDFile(filePath) {
-  const basename2 = path.basename(filePath).toLowerCase();
+  const basename2 = path2.basename(filePath).toLowerCase();
   return basename2.startsWith("prd-") && basename2.endsWith(".md");
 }
 function isTasksFile(filePath) {
-  const basename2 = path.basename(filePath).toLowerCase();
+  const basename2 = path2.basename(filePath).toLowerCase();
   return basename2.startsWith("tasks-") && basename2.endsWith(".md");
 }
 function extractPRDMetadata(content) {
@@ -189,12 +235,12 @@ function extractPRDMetadata(content) {
   return result;
 }
 function extractTaskProgress(content, filePath) {
-  const basename2 = path.basename(filePath);
+  const basename2 = path2.basename(filePath);
   const featureMatch = basename2.match(/tasks?-(.+)\.md/i);
   const featureName = featureMatch ? featureMatch[1].replace(/-/g, " ") : "Unknown Feature";
-  const dir = path.dirname(filePath);
+  const dir = path2.dirname(filePath);
   const prdPattern = basename2.replace(/^tasks?-/i, "prd-");
-  const prdPath = path.join(dir, prdPattern.replace("tasks-", "PRD-"));
+  const prdPath = path2.join(dir, prdPattern.replace("tasks-", "PRD-"));
   const prdFile = fs.existsSync(prdPath) ? prdPath : null;
   const taskPattern = /^-\s*\[([ x])\]/gm;
   let match;
@@ -219,26 +265,26 @@ function extractTaskProgress(content, filePath) {
 function findRoadmapPath(startDir) {
   const projectDir = process.env.CLAUDE_PROJECT_DIR;
   if (projectDir) {
-    const roadmap = path.join(projectDir, "ROADMAP.md");
+    const roadmap = path2.join(projectDir, "ROADMAP.md");
     if (fs.existsSync(roadmap)) return roadmap;
-    const claudeRoadmap = path.join(projectDir, ".claude", "ROADMAP.md");
+    const claudeRoadmap = path2.join(projectDir, ".claude", "ROADMAP.md");
     if (fs.existsSync(claudeRoadmap)) return claudeRoadmap;
     return roadmap;
   }
-  let current = path.resolve(startDir);
-  const root = path.parse(current).root;
+  let current = path2.resolve(startDir);
+  const root = path2.parse(current).root;
   let projectRoot = null;
   while (current !== root) {
-    if (fs.existsSync(path.join(current, ".git")) || fs.existsSync(path.join(current, "package.json"))) {
+    if (fs.existsSync(path2.join(current, ".git")) || fs.existsSync(path2.join(current, "package.json"))) {
       projectRoot = current;
       break;
     }
-    current = path.dirname(current);
+    current = path2.dirname(current);
   }
   if (projectRoot) {
-    const candidate = path.join(projectRoot, "ROADMAP.md");
+    const candidate = path2.join(projectRoot, "ROADMAP.md");
     if (fs.existsSync(candidate)) return candidate;
-    const claudeCandidate = path.join(projectRoot, ".claude", "ROADMAP.md");
+    const claudeCandidate = path2.join(projectRoot, ".claude", "ROADMAP.md");
     if (fs.existsSync(claudeCandidate)) return claudeCandidate;
     return candidate;
   }
@@ -416,9 +462,9 @@ function promoteToCurrent(content, item) {
 }
 async function handlePRDChange(filePath, content) {
   const metadata = extractPRDMetadata(content);
-  const fileDir = path.dirname(filePath);
+  const fileDir = path2.dirname(filePath);
   const projectDir = process.env.CLAUDE_PROJECT_DIR || process.cwd();
-  if (!path.resolve(filePath).startsWith(path.resolve(projectDir))) {
+  if (!isPathInsideProject(filePath, projectDir)) {
     return {
       result: "continue",
       message: "PRD file is outside current project directory"
@@ -447,7 +493,7 @@ async function handlePRDChange(filePath, content) {
   const newItem = {
     title: metadata.title,
     priority: metadata.priority.toLowerCase(),
-    source: path.basename(filePath)
+    source: path2.basename(filePath)
   };
   const updated = addToPlanned(roadmapContent, newItem);
   fs.writeFileSync(roadmapPath, updated);
@@ -458,9 +504,9 @@ async function handlePRDChange(filePath, content) {
 }
 async function handleTasksChange(filePath, content) {
   const progress = extractTaskProgress(content, filePath);
-  const fileDir = path.dirname(filePath);
+  const fileDir = path2.dirname(filePath);
   const projectDir = process.env.CLAUDE_PROJECT_DIR || process.cwd();
-  if (!path.resolve(filePath).startsWith(path.resolve(projectDir))) {
+  if (!isPathInsideProject(filePath, projectDir)) {
     return {
       result: "continue",
       message: "Tasks file is outside current project directory"
@@ -482,13 +528,22 @@ async function handleTasksChange(filePath, content) {
   let updated = roadmapContent;
   let message = "";
   if (progress.isComplete) {
-    const titleToComplete = roadmap.current?.title || progress.featureName;
-    updated = moveToCompleted(roadmapContent, titleToComplete);
-    message = `ROADMAP updated: "${titleToComplete}" marked complete (100%)`;
+    if (roadmap.current) {
+      if (isTasksRelatedToGoal(progress.featureName, roadmap.current.title)) {
+        const titleToComplete = roadmap.current.title;
+        updated = moveToCompleted(roadmapContent, titleToComplete);
+        message = `ROADMAP updated: "${titleToComplete}" marked complete (100%)`;
+      } else {
+        message = `Tasks complete (100%) for "${progress.featureName}" but unrelated to current goal "${roadmap.current.title}" -- ROADMAP completion skipped`;
+      }
+    } else {
+      updated = moveToCompleted(roadmapContent, progress.featureName);
+      message = `ROADMAP updated: "${progress.featureName}" marked complete (100%)`;
+    }
   } else if (inPlanned && !roadmap.current) {
     updated = promoteToCurrent(roadmapContent, {
       title: inPlanned.title,
-      source: path.basename(filePath)
+      source: path2.basename(filePath)
     });
     message = `ROADMAP updated: Promoted "${inPlanned.title}" to Current`;
   } else if (isCurrent) {

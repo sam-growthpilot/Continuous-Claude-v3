@@ -16,7 +16,7 @@ async function main() {
     console.log("{}");
     return;
   }
-  const tool = input.tool;
+  const tool = input.tool_name;
   if (tool !== "Grep") {
     console.log("{}");
     return;
@@ -37,7 +37,7 @@ Common false patterns:
   const output = {
     hookSpecificOutput: {
       hookEventName: "PostToolUse",
-      systemPromptSuffix: reminder
+      additionalContext: reminder
     }
   };
   console.log(JSON.stringify(output));

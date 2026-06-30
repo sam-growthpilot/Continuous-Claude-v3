@@ -11,20 +11,24 @@ ACTIVE_CLAUDE="$HOME/.claude"
 
 DRY_RUN=false
 VERBOSE=false
+CHANGED=false
 
 while [[ $# -gt 0 ]]; do
     case $1 in
         --dry-run) DRY_RUN=true; shift ;;
         --verbose) VERBOSE=true; shift ;;
+        --changed) CHANGED=true; shift ;;
         --skip-build) shift ;;
         --help|-h)
-            echo "Usage: $0 [--dry-run] [--verbose] [--skip-build]"
+            echo "Usage: $0 [--dry-run] [--verbose] [--changed] [--skip-build]"
             echo ""
             echo "Syncs continuous-claude/.claude/ → ~/.claude/"
             echo ""
             echo "Options:"
             echo "  --dry-run     Show what would be copied without copying"
             echo "  --verbose     Show detailed progress"
+            echo "  --changed     Incremental: sync only files the latest commit"
+            echo "                (HEAD diff) touched. Without it, the full mirror runs."
             echo "  --skip-build  Accepted for back-compat; no-op (build step was removed)"
             exit 0
             ;;
@@ -68,6 +72,198 @@ copy_dir() {
         fi
     done < <(find "$src_path" -type f ! -name "*.pid" ! -name "*.lock" ! -path "*/.tldr/*" ! -path "*/node_modules/*" ! -path "*/cache/*" ! -path "*/dist/*" 2>/dev/null)
 }
+
+# -----------------------------------------------------------------------------
+# Single-flight lock (atomic mkdir). Concurrent invocations coalesce: a second
+# sync sees the held lock and exits 0 quietly instead of running an overlapping
+# mirror. Fail-open by design; dry-run never locks (read-only inspection).
+# -----------------------------------------------------------------------------
+LOCK_DIR="$ACTIVE_CLAUDE/.sync.lock"
+LOCK_HELD=false
+
+release_lock() {
+    if $LOCK_HELD; then
+        rmdir "$LOCK_DIR" 2>/dev/null || true
+    fi
+    return 0
+}
+
+if ! $DRY_RUN; then
+    mkdir -p "$ACTIVE_CLAUDE" 2>/dev/null || true
+    # Stale-lock guard: steal a lock older than ~120s (a prior run likely died).
+    if [[ -d "$LOCK_DIR" ]]; then
+        now_ts=$(date +%s 2>/dev/null || echo 0)
+        lock_ts=$(stat -c %Y "$LOCK_DIR" 2>/dev/null || stat -f %m "$LOCK_DIR" 2>/dev/null || echo 0)
+        if [[ "$now_ts" -gt 0 && "$lock_ts" -gt 0 && $(( now_ts - lock_ts )) -gt 120 ]]; then
+            rmdir "$LOCK_DIR" 2>/dev/null || true
+        fi
+    fi
+    if mkdir "$LOCK_DIR" 2>/dev/null; then
+        LOCK_HELD=true
+        trap release_lock EXIT
+    else
+        $VERBOSE && echo "Another sync is already running (lock held); exiting." || true
+        exit 0
+    fi
+fi
+
+# -----------------------------------------------------------------------------
+# Incremental mode (--changed): copy/delete ONLY what the latest commit touched,
+# using the SAME source->dest mapping as the full mirror below. Skips the
+# whole-tree walk (dominated by the skills/ subtree) so a docs-only commit never
+# re-copies hundreds of unrelated skill files. Renames are not detected (no -M),
+# so a moved file shows as D(old)+A(new) and is handled correctly. Full mode is
+# left completely intact -- this branch exits before reaching it.
+# -----------------------------------------------------------------------------
+if $CHANGED; then
+    SYNC_AGENT_JSON="$SCRIPT_DIR/sync-agent-json.py"
+    AGENT_MD_PATHS=()
+    SETTINGS_CHANGED=false
+
+    # Excluded within the rules/agents/skills/scripts/docs subtree -- mirrors the
+    # find filters in copy_dir() plus NEVER_SYNC by basename. Returns 0 = excluded.
+    changed_is_excluded() {
+        local p="$1" base="${1##*/}" skip
+        case "$base" in
+            *.pid|*.lock) return 0 ;;
+        esac
+        for skip in $NEVER_SYNC; do
+            [[ "$base" == "$skip" ]] && return 0
+        done
+        case "/$p/" in
+            */.tldr/*|*/node_modules/*|*/cache/*|*/dist/*) return 0 ;;
+        esac
+        return 1
+    }
+
+    # Map a repo-relative path to its active-tree dest, or echo nothing if the
+    # path is not one full mode would sync. Order matters: SYNC_DIRS subtrees are
+    # matched before the top-level .claude/*.md rule (case '*' spans '/').
+    changed_map_target() {
+        local p="$1" rest skip
+        case "$p" in
+            .claude/rules/*|.claude/agents/*|.claude/skills/*|.claude/scripts/*|.claude/docs/*)
+                changed_is_excluded "$p" && return 0
+                printf '%s\n' "$ACTIVE_CLAUDE/${p#.claude/}"
+                ;;
+            .claude/hooks/dist/*.mjs)
+                rest="${p#.claude/hooks/dist/}"
+                [[ "$rest" == */* ]] && return 0   # top-level dist only
+                printf '%s\n' "$ACTIVE_CLAUDE/hooks/dist/$rest"
+                ;;
+            .claude/hooks/*.sh|.claude/hooks/*.py|.claude/hooks/*.mjs|.claude/hooks/*.ps1|.claude/hooks/package.json|.claude/hooks/tsconfig.json)
+                rest="${p#.claude/hooks/}"
+                [[ "$rest" == */* ]] && return 0   # top-level hooks/ files only (hooks/src excluded)
+                printf '%s\n' "$ACTIVE_CLAUDE/hooks/$rest"
+                ;;
+            .claude/templates/ralph/*)
+                rest="${p#.claude/templates/ralph/}"
+                [[ "$rest" == */* ]] && return 0   # files directly under templates/ralph
+                printf '%s\n' "$ACTIVE_CLAUDE/templates/ralph/$rest"
+                ;;
+            .claude/*.md)
+                rest="${p#.claude/}"
+                [[ "$rest" == */* ]] && return 0   # top-level .claude/*.md only
+                for skip in $NEVER_SYNC; do
+                    [[ "$rest" == "$skip" ]] && return 0
+                done
+                printf '%s\n' "$ACTIVE_CLAUDE/$rest"
+                ;;
+            opc/scripts/core/project_memory.py)
+                printf '%s\n' "$ACTIVE_CLAUDE/scripts/core/project_memory.py"
+                ;;
+        esac
+        return 0
+    }
+
+    # Content-guarded copy: only writes when src/dst differ (or dst is missing).
+    changed_copy_one() {
+        local src="$1" dst="$2"
+        [[ -f "$src" ]] || return 0
+        if $DRY_RUN; then
+            echo "[DRY RUN] Would copy: $src -> $dst"
+        else
+            mkdir -p "$(dirname "$dst")"
+            cmp -s "$src" "$dst" 2>/dev/null || cp "$src" "$dst"
+            $VERBOSE && echo "Copied: ${dst#$ACTIVE_CLAUDE/}" || true
+        fi
+    }
+
+    while IFS=$'\t' read -r status path _rest; do
+        [[ -z "$status" || -z "$path" ]] && continue
+        st="${status:0:1}"
+        dst="$(changed_map_target "$path")"
+        [[ -z "$dst" ]] && continue
+
+        case "$path" in
+            .claude/agents/*.md) AGENT_MD_PATHS+=("$path") ;;
+        esac
+        [[ "$path" == ".claude/settings.json" ]] && SETTINGS_CHANGED=true
+
+        if [[ "$st" == "D" ]]; then
+            # Conservative delete: only within the active subtree we just mapped.
+            # (Full mode never deletes; this is a strict, scoped improvement.)
+            case "$dst" in
+                "$ACTIVE_CLAUDE"/*)
+                    if [[ -e "$dst" ]]; then
+                        if $DRY_RUN; then
+                            echo "[DRY RUN] Would delete: $dst"
+                        else
+                            rm -f "$dst"
+                            $VERBOSE && echo "Deleted: ${dst#$ACTIVE_CLAUDE/}" || true
+                        fi
+                    fi
+                    ;;
+            esac
+        else
+            changed_copy_one "$REPO_ROOT/$path" "$dst"
+        fi
+    done < <(git -C "$REPO_ROOT" diff-tree --no-commit-id --name-status -r HEAD 2>/dev/null)
+
+    # Conditional agent .json sidecar regen -- only when an agent .md changed
+    # (full mode runs it unconditionally). The regen writes .json into the repo
+    # agents dir, which the diff set above does NOT include, so we then copy the
+    # freshly-regenerated sibling .json sidecars into the active tree.
+    if [[ ${#AGENT_MD_PATHS[@]} -gt 0 && -f "$SYNC_AGENT_JSON" ]]; then
+        if $DRY_RUN; then
+            echo "[DRY RUN] Would regenerate agent .json sidecars from .md frontmatter"
+        else
+            $VERBOSE && echo "Regenerating agent .json sidecars..." || true
+            python "$SYNC_AGENT_JSON" --target "$REPO_CLAUDE/agents" --apply \
+                $( $VERBOSE && echo "--verbose" || true ) 2>&1 \
+                | python -c "import json,sys; d=json.load(sys.stdin); print(f'  agent-json-sync: {d[\"summary\"][\"updated\"]} updated, {d[\"summary\"][\"no_change\"]} unchanged')" \
+                || echo "  Warning: agent .json sidecar sync failed (non-fatal)"
+        fi
+        for md_path in "${AGENT_MD_PATHS[@]}"; do
+            json_dst="$(changed_map_target "${md_path%.md}.json")"
+            [[ -n "$json_dst" ]] && changed_copy_one "$REPO_ROOT/${md_path%.md}.json" "$json_dst"
+        done
+    fi
+
+    # Conditional mcpServers merge -- mirrors the full-mode merge block, run only
+    # when .claude/settings.json changed (settings.json itself is NEVER_SYNC; only
+    # its mcpServers key is merged into the active settings.json).
+    if $SETTINGS_CHANGED && ! $DRY_RUN && command -v jq &> /dev/null; then
+        REPO_SETTINGS="$REPO_CLAUDE/settings.json"
+        ACTIVE_SETTINGS="$ACTIVE_CLAUDE/settings.json"
+        if [[ -f "$REPO_SETTINGS" && -f "$ACTIVE_SETTINGS" ]]; then
+            MCP_SERVERS=$(jq '.mcpServers // empty' "$REPO_SETTINGS" 2>/dev/null) || MCP_SERVERS=""
+            if [[ -n "$MCP_SERVERS" && "$MCP_SERVERS" != "null" ]]; then
+                TEMP_SETTINGS=$(mktemp)
+                if jq --argjson mcp "$MCP_SERVERS" '.mcpServers = $mcp' "$ACTIVE_SETTINGS" > "$TEMP_SETTINGS" 2>/dev/null && [[ -s "$TEMP_SETTINGS" ]]; then
+                    mv "$TEMP_SETTINGS" "$ACTIVE_SETTINGS"
+                    $VERBOSE && echo "Merged mcpServers into ~/.claude/settings.json" || true
+                else
+                    rm -f "$TEMP_SETTINGS"
+                    $VERBOSE && echo "Warning: Failed to merge mcpServers" || true
+                fi
+            fi
+        fi
+    fi
+
+    $VERBOSE && echo "Incremental sync complete: continuous-claude -> ~/.claude" || true
+    exit 0
+fi
 
 # Regenerate .json sidecars from .md frontmatter before copying agents.
 # This ensures any .md edits are reflected in the .json files that claude_spawn.py reads.

@@ -35,6 +35,8 @@ import {
   pingDaemon,
   embedText,
   isDaemonReady,
+  probeDaemon,
+  recallViaDaemon,
   ensureDaemonRunning,
   __test,
   type DaemonInfo,
@@ -533,6 +535,120 @@ describe('isDaemonReady: transient ping failure does not delete discovery file',
     // Pre-fix: _cleanupDiscoveryFile() was called on ping null → file deleted.
     // Post-fix: transient ping miss leaves the file intact.
     expect(existsSync(DISCOVERY_PATH)).toBe(true);
+  });
+});
+
+describe('probeDaemon (ST-05)', () => {
+  it('returns null when discovery file is missing', async () => {
+    expect(await probeDaemon()).toBeNull();
+  });
+
+  it('returns {ready, recallReady:true} when daemon reports recall_ready + loop_ok', async () => {
+    const { server, port } = await startMockServer((req) =>
+      req.cmd === 'ping'
+        ? { ok: true, ready: true, model: EXPECTED_MODEL, dim: EXPECTED_DIM, recall_ready: true, loop_ok: true }
+        : {},
+    );
+    try {
+      writeFileSync(DISCOVERY_PATH, JSON.stringify({ pid: process.pid, port, started_at: Date.now() / 1000, model: EXPECTED_MODEL, dim: EXPECTED_DIM }));
+      const probe = await probeDaemon();
+      expect(probe).not.toBeNull();
+      expect(probe?.ready).toBe(true);
+      expect(probe?.recallReady).toBe(true);
+      expect(probe?.info.port).toBe(port);
+    } finally {
+      await new Promise<void>((res) => server.close(() => res()));
+    }
+  });
+
+  it('recallReady=false when daemon omits recall_ready (old daemon; embed still ready)', async () => {
+    const { server, port } = await startMockServer((req) =>
+      req.cmd === 'ping' ? { ok: true, ready: true, model: EXPECTED_MODEL, dim: EXPECTED_DIM } : {},
+    );
+    try {
+      writeFileSync(DISCOVERY_PATH, JSON.stringify({ pid: process.pid, port, started_at: 0, model: EXPECTED_MODEL, dim: EXPECTED_DIM }));
+      const probe = await probeDaemon();
+      expect(probe?.ready).toBe(true);
+      expect(probe?.recallReady).toBe(false);
+    } finally {
+      await new Promise<void>((res) => server.close(() => res()));
+    }
+  });
+
+  it('recallReady=false when loop_ok is false (dead-loop watchdog, H2)', async () => {
+    const { server, port } = await startMockServer((req) =>
+      req.cmd === 'ping' ? { ok: true, ready: true, model: EXPECTED_MODEL, dim: EXPECTED_DIM, recall_ready: true, loop_ok: false } : {},
+    );
+    try {
+      writeFileSync(DISCOVERY_PATH, JSON.stringify({ pid: process.pid, port, started_at: 0, model: EXPECTED_MODEL, dim: EXPECTED_DIM }));
+      const probe = await probeDaemon();
+      expect(probe?.recallReady).toBe(false);
+    } finally {
+      await new Promise<void>((res) => server.close(() => res()));
+    }
+  });
+});
+
+describe('recallViaDaemon (ST-05)', () => {
+  const INFO = (port: number): DaemonInfo => ({ pid: process.pid, port, started_at: 0, model: EXPECTED_MODEL, dim: EXPECTED_DIM });
+
+  it('returns the results array on ok:true', async () => {
+    const rows = [{ id: 'a', content: 'x', score: 0.02, base_score: 0.03 }];
+    const { server, port } = await startMockServer((req) =>
+      req.cmd === 'recall'
+        ? { ok: true, results: rows, _meta: { model: EXPECTED_MODEL, dim: EXPECTED_DIM, vector_count: 1, fts_count: 1 }, elapsed_ms: 12 }
+        : {},
+    );
+    try {
+      expect(await recallViaDaemon(INFO(port), 'typescript hook', 3)).toEqual(rows);
+    } finally {
+      await new Promise<void>((res) => server.close(() => res()));
+    }
+  });
+
+  it('returns [] (real no-match) on ok:true empty results — does NOT signal fallback', async () => {
+    const { server, port } = await startMockServer((req) =>
+      req.cmd === 'recall' ? { ok: true, results: [], _meta: { model: EXPECTED_MODEL, dim: EXPECTED_DIM } } : {},
+    );
+    try {
+      expect(await recallViaDaemon(INFO(port), 'q', 3)).toEqual([]);
+    } finally {
+      await new Promise<void>((res) => server.close(() => res()));
+    }
+  });
+
+  it('returns null on ok:false (error -> caller falls back to uv)', async () => {
+    const { server, port } = await startMockServer((req) =>
+      req.cmd === 'recall' ? { ok: false, error: 'recall_loop_dead' } : {},
+    );
+    try {
+      expect(await recallViaDaemon(INFO(port), 'q', 3)).toBeNull();
+    } finally {
+      await new Promise<void>((res) => server.close(() => res()));
+    }
+  });
+
+  it('returns null when _meta reports a wrong model (H6)', async () => {
+    const { server, port } = await startMockServer((req) =>
+      req.cmd === 'recall' ? { ok: true, results: [{ id: 'a' }], _meta: { model: 'other/model', dim: 1024 } } : {},
+    );
+    try {
+      expect(await recallViaDaemon(INFO(port), 'q', 3)).toBeNull();
+    } finally {
+      await new Promise<void>((res) => server.close(() => res()));
+    }
+  });
+
+  it('returns null on a whitespace-only query without connecting', async () => {
+    expect(await recallViaDaemon(INFO(1), '   ', 3)).toBeNull();
+  });
+
+  it('returns null (no hang) when nothing is listening', async () => {
+    const probe = net.createServer();
+    await new Promise<void>((res) => probe.listen(0, '127.0.0.1', () => res()));
+    const deadPort = (probe.address() as any).port;
+    await new Promise<void>((res) => probe.close(() => res()));
+    expect(await recallViaDaemon(INFO(deadPort), 'q', 3, { timeoutMs: 300 })).toBeNull();
   });
 });
 
