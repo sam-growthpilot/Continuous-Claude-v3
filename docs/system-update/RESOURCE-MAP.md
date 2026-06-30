@@ -43,6 +43,19 @@ Where everything lives. Paths are repo-relative to `continuous-claude/` unless n
 | Shell-injection (ST-08) | `smart-search-router.ts`, `daemon-client.ts`, the 4 `store_learning` call sites |
 | Telemetry (SG-04) | `.claude/logs/{intel-bus,memory-recall,agent-recall,codex-lift}.jsonl` |
 
+## Resident recall daemon (the foundation)
+
+ST-05 + Session-2 made the memory RECALL hot-path resident (warm recall ~136 ms, was ~10 s). The embedding daemon holds the BGE model + a persistent psycopg pool and answers `recall` in-process; `memory-awareness` routes through it and falls back to the `uv run --text-only` path when the daemon is cold.
+
+| Concern | Files / artifacts |
+|---------|-------------------|
+| Daemon (model + recall op + watchdog) | `opc/scripts/core/embedding_daemon.py` (ping/recall/embed ops, A1-A4 multi-week resilience), `opc/scripts/core/db/postgres_pool.py` (asyncpg pool, idle-conn lifetime) |
+| Recall query (hybrid RRF) | `opc/scripts/core/recall_learnings.py` — the `--json` shape the daemon's `recall` op reproduces in-process |
+| TS client + routing | `.claude/hooks/src/shared/embedding-client.ts` (`probeDaemon` / `recallViaDaemon`), `.claude/hooks/src/shared/host-ram.ts` (host-memory-pressure gate), `.claude/hooks/src/memory-awareness.ts` (routes `checkDbMemory` → daemon) |
+| Lifecycle (Windows) | `scripts/start-embedding-daemon.ps1`, `scripts/install-embedding-daemon-task.ps1`, `scripts/uninstall-embedding-daemon-task.ps1`; Task Scheduler `CCv3-Embedding-Daemon` (logon trigger) + `CCv3-Embedding-Daemon-Daily` (idempotent daily backstop) |
+| Runtime state | `~/.claude/run/ccv3-embedding.json` = `{pid, port, model, dim}`; ping the `port` with a 4-byte-length-prefixed `{"cmd":"ping"}` frame → `{recall_ready, loop_ok, …}` |
+| Invariant | BGE model `BAAI/bge-large-en-v1.5`, dim **1024** — NEVER change (vector-space parity). |
+
 ## Operational guardrails
 
 | Need | Command |

@@ -3,13 +3,37 @@
 ## Current Focus
 **CCv3 System Update — execute the ratified deep-review backlog (Wave 1 → Tier 2 → Tier 3 → Deletions)**
 - The Fable-5 deep review is COMPLETE (190 confirmed findings, ratified 4-tier backlog, elegance verdict "mixed"). Wave 0 (3 S0 fixes) SHIPPED. Now executing the rest across coordinated sessions.
-- **Orientation library:** `docs/system-update/` (README → CURRENT-STATE → BACKLOG → RESOURCE-MAP). **Handoff:** `docs/HANDOFF-2026-06-28-ccv3-system-update.md` (latest; supersedes 06-27).
+- **Orientation library:** `docs/system-update/` (README → NEXT-SESSION-PLAN → BACKLOG → RESOURCE-MAP). **Canonical handoff:** `docs/system-update/NEXT-SESSION-PLAN.md` (live; supersedes all dated `HANDOFF-*`, now archived under `docs/handoffs-archive/`).
 - **Branch:** `snapshot/ccv3-system-update` (off main; excludes in-progress `feature/cma-integration`). **Live visual:** https://rev4nchist.github.io/ai-enablement-decks/ccv3-state-of-rework/
-- **Status:** Wave 1 = **7/9 shipped** (QW-05/06/07/08/09/11/12 — all verified + pushed). Tier 2b **multi-session arc** added to BACKLOG (ST-02 foundation + MS-01/02/03 + SG-04+). **Next action:** QW-04 (matcher flip — LAST in Wave 1, atomic across 3 settings surfaces), then Wave-1 cleanup (QW-10 + safe deletions + D7b-02/07 + D8c-06), then Tier 2 (**ST-02 first** — the multi-session foundation). See BACKLOG.md.
+- **Status:** Wave 0 ✓ · Wave 1 ✓ · ST-05 ✓ (resident recall daemon, warm recall ~136ms) · Session-2 foundation hardening ✓ (daemon multi-week resilience A1-A4, host-RAM gate, three-layer auto-start, tldr latency) — all pushed to `fork`. **Next action:** the FINAL session (`docs/system-update/NEXT-SESSION-PLAN.md` → "▶ FINAL SESSION"), then the net-new Tier-2/3 structural arcs (ST-01 bus writer, ST-02 session-id, MS multi-session arc, SG-02/03/04) in BACKLOG.md.
 - Constraints: push `fork` not `origin`; never change BGE model/dim (`BAAI/bge-large-en-v1.5`, 1024); Windows-safe; emit-guard 4/4 after hook edits; never full vitest; end goal = elegant CCv3 (design contract = running behavior).
 - Started: 2026-06-27 (review arc started 2026-06-10)
 
 ## Completed
+- [x] docs(handoff): add canonical FINAL SESSION directive to NEXT-SESSION-PLAN (cycle wrap-up) (2026-06-30) `9ac76d2`
+- [x] docs(foundation): record Session 2 foundation-hardening (A1-A4/B/A6/D/SG-01) + follow-ups (2026-06-29) `dfaab16`
+- [x] perf(tldr-context-inject): git-freshness cache + narrow to code agents (D) (2026-06-29) `1fd155c`
+- [x] fix(memory-awareness): restore host-memory-pressure degradation gate, integrated with ST-05 probeDaemon (BLOCKER-2) (2026-06-29) `501365e`
+- [x] fix(daemon): multi-week resilience hardening (A1-A4) — recall-loop watchdog, explicit idle-conn lifetime, stale-conn retry recycle, cheap redundant-spawn exit (2026-06-29) `237c72e`
+- [x] docs(plan): Phase 3 DONE; record host-ram regression + tldr-context-inject finding for next session (2026-06-29) `110e423`
+- [x] docs(st-05): mark ST-05 shipped + verified; record e2e + import-fix lesson; update plan (2026-06-29) `3fbdf9f`
+- [x] fix(opc): ST-05 daemon recall import -- resolve do_recall in the live script context (2026-06-29) `31ffd8d`
+- [x] feat(opc): ST-05 resident recall daemon -- Python recall op + query_vector seam (2026-06-29) `a9dd226`
+- [x] docs(st-05): fold Codex premortem into design (v2 hardened) + go-decision (2026-06-29) `b67e5c2`
+- [x] docs(st-05): resident recall daemon design proposal + premortem register (2026-06-29) `aa6c982`
+- [x] fix(hooks): destructive-guard round-2 -- fix FPs + close verify-sweep holes (2026-06-29) `3707420`
+- [x] fix(hooks): destructive-guard recurses into wrapper + substitution payloads (Phase 1b) (2026-06-29) `5a9abe5`
+- [x] fix(hooks): agent-error-capture fire-and-forget + tightened trigger (Phase 1a) (2026-06-29) `09ba655`
+- [x] docs(handoff): F4 interactive-gate verified — SAFE fully confirmed (2026-06-29) `9568ae5`
+- [x] docs(handoff): 2026-06-29 review + remediation — closed 4 review-found SAFE S1 gaps (2026-06-29) `39379ac`
+- [x] fix(hooks): close 4 review-found SAFE gaps (RCE daemon path, guard bypasses, Windows loop) (2026-06-29) `9613d3c`
+- [x] docs(handoff): 2026-06-28 threshold-execution — LIVE/SAFE/HONEST shipped, USABLE partial (2026-06-29) `52de54d`
+- [x] fix(settings): Phase 2 / SG-02 — reconcile fresh-install template + add validation guard (2026-06-29) `b219109`
+- [x] fix(hooks): D5b-01 — sanitize raw recall in the 2 remaining injectors (poison-then-inject) (2026-06-29) `83c3f17`
+- [x] perf(hooks): Phase 3 — drop dead checkLocalMemory from the recall hot path (D3b-04) (2026-06-29) `3201760`
+- [x] fix(settings): QW-04 — flip agent safety+verification chain matcher Agent->Task (2026-06-29) `574e7f5`
+- [x] fix(hooks): Phase 1b — argv-ify smart-search-router ripgrep fallback (close RCE) (2026-06-29) `4dab9f8`
+- [x] docs(handoff): 2026-06-28 session close — Wave 1 7/9 + multi-session arc + incremental sync (2026-06-28) `b895010`
 - [x] perf(sync): incremental forward-sync — copy only changed files, not the full .claude/ mirror (2026-06-28) `9cd77e1`
 - [x] fix(hooks): QW-12 roadmap-sync guards — relatedness, cwd verification, path-containment (2026-06-28) `bb96a55`
 - [x] fix(hooks): QW-11 post-edit-diagnostics — real tsc invocation + bus 'edited' before early-return (2026-06-28) `a8b10c5`

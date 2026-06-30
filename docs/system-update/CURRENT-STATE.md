@@ -1,5 +1,7 @@
 # CCv3 Current State — Snapshot 2026-06-27 (Review SHA `86b8f60`)
 
+> **⚠ DATED SNAPSHOT (2026-06-27).** This file describes CCv3 as it looked at review time. For the current state and the live plan, see **[NEXT-SESSION-PLAN.md](./NEXT-SESSION-PLAN.md)** (the canonical handoff). Wave 0+1, ST-05 (resident recall daemon), and Session-2 foundation hardening have shipped since this snapshot — several seams below are now fixed.
+
 The system at a glance: a **sound spine wrapped in a dead/mis-wired periphery.** The SQL layer, secret handling, path-traversal defenses, and the L3 boundary/bus *design* are cleared. The enforcement and intelligence *periphery* is largely dead or mis-wired. Elegance verdict: **MIXED.** Dominant failure pattern: **registration/wiring drift + consolidatable duplication.**
 
 > Source of every number below: `docs/reviews/2026-06-10/` (190 confirmed findings, `findings.json`) and `docs/reviews/2026-06-10/wf3/synthesis.json`. Visual: https://rev4nchist.github.io/ai-enablement-decks/ccv3-state-of-rework/
