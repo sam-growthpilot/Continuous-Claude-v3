@@ -1,5 +1,48 @@
 # Next-Session Plan — ST-05 + S2/S3 backlog (post review-remediation)
 
+> ## ▶ FINAL SESSION — START HERE (planned 2026-06-29, approved)
+>
+> This is the **last session of the CCv3 system-update cycle**. The code foundation is hardened
+> and live (Session 2, below). One task remains: **bring the handoff materials to a clean,
+> single-entry-point state + close the few bounded loose ends** (NOT net-new structural arcs).
+> Full approved plan: `~/.claude/plans/if-we-are-now-tingly-beaver.md` (this banner is self-sufficient).
+>
+> **Approved scope** (most-thorough): materials cleanup IN FULL + FH-01 (warm tldr daemon at
+> session start **and** fix the health-check severity) + FH-02 (SG-01 re-baseline) + commit the viz
+> files + Judge-Batch triage. **All Tier-2/3 structural arcs stay in [`BACKLOG.md`](./BACKLOG.md)
+> (net-new — out of scope).**
+>
+> **Execution order:**
+> 1. **Docs cleanup (no build):** rewrite [`README.md`](./README.md) as the accurate hub (current
+>    snapshot/SHA; reading order leads with THIS file; status = Wave 0+1 ✓ / ST-05 ✓ / Session-2 ✓;
+>    next-action → this file's "Remaining for next session"). Fix `ROADMAP.md` lines 6–7 (Handoff →
+>    this file; drop the superseded 06-28 pointer; reading order `README → NEXT-SESSION-PLAN →
+>    BACKLOG → RESOURCE-MAP`). Add a "DATED SNAPSHOT (2026-06-27) — see NEXT-SESSION-PLAN for
+>    current" banner to [`CURRENT-STATE.md`](./CURRENT-STATE.md) (no body rewrite). Add a "Resident
+>    recall daemon / foundation" file group to [`RESOURCE-MAP.md`](./RESOURCE-MAP.md): `embedding_daemon.py`,
+>    `recall_learnings.py`, `db/postgres_pool.py`, `shared/{embedding-client,host-ram}.ts`,
+>    `memory-awareness.ts`, `scripts/start-embedding-daemon.ps1`, the `CCv3-Embedding-Daemon[-Daily]`
+>    tasks, `~/.claude/run/ccv3-embedding.json`.
+> 2. **Handoff archive:** `git mv` the 3 superseded handoffs (`HANDOFF-2026-06-27`, both `-06-28-*`)
+>    into `docs/handoffs-archive/`; keep `HANDOFF-2026-06-29`; **THIS file is the canonical handoff.**
+> 3. **FH-01:** (a) extend a SessionStart hook (e.g. `session-start-init-check.ts`) to fire-and-forget
+>    an idempotent, Windows-safe `tldr daemon start <projectDir>` (array-arg spawn, detached, skip if
+>    already running) → `cd .claude/hooks && npm run build` + `bash scripts/audit-braintrust-emits.sh`
+>    (4/4); (b) downgrade the `tldr-daemon-running` check in `opc/scripts/health_check.py` from HIGH to
+>    WARN/INFO (it's an on-demand daemon; the scheduled weekly check has no session to warm it).
+>    Verify `/health-check` is no longer HIGH.
+> 4. **Judge-Batch triage:** `CCv3-Judge-Batch` `LastResult=0x80070…` — fix if obvious, else BACKLOG note.
+> 5. **viz commit:** commit the auto-output `architecture.json` + `index.html` so the tree is clean.
+> 6. **FH-02 re-baseline:** re-run the `memory-recall.jsonl` analysis (≥50 `recall_via:daemon` events
+>    should exist now); record numbers here + in BACKLOG; mark **ST-03/ST-10 unblocked**; mark the
+>    cycle **WRAPPED**.
+>
+> **Constraints:** push `fork` not `origin`; never change the BGE model/dim; Windows-safe; commit
+> with `git commit -F` (never backtick `-m`); do NOT touch `feature/cma-integration`; targeted edits
+> to `memory-awareness.ts` (overwrite history). **Preflight:** ping the daemon
+> (`~/.claude/run/ccv3-embedding.json` → port) for `recall_ready:true, loop_ok:true`; branch synced
+> to `fork` at `dfaab16`+.
+
 > Branch `snapshot/ccv3-system-update`, tip `39379ac`. Read first:
 > [`../HANDOFF-2026-06-29-review-remediation.md`](../HANDOFF-2026-06-29-review-remediation.md).
 > The 4 review-found S1 SAFE gaps are fixed + live. This plan covers what remains.
