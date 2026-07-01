@@ -1,0 +1,62 @@
+schedule:
+  day: friday
+  time: "06:00"
+  timezone: CST
+
+repos:
+  - name: continuous-claude
+    path: C:\Users\david.hayes\continuous-claude
+    label: "Continuous Claude"
+  - name: spark-platform
+    path: C:\Users\david.hayes\spark-platform
+    label: "Spark Platform"
+  - name: fourth-marketing-brain
+    path: C:\Users\david.hayes\fourth-marketing-brain
+    label: "Fourth Marketing Brain"
+  - name: ai-enablement-status
+    path: C:\Users\david.hayes\ai-enablement-status
+    label: "Status Reports"
+
+counts:
+  hooks_dir: C:\Users\david.hayes\continuous-claude\.claude\hooks\dist
+  skills_dir: C:\Users\david.hayes\continuous-claude\.claude\skills
+  agents_dir: C:\Users\david.hayes\continuous-claude\.claude\agents
+
+connectors:
+  live:
+    - SharePoint
+    - Teams
+    - Outlook
+    - OneDrive
+    - Asana
+  coming:
+    - Salesforce
+    - PowerBI
+
+output:
+  report_dest: C:\Users\david.hayes\Documents
+  presentation_repo: C:\Users\david.hayes\ai-enablement-status
+  github_pages_url: https://rev4nchist.github.io/ai-enablement-status/
+
+recipients:
+  primary: "Carly Hodges, VP Enterprise Transformation & Technology"
+  author: "David Hayes"
+  author_email: "david.hayes@fourth.com"
+  author_title: "AI Enablement Lead"
+
+memory:
+  database_url: postgresql://claude:claude_dev@localhost:5432/continuous_claude
+  recall_script: C:\Users\david.hayes\continuous-claude\opc\scripts\core\recall_learnings.py
+
+ai:
+  model: claude-sonnet-4-5-20250929
+  max_tokens: 2000
+  budget_cap_usd: 0.50
+
+vocabulary:
+  hooks: "automated safeguards"
+  skills: "AI workflows"
+  agents: "specialized assistants"
+  commits: "capability iterations"
+  connectors: "enterprise integrations"
+  learnings: "organizational insights"

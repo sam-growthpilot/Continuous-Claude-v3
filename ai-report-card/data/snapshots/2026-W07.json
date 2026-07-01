@@ -1,0 +1,476 @@
+{
+  "git": {
+    "repos": {
+      "continuous-claude": {
+        "name": "continuous-claude",
+        "label": "Continuous Claude",
+        "exists": true,
+        "branch": "spark-frontend-experiment",
+        "last_commit_date": "2026-02-10 19:26:59 -0600",
+        "week_commits": 27,
+        "total_commits": 212,
+        "top_messages": [
+          "fix: harden knowledge tree reliability",
+          "fix: regenerate knowledge tree and fix Windows Unicode crash",
+          "docs: add Streamdown implementation guide",
+          "fix: 6 hooks output valid JSON instead of raw text to stdout",
+          "fix: task-router hook outputs valid JSON instead of mixed stdout",
+          "fix: correct tree key names in flatten_tree_nodes for deep node extraction",
+          "docs: add Edge CDP browser automation setup guide",
+          "feat: fast PageIndex search via FTS + hybrid RRF",
+          "fix: PageIndex CLI Windows compatibility and project root detection",
+          "docs: add Ralph quickstart guide",
+          "docs: comprehensive README update with Ralph, browser automation, and corrected counts",
+          "chore: archive 34 unused skills and 12 redundant agent files",
+          "chore: sync ralph scale-hardened hook dist files from active environment",
+          "docs: add E2E testing patterns from Fourth Workbook session",
+          "feat(ralph): implement 8-phase scale hardening for 100+ task reliability",
+          "feat(agent-browser): rewrite SKILL.md with full command reference",
+          "fix(ralph): remove non-existent tldr_stats reference from SKILL.md",
+          "test(hooks): add E2E test suites with session isolation fixes",
+          "feat(hooks): implement 7-phase Ralph/Maestro hardening plan",
+          "fix(dashboard): resolve final contract mismatches and add PageIndex router"
+        ],
+        "files_changed": 305,
+        "insertions": 29408,
+        "deletions": 10741,
+        "contributors": [
+          "Rev4nchist"
+        ],
+        "contributor_count": 1
+      },
+      "spark-platform": {
+        "name": "spark-platform",
+        "label": "Spark Platform",
+        "exists": true,
+        "branch": "master",
+        "last_commit_date": "2026-02-12 17:11:20 -0600",
+        "week_commits": 35,
+        "total_commits": 49,
+        "top_messages": [
+          "refactor: production hardening \u2014 security, DRY, error handling, schema indexes",
+          "docs: add comprehensive project README",
+          "fix: create .claude/debug directory for SDK subprocess debug logs",
+          "fix: capture SDK subprocess stderr and fix container runtime issues",
+          "fix: eliminate silent failures in Agent SDK integration",
+          "fix: use filesystem search instead of require.resolve for Agent SDK in Docker",
+          "fix: dereference pnpm symlinks for Agent SDK in Docker build",
+          "fix: replace demo-user-id string with actual UUID in all API routes",
+          "fix: explicitly copy Agent SDK into Docker runner stage for cli.js resolution",
+          "fix: resolve Agent SDK cli.js path in Docker standalone",
+          "fix: include Agent SDK cli.js in Next.js standalone output",
+          "fix: resolve TypeScript type error in stream_event cast",
+          "fix: use Jay Altizer's actual DB user ID for demo auth",
+          "feat: enable token-level streaming for Agent SDK path",
+          "feat: agent arch feature integration \u2014 proposals, enhanced actions/decisions, full test suite",
+          "fix: E2E fixes \u2014 demo auth UUID, DB migration, error handling",
+          "fix: pre-merge security and quality fixes",
+          "fix: update SPARK\u2192Workbook in test assertions",
+          "feat: Wave 6 \u2014 animation polish with Framer Motion transitions",
+          "feat: Wave 5 \u2014 custom agent builder with conversational wizard"
+        ],
+        "files_changed": 511,
+        "insertions": 30448,
+        "deletions": 6132,
+        "contributors": [
+          "Rev4nchist"
+        ],
+        "contributor_count": 1
+      },
+      "fourth-marketing-brain": {
+        "name": "fourth-marketing-brain",
+        "label": "Fourth Marketing Brain",
+        "exists": true,
+        "branch": "master",
+        "last_commit_date": "2026-02-10 22:12:11 -0600",
+        "week_commits": 9,
+        "total_commits": 9,
+        "top_messages": [
+          "fix: restructure skills with YAML frontmatter + add orchestrator skill",
+          "feat: expand content library to 34 docs (43K words) + Claude.ai project + Phase 2 doc",
+          "chore: remove debug JWT logging now that OAuth flow works",
+          "fix: accept both v1.0 and v2.0 Azure AD token formats",
+          "fix: override correct method (load_access_token) for debug logging",
+          "fix: set accessTokenAcceptedVersion=2 and add debug JWT logging",
+          "fix: use custom app scope so Azure AD token audience matches our app",
+          "fix: strip resource param from Azure AD authorize URL",
+          "feat: Fourth Marketing Brain MCP server with remote OAuth support"
+        ],
+        "files_changed": 80,
+        "insertions": 8784,
+        "deletions": 839,
+        "contributors": [
+          "Rev4nchist"
+        ],
+        "contributor_count": 1
+      },
+      "ai-enablement-status": {
+        "name": "ai-enablement-status",
+        "label": "Status Reports",
+        "exists": true,
+        "branch": "master",
+        "last_commit_date": "2026-02-11 16:26:48 -0600",
+        "week_commits": 4,
+        "total_commits": 4,
+        "top_messages": [
+          "feat: v3.0 production-grade presentation",
+          "feat: premium production polish v2.0",
+          "Major update: reframe narrative with Continuous Claude as headline",
+          "AI Enablement Team Status Report - February 2026"
+        ],
+        "files_changed": 4,
+        "insertions": 3399,
+        "deletions": 1665,
+        "contributors": [
+          "Rev4nchist"
+        ],
+        "contributor_count": 1
+      }
+    },
+    "totals": {
+      "week_commits": 75,
+      "total_commits": 274,
+      "files_changed": 900,
+      "all_contributors": [
+        "Rev4nchist"
+      ],
+      "all_messages": [
+        "fix: harden knowledge tree reliability",
+        "fix: regenerate knowledge tree and fix Windows Unicode crash",
+        "docs: add Streamdown implementation guide",
+        "fix: 6 hooks output valid JSON instead of raw text to stdout",
+        "fix: task-router hook outputs valid JSON instead of mixed stdout",
+        "fix: correct tree key names in flatten_tree_nodes for deep node extraction",
+        "docs: add Edge CDP browser automation setup guide",
+        "feat: fast PageIndex search via FTS + hybrid RRF",
+        "fix: PageIndex CLI Windows compatibility and project root detection",
+        "docs: add Ralph quickstart guide",
+        "docs: comprehensive README update with Ralph, browser automation, and corrected counts",
+        "chore: archive 34 unused skills and 12 redundant agent files",
+        "chore: sync ralph scale-hardened hook dist files from active environment",
+        "docs: add E2E testing patterns from Fourth Workbook session",
+        "feat(ralph): implement 8-phase scale hardening for 100+ task reliability",
+        "feat(agent-browser): rewrite SKILL.md with full command reference",
+        "fix(ralph): remove non-existent tldr_stats reference from SKILL.md",
+        "test(hooks): add E2E test suites with session isolation fixes",
+        "feat(hooks): implement 7-phase Ralph/Maestro hardening plan",
+        "fix(dashboard): resolve final contract mismatches and add PageIndex router",
+        "refactor: production hardening \u2014 security, DRY, error handling, schema indexes",
+        "docs: add comprehensive project README",
+        "fix: create .claude/debug directory for SDK subprocess debug logs",
+        "fix: capture SDK subprocess stderr and fix container runtime issues",
+        "fix: eliminate silent failures in Agent SDK integration",
+        "fix: use filesystem search instead of require.resolve for Agent SDK in Docker",
+        "fix: dereference pnpm symlinks for Agent SDK in Docker build",
+        "fix: replace demo-user-id string with actual UUID in all API routes",
+        "fix: explicitly copy Agent SDK into Docker runner stage for cli.js resolution",
+        "fix: resolve Agent SDK cli.js path in Docker standalone",
+        "fix: include Agent SDK cli.js in Next.js standalone output",
+        "fix: resolve TypeScript type error in stream_event cast",
+        "fix: use Jay Altizer's actual DB user ID for demo auth",
+        "feat: enable token-level streaming for Agent SDK path",
+        "feat: agent arch feature integration \u2014 proposals, enhanced actions/decisions, full test suite",
+        "fix: E2E fixes \u2014 demo auth UUID, DB migration, error handling",
+        "fix: pre-merge security and quality fixes",
+        "fix: update SPARK\u2192Workbook in test assertions",
+        "feat: Wave 6 \u2014 animation polish with Framer Motion transitions",
+        "feat: Wave 5 \u2014 custom agent builder with conversational wizard",
+        "fix: restructure skills with YAML frontmatter + add orchestrator skill",
+        "feat: expand content library to 34 docs (43K words) + Claude.ai project + Phase 2 doc",
+        "chore: remove debug JWT logging now that OAuth flow works",
+        "fix: accept both v1.0 and v2.0 Azure AD token formats",
+        "fix: override correct method (load_access_token) for debug logging",
+        "fix: set accessTokenAcceptedVersion=2 and add debug JWT logging",
+        "fix: use custom app scope so Azure AD token audience matches our app",
+        "fix: strip resource param from Azure AD authorize URL",
+        "feat: Fourth Marketing Brain MCP server with remote OAuth support",
+        "feat: v3.0 production-grade presentation",
+        "feat: premium production polish v2.0",
+        "Major update: reframe narrative with Continuous Claude as headline",
+        "AI Enablement Team Status Report - February 2026"
+      ],
+      "contributor_count": 1
+    },
+    "collected_at": "2026-02-12T17:18:24.046111",
+    "since_days": 7
+  },
+  "system": {
+    "hooks": 113,
+    "skills": 118,
+    "agents": 16,
+    "connectors_live": 5,
+    "connectors_coming": 2,
+    "connector_names_live": [
+      "SharePoint",
+      "Teams",
+      "Outlook",
+      "OneDrive",
+      "Asana"
+    ],
+    "connector_names_coming": [
+      "Salesforce",
+      "PowerBI"
+    ],
+    "connectors_total": 7,
+    "collected_at": "2026-02-12T17:18:24.050054"
+  },
+  "memory": {
+    "available": true,
+    "total_learnings": 272,
+    "recent_count": 20,
+    "recent_learnings": [
+      {
+        "content": "Agent 'scout' failed when given task: \"## Task\\nExplore the Workbook platform's current multi-tenancy architecture to understand what exists today and what would need to change for true multi-tenant SaaS.\\n\\n## Focus Areas\\n1. **Current worksp...\". Error context:     {\\n      \"type\": \"text\",\\n      \"text\": \"I've completed a comprehensive analysis of the Workbook platform's multi-tenancy architecture. Here's what I found:\\n\\n## Executive Summary\\n\\nThe Workbook platform has **solid multi-tenancy foundations** at the database level with workspace isolation, but is currently configured as a **single-tenant demo** with critical security gaps. Converting to true multi-tenant SaaS requires addressing 5 major areas.\\n\\n## Key Findings\\n\\n### 1. **Workspace Model ",
+        "learning_type": "session_learning",
+        "context": "Failed agent invocation: scout",
+        "confidence": "medium",
+        "tags": [
+          "auto_captured",
+          "agent_failure",
+          "agent:scout",
+          "scope:global"
+        ],
+        "created_at": "2026-02-12T22:53:33.412858+00:00"
+      },
+      {
+        "content": "Agent 'scout' failed when given task: \"Explore the following to help design an automated weekly report system:\\n\\n1. Check if there's an existing CLAUDE.md pattern in other projects:\\n   - Read `C:\\Users\\david.hayes\\continuous-claude\\CLAUDE.m...\". Error context:     {\\n      \"type\": \"text\",\\n      \"text\": \"I need to present my findings directly since I can't write to the plan file in the current environment. Here's the comprehensive design report:\\n\\n---\\n\\n# Automated Weekly AI Enablement Report System - Discovery Report\\n\\n## Executive Summary\\n\\n**Goal:** Automate weekly updates to the AI Enablement status presentation at `C:\\\\Users\\\\david.hayes\\\\ai-enablement-status`\\n\\n**Current State:**\\n- 14-slide HTML presentation (1734 lines, Alpine.js-based scro",
+        "learning_type": "session_learning",
+        "context": "Failed agent invocation: scout",
+        "confidence": "medium",
+        "tags": [
+          "auto_captured",
+          "agent_failure",
+          "agent:scout",
+          "scope:global"
+        ],
+        "created_at": "2026-02-12T21:59:48.458388+00:00"
+      },
+      {
+        "content": "Agent 'critic' failed when given task: \"Please provide a summary of your findings from the code audit you just performed. List all issues you found organized by severity (CRITICAL, HIGH, MEDIUM, LOW) with file paths and line numbers.\". Error context:     {\\n      \"type\": \"text\",\\n      \"text\": \"# Workbook Agent/AI System - Code Audit Summary\\n\\n**Files Audited:** 19 files, 3,789 lines of code  \\n**Date:** 2026-02-12  \\n**Overall Assessment:** Request Changes  \\n\\n---\\n\\n## CRITICAL Issues (5) - Block Production\\n\\n### 1. SQL Injection Vulnerability via ILIKE\\n**Files ",
+        "learning_type": "session_learning",
+        "context": null,
+        "confidence": null,
+        "tags": null,
+        "created_at": "2026-02-12T19:52:18.078453+00:00"
+      },
+      {
+        "content": "Agent 'scout' failed when given task: \"Thoroughly explore the Workbook platform's agent/AI system code. This is a Next.js 15 app at C:\\Users\\david.hayes\\spark-platform.\\n\\nFocus areas:\\n1. `apps/web/lib/agent/` \u2014 ALL files. Read every file fu...\". Error context:   \"agentId\": \"a4045af\",\\n  \"description\": \"Explore agent system code\",\\n  \"prompt\": \"Thoroughly explore the Workbook platform's agent/AI system code. This is a Next.js 15 app at C:\\\\Users\\\\david.hayes\\\\spark-platform.\\n\\nFocus areas:\\n1. `apps/web/lib/agent/` \u2014 ALL files. Read every file fully. Note: code smells, dead code, duplication, inconsistencies, error handling gaps, type safety issues\\n2. `apps/web/app/api/agent/` \u2014 ALL route files. Check for: proper error handling, validation, security, c",
+        "learning_type": "session_learning",
+        "context": "Failed agent invocation: scout",
+        "confidence": "medium",
+        "tags": [
+          "auto_captured",
+          "agent_failure",
+          "agent:scout",
+          "scope:global"
+        ],
+        "created_at": "2026-02-12T19:26:49.841401+00:00"
+      },
+      {
+        "content": "Agent 'scout' failed when given task: \"I need to understand why the Claude Agent SDK's `query()` function yields 0 messages in a Docker container even though cli.js exists.\\n\\nInvestigate these specific areas:\\n\\n1. **Agent SDK source code**: ...\". Error context: {\\n  \"status\": \"completed\",\\n  \"prompt\": \"I need to understand why the Claude Agent SDK's `query()` function yields 0 messages in a Docker container even though cli.js exists.\\n\\nInvestigate these specific areas:\\n\\n1. **Agent SDK source code**: Look at `node_modules/@anthropic-ai/claude-agent-sdk/` \u2014 specifically:\\n   - What does `cli.js` actually do? What process does it spawn?\\n   - What does the `query()` function in the SDK's `index.js`/`index.mjs` do? How does it spawn the subprocess?\\n   - ",
+        "learning_type": "session_learning",
+        "context": "Failed agent invocation: scout",
+        "confidence": "medium",
+        "tags": [
+          "auto_captured",
+          "agent_failure",
+          "agent:scout",
+          "scope:global"
+        ],
+        "created_at": "2026-02-12T16:06:03.682748+00:00"
+      },
+      {
+        "content": "Agent 'scout' failed when given task: \"Deep investigation of the Agent SDK CLIENT-SIDE implementation in the Workbook platform. I need to understand how the chat UI sends requests and parses SSE responses.\\n\\nFocus areas:\\n1. `apps/web/compon...\". Error context: {\\n  \"status\": \"completed\",\\n  \"prompt\": \"Deep investigation of the Agent SDK CLIENT-SIDE implementation in the Workbook platform. I need to understand how the chat UI sends requests and parses SSE responses.\\n\\nFocus areas:\\n1. `apps/web/components/agent/AgentSidebar.tsx` \u2014 the main chat UI component. Read the ENTIRE file. How does it send messages? How does it parse SSE events?\\n2. `apps/web/components/agent/hooks/useAgentStore.ts` \u2014 Zustand store for agent state. What state is tracked? How are ",
+        "learning_type": "session_learning",
+        "context": "Failed agent invocation: scout",
+        "confidence": "medium",
+        "tags": [
+          "auto_captured",
+          "agent_failure",
+          "agent:scout",
+          "scope:global"
+        ],
+        "created_at": "2026-02-12T14:57:53.360458+00:00"
+      },
+      {
+        "content": "Agent 'scout' failed when given task: \"Research how to correctly copy pnpm workspace dependencies in a multi-stage Docker build.\\n\\nThe problem: In a pnpm monorepo, packages are stored in `node_modules/.pnpm/` and symlinked. When doing `COPY...\". Error context:     {\\n      \"type\": \"text\",\\n      \"text\": \"Let me provide the research findings directly:\\n\\n## Research: pnpm Workspace Dependencies in Multi-Stage Docker Builds\\n\\n### Executive Summary\\n\\nYour current Dockerfile (lines 39-41, 62) **already implements the correct solution**. Here's why it works and what the alternatives are.\\n\\n---\\n\\n## 1. Does Docker COPY Follow Symlinks?\\n\\n**Answer: No, by default BuildKit does NOT follow symlinks**\\n\\n- Modern BuildKit copies the symlink itself, not the t",
+        "learning_type": "session_learning",
+        "context": "Failed agent invocation: scout",
+        "confidence": "medium",
+        "tags": [
+          "auto_captured",
+          "agent_failure",
+          "agent:scout",
+          "scope:global"
+        ],
+        "created_at": "2026-02-12T14:23:58.230101+00:00"
+      },
+      {
+        "content": "Agent 'scout' failed when given task: \"Investigate the Next.js standalone output for the Workbook platform to understand what gets copied into the Docker image.\\n\\nWorking directory: C:\\Users\\david.hayes\\spark-platform\\n\\n1. Check if a standal...\". Error context:     {\\n      \"type\": \"text\",\\n      \"text\": \"## Investigation Report: Next.js Standalone Output\\n\\n### Key Findings\\n\\n**The Agent SDK IS properly included in the standalone output.** The `outputFileTracingIncludes` configuration is working correctly.\\n\\n### Standalone Structure\\n\\n```\\napps/web/.next/standalone/\\n\u251c\u2500\u2500 node_modules/\\n\u2502   \u2514\u2500\u2500 @anthropic-ai/\\n\u2502       \u2514\u2500\u2500 claude-agent-sdk/          # 69MB total\\n\u2502           \u251c\u2500\u2500 cli.js                 # 11.4MB - MCP server binary\\n\u2502           \u251c\u2500\u2500 sdk.m",
+        "learning_type": "session_learning",
+        "context": "Failed agent invocation: scout",
+        "confidence": "medium",
+        "tags": [
+          "auto_captured",
+          "agent_failure",
+          "agent:scout",
+          "scope:global"
+        ],
+        "created_at": "2026-02-12T13:41:00.528581+00:00"
+      },
+      {
+        "content": "Agent 'scout' failed when given task: \"Investigate how the `@anthropic-ai/claude-agent-sdk` package works internally, specifically:\\n\\n1. Read the SDK entry point at `C:\\Users\\david.hayes\\spark-platform\\node_modules\\@anthropic-ai\\claude-agen...\". Error context: {\\n  \"status\": \"completed\",\\n  \"prompt\": \"Investigate how the `@anthropic-ai/claude-agent-sdk` package works internally, specifically:\\n\\n1. Read the SDK entry point at `C:\\\\Users\\\\david.hayes\\\\spark-platform\\\\node_modules\\\\@anthropic-ai\\\\claude-agent-sdk\\\\sdk.mjs` \u2014 find how `query()` is implemented and how it spawns `cli.js`\\n2. Check if there's a `pathToClaudeCodeExecutable` option in the `query()` function signature\\n3. Look at the Dockerfile at `C:\\\\Users\\\\david.hayes\\\\spark-platform\\\\Dockerf",
+        "learning_type": "session_learning",
+        "context": "Failed agent invocation: scout",
+        "confidence": "medium",
+        "tags": [
+          "auto_captured",
+          "agent_failure",
+          "agent:scout",
+          "scope:global"
+        ],
+        "created_at": "2026-02-12T04:34:27.307572+00:00"
+      },
+      {
+        "content": "Agent 'scout' failed when given task: \"Explore the streaming implementation in the Workbook platform at C:\\Users\\david.hayes\\spark-platform. I need a comprehensive audit of:\\n\\n1. **Backend streaming** \u2014 How does `apps/web/app/api/agent/chat...\". Error context:     {\\n      \"type\": \"text\",\\n      \"text\": \"I apologize for the error. Let me provide you with the comprehensive audit directly:\\n\\n---\\n\\n# Workbook Platform Streaming Implementation Audit\\n\\n## Executive Summary\\n\\nThe Workbook platform implements **dual-path streaming** with a feature flag:\\n- **Agent SDK path** (primary): Server-Sent Events (SSE) via `ReadableStream`\\n- **Legacy path** (fallback): Raw text streaming via `ReadableStream`\\n\\n**Vercel AI SDK:** \u274c NOT INSTALLED. All streaming is ",
+        "learning_type": "session_learning",
+        "context": "Failed agent invocation: scout",
+        "confidence": "medium",
+        "tags": [
+          "auto_captured",
+          "agent_failure",
+          "agent:scout",
+          "scope:global"
+        ],
+        "created_at": "2026-02-12T03:38:54.464526+00:00"
+      },
+      {
+        "content": "Agent 'oracle' failed when given task: \"Research the feasibility of using multiple AI models in a Next.js platform. The user wants to understand:\\n\\n1. **Vercel AI SDK** (ai package): \\n   - Can it be used alongside Claude Agent SDK?\\n   - Does...\". Error context: {\\n  \"status\": \"completed\",\\n  \"prompt\": \"Research the feasibility of using multiple AI models in a Next.js platform. The user wants to understand:\\n\\n1. **Vercel AI SDK** (ai package): \\n   - Can it be used alongside Claude Agent SDK?\\n   - Does it support OpenRouter as a provider?\\n   - What models can it connect to? (specifically Kimi K2.5, Z.ai GLM-5)\\n   - How does streaming work vs Agent SDK streaming?\\n\\n2. **OpenRouter**:\\n   - What models are available? (Kimi K2.5, GLM-5, etc.)\\n   - How ",
+        "learning_type": "session_learning",
+        "context": "Failed agent invocation: oracle",
+        "confidence": "medium",
+        "tags": [
+          "auto_captured",
+          "agent_failure",
+          "agent:oracle",
+          "scope:global"
+        ],
+        "created_at": "2026-02-12T03:21:18.055704+00:00"
+      },
+      {
+        "content": "Agent 'spark' failed when given task: \"Fix the 3 failing tests in `C:\\Users\\david.hayes\\spark-platform\\apps\\web\\app\\api\\workspaces\\__tests__\\route.test.ts`.\\n\\n**Problem:** The tests expect auth-gated behavior (401, innerJoin with user), but...\". Error context:   \"agentId\": \"a425113\",\\n  \"description\": \"Fix workspaces route test\",\\n  \"prompt\": \"Fix the 3 failing tests in `C:\\\\Users\\\\david.hayes\\\\spark-platform\\\\apps\\\\web\\\\app\\\\api\\\\workspaces\\\\__tests__\\\\route.test.ts`.\\n\\n**Problem:** The tests expect auth-gated behavior (401, innerJoin with user), but the actual route at `apps/web/app/api/workspaces/route.ts` is in demo mode and does NO auth check. Here's the actual route:\\n\\n```typescript\\nimport { db } from '@/lib/db';\\nimport { workspaces } from '@w",
+        "learning_type": "session_learning",
+        "context": "Failed agent invocation: spark",
+        "confidence": "medium",
+        "tags": [
+          "auto_captured",
+          "agent_failure",
+          "agent:spark",
+          "scope:global"
+        ],
+        "created_at": "2026-02-12T02:30:22.948309+00:00"
+      },
+      {
+        "content": "Agent 'scout' failed when given task: \"Explore the testing infrastructure in C:\\Users\\david.hayes\\spark-platform. I need to understand:\\n\\n1. **Test framework**: What test runner is used? (vitest, jest, etc.) Check package.json scripts, vite...\". Error context:     {\\n      \"type\": \"text\",\\n      \"text\": \"I've completed the exploration of the testing infrastructure. Here's the comprehensive report:\\n\\n## Testing Infrastructure \u2014 Workbook Platform\\n\\n### Test Framework: **Vitest 2.1.8**\\n\\n**Scripts:** \\n- `pnpm test` \u2192 watch mode\\n- `pnpm test:run` \u2192 CI mode\\n\\n**Configuration:** `apps/web/vitest.config.ts`\\n- Environment: jsdom\\n- Setup: `vitest.setup.ts` (imports @testing-library/jest-dom)\\n- Pattern: `**/*.test.{ts,tsx}`\\n\\n---\\n\\n## Test Suite Status",
+        "learning_type": "session_learning",
+        "context": "Failed agent invocation: scout",
+        "confidence": "medium",
+        "tags": [
+          "auto_captured",
+          "agent_failure",
+          "agent:scout",
+          "scope:global"
+        ],
+        "created_at": "2026-02-12T02:17:55.321229+00:00"
+      },
+      {
+        "content": "Agent 'kraken' failed when given task: \"## Task: CATALYST Animation + Card Differentiation + Command Bar\\n\\nYou are editing 3 HTML files in `C:\\Users\\david.hayes\\continuous-claude\\spark-frontend-experiment\\catalyst\\`:\\n- `dashboard.html`\\n- `me...\". Error context:   \"agentId\": \"abbefbd\",\\n  \"description\": \"Catalyst animations + card types\",\\n  \"prompt\": \"## Task: CATALYST Animation + Card Differentiation + Command Bar\\n\\nYou are editing 3 HTML files in `C:\\\\Users\\\\david.hayes\\\\continuous-claude\\\\spark-frontend-experiment\\\\catalyst\\\\`:\\n- `dashboard.html`\\n- `meeting.html`\\n- `actions.html`\\n\\n**CATALYST Identity:** The most INTELLIGENT executive tool. AI-native command center with dark cyber-aesthetic, neon accents, terminal-style UI.\\n\\n### Changes Require",
+        "learning_type": "session_learning",
+        "context": "Failed agent invocation: kraken",
+        "confidence": "medium",
+        "tags": [
+          "auto_captured",
+          "agent_failure",
+          "agent:kraken",
+          "scope:global"
+        ],
+        "created_at": "2026-02-12T01:09:53.808943+00:00"
+      },
+      {
+        "content": "Agent 'kraken' failed when given task: \"## Task: TASK-AA-2.0 \u2014 Proposals API Routes\\n\\n**Project root:** C:\\Users\\david.hayes\\spark-platform\\n**Branch:** workbook-v2\\n\\nCreate three new API route files for proposals CRUD + conversion.\\n\\n### Refer...\". Error context:   \"agentId\": \"a405710\",\\n  \"description\": \"Wave 4a: Proposals API routes\",\\n  \"prompt\": \"## Task: TASK-AA-2.0 \u2014 Proposals API Routes\\n\\n**Project root:** C:\\\\Users\\\\david.hayes\\\\spark-platform\\n**Branch:** workbook-v2\\n\\nCreate three new API route files for proposals CRUD + conversion.\\n\\n### Reference Pattern\\n\\nRead `apps/web/app/api/decisions/route.ts` and `apps/web/app/api/actions/route.ts` first \u2014 follow their exact patterns for imports, error handling, and response format.\\n\\nKey imports use",
+        "learning_type": "session_learning",
+        "context": "Failed agent invocation: kraken",
+        "confidence": "medium",
+        "tags": [
+          "auto_captured",
+          "agent_failure",
+          "agent:kraken",
+          "scope:global"
+        ],
+        "created_at": "2026-02-12T00:45:19.719550+00:00"
+      },
+      {
+        "content": "Agent 'scout' failed when given task: \"Deeply explore the Agent Arch codebase at C:\\agent-arch. I need a comprehensive understanding of its architecture and features, specifically focused on these three feature areas:\\n\\n1. **Proposals ",
+        "learning_type": "session_learning",
+        "context": null,
+        "confidence": null,
+        "tags": null,
+        "created_at": "2026-02-11T21:57:31.909039+00:00"
+      },
+      {
+        "content": "Agent 'oracle' failed when given task: \"Research these 4 frontend inspiration sources and extract design patterns, component ideas, and visual approaches:\\n\\n1. https://github.com/educlopez/smoothui/ - Read the README and understand what comp...\". Error context:     {\\n      \"type\": \"text\",\\n      \"text\": \"Here is the full research report.\\n\\n---\\n\\n# Research Report: Frontend Inspiration Sources for SaaS Dashboard Redesign\\n\\nGenerated: 2026-02-11\\n\\n## Summary\\n\\nFour frontend component libraries were analyzed: SmoothUI (animation-first shadcn components), ShadcnSpace (production-ready shadcn blocks/layouts), Efferd (landing page and dashboard blocks), and React Bits Pro (premium animated UI for memorable products). Together they represent the current s",
+        "learning_type": "session_learning",
+        "context": "Failed agent invocation: oracle",
+        "confidence": "medium",
+        "tags": [
+          "auto_captured",
+          "agent_failure",
+          "agent:oracle",
+          "scope:global"
+        ],
+        "created_at": "2026-02-11T20:21:56.787780+00:00"
+      },
+      {
+        "content": "Agent 'scout' failed when given task: \"Read and summarize the following skill/plugin files to understand their capabilities:\\n\\n1. C:\\Users\\david.hayes\\.claude\\skills\\shadcn-create\\SKILL.md (or any files in that directory)\\n2. C:\\Users\\david....\". Error context:     {\\n      \"type\": \"text\",\\n      \"text\": \"I'll provide the summary directly since Write tool isn't available in plan mode:\\n\\n---\\n\\n# Frontend Design Skills ",
+        "learning_type": "session_learning",
+        "context": null,
+        "confidence": null,
+        "tags": null,
+        "created_at": "2026-02-11T20:21:30.787112+00:00"
+      },
+      {
+        "content": "Agent 'spark' failed when given task: \"## Task: Add Zod validation schemas + remove systemPromptOverride\\n\\n**Project:** C:\\Users\\david.hayes\\spark-platform\\n**Branch:** workbook-v2\\n\\n### Part 1: Add Zod Schemas\\n**File:** `apps/web/lib/validat...\". Error context:   \"agentId\": \"aad0648\",\\n  \"description\": \"Zod validation + systemPromptOverride\",\\n  \"prompt\": \"## Task: Add Zod validation schemas + remove systemPromptOverride\\n\\n**Project:** C:\\\\Users\\\\david.hayes\\\\spark-platform\\n**Branch:** workbook-v2\\n\\n### Part 1: Add Zod Schemas\\n**File:** `apps/web/lib/validations/api-schemas.ts`\\n\\nRead the file first. Then add 4 new Zod schemas:\\n\\n1. `createAgentTemplateSchema` \u2014 validate agent template creation:\\n   - `name`: z.string().min(1).max(100)\\n   - `descr",
+        "learning_type": "session_learning",
+        "context": "Failed agent invocation: spark",
+        "confidence": "medium",
+        "tags": [
+          "auto_captured",
+          "agent_failure",
+          "agent:spark",
+          "scope:global"
+        ],
+        "created_at": "2026-02-11T07:14:14.192112+00:00"
+      },
+      {
+        "content": "Agent 'Plan' failed when given task: \"## Context\\n\\nThe workbook-v2 branch has 109 files changed (+5710/-609 lines) across 8 commits. Three parallel security/quality audits identified issues that must be fixed before merging to master and d...\". Error context: {\\n  \"status\": \"completed\",\\n  \"prompt\": \"## Context\\n\\nThe workbook-v2 branch has 109 files changed (+5710/-609 lines) across 8 commits. Three parallel security/quality audits identified issues that must be fixed before merging to master and deploying to Railway.\\n\\n## Audit Findings Summary\\n\\n### CRITICAL (Block Merge)\\n\\n1. **XSS in renderMarkdown** (ChatMessage.tsx) \u2014 HTML escaping happens before code block extraction, allowing script injection via markdown code blocks. Uses `dangerouslySetIn",
+        "learning_type": "session_learning",
+        "context": "Failed agent invocation: Plan",
+        "confidence": "medium",
+        "tags": [
+          "auto_captured",
+          "agent_failure",
+          "agent:Plan",
+          "scope:global"
+        ],
+        "created_at": "2026-02-11T07:11:06.279682+00:00"
+      }
+    ],
+    "achievements": [],
+    "decisions": [],
+    "error_fixes": [],
+    "collected_at": "2026-02-12T17:18:24.205133"
+  },
+  "collected_at": "2026-02-12T17:18:24.205272",
+  "week": 7,
+  "year": 2026
+}
