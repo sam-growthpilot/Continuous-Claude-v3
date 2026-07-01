@@ -1,0 +1,90 @@
+{
+  "_comment": "The CCv3 self-improvement loop's component baseline. One component is researched per daily run, round-robin (see select-component.mjs + state.json). currentImpl pointers and frontierHints are starting points the research session VERIFIES, not gospel.",
+  "version": 1,
+  "components": [
+    {
+      "id": "memory",
+      "name": "Memory",
+      "summary": "Persistent semantic memory across sessions: recall + store, BGE-large-en-v1.5 (1024-dim) embeddings, Postgres pgvector, hybrid RRF retrieval, resident recall daemon (warm ~136ms).",
+      "currentImpl": ["opc/scripts/core/recall_learnings.py", "opc/scripts/core/store_learning.py", "opc/scripts/core/embedding_daemon.py", ".claude/hooks/src/memory-awareness.ts", ".claude/skills/memory/SKILL.md"],
+      "frontierHints": ["agentic memory architectures", "episodic vs semantic vs procedural memory", "Letta/MemGPT", "GraphRAG", "memory reflection/consolidation", "contextual retrieval", "hit-rate and corpus-health SLOs"]
+    },
+    {
+      "id": "hooks",
+      "name": "Hooks",
+      "summary": "Lifecycle hook system (90+ hooks): PreToolUse/PostToolUse/SessionStart/UserPromptSubmit/SubagentStop, context injection, guardrails, enforcement chains. TypeScript -> esbuild dist.",
+      "currentImpl": [".claude/hooks/src/", ".claude/hooks/dist/", "settings.json", "docs/architecture/quick-ref/hook-catalog.md"],
+      "frontierHints": ["agent middleware patterns", "deterministic policy enforcement for LLM agents", "guardrail frameworks", "event-driven agent control", "hook security / prompt-injection surfaces"]
+    },
+    {
+      "id": "agents",
+      "name": "Agents",
+      "summary": "Specialized subagent ecosystem (36 agents: scout, oracle, kraken, critic, debug-agent, etc.) with delegation for context isolation.",
+      "currentImpl": [".claude/agents/", "docs/agents/README.md", ".claude/skills/personas/"],
+      "frontierHints": ["multi-agent orchestration", "agent routing/selection", "role specialization vs generalist", "agent evaluation/grading", "context isolation strategies", "agent-as-tool"]
+    },
+    {
+      "id": "workflows",
+      "name": "Workflows",
+      "summary": "Autonomous + orchestrated workflows: Ralph (GSD autonomous dev), Maestro (multi-step orchestration), and the deterministic Workflow tool (fan-out/pipeline/verify).",
+      "currentImpl": [".claude/skills/ralph/", ".claude/skills/maestro/", ".claude/scripts/ralph/"],
+      "frontierHints": ["agentic workflow patterns", "plan-execute-verify loops", "deterministic vs model-driven orchestration", "LangGraph/agent supervisors", "self-correcting workflows", "adversarial verification"]
+    },
+    {
+      "id": "code-intel",
+      "name": "Code Intelligence",
+      "summary": "Code intelligence stack: codegraph (SCIP/SQLite), Serena (LSP), TLDR (AST), the /code-intel facade, and the L2 context bus.",
+      "currentImpl": ["scripts/code-intel.mjs", ".claude/rules/code-intel-boundaries.md", ".claude/hooks/src/shared/context-bus.ts", ".serena/", ".codegraph/"],
+      "frontierHints": ["SCIP/LSIF code graphs", "LSP-backed agents", "semantic code search", "repo-level reasoning", "incremental index freshness", "symbol-precise retrieval"]
+    },
+    {
+      "id": "observability",
+      "name": "Braintrust Observability",
+      "summary": "Observability: 4 deterministic emitBraintrustScore() signals + LLM judges, audit-enforced emit invariant, session scoring.",
+      "currentImpl": [".claude/hooks/src/shared/braintrust-client.ts", "scripts/audit-braintrust-emits.sh", "docs/architecture/subsystems/braintrust.md"],
+      "frontierHints": ["LLM eval / online eval", "trace-based evaluation", "OpenTelemetry GenAI semconv", "agent observability", "LLM-as-judge calibration", "eval-driven development"]
+    },
+    {
+      "id": "doc-rag",
+      "name": "Doc-RAG (PageIndex)",
+      "summary": "Tree-based RAG for long documents using LLM reasoning over a hierarchical index; on-demand (per-prompt hook disabled).",
+      "currentImpl": ["opc/scripts/pageindex/", ".claude/skills/pageindex-search/SKILL.md"],
+      "frontierHints": ["hierarchical / reasoning RAG", "long-document retrieval", "contextual retrieval (Anthropic)", "agentic RAG", "retrieval vs long-context tradeoffs"]
+    },
+    {
+      "id": "skills",
+      "name": "Skills System",
+      "summary": "Skill system (200+ skills) with keyword/intent triggering via skill-rules.json and a hook-driven activation pipeline.",
+      "currentImpl": [".claude/skills/", ".claude/skills/skill-rules.json", ".claude/skills/_eval/"],
+      "frontierHints": ["tool/skill routing accuracy", "progressive disclosure", "skill selection under large catalogs", "semantic vs keyword triggering", "skill collision/precision"]
+    },
+    {
+      "id": "cli-integration",
+      "name": "CLI Integration Layer",
+      "summary": "CLI/tool integration strategy (23 tools): native CLI > OpenCLI > MCP > wrapper > browser. Agent-friendly CLI design.",
+      "currentImpl": [".claude/rules/cli-integration-strategy.md", "scripts/cdp.mjs"],
+      "frontierHints": ["building CLIs for agents", "MCP vs CLI tradeoffs", "structured tool output", "tool design ergonomics for LLMs", "MCP ecosystem evolution"]
+    },
+    {
+      "id": "learning-loop",
+      "name": "Self-Improvement / Learning Extraction",
+      "summary": "Multi-layer learning capture (L0 hook extraction + quality gate, L1 pre-compact, L2 session-end, L3 manual) feeding the memory system.",
+      "currentImpl": [".claude/hooks/src/memory-extractor.ts", ".claude/skills/extract-v2/", ".claude/skills/memory-curate/"],
+      "frontierHints": ["self-improving agents", "reflection / self-critique loops", "automated insight extraction", "RLAIF / constitutional approaches", "experience replay for agents", "skill induction"]
+    },
+    {
+      "id": "coordination",
+      "name": "Cross-Session Coordination",
+      "summary": "Multi-session awareness: Postgres sessions + file_claims locking, heartbeats, session identity. Gated on session-id consolidation.",
+      "currentImpl": [".claude/hooks/src/shared/session-id.ts", ".claude/hooks/src/file-claims.ts", ".claude/rules/cross-terminal-db.md"],
+      "frontierHints": ["multi-agent file locking", "distributed agent coordination", "optimistic vs pessimistic concurrency", "agent identity/provenance", "intra-session fan-out conflict detection"]
+    },
+    {
+      "id": "browser",
+      "name": "Browser Automation",
+      "summary": "Browser automation tier: Playwright MCP/CLI, CDP CLI for perf, computer-use fallback.",
+      "currentImpl": [".claude/rules/browser-automation.md", "scripts/cdp.mjs", ".claude/skills/browser-dev-cycle/"],
+      "frontierHints": ["computer-use agents", "browser agents reliability", "DOM vs vision grounding", "web automation benchmarks (WebArena)", "accessibility-tree navigation"]
+    }
+  ]
+}

@@ -1,0 +1,3 @@
+# Runtime round-robin cursor — recreated on first run (select-component.mjs defaults to lastIndex:-1).
+# Committing it would dirty the tree on every daily run.
+state.json

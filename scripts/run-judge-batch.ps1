@@ -13,7 +13,10 @@
 #   schtasks /delete /tn "CCv3-Judge-Batch" /f       # remove
 # Log: .claude/logs/judge-batch.log
 
-$ErrorActionPreference = "Stop"
+# Was "Stop": with the '2>&1 |' pipeline below, a native stderr write raised a terminating
+# NativeCommandError that aborted the script BEFORE logging the real exit code — the root cause
+# of the recurring 0x80070001 self-aborts (empty log + missing END line). "Continue" + capture-first.
+$ErrorActionPreference = "Continue"
 
 $repo    = "C:\Users\david.hayes\continuous-claude"
 $opc     = Join-Path $repo "opc"
@@ -35,9 +38,11 @@ function Write-Log($msg) {
 Write-Log "START judge batch --scan-since $since --max-sessions 10 (uv: $uv)"
 
 Set-Location $opc
-& $uv run python -m scripts.core.judge_session --scan-since $since --max-sessions 10 2>&1 |
-    ForEach-Object { Add-Content -Path $logFile -Value $_ }
+# Capture BEFORE logging so a native stderr write can't abort the script mid-pipeline (which
+# previously destroyed the log and masked the real exit code). This always reaches the END line.
+$out  = & $uv run python -m scripts.core.judge_session --scan-since $since --max-sessions 10 2>&1
 $code = $LASTEXITCODE
+$out | ForEach-Object { Add-Content -Path $logFile -Value $_ }
 
 Write-Log "END exit=$code"
 exit $code

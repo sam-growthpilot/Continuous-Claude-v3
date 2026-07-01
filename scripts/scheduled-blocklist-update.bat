@@ -3,6 +3,14 @@ REM Daily package security blocklist update
 REM Runs via Windows Task Scheduler at 9am
 REM Updates malicious-packages.json from GitHub Advisory API, rebuilds hooks, commits, pushes, syncs
 
+REM Self-redirect ALL output to a durable log (Task Scheduler discards the console, which is why
+REM this task's daily exit-1 failures were undiagnosable). The re-invoke runs the real body below.
+set "LOG=C:\Users\david.hayes\continuous-claude\.claude\logs\blocklist-update.log"
+if /i not "%~1"=="__LOGGED__" (
+    call "%~f0" __LOGGED__ >> "%LOG%" 2>&1
+    exit /b %ERRORLEVEL%
+)
+
 echo [%date% %time%] Starting blocklist update...
 
 cd /d C:\Users\david.hayes\continuous-claude

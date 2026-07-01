@@ -1,15 +1,12 @@
 # Project Roadmap
 
 ## Current Focus
-**CCv3 System Update — execute the ratified deep-review backlog (Wave 1 → Tier 2 → Tier 3 → Deletions)**
-- The Fable-5 deep review is COMPLETE (190 confirmed findings, ratified 4-tier backlog, elegance verdict "mixed"). Wave 0 (3 S0 fixes) SHIPPED. Now executing the rest across coordinated sessions.
-- **Orientation library:** `docs/system-update/` (README → NEXT-SESSION-PLAN → BACKLOG → RESOURCE-MAP). **Canonical handoff:** `docs/system-update/NEXT-SESSION-PLAN.md` (live; supersedes all dated `HANDOFF-*`, now archived under `docs/handoffs-archive/`).
-- **Branch:** `snapshot/ccv3-system-update` (off main; excludes in-progress `feature/cma-integration`). **Live visual:** https://rev4nchist.github.io/ai-enablement-decks/ccv3-state-of-rework/
-- **Status:** Wave 0 ✓ · Wave 1 ✓ · ST-05 ✓ (resident recall daemon, warm recall ~136ms) · Session-2 foundation hardening ✓ (daemon multi-week resilience A1-A4, host-RAM gate, three-layer auto-start, tldr latency) — all pushed to `fork`. **Next action:** the FINAL session (`docs/system-update/NEXT-SESSION-PLAN.md` → "▶ FINAL SESSION"), then the net-new Tier-2/3 structural arcs (ST-01 bus writer, ST-02 session-id, MS multi-session arc, SG-02/03/04) in BACKLOG.md.
-- Constraints: push `fork` not `origin`; never change BGE model/dim (`BAAI/bge-large-en-v1.5`, 1024); Windows-safe; emit-guard 4/4 after hook edits; never full vitest; end goal = elegant CCv3 (design contract = running behavior).
-- Started: 2026-06-27 (review arc started 2026-06-10)
+**Plan — Close out `snapshot/ccv3-system-update` + stage the fourthos v4 build**
+- Decisions (confirmed): stage v4 → build later; PR to main now but **keep* the branch.; -title "feat(scheduled-tasks): self-improvement loop + 6 job fixes + Notion dashboard; stage fourthos v4" \
+- Started: 2026-07-01
 
 ## Completed
+- [x] feat(self-improvement): daily research loop + ratify SI-01 from first proposal (2026-06-30) `ccbc67e`
 - [x] feat(memory-awareness): FH-02 recall_ready telemetry + record data-gated re-baseline (2026-06-30) `0368785`
 - [x] fix(hooks,health): FH-01 warm tldr daemon at session start + health-check tolerates on-demand absence (2026-06-30) `80b1b0f`
 - [x] docs(handoff): FINAL-session materials cleanup + archive superseded handoffs (2026-06-30) `965a5d1`
@@ -203,6 +200,7 @@
 - [x] Eliminate Excessive Permission Prompts for Autonomous Agent Tasks (2026-04-02)
 
 ## Planned
+- [ ] CCv3 System Update — execute the ratified deep-review backlog (Wave 1 → Tier 2 → Tier 3 → Deletions) (high priority)
 - [ ] CCv3-Hardening — Session 9: through Phase C (codegraph) (high priority)
 - [ ] P2 — Verify embedding daemon survives a REAL reboot (scheduled task only ad-hoc-verified; Codex flagged job-object detach). After next restart confirm `~/.claude/run/ccv3-embedding.json` appears <60s + warm recall (medium priority)
 - [ ] P2 — Ops: full parallel `vitest run` hangs on a pre-existing Windows daemon/socket suite — add a hard per-test timeout (medium priority)
@@ -223,19 +221,25 @@
 - Data note: use `count(*)` not `pg_stat` for usage calls (the latter mis-reported memory/PageIndex as empty). Live counts: archival_memory 569, pageindex_nodes 2418, file_claims 6720, sessions 1117.
 
 ## Recent Planning Sessions
-### 2026-06-10: CCv3 Fable-5 Deep Review — "Hone to Elegance" (2026-06-10)
-**Summary:** > Supersedes the session-9 execution plan that previously lived in this file (completed SUCCEEDED 2026-06-07; durable record: `docs/ccv3-session9-completion-2026-06-07.md` + ROADMAP).
+### 2026-07-01: Plan — Close out `snapshot/ccv3-system-update` + stage the fourthos v4 build
+**Key Decisions:**
+- Decisions (confirmed): stage v4 → build later; PR to main now but **keep* the branch.
+- -title "feat(scheduled-tasks): self-improvement loop + 6 job fixes + Notion dashboard; stage fourthos v4" \
+- -body "<summary of the ~8 commits since PR #11: SI-01 loop, judge/health/AIWeeklyReport/blocklist/fourthos-restore fixes, dashboard-sync, + the 3 fourthos v4 staging commits>"
+- Merge the PR: into `fork/main` (`gh pr merge <n> --merge`, or the GitHub UI). Confirm the merge.
+- Keep the branch: — do NOT delete `snapshot/ccv3-system-update` (per decision). After merge it can
 
+**Files:** ROADMAP.md, docs/architecture/system-visualization/architecture.json, git add ROADMAP.md docs/architecture/system-visualization/architecture.json, .claude/skills/fourthos-weekly/v4-report-enhancements-plan.md, HANDOFF-v4-build.md, continuous-claude/scripts/fourthos-weekly/generate-prompt.md, scripts/fourthos-weekly/promote.mjs, scripts/fourthos-weekly/generate-prompt.md
+
+**Verification:** Closeout:: `gh pr view <n>` lists the ~8 tail commits; after merge `git rev-list --count fork/main..snapshot/ccv3-system-update` → `0`; `git branch` still shows `snapshot/ccv3-system-update` (kept).
+
+### 2026-06-10: CCv3 Fable-5 Deep Review — "Hone to Elegance" (2026-06-10)
 **Key Decisions:**
 - User decisions (locked): (1) **merge PRs #8/#9/#10 first* — review one unified main; (2) **whole-system scope, recent-weighted* (extra depth on the 145 commits since the 2026-05-16 memory-upgrade era); (3) deliver **report + ratified backlog + quick-wins executed* this arc (structural refactors are a later ratified arc).
 - Push **`fork`* (Rev4nchist), never `origin`. Never change BGE model/dim (`BAAI/bge-large-en-v1.5`, 1024).
 - The review is READ-ONLY: — no fixes during discovery/verification/synthesis. Fixes happen only in Phase 4 (quick wins) after ratification.
 - Windows-safe commands (array-arg spawns, `Remove-Item -LiteralPath`, no brace expansion). **Never run the full parallel vitest suite* (known hang on a Windows daemon/socket suite) — no test execution during the review at all.
 - Gates G4 (no parallel edits to memory files), G5 (WS-0.1 blocked), G6 (P3 archive cross-check) remain binding for the fix arc.
-
-**Files:** docs/ccv3-session9-completion-2026-06-07.md, .claude/hooks/src/*.ts, .claude/settings.json, .claude/docs/architecture/quick-ref/hook-catalog.md, docs/architecture/system-visualization/architecture.json, ~/.claude/plans/we-have-recently-done-refactored-storm.md, store_learning.py, architecture.json
-
-**Verification:** WF-0: harvest tables exist + row counts sane; exclusion manifest + inventories committed to the review dir.
 
 ### 2026-06-06: CCv3-Hardening — Session 9 (reconciliation + P1 bus-bias)
 **Key Decisions:**
@@ -251,5 +255,3 @@
 - Run the reproduce one-liner (from `$CLAUDE_OPC_DIR`):
 - Single-shot ping in isolation (expect to SUCCEED, proving the daemon is fine when idle):
 - Reproduce under load: fire several `recall_learnings.py` / direct `embed` calls concurrently while pinging, to
-
-### 2026-06-03: Planning Session
