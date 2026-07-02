@@ -10,7 +10,8 @@ multi-tier, **draft-and-notify** artifact pipeline for sponsors **Carly** (VP En
 Transformation & Technology) and **Christian** (CTO, dotted line).
 
 **Mental model:** Dave stays editor-in-chief. The pipeline auto-builds everything to an
-*unlisted* preview each Friday morning and pings Dave; nothing reaches sponsors until Dave
+*unlisted* preview each Thursday morning and pings Dave (Dave's submit deadline is 10:00 CST
+Thursday; sponsors review Friday morning); nothing reaches sponsors until Dave
 promotes it. The "teach what we build/research" mandate is carried by the Tier 2 **Concept
 Spotlight** module.
 
@@ -20,10 +21,10 @@ Spotlight** module.
 
 | Intent | What runs | Who triggers |
 |---|---|---|
-| **Generate** (default) | Read Notion → refresh Tier 3 package → render Tier 1+2 → stage to `fourthos/preview/` (unlisted) → notify Dave | `CCv3-FourthOS-Weekly` task (Fri 07:00) OR Dave interactively |
-| **Promote** | `fourthos/preview/` → stable `fourthos/` + archive snapshot + add `decks.json` card → push | Dave, after reviewing the preview |
+| **Generate** (default) | Read Notion → refresh Tier 3 package → render Tier 1+2 → stage to `fourthos/preview/` (unlisted) → notify Dave | `CCv3-FourthOS-Weekly` task (**Thu 07:00** — moved from Fri 2026-07-02 for the 10:00 CST Thursday submit deadline) OR Dave interactively |
+| **Promote** | `fourthos/preview/` → dated `fourthos/<YYYY-MM-DD>/` + add its card to `decks.json` `sponsor-updates` (newest becomes `featured`, prior weeks demoted) → push | Dave, after reviewing the preview |
 
-- **Generate** headless path (unattended, Friday 07:00): `scripts/fourthos-weekly/scheduled-fourthos-weekly.bat`
+- **Generate** headless path (unattended, Thursday 07:00): `scripts/fourthos-weekly/scheduled-fourthos-weekly.bat`
   pipes `scripts/fourthos-weekly/generate-prompt.md` into `claude -p`.
 - **Promote**: `node scripts/fourthos-weekly/promote.mjs` (run from anywhere; it targets the decks repo).
   Options: `--date=YYYY-MM-DD`, `--dry-run`, `--no-push`.
@@ -92,18 +93,34 @@ rendered into the published HTML. **GitHub Pages is public; the preview slug is 
 
 ---
 
-## Site chrome & navigation (v2 — shared shell)
+## Site chrome & navigation (v2 — shared shell; hover ToC added 2026-07-02)
 
 Every tier uses the shared shell `templates/shell.html` (+ `templates/README.md`): custom inline-SVG
 FourthOS mark, a sticky **top bar** (breadcrumb `Sponsor Updates › <date> › <page>` + tier tabs
 Hub·Briefing·Deep-Dive + a data-driven **week-switcher** that reads `decks.json`), and a shared footer.
+- **Hover section nav (tab ToC — MANDATORY since 2026-07-02):** each top-bar tab reveals a hover
+  dropdown listing that page's sections (quick nav + table of contents). Markup/CSS live in
+  `templates/shell.html` (`.tab-wrap` / `.tab-menu`). Keep menu anchors in sync with the section ids
+  actually rendered that week; every target id needs `scroll-margin-top:80px`. Menus are hidden ≤720px.
 - **Hub hero is headline-driven:** H1 = the week's biggest news (`headline`), not "Weekly Sponsor
-  Update"; supporting `subheadline`; a **Recently shipped** chip row (`shipped[]`); **no RAG/health
-  pill** (health lives on the Briefing's portfolio cards). Glance = sponsor-lens **Needs you / What
-  moved / Watch**.
+  Update"; supporting `subheadline`; a **"This week"** chip row (`shipped[]` — label the row "This
+  week", not "Recently shipped", so discovery/decision items sit under it honestly); **no RAG/health
+  pill** (health lives on the Briefing's portfolio cards). Hub body order: sponsor-lens glance
+  (**Needs you / What moved / Watch**) FIRST, nav cards second — decisions outrank navigation chrome.
+- **Briefing "Portfolio Pulse" hero layout:** never tall-narrow stat cards. The 4 short facts
+  (Flagship / Biggest decision / Biggest risk / Next proof point) render as WIDE horizontal
+  label-left/value-right rows, two per row on desktop; **"What changed this week"** is a full-width
+  strip with one ✓-bullet per discrete change (not a semicolon chain). The "Biggest decision" tile
+  names exactly ONE decision.
+- **Sponsor actions are decision cards ("For Your Decision"):** every card follows the skeleton
+  h3 = the decision as a verb phrase → **Recommendation → Decide by → Cost of waiting → (detail) →
+  Owner**. FYI/endorse items use the dashed `.action-card.fyi` variant and say what happens if no
+  response comes. Cards carry `id="action-01/-02/-03"`; hub "Needs you" items and project-card
+  decision flags link to the specific card id.
 - **Links are root-absolute** (`/ai-enablement-decks/fourthos/<date>/…`) — bare relative links 404 on
-  Pages without a trailing slash. Deep-link anchors: briefing `#sponsor-actions`/`#outcomes`/`#risk-radar`,
-  deep-dive `#outputs`/`#concept`/`#architecture`/`#reporting`/`#feedback`.
+  Pages without a trailing slash. Deep-link anchors: briefing `#sponsor-actions`/`#portfolio`/
+  `#outcomes`/`#risk-radar`/`#action-0N`, deep-dive `#thesis`/`#outputs`/`#concept`/`#architecture`/
+  `#reporting`/`#feedback`/`#payoff`, hub `#glance`/`#next`/`#seeds`.
 
 ## Honesty / 3-state badge system (v3 — MANDATORY)
 
@@ -112,9 +129,34 @@ Public site to a VP/CTO — **never overstate**. Tag every capability: **LIVE** 
 built, dashed). The Salesforce connector is **"live in ALPHA"** (released for alpha testing — NOT GA;
 never "live in production"). Reporting hosted distribution + the feedback auto-alert are DESIGNED·NEXT;
 the report engine + feedback capture/store/pull are BUILT IN-REPO. **No real person names** (HMAC
-pseudonyms / counts only). The HTML is grep-audited for these rules before publish. Showcase patterns
+pseudonyms / counts only) — role titles for owners ("Program lead", "NetSuite admins", "IT"); the two
+addressed sponsors, **Carly and Christian, are the sanctioned exception** (they are the audience).
+**Claim calibration:** a 16-case adversarial suite is "demonstrated"/"held 16/16"/"boundary-tested" —
+never "proven"/"secure". The HTML is grep-audited for these rules before publish. Showcase patterns
 (reusable, proven in `fourthos/2026-06-24/`): the interactive 3-view governed-report toggle and the
-inheritance diagram ("build the mold once; every connector inherits the governance").
+inheritance diagram ("build the mold once; every connector inherits the governance"). Any demo data
+inside the toggle must be internally consistent across all three views and carry an explicit
+provenance label (e.g. "validation-window snapshot").
+
+## Language rules (MANDATORY — Dave, 2026-07-02)
+
+The writing must be **intelligent and clear** — no dumbing down, and no insider shorthand. A smart
+non-engineer (Carly) reads every sentence cold; a CTO (Christian) reads for soundness.
+- **BANNED WORDS:** "topology" (always — say "where the reports are hosted" / "hosting setup").
+- **Technical terms must be defined on first use or replaced.** Standard replacements:
+  | Jargon | Write instead |
+  |---|---|
+  | (gated) SWA / Static Web App | "access-gated report site" (first use may add "(an Azure Static Web App)") |
+  | ACA / ACA Job / rev NNNN | "on Azure" / "scheduled report job" / drop rev numbers from Tier 1 (keep ONE in the deep-dive workstream card as the traceability anchor) |
+  | Entra groups | "per-audience security groups" / "access groups" |
+  | OBO / token exchange | "each person signs in as themselves" / "your own Microsoft sign-in (per-user)" |
+  | auth model | "sign-in model" / "sign-in approach" |
+  | ADR | "architecture decision record" |
+  | chassis / clone the chassis | "reuse the Salesforce build as the mold" (mold/stamp is the house metaphor) |
+  | Phase-0 / spike | keep, but define once per page: "(the hands-on discovery check)" |
+  | Cosmos | "the system of record" |
+- Sentences carry one idea each; every technical item states its "so what" (the v4 So-What Ladder is
+  the fuller version of this rule).
 
 ## Render constraints (reuse, do not rebuild)
 
@@ -186,7 +228,12 @@ End the headless run with exactly one stdout line:
 
 - `gh run list --repo Rev4nchist/ai-enablement-decks --limit 3` → `success`.
 - Preview URL loads, brand-correct, SVG visible; hub root does NOT show a FourthOS card (correct while unlisted).
-- After promote: stable URL updated, `archive/<date>/` snapshot exists, hub card now visible, `decks.json` valid.
+- After promote: `fourthos/<date>/` is live at its own URL; the hub's **Sponsor Updates** section
+  (`https://rev4nchist.github.io/ai-enablement-decks/#sponsor-updates`) shows the new week as the top
+  `featured` card with prior weeks demoted behind the collapse; `decks.json` still parses; `preview/`
+  is gone. **The hub page itself is never hand-edited** — `#sponsor-updates` renders from `decks.json`
+  at load, and `promote.mjs` is the ONLY thing that writes that manifest entry (generate must not, G4).
+  The per-page week-switcher picks up the new week from the same manifest automatically.
 
 ## v4 — planned report enhancements (agreed with Dave, 2026-06-30)
 
