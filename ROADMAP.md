@@ -1,9 +1,11 @@
 # Project Roadmap
 
 ## Current Focus
-**Plan — Close out `snapshot/ccv3-system-update` + stage the fourthos v4 build**
-- Decisions (confirmed): stage v4 → build later; PR to main now but **keep* the branch.; -title "feat(scheduled-tasks): self-improvement loop + 6 job fixes + Notion dashboard; stage fourthos v4" \
-- Started: 2026-07-01
+**Notion Platform Integration + Living Project Cards** (branch `feature/notion-platform`)
+- **Done (2026-07-03):** N0 spikes all PASS (`docs/notion-platform-spike-report.md`) — ntn 0.18.1 via winget, page access proven, HTML publishing path = create-attachment + `<embed>` (sandboxed, interactive, workspace-private), Markdown round-trip byte-identical, Projects-DB upsert loop working. N1 shipped: notion-cli skill + notion-cli-safety rule + CLI inventory (24 tools). Helm design package delivered earlier (3 styled drafts + landing artifact + session report). Plan premortemed twice (34 findings folded in, Codex cross-model lift both times).
+- **Next:** A1 pilot card (CCv3 living status card replaces the S2 test embed) → N4r card engine (`scripts/project-cards/`, zero-LLM sweep assembler, `/project-card` skill) → N5 FourthOS rollout (cards on every active Projects-DB row + daily `CCv3-Project-Cards` sweep + Reporting Hub cards table) → N2 docs refresh (bridge-skill provenance merge v1.4/v1.5!) → N3 scheduled-job refits (dashboard-sync state machine, digest push).
+- Helm local SPA deferred behind the daily-use gate; card engine is the Notion-first v0 surface.
+- Plan: `~/.claude/plans/review-ccv3-system-wondrous-cascade.md` · Started: 2026-07-03
 
 ## Completed
 - [x] docs(self-improvement): 07-01 hooks + 07-02 agents proposals + digest queue (2026-07-03) `7c4c79c`
@@ -203,6 +205,8 @@
 - [x] Eliminate Excessive Permission Prompts for Autonomous Agent Tasks (2026-04-02)
 
 ## Planned
+- [ ] HELM — Local Project Command Center: Spec + Build Plan (high priority)
+- [ ] Plan — Close out `snapshot/ccv3-system-update` + stage the fourthos v4 build (high priority)
 - [ ] CCv3 System Update — execute the ratified deep-review backlog (Wave 1 → Tier 2 → Tier 3 → Deletions) (high priority)
 - [ ] CCv3-Hardening — Session 9: through Phase C (codegraph) (high priority)
 - [ ] P2 — Verify embedding daemon survives a REAL reboot (scheduled task only ad-hoc-verified; Codex flagged job-object detach). After next restart confirm `~/.claude/run/ccv3-embedding.json` appears <60s + warm recall (medium priority)
@@ -224,6 +228,18 @@
 - Data note: use `count(*)` not `pg_stat` for usage calls (the latter mis-reported memory/PageIndex as empty). Live counts: archival_memory 569, pageindex_nodes 2418, file_claims 6720, sessions 1117.
 
 ## Recent Planning Sessions
+### 2026-07-03: Notion Platform Integration + Helm Notion-First Pivot
+**Key Decisions:**
+- Helm pivots Notion-first: the approved Helm plan's *engine (collectors, salience rules, brief pipeline + its premortem constraints) survives unchanged, but the v0 *presentation layer becomes a Notion surface (Projects DB + views + HTML daily brief) synced via `ntn`. The local SPA (:3005, launchers, drawer, palette) is **deferred* behind the same daily-use gate — the graveyard lesson applied: ship the simplest surface tied to the key resource (Notion = Bridge/Eve/reports home).
+- `ntn` surface: `login/logout` (keychain; `NOTION_API_TOKEN` env override; `NOTION_KEYRING=0` → file auth for headless), `api <path>` (httpie-style `=`/`:=`/`==`, `-X`, `--spec`, JSON stdout), `pages get/create/edit` (**Markdown I/O**; `--allow-deleting-content` gate), `datasources query/resolve`, `files`, `workers …` (deploy/exec/syncs/webhooks/env/oauth/runs), `doctor`, `--json/--plain/--yes` throughout. Windows Workers support added in 3.6.
+- Live MCP server already exposes the new tools (`notion-create-view` incl. dashboard type, `notion-query-data-sources` SQL, `notion-update-view`, `notion-query-database-view`, `notion-query-meeting-notes`, `notion-duplicate-page`, `notion-move-pages`, `notion-update-data-source`, `notion-get-async-task`, `notion-create-attachment`).
+- S1 CLI on Windows: `curl -fsSL https://ntn.dev | bash` under Git Bash → `ntn doctor`, `ntn login`, `ntn api v1/users` → 200. Headless: `NOTION_KEYRING=0` file auth works from a scheduled-task context. Never echo tokens.
+- S2 HTML block write path: (decides brief publishing): hand-create an HTML block on a scratch page; inspect via `notion-fetch` and `ntn pages get` (round-trip shape); attempt creation via MCP `notion-update-page`/`notion-create-pages` with HTML content. Verdict: MCP-writable / Agent-only / not-yet → pick HTML-block vs Embed-fallback.
+
+**Files:** docs/notion-platform-spike-report.md, .claude/skills/notion-cli/SKILL.md, .claude/rules/notion-cli-safety.md, .claude/rules/cli-integration-strategy.md, bash scripts/sync-to-active.sh, .claude/skills/notion-bridge/SKILL.md, .claude/skills/notion-bridge/notion-bridge/SKILL.md, references/bridge-schema.md
+
+**Verification:** N0: spike report exists with 4 verdicts; `ntn api v1/users` 200 both interactive and headless-file-auth.
+
 ### 2026-07-01: Plan — Close out `snapshot/ccv3-system-update` + stage the fourthos v4 build
 **Key Decisions:**
 - Decisions (confirmed): stage v4 → build later; PR to main now but **keep* the branch.
@@ -231,10 +247,6 @@
 - -body "<summary of the ~8 commits since PR #11: SI-01 loop, judge/health/AIWeeklyReport/blocklist/fourthos-restore fixes, dashboard-sync, + the 3 fourthos v4 staging commits>"
 - Merge the PR: into `fork/main` (`gh pr merge <n> --merge`, or the GitHub UI). Confirm the merge.
 - Keep the branch: — do NOT delete `snapshot/ccv3-system-update` (per decision). After merge it can
-
-**Files:** ROADMAP.md, docs/architecture/system-visualization/architecture.json, git add ROADMAP.md docs/architecture/system-visualization/architecture.json, .claude/skills/fourthos-weekly/v4-report-enhancements-plan.md, HANDOFF-v4-build.md, continuous-claude/scripts/fourthos-weekly/generate-prompt.md, scripts/fourthos-weekly/promote.mjs, scripts/fourthos-weekly/generate-prompt.md
-
-**Verification:** Closeout:: `gh pr view <n>` lists the ~8 tail commits; after merge `git rev-list --count fork/main..snapshot/ccv3-system-update` → `0`; `git branch` still shows `snapshot/ccv3-system-update` (kept).
 
 ### 2026-06-10: CCv3 Fable-5 Deep Review — "Hone to Elegance" (2026-06-10)
 **Key Decisions:**
@@ -251,10 +263,3 @@
 - Two live-hazard findings flagged for follow-up (out of this push's scope): (a) a `store_learning.py` invocation with unquoted shell metacharacters creates junk files under `opc/` (one regenerated mid-session); (b) the `post-plan-roadmap` hook clobbered this Current Focus with a foreign project's goal (Salesforce/FastMCP plan `abstract-coral`) — the cross-project contamination guard did not catch it; this entry restores the correct session-9 record.
 
 ### 2026-06-05: Planning Session
-### 2026-06-04: Fix BGE embedding-daemon `ping_failed` → warm hybrid quality-gate re-run
-**Key Decisions:**
-- Branch off `main`: `feature/embedding-daemon-ping-fix`. Push target is `fork`, never `origin`.
-- Do NOT kill the live daemon casually (model reload is ~30-45s). Capture current discovery file first.
-- Run the reproduce one-liner (from `$CLAUDE_OPC_DIR`):
-- Single-shot ping in isolation (expect to SUCCEED, proving the daemon is fine when idle):
-- Reproduce under load: fire several `recall_learnings.py` / direct `embed` calls concurrently while pinging, to
