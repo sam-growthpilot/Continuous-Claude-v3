@@ -1,0 +1,325 @@
+{
+  "git": {
+    "repos": {
+      "continuous-claude": {
+        "name": "continuous-claude",
+        "label": "Continuous Claude",
+        "exists": true,
+        "branch": "snapshot/ccv3-system-update",
+        "last_commit_date": "2026-07-01 08:12:43 -0500",
+        "week_commits": 56,
+        "total_commits": 620,
+        "top_messages": [
+          "fix(dashboard-sync): align refresh prompt with the new Reporting Hub structure",
+          "chore: sync ROADMAP + viz lastCommit stamp",
+          "docs(fourthos-weekly): v4 build handoff + branch note",
+          "docs(fourthos-weekly): v4 report-enhancements implementation plan",
+          "skill(fourthos-weekly): version-control the sponsor-weekly skill",
+          "feat(scheduled-tasks): daily 8pm Notion dashboard refresh",
+          "fix(scheduled-tasks): restore FourthOS-Weekly pipeline to this branch",
+          "fix(scheduled-tasks): repair AIWeeklyReport PATH + add Blocklist logging",
+          "fix(scheduled-tasks): stop two recurring weekly-job failures",
+          "feat(self-improvement): daily research loop + ratify SI-01 from first proposal",
+          "chore: sync ROADMAP completed-log + viz lastCommit stamp",
+          "feat(memory-awareness): FH-02 recall_ready telemetry + record data-gated re-baseline",
+          "chore(viz): commit auto-generated system-visualization output",
+          "fix(hooks,health): FH-01 warm tldr daemon at session start + health-check tolerates on-demand absence",
+          "docs(handoff): FINAL-session materials cleanup + archive superseded handoffs",
+          "docs(handoff): add canonical FINAL SESSION directive to NEXT-SESSION-PLAN (cycle wrap-up)",
+          "docs(foundation): record Session 2 foundation-hardening (A1-A4/B/A6/D/SG-01) + follow-ups",
+          "perf(tldr-context-inject): git-freshness cache + narrow to code agents (D)",
+          "fix(memory-awareness): restore host-memory-pressure degradation gate, integrated with ST-05 probeDaemon (BLOCKER-2)",
+          "fix(daemon): multi-week resilience hardening (A1-A4) \u2014 recall-loop watchdog, explicit idle-conn lifetime, stale-conn retry recycle, cheap redundant-spawn exit"
+        ],
+        "files_changed": 205,
+        "insertions": 25959,
+        "deletions": 1750,
+        "contributors": [
+          "Rev4nchist"
+        ],
+        "contributor_count": 1
+      },
+      "spark-platform": {
+        "name": "spark-platform",
+        "label": "Spark Platform",
+        "exists": true,
+        "branch": "feat/cross-department-comms",
+        "last_commit_date": "2026-03-09 20:43:50 -0500",
+        "week_commits": 0,
+        "total_commits": 59,
+        "top_messages": [],
+        "files_changed": 0,
+        "insertions": 0,
+        "deletions": 0,
+        "contributors": [],
+        "contributor_count": 0
+      },
+      "fourth-marketing-brain": {
+        "name": "fourth-marketing-brain",
+        "label": "Fourth Marketing Brain",
+        "exists": true,
+        "branch": "master",
+        "last_commit_date": "2026-04-15 20:44:43 -0500",
+        "week_commits": 0,
+        "total_commits": 21,
+        "top_messages": [],
+        "files_changed": 0,
+        "insertions": 0,
+        "deletions": 0,
+        "contributors": [],
+        "contributor_count": 0
+      },
+      "ai-enablement-status": {
+        "name": "ai-enablement-status",
+        "label": "Status Reports",
+        "exists": true,
+        "branch": "master",
+        "last_commit_date": "2026-02-11 16:26:48 -0600",
+        "week_commits": 0,
+        "total_commits": 4,
+        "top_messages": [],
+        "files_changed": 0,
+        "insertions": 0,
+        "deletions": 0,
+        "contributors": [],
+        "contributor_count": 0
+      }
+    },
+    "totals": {
+      "week_commits": 56,
+      "total_commits": 704,
+      "files_changed": 205,
+      "all_contributors": [
+        "Rev4nchist"
+      ],
+      "all_messages": [
+        "fix(dashboard-sync): align refresh prompt with the new Reporting Hub structure",
+        "chore: sync ROADMAP + viz lastCommit stamp",
+        "docs(fourthos-weekly): v4 build handoff + branch note",
+        "docs(fourthos-weekly): v4 report-enhancements implementation plan",
+        "skill(fourthos-weekly): version-control the sponsor-weekly skill",
+        "feat(scheduled-tasks): daily 8pm Notion dashboard refresh",
+        "fix(scheduled-tasks): restore FourthOS-Weekly pipeline to this branch",
+        "fix(scheduled-tasks): repair AIWeeklyReport PATH + add Blocklist logging",
+        "fix(scheduled-tasks): stop two recurring weekly-job failures",
+        "feat(self-improvement): daily research loop + ratify SI-01 from first proposal",
+        "chore: sync ROADMAP completed-log + viz lastCommit stamp",
+        "feat(memory-awareness): FH-02 recall_ready telemetry + record data-gated re-baseline",
+        "chore(viz): commit auto-generated system-visualization output",
+        "fix(hooks,health): FH-01 warm tldr daemon at session start + health-check tolerates on-demand absence",
+        "docs(handoff): FINAL-session materials cleanup + archive superseded handoffs",
+        "docs(handoff): add canonical FINAL SESSION directive to NEXT-SESSION-PLAN (cycle wrap-up)",
+        "docs(foundation): record Session 2 foundation-hardening (A1-A4/B/A6/D/SG-01) + follow-ups",
+        "perf(tldr-context-inject): git-freshness cache + narrow to code agents (D)",
+        "fix(memory-awareness): restore host-memory-pressure degradation gate, integrated with ST-05 probeDaemon (BLOCKER-2)",
+        "fix(daemon): multi-week resilience hardening (A1-A4) \u2014 recall-loop watchdog, explicit idle-conn lifetime, stale-conn retry recycle, cheap redundant-spawn exit"
+      ],
+      "contributor_count": 1
+    },
+    "collected_at": "2026-07-01T08:49:08.427099",
+    "since_days": 7
+  },
+  "system": {
+    "hooks": 112,
+    "skills": 142,
+    "agents": 16,
+    "connectors_live": 5,
+    "connectors_coming": 2,
+    "connector_names_live": [
+      "SharePoint",
+      "Teams",
+      "Outlook",
+      "OneDrive",
+      "Asana"
+    ],
+    "connector_names_coming": [
+      "Salesforce",
+      "PowerBI"
+    ],
+    "connectors_total": 7,
+    "collected_at": "2026-07-01T08:49:08.433831"
+  },
+  "memory": {
+    "available": true,
+    "total_learnings": 603,
+    "recent_count": 13,
+    "recent_learnings": [
+      {
+        "content": "Planning: Plan \u2014 Close out `snapshot/ccv3-system-update` + stage the fourthos v4 build\n\nDecisions:\n- Decisions (confirmed): stage v4 \u2192 build later; PR to main now but **keep* the branch.\n- -title \"feat(scheduled-tasks): self-improvement loop + 6 job fixes + Notion dashboard; stage fourthos v4\" \\\n- -body \"<summary of the ~8 commits since PR #11: SI-01 loop, judge/health/AIWeeklyReport/blocklist/fourthos-restore fixes, dashboard-sync, + the 3 fourthos v4 staging commits>\"\n- Merge the PR: into `fork/main` (`gh pr merge <n> --merge`, or the GitHub UI). Confirm the merge.\n- Keep the branch: \u2014 do NOT delete `snapshot/ccv3-system-update` (per decision). After merge it can",
+        "learning_type": "session_learning",
+        "context": "planning: Plan \u2014 Close out `snapshot/ccv3-system-update` + stage the fourthos v4 build",
+        "confidence": "high",
+        "tags": [
+          "planning",
+          "decisions",
+          "architecture"
+        ],
+        "created_at": "2026-07-01T02:05:22.327953+00:00"
+      },
+      {
+        "content": "Planning: SF-MCP \u2014 Acceptance-test report + connector-hardening roadmap\n\nDecisions:\n- Every finding was verified first-hand against code (direct reads of `formatting.py`, `feedback_tools.py`, `soql_validation.py`, `safety.py`, `tool_allowlist.py`, `discover.py`) **and corroborated by a 10-agent adversarial verification workflow* (`wf_c144f03b-3dc`, map\u2192verify per cluster). Confidence markers below: \u2713 verified, ? inferred.\n- Create `docs/acceptance-test-report.md`: = the Donna child-page report, **verbatim* (no truncation/summarising; content captured this session). `docs/` exists; new file, overwrite-safe. **Do NOT edit the report* \u2014 it is the tester's record; this roadmap is the separate analysis layer that corrects/contextualizes it.\n- Commit: message exactly `docs: add MCP acceptance test report (2026-06-29)`, staging **only* that path (`git add docs/acceptance-test-report.md` \u2014 never `git add .`; the `feat/alpha-feedback-kit` working tree carries many unrelated uncommitted artifacts).\n- Branch:: create a clean **git worktree off `origin/main`* (e.g. `../sf-mcp-docs-wt`), write + commit + push the single file, open a trivial doc-only PR to `main`. The worktree avoids disturbing the dirty branch and puts the doc on the main line (so hardening branches inherit it). *(Commits/checkouts need Dave's confirmation per destructive-commands rule \u2014 exact commands surfaced at execution.)*\n- Bridge writeback (required before closing):: create `[Code\u2192Donna] SF MCP: Acceptance Test Report Committed \u2014 2026-06-29` child page under HQ (`30e76fd7-ac82-81e9-9fe1-c0b257088b34`) with commit hash + confirmed path + \"no other files changed\" + a one-line pointer to this roadmap; insert one-liner into the **Code\u2192Donna* queue (`insert_content_after` the blockquote); add an Implementation Log entry (top); flip the Donna\u2192Code handoff one-liner \ud83d\udfe1\u2192\u2705 (HQ + child Status field).",
+        "learning_type": "session_learning",
+        "context": "planning: SF-MCP \u2014 Acceptance-test report + connector-hardening roadmap",
+        "confidence": "high",
+        "tags": [
+          "planning",
+          "decisions",
+          "architecture"
+        ],
+        "created_at": "2026-06-29T15:38:33.466584+00:00"
+      },
+      {
+        "content": "Mid-session checkpoint at 350 tool uses. Recent activity: Bash(15), Read(10), Edit(7), mcp__playwright__browser_take_screenshot(5), mcp__playwright__browser_evaluate(5). Session b478f78e-97ab-489f-a1d0-a57103a8cad9.",
+        "learning_type": "session_learning",
+        "context": "periodic mid-session extraction",
+        "confidence": "low",
+        "tags": [
+          "periodic",
+          "extraction",
+          "scope:project"
+        ],
+        "created_at": "2026-06-27T15:00:48.679433+00:00"
+      },
+      {
+        "content": "Planning: Plan \u2014 Reporting System: Document It + Make It Flow Better\n\nDecisions:\n- Bridge **auto-mirror* (notion-bridge SKILL step 3b): every Code\u2192Eve/Donna writeback creates a Tracker row \u2014 **MANUAL/model-followed, NOT hook-enforced**.\n- Bridge HQ handoff queues (Eve/Donna/Code) + Implementation Log \u2014 **MANUAL**.\n- Notion data layer: *Weekly Work Tracker* DB `3d7f2afd` (spine: Source/Type/Impact/Dashboard Section/Project\u2192FourthOS Projects) \u00b7 FourthOS **Cockpit* `34076fd7` \u00b7 **Leadership Portfolio Dashboard* `e29dd1c4` (5 DBs) \u00b7 Update Package prompt `82c202b8` \u00b7 Connector master plan `38776fd7` \u00b7 Bridge HQ `30e76fd7`.\n- `ai-reporting` MCP appears unregistered: in `~/.claude/settings.json` \u2014 the team-dashboard pipeline may be broken right now (verify first).\n- Decisions locked: doc home = a new **ai-enablement-decks deck* (+ committed `.excalidraw`); architecture =",
+        "learning_type": "session_learning",
+        "context": "planning: Plan \u2014 Reporting System: Document It + Make It Flow Better",
+        "confidence": "high",
+        "tags": [
+          "planning",
+          "decisions",
+          "architecture"
+        ],
+        "created_at": "2026-06-27T14:29:56.961171+00:00"
+      },
+      {
+        "content": "Planning: Integrate Claude Managed Agents (CMA) into the CC Harness\n\nDecisions:\n- Mandatory frontmatter fix (verified against `quick_validate.py:26-28`). The allowed top-level keys\n- Register + vet + sync. Add `launch-your-agent` and `wrap-up` entries inside the top-level `\"skills\": {}`\n- Registry update: \u2014 in `cli-integration-strategy.md`: add `cma`/`ant` to the Pattern-1 inventory row,\n- Agent config (build-sheet): *\n- connections (vaults):: (1) **GitHub* read-only fine-grained token scoped to the target repos;",
+        "learning_type": "session_learning",
+        "context": "planning: Integrate Claude Managed Agents (CMA) into the CC Harness",
+        "confidence": "high",
+        "tags": [
+          "planning",
+          "decisions",
+          "architecture"
+        ],
+        "created_at": "2026-06-27T14:09:44.454602+00:00"
+      },
+      {
+        "content": "FourthOS sponsor site \u2014 accuracy/honesty conventions for the VP/CTO audience (v3, 2026-06-26): (1) The Salesforce connector is 'LIVE in ALPHA' (released for alpha testing on production Azure infra, ~10 testers) \u2014 NEVER 'live in production'/GA. Dave corrected this explicitly. (2) Use a 3-state badge system everywhere: LIVE (running now) / BUILT IN-REPO (code-complete, not yet hosted/wired) / DESIGNED\u00b7NEXT (designed, not built). Only the connector + audit collection are LIVE. The 3-tier reporting ENGINE + default-deny serializer and the feedback CAPTURE/STORE/PULL are BUILT IN-REPO; the reporting hosted distribution (SWA+Entra+Slack/email) and the feedback AUTO-ALERT (Slack/email on new feedback) are DESIGNED\u00b7NEXT \u2014 zero code, must not be shown as live. (3) NEVER publish real person names on the public GitHub Pages site \u2014 the sample report data contains real Fourth names (Nipul Chokshi, Christian B., Carly H. etc.); use HMAC pseudonyms (U-xxxx) and counts only. Published HTML is grep-audited for all three. Reusable showcase patterns proven in ai-enablement-decks/fourthos/2026-06-24/deep-dive.html: interactive 'same data, three governed views' Leadership/IT/Governance toggle (per-user rows literally vanish at Leadership, demonstrating the S5 default-deny serializer) + the inheritance diagram ('build the mold once; every connector inherits identity\u00b7audit\u00b7reporting\u00b7feedback'). Captured in generate-prompt.md + SKILL.md honesty section.",
+        "learning_type": "session_learning",
+        "context": "Dave's annotated review corrected 'live in production' -> 'released for alpha testing'. Connector showcase rework of the first weekly deck.",
+        "confidence": "high",
+        "tags": [
+          "scope:project",
+          "fourthos",
+          "ai-enablement-decks",
+          "honesty",
+          "alpha",
+          "salesforce-connector",
+          "reporting",
+          "feedback"
+        ],
+        "created_at": "2026-06-26T12:48:05.172947+00:00"
+      },
+      {
+        "content": "Planning: Plan \u2014 Sponsor Site v3: Showcase the Salesforce Connector (Feedback + Reporting + Ecosystem Seeding)\n\nDecisions:\n- Decisions locked (this round): *\n- \"We didn't build a Salesforce integration \u2014 we built the **mold**. A governed doorway between AI and\n- Reframe Action 01: (reporting hosting) from infrastructure to sponsor unlock: \"ships the built\n- Add Feedback to the narrative (currently absent everywhere).\n- Reworked architecture diagram (INNOVATIVE \u2014 inline SVG):: keep agent\u2192proxy\u2192Salesforce, and ADD",
+        "learning_type": "session_learning",
+        "context": "planning: Plan \u2014 Sponsor Site v3: Showcase the Salesforce Connector (Feedback + Reporting + Ecosystem Seeding)",
+        "confidence": "high",
+        "tags": [
+          "planning",
+          "decisions",
+          "architecture"
+        ],
+        "created_at": "2026-06-26T11:05:51.970581+00:00"
+      },
+      {
+        "content": "Planning: Plan \u2014 Reporting readiness EVAL + decouple-and-ship feedback-only to main\n\nDecisions:\n- 3 real test bugs (future-dated TTL bypass `names.py`; tautological assert `test_report_governance.py`;\n- Decouple (the only code change): add the `_USE_CASE_RULES` constant to\n- No feedback-code change needed; the existing import resolves. `DATA_TOOLS` already on main.\n- Verify (in the worktree, isolated venv already synced): *\n- `uv run pytest tests/test_feedback_state.py -q` \u2192 the 3 fingerprint tests pass.",
+        "learning_type": "session_learning",
+        "context": "planning: Plan \u2014 Reporting readiness EVAL + decouple-and-ship feedback-only to main",
+        "confidence": "high",
+        "tags": [
+          "planning",
+          "decisions",
+          "architecture"
+        ],
+        "created_at": "2026-06-26T03:03:51.267975+00:00"
+      },
+      {
+        "content": "Planning: Plan \u2014 FourthOS Sponsor Site: Design + Navigation Overhaul (v2)\n\nDecisions:\n- Decisions locked (this round): *\n- Glance redesign:: Sponsor-lens, action-first \u2014 **Needs you* (decisions) / **What moved**\n- Navigation: *full nav system* on every page \u2014 logo + breadcrumb (`Sponsor Updates \u203a 24 Jun\n- Recently-shipped chips: the \"what changed\" signal sponsors actually want, each deep-linking to\n- Deep-link anchors: stable ids in Briefing (`#sponsor-actions`, `#outcomes`, `#risk-radar`) and",
+        "learning_type": "session_learning",
+        "context": "planning: Plan \u2014 FourthOS Sponsor Site: Design + Navigation Overhaul (v2)",
+        "confidence": "high",
+        "tags": [
+          "planning",
+          "decisions",
+          "architecture"
+        ],
+        "created_at": "2026-06-25T19:34:16.608837+00:00"
+      },
+      {
+        "content": "Planning: Plan \u2014 Connector-native feedback (Cosmos) + reusable report-access gate\n\nDecisions:\n- Intake CodeRabbit's PR #15 re-review: and address any final comments.\n- Why now / intended outcome: the strategy's durable asset is the **per-user\n- reuse the transform, change the trigger \u2014 we do NOT extract a shared package yet\n- \"Review skipped\" \u2014 it did NOT re-review the fix push or the `read_feedback` commit\n- Action: post `@coderabbitai review` on PR #15 to confirm the 19 are resolved and get",
+        "learning_type": "session_learning",
+        "context": "planning: Plan \u2014 Connector-native feedback (Cosmos) + reusable report-access gate",
+        "confidence": "high",
+        "tags": [
+          "planning",
+          "decisions",
+          "architecture"
+        ],
+        "created_at": "2026-06-25T13:52:37.989302+00:00"
+      },
+      {
+        "content": "FourthOS weekly publish model CORRECTION (supersedes earlier 'overwrite + archive' note): each promoted week is its OWN dated deck at ai-enablement-decks/fourthos/<YYYY-MM-DD>/ surfaced as a card in a dedicated 'sponsor-updates' section that is the FIRST section on the hub (decks.json sections[0], above mcp-capabilities/portfolio/etc). The hub index.html renderer was extended: sections with chronological:true sort cards newest-first; sections with collapsible:true get a JS post-pass that measures card offsetTop, keeps only the first visual row, collapses the rest behind a 'Show N earlier updates' toggle, and re-measures on resize. Only the newest sponsor card is featured. promote.mjs (scripts/fourthos-weekly/) reads fourthos/preview/card.json {tag,title,description,meta,date}, copies preview/ -> fourthos/<date>/, upserts the dated card, un-features older ones, validates+commits+pushes. Generate still stages to preview/ (unlisted); promote publishes the dated card. Verified live: section first, collapse fires (8 cards -> 1 row + toggle), no JS errors.",
+        "learning_type": "session_learning",
+        "context": "User-directed revision after first build: sponsor updates need their own top hub section, chronological, one row visible with collapse. Pairing skill = .claude/skills/fourthos-weekly/SKILL.md (interactive generate/review/promote companion to CCv3-FourthOS-Weekly task).",
+        "confidence": "high",
+        "tags": [
+          "scope:project",
+          "fourthos",
+          "ai-enablement-decks",
+          "github-pages",
+          "decks-json",
+          "sponsor-update"
+        ],
+        "created_at": "2026-06-25T03:49:29.211535+00:00"
+      },
+      {
+        "content": "FourthOS Weekly Sponsor Update pipeline (for Carly/VP + Christian/CTO). Scheduled task CCv3-FourthOS-Weekly (Fri 07:00) runs scripts/fourthos-weekly/scheduled-fourthos-weekly.bat -> 'type generate-prompt.md | claude -p' (mirrors the CCv3-Health-Check Notion pattern). It reads the FourthOS Notion cockpit (34076fd7ac82805dac89dd26476e2c47) + Leadership Dashboard (e29dd1c4...) + Connector master plan (38776fd7...), refreshes a Tier-3 Notion 'Update Package' child page, renders 3 self-contained brand HTML tiers (index/briefing/deep-dive) into the PUBLIC ai-enablement-decks repo under fourthos/preview/, and Slack-DMs + Notion-comments Dave. DRAFT-AND-NOTIFY gate: the preview folder is committed live-but-UNLISTED (NOT added to decks.json), so sponsors don't see it until Dave runs 'node scripts/fourthos-weekly/promote.mjs' which moves preview/ -> fourthos/ (stable bookmarked URL), snapshots to archive/YYYY-MM-DD/, and adds the decks.json card. Orchestration brain: .claude/skills/fourthos-weekly/SKILL.md. Content bar: status-grade only in published HTML (GitHub Pages is public); sensitive detail stays in the Notion Tier-3 page. First package built+pushed 2026-06-24.",
+        "learning_type": "session_learning",
+        "context": "Operationalizes the existing Notion 'Update Package Generator' saved prompt into a scheduled multi-tier pipeline. Reuses fourth-presentation-suite html-engine + fourth-brand-guidelines (Fourth Midnight dark theme). Excalidraw diagram inlined as SVG (canvas server not headless-able).",
+        "confidence": "high",
+        "tags": [
+          "scope:project",
+          "fourthos",
+          "weekly-report",
+          "sponsor-update",
+          "scheduled-task",
+          "notion",
+          "github-pages",
+          "ai-enablement-decks"
+        ],
+        "created_at": "2026-06-25T03:26:57.325155+00:00"
+      },
+      {
+        "content": "Planning: Plan \u2014 FourthOS Weekly Sponsor Update Pipeline (Carly & Christian)\n\nDecisions:\n- A **Leadership Portfolio Dashboard* (5 live DBs: Sponsor Action Required, Portfolio Live Look,\n- A designed **\"Update Package Generator \u2014 Saved Prompt\"* (Notion page `82c202b8\u2026`) that already\n- A defined **Sponsor Update format* and Daily/Weekly/Monthly operating rhythm.\n- Locked decisions (from user): *\n- Execution:: Draft & notify \u2014 task auto-generates everything to a staged/unlisted location,",
+        "learning_type": "session_learning",
+        "context": "planning: Plan \u2014 FourthOS Weekly Sponsor Update Pipeline (Carly & Christian)",
+        "confidence": "high",
+        "tags": [
+          "planning",
+          "decisions",
+          "architecture"
+        ],
+        "created_at": "2026-06-25T02:59:22.546744+00:00"
+      }
+    ],
+    "achievements": [],
+    "decisions": [],
+    "error_fixes": [],
+    "collected_at": "2026-07-01T08:49:08.631524"
+  },
+  "collected_at": "2026-07-01T08:49:08.631687",
+  "week": 27,
+  "year": 2026
+}

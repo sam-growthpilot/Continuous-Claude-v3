@@ -205,8 +205,10 @@ opc/.python-version
 # Large or one-off artifacts (kept on disk, not in git)
 fourth-transformation/
 test-screenshots/
-ai-report-card/
 presentations/
+
+# ai-report-card is version-controlled (pipeline + templates). Its build artifacts,
+# caches, logs, and snapshots are ignored via ai-report-card/.gitignore.
 
 # Orphan screenshot artifacts (one-off dashboard/landing-page review captures)
 review-*.png

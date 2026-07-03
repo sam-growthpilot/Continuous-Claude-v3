@@ -6,6 +6,8 @@
 - Started: 2026-07-01
 
 ## Completed
+- [x] feat(fourthos-weekly): Thu-cadence reschedule + v3.1 render rules (2026-07-02) `6472a4d`
+- [x] feat(ai-report-card): version-control the VP weekly-report pipeline + Week 27 narratives (2026-07-01) `5ce12d6`
 - [x] feat(self-improvement): daily research loop + ratify SI-01 from first proposal (2026-06-30) `ccbc67e`
 - [x] feat(memory-awareness): FH-02 recall_ready telemetry + record data-gated re-baseline (2026-06-30) `0368785`
 - [x] fix(hooks,health): FH-01 warm tldr daemon at session start + health-check tolerates on-demand absence (2026-06-30) `80b1b0f`

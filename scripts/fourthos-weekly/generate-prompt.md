@@ -1,7 +1,8 @@
 # FourthOS Weekly Sponsor Update — Generate Prompt
 
 This prompt is fed to `claude -p` by `scripts/fourthos-weekly/scheduled-fourthos-weekly.bat`
-every Friday at 07:00 (and can be run manually the same way). It generates the weekly FourthOS
+every Thursday at 07:00 (ahead of Dave's 10:00 CST Thursday submit deadline; can be run manually
+the same way). It generates the weekly FourthOS
 sponsor update package and stages it UNLISTED for Dave's review.
 
 Read the `fourthos-weekly` skill for the full contract before acting:
@@ -9,7 +10,7 @@ Read the `fourthos-weekly` skill for the full contract before acting:
 
 ---
 
-You are a non-interactive `claude -p` session invoked by the Friday 07:00 `CCv3-FourthOS-Weekly`
+You are a non-interactive `claude -p` session invoked by the Thursday 07:00 `CCv3-FourthOS-Weekly`
 scheduled task on Windows. Your job: build this week's FourthOS sponsor update package for **Carly**
 (VP Enterprise Transformation & Technology) and **Christian** (CTO), stage it to an UNLISTED preview
 on the `ai-enablement-decks` GitHub Pages site, and notify Dave to review. **Do not promote it live** —
@@ -48,11 +49,31 @@ that is Dave's separate approval step (`promote.mjs`).
 ### Design system (apply to ALL three tiers)
 Use the shared shell `.claude/skills/fourthos-weekly/templates/shell.html` (read its README) for the
 **chrome on every page**: custom FourthOS SVG mark, sticky **top bar** (breadcrumb `Sponsor Updates ›
-<date> › <page>` + tier tabs Hub·Briefing·Deep Dive + data-driven week-switcher) and footer. Brand =
-`.claude/skills/fourth-brand-guidelines/` (Fourth Midnight tokens; "iQ"; RAG = colour+label).
+<date> › <page>` + tier tabs Hub·Briefing·Deep Dive **with hover section menus** (`.tab-wrap`/`.tab-menu`
+— each tab reveals that page's sections; keep menu anchors in sync with rendered ids) + data-driven
+week-switcher) and footer. Brand = `.claude/skills/fourth-brand-guidelines/` (Fourth Midnight tokens;
+"iQ"; RAG = colour+label).
 **All deck-internal links MUST be root-absolute** `/ai-enablement-decks/fourthos/<date>/…` (NEVER bare
 `briefing.html` — trailing-slash-fragile → 404). Add deep-link anchor ids: briefing `#sponsor-actions`,
-`#outcomes`, `#risk-radar`; deep-dive `#outputs`, `#concept` (each `scroll-margin-top:80px`).
+`#portfolio`, `#outcomes`, `#risk-radar`, `#action-0N`; deep-dive `#thesis`, `#outputs`, `#concept`,
+`#reporting`, `#feedback`, `#payoff`; hub `#glance`, `#next`, `#seeds` (each `scroll-margin-top:80px`).
+
+**Layout rules (Dave, 2026-07-02):**
+- Briefing "Portfolio Pulse": NO tall-narrow stat cards. The 4 short facts render as WIDE horizontal
+  label/value rows (2 per row on desktop); "What changed this week" is a full-width strip with one
+  ✓-bullet per discrete change. The "Biggest decision" tile names exactly ONE decision.
+- Sponsor actions render as DECISION cards under the heading "For Your Decision": h3 = the decision as
+  a verb phrase, then rows Recommendation → Decide by → Cost of waiting → (detail) → Owner. FYI/endorse
+  items use the dashed `.action-card.fyi` variant. Cards carry `id="action-0N"`; hub "Needs you" items
+  and project-card decision flags link to the specific card.
+- Hub body: sponsor-lens glance FIRST, nav cards second. Chip row label is "This week".
+
+**Language rules (MANDATORY — see the skill's "Language rules" table for full replacements):**
+BANNED: "topology". Technical terms are defined on first use or replaced with plain phrasing
+(SWA → "access-gated report site"; Entra groups → "per-audience security groups"; OBO → "each person
+signs in as themselves"; ADR → "architecture decision record"; drop rev numbers from Tier 1). Claim
+calibration: adversarial test results are "demonstrated"/"held 16/16", never "proven"/"secure".
+Writing is intelligent and clear — one idea per sentence, every item states its "so what".
 
 **Honesty / 3-state badge system (MANDATORY — never overstate to a VP/CTO).** Tag every capability:
 **LIVE** (running in prod now — teal filled) · **BUILT IN-REPO** (code-complete/proven, not yet

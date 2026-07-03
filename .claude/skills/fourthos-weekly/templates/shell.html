@@ -100,6 +100,15 @@
       pointer-events:none; color:var(--accent); font-size:0.7rem;
     }
 
+    /* ===== hover section nav (tab ToC) — each tab reveals that page's sections on hover ===== */
+    .tab-wrap { position:relative; display:inline-flex; }
+    .tab-menu { position:absolute; top:100%; left:50%; transform:translateX(-50%); min-width:225px; display:none; flex-direction:column; gap:0.1rem; z-index:60; background:rgba(5,21,38,0.97); backdrop-filter:blur(14px); border:1px solid var(--border-accent); border-radius:12px; padding:0.55rem; box-shadow:0 18px 40px rgba(0,0,0,0.45); }
+    .tab-wrap:hover .tab-menu, .tab-wrap:focus-within .tab-menu { display:flex; }
+    .tab-menu .mh { font-size:0.62rem; font-weight:700; letter-spacing:0.14em; text-transform:uppercase; color:var(--text-muted); padding:0.3rem 0.7rem 0.2rem; }
+    .tab-menu a { display:block; font-size:0.82rem; font-weight:500; color:var(--text-secondary); padding:0.4rem 0.7rem; border-radius:8px; white-space:nowrap; transition:color .15s, background .15s; }
+    .tab-menu a:hover { color:var(--text-primary); background:rgba(111,180,227,0.10); }
+    @media (max-width:720px) { .tab-menu { display:none !important; } }
+
     /* ===================== FOOTER (shared) ===================== */
     footer {
       border-top:1px solid var(--border); padding:2.25rem 0 2.75rem; background:var(--bg-midnight); margin-top:3rem;
@@ -158,10 +167,41 @@
       </nav>
 
       <div class="topbar-right">
+        <!-- Tabs carry hover section menus (quick nav / ToC). Keep menu anchors in sync with the
+             section ids actually rendered that week; every target id needs scroll-margin-top:80px. -->
         <nav class="tabs" aria-label="Sections">
-          <a class="tab-hub" href="{{DECK_BASE}}/">Hub</a>
-          <a class="tab-briefing" href="{{DECK_BASE}}/briefing.html">The Briefing</a>
-          <a class="tab-deepdive" href="{{DECK_BASE}}/deep-dive.html">Deep Dive</a>
+          <div class="tab-wrap">
+            <a class="tab-hub" href="{{DECK_BASE}}/">Hub</a>
+            <div class="tab-menu" aria-label="Hub sections">
+              <span class="mh">Hub</span>
+              <a href="{{DECK_BASE}}/#glance">This week, for you</a>
+              <a href="{{DECK_BASE}}/#next">Where to next</a>
+              <a href="{{DECK_BASE}}/#seeds">What this seeds</a>
+            </div>
+          </div>
+          <div class="tab-wrap">
+            <a class="tab-briefing" href="{{DECK_BASE}}/briefing.html">The Briefing</a>
+            <div class="tab-menu" aria-label="Briefing sections">
+              <span class="mh">The Briefing</span>
+              <a href="{{DECK_BASE}}/briefing.html#sponsor-actions">For your decision</a>
+              <a href="{{DECK_BASE}}/briefing.html#portfolio">Active portfolio</a>
+              <a href="{{DECK_BASE}}/briefing.html#risk-radar">Risk radar</a>
+              <a href="{{DECK_BASE}}/briefing.html#outcomes">Outcomes &amp; evidence</a>
+            </div>
+          </div>
+          <div class="tab-wrap">
+            <a class="tab-deepdive" href="{{DECK_BASE}}/deep-dive.html">Deep Dive</a>
+            <div class="tab-menu" aria-label="Deep Dive sections">
+              <span class="mh">Deep Dive</span>
+              <a href="{{DECK_BASE}}/deep-dive.html#thesis">The thesis</a>
+              <a href="{{DECK_BASE}}/deep-dive.html#architecture">Architecture</a>
+              <a href="{{DECK_BASE}}/deep-dive.html#concept">Concept spotlight</a>
+              <a href="{{DECK_BASE}}/deep-dive.html#reporting">Governed reporting</a>
+              <a href="{{DECK_BASE}}/deep-dive.html#feedback">Feedback loop</a>
+              <a href="{{DECK_BASE}}/deep-dive.html#outputs">Workstreams</a>
+              <a href="{{DECK_BASE}}/deep-dive.html#payoff">The payoff</a>
+            </div>
+          </div>
         </nav>
         <label class="wkswitch">
           <span class="sr-only" style="position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0);">Switch week</span>
