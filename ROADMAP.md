@@ -6,6 +6,7 @@
 - Started: 2026-07-01
 
 ## Completed
+- [x] docs(self-improvement): 07-01 hooks + 07-02 agents proposals + digest queue (2026-07-03) `7c4c79c`
 - [x] feat(fourthos-weekly): Thu-cadence reschedule + v3.1 render rules (2026-07-02) `6472a4d`
 - [x] feat(ai-report-card): version-control the VP weekly-report pipeline + Week 27 narratives (2026-07-01) `5ce12d6`
 - [x] feat(self-improvement): daily research loop + ratify SI-01 from first proposal (2026-06-30) `ccbc67e`
