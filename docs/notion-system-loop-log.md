@@ -46,3 +46,28 @@ Build via sequenced workflow (history lib → parallel assembler/cockpit/refresh
 **Iteration 2 RESULT:** GREEN + deployed live. Shared lib/history.mjs + lib/attention.mjs (single attention source). Portfolio COCKPIT (cockpit.mjs) live at the top of the Hub under "🎯 Portfolio Cockpit" — health counts + prioritized "needs your attention" list + sweep-health line. Richer cards: real stats row, Review Date tile, staleness Watch, Decision/Finding text, inline-SVG health sparkline + trend. Hub gallery now attention-ordered with an Attention column (width 5). Health history seeded (logs/health-history.jsonl). Tests: assemble 21 / cockpit 10 / sweep 11 / state 9 / history 8 — all green. Live-verified: real sweep published+verified the card, appended 6 history points, published the cockpit embed (at hub top), reordered the hub. Fixed a real bug found during deploy: verifyCardEmbed was hardcoded to the card heading so the cockpit read-back false-negatived — parameterized the section heading; confirmed verifyCardEmbed(hub, cockpit-heading)=true on the live page.
 
 Note: the interactive test run was killed at ~7min by MY Bash timeout (3 sequential claude -p calls); the scheduled task's 30min limit covers it. Iteration-3 candidate: make the hub-table refresh deterministic ntn (no claude -p) to drop 1 of the 3 publish calls.
+
+**Iteration 3 (hardening, commit 0cfa52f):** cockpit read-back section fix (verifyCardEmbed now takes a heading; landed with iter2) + global sweep time budget (cockpit+hub+telemetry always complete; deferred cards self-heal).
+
+## CONVERGENCE (2026-07-04)
+
+The system is RELIABLE and USEFUL, with production-path evidence.
+
+**Reliability — proven via the real CCv3-Project-Cards scheduled task (LastTaskResult=0, clean telemetry cockpitPublished:true/hubRefreshed:true, cockpit read-back verified=true):**
+- Self-heals: a failed/unverified publish re-flags next sweep (publishedHash ≠ contentHash), never strands stale content.
+- Read-back verified: card AND cockpit publishes confirmed by reading the embed back, not by trusting an LLM stdout marker.
+- Telemetry on every run incl. crashes (try/catch/finally always emits a structured sweep.jsonl row with phase+error).
+- Corruption-tolerant state (quarantine + fresh start), transient ntn retry, global time budget.
+- 59 tests green (assemble 21 / cockpit 10 / sweep 11 / state 9 / history 8) + dashboard self-test 11.
+
+**Useful:**
+- Portfolio Cockpit at the top of the Reporting Hub answers "what needs my attention?" (health counts + prioritized attention list + sweep-health line).
+- Richer cards: real stats, review-date countdown, staleness, decision text, health sparkline + trend.
+- Attention-ordered hub gallery with an Attention column. Health history accumulating for trends.
+
+**Deliberately deferred (do with Dave present — risk/ROI):**
+1. Deterministic ntn hub-TABLE refresh (drop 1 of 3 claude -p; block-surgery on the shared hub — pattern proven in DashboardSync.psm1).
+2. Cockpit hash-skip (it republishes every sweep; add a content-hash no-op like cards).
+3. Bidirectional "decisions awaiting Dave" push; state RMW lock for concurrent manual+sweep.
+
+Loop stopped at convergence: mandate (reliable + useful) met with live evidence; remaining items are incremental or carry shared-page block-surgery risk better done attended.
