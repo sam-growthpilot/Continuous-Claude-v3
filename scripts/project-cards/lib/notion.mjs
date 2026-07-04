@@ -103,7 +103,14 @@ function apiPatch(path, body) {
 
 // DELETE a raw API path (block archive). Response body is unused.
 function apiDelete(path) {
-  runNtn(['api', path, '-X', 'DELETE']);
+  try {
+    runNtn(['api', path, '-X', 'DELETE']);
+  } catch (e) {
+    // Idempotent delete: a timed-out DELETE may have landed server-side, so the
+    // retry sees "already archived" — that is success, not failure.
+    if (/archived/i.test(String(e.message))) return;
+    throw e;
+  }
 }
 
 // The card heading text as stored in a Notion heading block (no Markdown '## ').

@@ -546,7 +546,10 @@ async function publishMobileCockpit({ liveRoster, seriesBySlug, lastSweep, asOfH
   }
   const html = buildMobileBriefHtml({ queue, roster, asOf: startedIso, lastSweep });
   const bytes = Buffer.byteLength(html, 'utf8');
-  const contentHash = createHash('sha256').update(html, 'utf8').digest('hex');
+  // Hash the SEMANTIC payload, not the HTML: the HTML embeds the run timestamp,
+  // which would defeat the hash-gate and force an MCP publish every run.
+  const contentHash = createHash('sha256')
+    .update(JSON.stringify({ queue, roster }), 'utf8').digest('hex');
   mob.contentHash = contentHash;
 
   if (dryRun) {
