@@ -73,3 +73,10 @@ Absolute exe path, closed stdin, 30 s timeout, `windowsHide`, fail-loud,
 
 After reportable FourthOS work on a project, run
 `/project-card refresh <that project>` so its living card stays current.
+
+## Automated daily sweep
+
+`node scripts/project-cards/sweep.mjs [--dry-run]` runs `refresh.mjs --all`, then
+publishes each changed/unpublished card and refreshes the Reporting Hub gallery
+via headless `claude -p` (connector needs `ANTHROPIC_API_KEY` unset); `--dry-run`
+previews without spawning claude. See `scripts/project-cards/README.md`.

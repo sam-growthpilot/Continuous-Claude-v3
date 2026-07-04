@@ -67,12 +67,45 @@ needsPublish, cardSectionHeading`. `changed:false` means the canonical content
 (hash **excludes** the volatile `AS_OF` stamp) is unchanged; `needsPublish:true`
 still flags a card that has not yet been embedded on its page.
 
-## Daily sweep & /project-card
+## Daily sweep (`sweep.mjs`)
 
-The daily `--all` sweep (registered separately in N5) refreshes every roster
-card; only `changed || needsPublish` cards get an MCP publish. Manual refresh
-is the `/project-card` skill. Reporting discipline: after reportable FourthOS
-work, run `/project-card refresh <that project>`.
+`node scripts/project-cards/sweep.mjs [--dry-run]` is the automated daily driver
+(registered as a scheduled task separately). It:
+
+1. Logs a start banner + `ntn --version`.
+2. Runs `refresh.mjs --all`, then for every result with a Notion `pageId` that
+   is `changed || needsPublish`, publishes the card's embed via a headless
+   `claude -p` call (the one MCP embed-bind step the CLI can't do). Each failure
+   is recorded and the batch continues; a success updates that slug's
+   `attachmentId` + `lastPublished` in `state.json`.
+3. Refreshes the **Reporting Hub** gallery: queries the non-archived roster,
+   classifies each row's `hostKind` (`notion`/`github`/`none`) from its
+   `Project Page`, merges the static CCv3 pilot row, renders a
+   `Project | Health | Status | Card` Markdown table, and hands it to one
+   headless `claude -p` that replaces only the `## 📇 FourthOS Project Cards`
+   section body.
+4. Appends one JSON line to `logs/sweep.jsonl`
+   (`ts, ntnVersion, refreshed, publishedOk, publishFailed, hubRefreshed`).
+
+**Key-unset requirement:** the claude.ai Notion connector only loads when
+`ANTHROPIC_API_KEY` is **unset**, so every spawned `claude` gets an env copy with
+that key deleted (headless, `--dangerously-skip-permissions`).
+
+**Exit-code contract:** exit `0` only if every attempted publish **and** the hub
+refresh succeeded; exit `1` if any failed — but only after completing all work,
+so a scheduled-task monitor shows red without aborting the batch.
+
+**`--dry-run`** is the safe test path: it logs the banner, runs `refresh.mjs
+--all`, and prints which cards *would* publish and the hub table that *would* be
+written — spawning **no** `claude` and mutating neither `state.json` (beyond
+refresh's own bookkeeping) nor Notion. Always exits `0`.
+
+## `/project-card`
+
+The daily `--all` sweep refreshes every roster card; only `changed ||
+needsPublish` cards get an MCP publish. Manual refresh is the `/project-card`
+skill. Reporting discipline: after reportable FourthOS work, run
+`/project-card refresh <that project>`.
 
 ## Caveat: not every Projects row has a Notion page to host a card
 
