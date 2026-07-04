@@ -15,6 +15,15 @@ Set-Location $repo
 # Unset it for this process so the headless session falls back to the subscription. Harmless if unset.
 Remove-Item Env:ANTHROPIC_API_KEY -ErrorAction SilentlyContinue
 
+# Research-session scope guard [N3]: this unattended session writes ONLY to docs/self-improvement
+# (prompt-fenced) and its claude -p allowlist below excludes every Notion MCP tool. As defence in
+# depth, scrub NOTION_* from the environment so nothing downstream (including any ntn reached via the
+# allowed Bash tool) can pick up a Notion token. ntn is not on PATH in this context; its keychain
+# creds are deliberately left untouched but are unreachable without the absolute exe path, which the
+# prompt never provides. Any future digest push to Notion MUST run in THIS parent process AFTER
+# claude -p returns — never inside the subprocess.
+Get-ChildItem Env: | Where-Object { $_.Name -like 'NOTION_*' } | ForEach-Object { Remove-Item "Env:$($_.Name)" -ErrorAction SilentlyContinue }
+
 $date   = Get-Date -Format 'yyyy-MM-dd'
 $logDir = Join-Path $repo '.claude\logs\self-improvement'
 New-Item -ItemType Directory -Force -Path $logDir | Out-Null

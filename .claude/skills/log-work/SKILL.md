@@ -39,6 +39,8 @@ This skill adds a row to the AI Enablement Weekly Work Tracker database in Notio
 
 5. **Report to user** — return the new Tracker row URL and a one-line summary: Title | Type | Impact | Source | Dashboard Section, so the user can spot-check the values.
 
+6. **Refresh the living card (FourthOS work only)** — if the logged work is on a FourthOS project that has a living status card, run `/project-card refresh "<project>"` so its Notion card stays current (or let the daily `CCv3-Project-Cards` sweep pick it up). Change the source data, not the card embed.
+
 ---
 
 ## Parameter Parsing

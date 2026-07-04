@@ -4,7 +4,7 @@ description: This skill governs the three-layer Bridge communication system betw
 ---
 
 # Notion Claude Bridge Skill
-## v1.5 | 2026-04-22 | Tracker auto-mirror
+## v1.6 | 2026-07-03 | ntn transport split + expanded toolset (was v1.5 Tracker auto-mirror)
 
 This skill governs all read/write operations on the Claude Bridge system — the shared knowledge and communication layer between Claude.ai (Eve), Claude.ai (Donna), and Claude Code. Always load `references/bridge-schema.md` before any write operation.
 
@@ -41,6 +41,18 @@ SPARK, RFP, etc.
 | **AI Enablement Weekly Work Tracker DB** | `3d7f2afd6c5046748408e4412a5552b2` |
 | **Tracker data_source_id (for creates)** | `6e8d9b17-f8ef-4d56-9f13-00344650ac03` |
 | **Default "AI Enablement (generic)" project** | `34b76fd7-ac82-8104-82ca-df3e801695c0` |
+
+---
+
+## Transport & Tooling (updated 2026-07-03)
+
+**Bridge writes stay on the Notion MCP.** All Bridge reads/writes (HQ queues, Implementation Log, Sprint State, Tracker mirror) use the `claude.ai Notion` MCP — its enhanced-markdown and selection-string semantics are what the bridge-schema `<td>` tables and page-mention handling depend on. Do NOT migrate bridge writes to the `ntn` CLI without a fresh fidelity spike: selection strings resolve differently (MCP renders links as `[text](url)` while Notion stores `<mention-page/>` XML), so a naive `ntn` swap will break section-targeted edits.
+
+**`ntn` CLI is for deterministic NON-bridge jobs** — scheduled dashboard/digest pushes, Projects-DB upserts, and the living project cards (`scripts/project-cards/`). See the `notion-cli` skill + `notion-cli-safety` rule for the non-interactive contract (absolute exe, stdin from NUL, stdin-JSON payloads, `--yes` on destructive verbs).
+
+**MCP toolset is now 18+** (was 14): added `notion-create-attachment`, `create-view` (incl. dashboard type), `update-view`, `query-data-sources` (SQL), `query-database-view`, `query-meeting-notes`, `duplicate-page`, `move-pages`, `update-data-source`, `get-async-task`.
+
+**HTML publishing path (spike S2):** `notion-create-attachment` (HTML string ≤ 200 KiB) → insert `<embed src="file-upload://<id>">` → renders as a sandboxed interactive iframe, private to the workspace; attach within 1 hour of upload. The native 3.6 "HTML block" is not exposed in the REST API — attachment + `<embed>` is the agent-available equivalent.
 
 ---
 
@@ -401,5 +413,5 @@ If a `notion-update-page` call fails with selection mismatch:
 
 ---
 
-*notion-bridge v1.5 | 2026-04-22 | Tracker auto-mirror*
+*notion-bridge v1.6 | 2026-07-03 | ntn transport split + expanded toolset (prev v1.5 Tracker auto-mirror, v1.4 three-instance model)*
 *Reference: bridge-schema.md for HQ page section map | handoff-templates/ for child page templates*
