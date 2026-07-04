@@ -29,6 +29,8 @@ import {
 import { OUT_DIR, CARD_SECTION_HEADING } from './lib/config.mjs';
 import { slugify, dateStamp } from './lib/util.mjs';
 import { readState, writeState, needsPublish } from './lib/state.mjs';
+import { readSeries, latestPrev } from './lib/history.mjs';
+import { computeAttention } from './lib/attention.mjs';
 import { assembleCard } from './assembler.mjs';
 
 function sha256(s) {
@@ -111,8 +113,33 @@ function refreshProject(projectPage, state, assigned) {
   const slug = resolveSlug(project, state, assigned);
   assigned.add(slug);
 
-  const html = assembleCard(project, decisions, { asOf: dateStamp() });
-  const canonical = assembleCard(project, decisions, { asOf: '' });
+  // New signals (iter2): health trend + "needs attention" scoring. Read-only here —
+  // sweep owns WRITING health history; refresh only READS the series it left behind.
+  const series = readSeries(slug);
+  const prevHealth = latestPrev(slug);
+  // computeAttention takes already-extracted plain values; map our normalized field
+  // names (lastEdited / reviewDate) onto the shape it documents (…ISO suffixes).
+  const attention = {
+    ...computeAttention(
+      {
+        health: project.health,
+        decisionNeeded: project.decisionNeeded,
+        lastEditedISO: project.lastEdited,
+        reviewDateISO: project.reviewDate,
+      },
+      series,
+    ),
+    prevHealth, // the "was X" health from latestPrev, for a "was X, now Y" trend line
+  };
+
+  // Both assembler calls receive the SAME series + attention; they differ ONLY by the
+  // volatile as-of stamp. That keeps the iter1 hash contract intact: the as-of stamp
+  // is excluded from the content hash, while every meaningful signal the assembler
+  // renders (stats / review / decision text, plus the new trend + attention state)
+  // IS in the canonical string, so a genuine state change still re-publishes.
+  const cardSignals = { series, attention };
+  const html = assembleCard(project, decisions, { ...cardSignals, asOf: dateStamp() });
+  const canonical = assembleCard(project, decisions, { ...cardSignals, asOf: '' });
   const contentHash = sha256(canonical);
 
   const nowIso = new Date().toISOString();

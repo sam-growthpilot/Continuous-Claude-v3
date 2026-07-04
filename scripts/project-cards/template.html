@@ -59,6 +59,14 @@
   .stats > div { flex:1; padding:10px 8px 0 0; }
   .stats b { display:block; font-family:"Palatino Linotype", Georgia, serif; font-size:24px; font-variant-numeric:tabular-nums; }
   .stats span { font-size:10px; text-transform:uppercase; letter-spacing:.08em; color:var(--dim); }
+  .stats > div.warn b { color:var(--warn); }
+  .stats > div.crit b { color:var(--crit); }
+
+  .trendbar { display:flex; align-items:center; gap:10px; margin:-6px 0 16px; min-height:20px; }
+  .trendbar .spark { display:block; flex:none; }
+  .tnote { font-size:11px; text-transform:uppercase; letter-spacing:.06em; font-weight:600; }
+  .tnote.down { color:var(--crit); }
+  .tnote.up { color:var(--ok); }
 
   details { margin-top:10px; }
   summary { cursor:pointer; font-size:12px; font-weight:600; color:var(--teal); }
@@ -82,7 +90,7 @@
 
   <h1>{{TITLE}}</h1>
   <p class="sub">{{SUBTITLE}}</p>
-
+{{TREND_BLOCK}}
   <div class="strip">
     <div><div class="k">Current focus</div><div class="v">{{CURRENT_FOCUS}}</div></div>
     <div><div class="k">Next milestone</div><div class="v">{{NEXT_MILESTONE}}</div></div>

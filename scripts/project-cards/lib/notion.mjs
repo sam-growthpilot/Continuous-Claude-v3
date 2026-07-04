@@ -95,8 +95,13 @@ const CARD_HEADING_TEXT = CARD_SECTION_HEADING.replace(/^#+\s*/, '').trim();
 // next heading_2). Used by the sweep to confirm a publish landed instead of
 // trusting the claude -p stdout marker. Best-effort: returns false (not throws)
 // on any read error, so a failed verification simply re-flags the card.
-export function verifyCardEmbed(pageId) {
+// Read-back verify: true iff an 'embed' block sits within the section whose
+// heading_2 text matches `sectionHeading` (default: the card section). Pass the
+// cockpit heading ('🎯 Portfolio Cockpit') to verify the hub cockpit embed —
+// the hub and the card use DIFFERENT section headings.
+export function verifyCardEmbed(pageId, sectionHeading = CARD_SECTION_HEADING) {
   if (!pageId) return false;
+  const wanted = String(sectionHeading).replace(/^#+\s*/, '').trim();
   let res;
   try {
     res = apiGet(`v1/blocks/${pageId}/children`);
@@ -105,16 +110,16 @@ export function verifyCardEmbed(pageId) {
     return false;
   }
   const blocks = (res && res.results) || [];
-  let inCardSection = false;
+  let inSection = false;
   for (const b of blocks) {
     if (!b || typeof b.type !== 'string') continue;
     if (b.type === 'heading_2') {
       const text = (b.heading_2?.rich_text || []).map((t) => t.plain_text).join('').trim();
-      // Entering the card section, or leaving it at the next heading_2.
-      inCardSection = text === CARD_HEADING_TEXT;
+      // Entering the wanted section, or leaving it at the next heading_2.
+      inSection = text === wanted;
       continue;
     }
-    if (inCardSection && b.type === 'embed') return true;
+    if (inSection && b.type === 'embed') return true;
   }
   return false;
 }
