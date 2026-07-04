@@ -143,6 +143,13 @@ function Resolve-TaskStatus {
         $keep = if ($prevEmoji) { $prevEmoji } else { Get-StatusEmoji Green }
         return [pscustomobject]@{ Emoji = $keep; Reason = 'in flight (0x41301)' }
     }
+    if ($isRefused) {
+        # 0x800710E0 = Task Scheduler "operator refused request": the task never
+        # launched, so this is NOT a script failure. Keep the prior glyph (neutral
+        # Yellow if none) rather than flipping to Red on a scheduler refusal.
+        $keep = if ($prevEmoji) { $prevEmoji } else { Get-StatusEmoji Yellow }
+        return [pscustomobject]@{ Emoji = $keep; Reason = 'launch refused (0x800710E0) - not a script failure' }
+    }
     return [pscustomobject]@{ Emoji = Get-StatusEmoji Red; Reason = "failing unexpectedly (0x$($Result.ToString('X')))" }
 }
 
@@ -197,6 +204,20 @@ $script:NAME_MAP = @{
     'Outcome-Tagger'            = 'CCv3-Outcome-Tagger'
     'UW-Daily-Snapshot'         = 'CCv3-UW-Daily-Snapshot'
     'Finance-Eval-Weekly'       = 'CCv3-Finance-Eval-Weekly'
+}
+
+function Expand-RowCells {
+    <#
+      Return a copy of a table row's cell array padded to at least $Min entries with
+      empty strings. Protects the scoped-write path from crashing (index out of range
+      under Set-StrictMode) when a malformed/short row carries fewer than 5 cells.
+      Always returns an array (comma operator prevents scalar unrolling on 1-cell rows).
+    #>
+    param([AllowNull()][string[]]$Cells, [int]$Min = 5)
+    $list = [System.Collections.Generic.List[string]]::new()
+    if ($Cells) { foreach ($c in $Cells) { $list.Add([string]$c) } }
+    while ($list.Count -lt $Min) { $list.Add('') }
+    return , ($list.ToArray())
 }
 
 function Resolve-TaskName {
@@ -273,7 +294,10 @@ function Build-TasksSectionMarkdown {
                 $newLast = Format-LastRun $t.LastRunTime
                 $newRes  = Format-TaskResult $t.LastTaskResult
                 # Preserve any parenthetical the human curated when numeric core matches.
-                if ($oldRes -and $oldRes.StartsWith($newRes)) { $newRes = $oldRes }
+                # Only for a genuine nonzero result: on recovery ($LastTaskResult -eq 0)
+                # newRes is '0', and a loose StartsWith('0') would wrongly retain a stale
+                # failing hex like '0x5 (failed)'. Exact-zero success never preserves.
+                if ($t.LastTaskResult -ne 0 -and $oldRes -and $oldRes.StartsWith($newRes)) { $newRes = $oldRes }
 
                 $changed = ($newEmoji -ne $oldEmoji)
                 $diff.Add([pscustomobject]@{
@@ -307,4 +331,4 @@ function Build-TasksSectionMarkdown {
 Export-ModuleMember -Function `
     Get-TaskInventory, Resolve-TaskStatus, Build-TasksSectionMarkdown, `
     Parse-StatusAnnotation, Get-LeadingStatusEmoji, Get-StatusEmoji, `
-    Format-TaskResult, Format-LastRun, Resolve-TaskName
+    Format-TaskResult, Format-LastRun, Resolve-TaskName, Expand-RowCells

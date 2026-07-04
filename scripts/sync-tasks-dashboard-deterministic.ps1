@@ -227,19 +227,25 @@ function Invoke-ScopedWrite {
         $rows = @($group.Rows)
         for ($ri = 1; $ri -lt $rows.Count; $ri++) {
             $row = $rows[$ri]
-            $label = $row.Cells[0]
+            $cells = @($row.Cells)
+            # Guard: a malformed/empty row must not abort the whole write.
+            if ($cells.Count -eq 0) { Write-Log "skipping empty table_row $($row.Id)" 'WARN'; continue }
+            $label = $cells[0]
             $taskName = Resolve-TaskName -Label $label -Inventory $Inventory
             if (-not $taskName) { continue }
             $t = $Inventory[$taskName]
-            $oldStat = if ($row.Cells.Count -gt 4) { $row.Cells[4] } else { '' }
+            # Pad short rows to >=5 cells so index writes below can't throw under StrictMode.
+            $newCells = Expand-RowCells $cells 5
+            $oldStat = $newCells[4]
             $res = Resolve-TaskStatus -State $t.State -Result $t.LastTaskResult -LastRunTime $t.LastRunTime -PreviousStatusText $oldStat
             $oldEmoji = Get-LeadingStatusEmoji $oldStat
             $phrase = if ($oldEmoji) { $oldStat.Substring($oldEmoji.Length).TrimStart() } else { $oldStat }
             $newStat = if ($phrase) { "$($res.Emoji) $phrase" } else { $res.Emoji }
-            $newCells = @($row.Cells)
             $newCells[2] = Format-LastRun $t.LastRunTime
             $newRes = Format-TaskResult $t.LastTaskResult
-            if ($newCells[3] -and $newCells[3].StartsWith($newRes)) { $newRes = $newCells[3] }
+            # Same fix as Build-TasksSectionMarkdown: only preserve a curated parenthetical
+            # for a genuine nonzero result; on recovery (result 0) never keep a stale hex.
+            if ($t.LastTaskResult -ne 0 -and $newCells[3] -and $newCells[3].StartsWith($newRes)) { $newRes = $newCells[3] }
             $newCells[3] = $newRes
             $newCells[4] = $newStat
 
@@ -272,6 +278,14 @@ function Invoke-SelfTest {
            Args = @{ State = 'Ready'; Result = [long]1; LastRunTime = [datetime]'2026-07-02'; PreviousStatusText = "$Y fixed 2026-07-01, verifies soon" } }
         @{ Name = '(f) Disabled -> no-entry'; Expect = $D;
            Args = @{ State = 'Disabled'; Result = [long]0; LastRunTime = $null; PreviousStatusText = "$G healthy" } }
+        # CORR#1: refused launch (0x800710E0) is a scheduler refusal, not a script failure.
+        @{ Name = '(g) refused 0x800710E0 no annotation, prior green -> keep green (NOT red)'; Expect = $G;
+           Args = @{ State = 'Ready'; Result = [long]2147946720; LastRunTime = [datetime]'2026-07-03'; PreviousStatusText = "$G healthy" } }
+        @{ Name = '(h) refused 0x800710E0 no annotation, no prior glyph -> neutral yellow (NOT red)'; Expect = $Y;
+           Args = @{ State = 'Ready'; Result = [long]2147946720; LastRunTime = [datetime]'2026-07-03'; PreviousStatusText = 'launched, no glyph yet' } }
+        # CORR#1 (regression guard): a real nonzero failure with no annotation still -> red.
+        @{ Name = '(i) genuine nonzero (5) no annotation -> red'; Expect = $R;
+           Args = @{ State = 'Ready'; Result = [long]5; LastRunTime = [datetime]'2026-07-03'; PreviousStatusText = "$G healthy" } }
     )
     $pass = 0; $fail = 0
     Write-Host ''
@@ -283,6 +297,46 @@ function Invoke-SelfTest {
         if ($ok) { $pass++; Write-Host ("  PASS  {0}  => {1}" -f $c.Name, $got.Emoji) -ForegroundColor Green }
         else { $fail++; Write-Host ("  FAIL  {0}  expected {1} got {2} ({3})" -f $c.Name, $c.Expect, $got.Emoji, $got.Reason) -ForegroundColor Red }
     }
+
+    # --- CORR#2: recovered task must show '0', never a stale failing hex ------
+    # Build-TasksSectionMarkdown is pure (no ntn/Notion); drive it with a synthetic
+    # section whose old Result cell is '0x5 (failed)' while inventory now returns 0.
+    $secCorr2 = @{
+        CapturedLine = 'captured 2026-07-03'
+        Groups = @(
+            [pscustomobject]@{ Title = 'core'; Rows = @(
+                [pscustomobject]@{ Cells = @('Task', 'Schedule', 'Last run', 'Result', 'Status') }
+                [pscustomobject]@{ Cells = @('Health-Check', 'daily', '2026-06-01', '0x5 (failed)', "$R failed") }
+            ) }
+        )
+    }
+    $invCorr2 = @{ 'CCv3-Health-Check' = [pscustomobject]@{
+        Name = 'CCv3-Health-Check'; State = 'Ready'; LastRunTime = [datetime]'2026-07-03'
+        LastTaskResult = [long]0; NextRunTime = $null } }
+    $bCorr2 = Build-TasksSectionMarkdown -Section $secCorr2 -Inventory $invCorr2 -Today ([datetime]'2026-07-03')
+    if ($bCorr2.Markdown -match '0x5') {
+        $fail++; Write-Host "  FAIL  (j) CORR#2 recovered task -> result cell kept stale '0x5' hex" -ForegroundColor Red
+    } elseif ($bCorr2.Markdown -match '\|\s*0\s*\|') {
+        $pass++; Write-Host "  PASS  (j) CORR#2 recovered task -> result cell shows '0' (stale hex dropped)" -ForegroundColor Green
+    } else {
+        $fail++; Write-Host "  FAIL  (j) CORR#2 recovered task -> expected clean '0' result cell not found" -ForegroundColor Red
+    }
+
+    # --- CORR#3: Expand-RowCells pads a short/empty row without throwing -------
+    try {
+        $padShort = Expand-RowCells @('only', 'two') 5
+        $padEmpty = Expand-RowCells @() 5
+        $padOne   = Expand-RowCells @('solo') 5
+        if ($padShort.Count -eq 5 -and $padEmpty.Count -eq 5 -and $padOne.Count -eq 5 `
+                -and $padShort[0] -eq 'only' -and $padShort[4] -eq '' -and $padOne[0] -eq 'solo') {
+            $pass++; Write-Host "  PASS  (k) CORR#3 Expand-RowCells pads short/empty/1-cell rows to 5 (no crash)" -ForegroundColor Green
+        } else {
+            $fail++; Write-Host "  FAIL  (k) CORR#3 Expand-RowCells padded shape unexpected" -ForegroundColor Red
+        }
+    } catch {
+        $fail++; Write-Host ("  FAIL  (k) CORR#3 Expand-RowCells threw: {0}" -f $_.Exception.Message) -ForegroundColor Red
+    }
+
     Write-Host ("---------------- {0} passed / {1} failed ----------------" -f $pass, $fail) -ForegroundColor Cyan
     if ($fail -gt 0) { exit 1 }
     Write-Host 'SELF-TEST GREEN' -ForegroundColor Green

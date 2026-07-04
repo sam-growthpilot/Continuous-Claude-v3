@@ -5,23 +5,23 @@
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
+import { esc } from './lib/util.mjs';
+
+// Re-export the shared escaper so callers/tests can import it from here too.
+// Single canonical implementation lives in lib/util.mjs (identical semantics).
+export { esc };
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const TEMPLATE = readFileSync(join(HERE, 'template.html'), 'utf8');
 const REPORTING_HUB = 'https://app.notion.com/p/38f76fd7ac8280478e50dd2956ba6e8a';
 
-// HTML-escape any value before it touches the template.
-export function esc(s) {
-  return String(s ?? '').replace(/[&<>"']/g, (c) =>
-    ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]),
-  );
-}
-
-// Map a Health select value to the modifier class + display label.
+// Map a Health select value to the modifier class.
+// GREEN requires an explicit "Green" — anything unknown/empty/missing maps to
+// the NEUTRAL (gray) state so an absent Health never renders as healthy-green.
 function healthClass(health) {
   const h = String(health || '').toLowerCase();
-  if (h === 'yellow' || h === 'red' || h === 'green') return h;
-  return 'green';
+  if (h === 'green' || h === 'yellow' || h === 'red') return h;
+  return 'neutral';
 }
 
 // MM/DD (UTC) from an ISO timestamp — deterministic, no local-time drift.
@@ -113,7 +113,7 @@ export function assembleCard(project, decisions = [], opts = {}) {
 
   const tokens = {
     HEALTH_CLASS: hClass,
-    HEALTH_UPPER: esc((project.health || 'Green').toUpperCase()),
+    HEALTH_UPPER: hClass === 'neutral' ? 'UNKNOWN' : esc(String(project.health).toUpperCase()),
     PROJECT_LABEL: esc(projectLabel),
     AS_OF: esc(asOf),
     TITLE: esc(project.name),
@@ -131,9 +131,17 @@ export function assembleCard(project, decisions = [], opts = {}) {
     REFRESH_NOTE: esc(refreshNote),
   };
 
-  let html = TEMPLATE;
-  for (const [key, value] of Object.entries(tokens)) {
-    html = html.replaceAll(`{{${key}}}`, value);
-  }
+  // Single-pass substitution over the TEMPLATE only. Because we scan the
+  // template (not the growing output), a field value that itself contains a
+  // "{{TOKEN}}" sequence is emitted verbatim (already esc()'d) and can NEVER be
+  // re-interpreted as a template token — closing the replaceAll injection hole.
+  // Any template token with no matching value fails loud rather than shipping a
+  // card with a literal {{TOKEN}} in it.
+  const html = TEMPLATE.replace(/\{\{(\w+)\}\}/g, (match, key) => {
+    if (!Object.prototype.hasOwnProperty.call(tokens, key)) {
+      throw new Error(`assembleCard: unresolved template token ${match}`);
+    }
+    return tokens[key];
+  });
   return html;
 }

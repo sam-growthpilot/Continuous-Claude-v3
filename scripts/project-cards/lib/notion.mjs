@@ -3,29 +3,64 @@
 //   absolute exe, empty/closed stdin (input), hard timeout, windowsHide, fail-loud.
 // See docs/notion-platform-spike-report.md and .claude/rules/notion-cli-safety.md.
 import { spawnSync } from 'node:child_process';
+import {
+  NTN_EXE, NTN_TIMEOUT_MS, PROJECTS_DS as PROJECTS_DS_ID,
+  DECISIONS_DS as DECISIONS_DS_ID, CARD_SECTION_HEADING,
+} from './config.mjs';
 
-const NTN = 'C:/Users/david.hayes/AppData/Local/Microsoft/WinGet/Packages/Notion.ntn_Microsoft.Winget.Source_8wekyb3d8bbwe/ntn-x86_64-pc-windows-msvc/ntn.exe';
+const NTN = NTN_EXE;
 
-// FourthOS data source ids (databases).
-export const PROJECTS_DS = '852a60e1-9fa6-4361-9b55-1a9f59d566d8';
-export const DECISIONS_DS = 'e209f0f0-e7a6-45f1-9d2d-bc97d9811d60';
+// FourthOS data source ids (databases). Re-exported from config (single source
+// of truth) so existing importers of these names keep working.
+export const PROJECTS_DS = PROJECTS_DS_ID;
+export const DECISIONS_DS = DECISIONS_DS_ID;
+
+// Transient failure signature — retry only these. A nonzero exit whose output
+// matches rate-limiting (429/rate), a timeout, a 5xx, or a dropped connection is
+// worth a backoff; anything else (bad request, auth, 4xx) fails loud immediately.
+const TRANSIENT_RE = /429|rate|timeout|5\d\d|ECONN/i;
+const MAX_ATTEMPTS = 3;
+
+// Blocking sleep (spawnSync is synchronous, so async timers won't help here).
+function sleepMs(ms) {
+  Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
+}
 
 // Run ntn with the contract enforced. `input` is fed to stdin then closed so ntn
-// never blocks waiting on an open pipe. Throws with stderr context on any failure.
+// never blocks waiting on an open pipe. Transient failures are retried up to 3
+// times with exponential backoff (~0.5s / 1s / 2s); non-transient failures throw
+// immediately with stderr context.
 function runNtn(args, { input = '' } = {}) {
-  const res = spawnSync(NTN, args, {
-    input,
-    timeout: 30000,
-    windowsHide: true,
-    encoding: 'utf8',
-    maxBuffer: 32 * 1024 * 1024,
-  });
-  if (res.error) throw new Error(`ntn spawn failed [${args.join(' ')}]: ${res.error.message}`);
-  if (res.status !== 0) {
-    const detail = (res.stderr || res.stdout || '').trim();
+  let lastDetail = '';
+  for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt += 1) {
+    const res = spawnSync(NTN, args, {
+      input,
+      timeout: NTN_TIMEOUT_MS,
+      windowsHide: true,
+      encoding: 'utf8',
+      maxBuffer: 32 * 1024 * 1024,
+    });
+
+    if (!res.error && res.status === 0) return res.stdout;
+
+    const detail = res.error
+      ? `spawn failed: ${res.error.message}`
+      : (res.stderr || res.stdout || '').trim();
+    lastDetail = detail;
+    const transient = TRANSIENT_RE.test(detail);
+
+    if (transient && attempt < MAX_ATTEMPTS) {
+      const backoff = 500 * 2 ** (attempt - 1); // 500, 1000, 2000
+      console.error(`[ntn] transient failure [${args.join(' ')}] attempt ${attempt}/${MAX_ATTEMPTS}: ${detail} — retrying in ${backoff}ms`);
+      sleepMs(backoff);
+      continue;
+    }
+
+    if (res.error) throw new Error(`ntn spawn failed [${args.join(' ')}]: ${res.error.message}`);
     throw new Error(`ntn exited ${res.status} [${args.join(' ')}]: ${detail}`);
   }
-  return res.stdout;
+  // Exhausted retries on a transient failure.
+  throw new Error(`ntn failed after ${MAX_ATTEMPTS} attempts [${args.join(' ')}]: ${lastDetail}`);
 }
 
 export function ntnVersion() {
@@ -40,6 +75,48 @@ function apiPost(path, body) {
   } catch (e) {
     throw new Error(`ntn api ${path} returned non-JSON: ${out.slice(0, 400)}`);
   }
+}
+
+// GET a raw API path; parse and return the response object.
+function apiGet(path) {
+  const out = runNtn(['api', path]);
+  try {
+    return JSON.parse(out);
+  } catch (e) {
+    throw new Error(`ntn api ${path} returned non-JSON: ${out.slice(0, 400)}`);
+  }
+}
+
+// The card heading text as stored in a Notion heading block (no Markdown '## ').
+const CARD_HEADING_TEXT = CARD_SECTION_HEADING.replace(/^#+\s*/, '').trim();
+
+// Read-back verification: true iff the page currently has an 'embed' block within
+// the "## 📊 Living Status Card" section (i.e. at/after that heading and before the
+// next heading_2). Used by the sweep to confirm a publish landed instead of
+// trusting the claude -p stdout marker. Best-effort: returns false (not throws)
+// on any read error, so a failed verification simply re-flags the card.
+export function verifyCardEmbed(pageId) {
+  if (!pageId) return false;
+  let res;
+  try {
+    res = apiGet(`v1/blocks/${pageId}/children`);
+  } catch (e) {
+    console.error(`[ntn] verifyCardEmbed read failed for ${pageId}: ${e.message}`);
+    return false;
+  }
+  const blocks = (res && res.results) || [];
+  let inCardSection = false;
+  for (const b of blocks) {
+    if (!b || typeof b.type !== 'string') continue;
+    if (b.type === 'heading_2') {
+      const text = (b.heading_2?.rich_text || []).map((t) => t.plain_text).join('').trim();
+      // Entering the card section, or leaving it at the next heading_2.
+      inCardSection = text === CARD_HEADING_TEXT;
+      continue;
+    }
+    if (inCardSection && b.type === 'embed') return true;
+  }
+  return false;
 }
 
 // Query the Projects data source. filter/sorts are raw Notion query objects.

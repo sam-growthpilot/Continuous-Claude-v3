@@ -1,52 +1,59 @@
 {
+  "version": 1,
   "cards": {
     "connector-ecosystem": {
       "projectRowId": "e48adf47-146e-4d46-a099-ef919b1b9e4e",
       "pageId": "38776fd7ac8281c7a286ce6ae478b6be",
-      "attachmentId": "39276fd7-ac82-816c-82de-00b266944ebc",
-      "contentHash": "18a659b7846bc5f5ab4ec942ef6f16160f93ca47a15cd237dfc4354353c89669",
-      "lastPublished": "2026-07-03T22:09:59.506Z",
-      "lastRefreshAttempt": "2026-07-04T01:10:04.338Z"
+      "attachmentId": "39376fd7-ac82-812d-9430-00b22539577b",
+      "contentHash": "6bd87724913eee47c8e498f19f60732cf10582168f7e834277f3fd797c6739f4",
+      "publishedHash": "6bd87724913eee47c8e498f19f60732cf10582168f7e834277f3fd797c6739f4",
+      "lastPublished": "2026-07-04T05:20:54.060Z",
+      "lastRefreshAttempt": "2026-07-04T05:23:42.276Z"
     },
     "ai-governance-research-cadence": {
       "projectRowId": "53320d1d-b2e4-405d-ac20-49274c6065a6",
       "pageId": null,
       "attachmentId": null,
-      "contentHash": "5e75757db3590744d9401ce43cd8b34005fca9b318946ce1b9bce1cc9a61c469",
+      "contentHash": "7c7ae0a0f39a76f4dd6405a96e4f119bfb9988d5db97348ffe173f1db3dcebb4",
+      "publishedHash": null,
       "lastPublished": null,
-      "lastRefreshAttempt": "2026-07-04T01:09:59.465Z"
+      "lastRefreshAttempt": "2026-07-04T05:23:38.235Z"
     },
     "fourth-fabric-architecture-alignment": {
       "projectRowId": "dd2e154a-2249-4c02-a2ad-f7bd7b880c6e",
       "pageId": null,
       "attachmentId": null,
-      "contentHash": "12a50ce818001a769772b2487a0fdb32ea08bbdd1612da3041728e38ad97260c",
+      "contentHash": "379a9ba52fcd60715cd27b1ba0652ae24ff4487f8535b42446bb0f7343bbd1bb",
+      "publishedHash": null,
       "lastPublished": null,
-      "lastRefreshAttempt": "2026-07-04T01:10:00.312Z"
+      "lastRefreshAttempt": "2026-07-04T05:23:38.951Z"
     },
     "everyday-business-ai-model-platform": {
       "projectRowId": "2c8d6a98-bd94-4408-b269-705766f836e8",
       "pageId": null,
       "attachmentId": null,
-      "contentHash": "804a20d94f8f05b382e2f6f4d0f3cd510d9339706b3f57a8ff4459be369a2df3",
+      "contentHash": "59f5f26d1643b2eee9a55950585cd787b90ef9f6ab985fde782c3be6017ae63d",
+      "publishedHash": null,
       "lastPublished": null,
-      "lastRefreshAttempt": "2026-07-04T01:10:01.230Z"
+      "lastRefreshAttempt": "2026-07-04T05:23:39.881Z"
     },
     "netsuite-connector": {
       "projectRowId": "39176fd7-ac82-819f-ad6c-d6709922b9ea",
       "pageId": null,
       "attachmentId": null,
-      "contentHash": "3b25e26f241998647f7e09a86754d7867103a9a84e3f72bb3d232c9c0327cb4c",
+      "contentHash": "0b413f0df615103abf4d60912c458796532ab917195f3a0e5e9faae4c1dd1df4",
+      "publishedHash": null,
       "lastPublished": null,
-      "lastRefreshAttempt": "2026-07-04T01:10:02.169Z"
+      "lastRefreshAttempt": "2026-07-04T05:23:40.781Z"
     },
     "salesforce-connector": {
       "projectRowId": "39076fd7-ac82-81a9-b583-f5e928be50f2",
       "pageId": null,
       "attachmentId": null,
-      "contentHash": "8f958c856e605403b0ec171c557aaa112fca79ac7753b2d81ded2aeedd873415",
+      "contentHash": "e7abdfb2587de9fb5c3034dd0247ed17a808c956847c5bb6ca0972c1a85ac1a3",
+      "publishedHash": null,
       "lastPublished": null,
-      "lastRefreshAttempt": "2026-07-04T01:10:03.310Z"
+      "lastRefreshAttempt": "2026-07-04T05:23:41.496Z"
     }
   }
 }

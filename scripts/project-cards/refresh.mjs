@@ -6,10 +6,12 @@
 // HTML -> hash (AS_OF excluded) -> compare state -> write out/<slug>.html + emit
 // a publish manifest. The engine NEVER calls the Notion MCP or claude -p; the
 // /project-card skill consumes the manifest and does the one MCP embed-bind step.
-import { mkdirSync, readFileSync, writeFileSync, renameSync, existsSync } from 'node:fs';
+//
+// Filesystem paths, section headings, and state I/O come from the shared lib
+// (config/util/state) so refresh.mjs and sweep.mjs agree on shape and decisions.
+import { mkdirSync, writeFileSync, renameSync, existsSync } from 'node:fs';
 import { createHash } from 'node:crypto';
-import { fileURLToPath } from 'node:url';
-import { dirname, join } from 'node:path';
+import { join } from 'node:path';
 import {
   ntnVersion,
   queryProjects,
@@ -24,19 +26,10 @@ import {
   multiSelect,
   dateStart,
 } from './lib/notion.mjs';
+import { OUT_DIR, CARD_SECTION_HEADING } from './lib/config.mjs';
+import { slugify, dateStamp } from './lib/util.mjs';
+import { readState, writeState, needsPublish } from './lib/state.mjs';
 import { assembleCard } from './assembler.mjs';
-
-const HERE = dirname(fileURLToPath(import.meta.url));
-const OUT_DIR = join(HERE, 'out');
-const STATE_PATH = join(HERE, 'state.json');
-const CARD_HEADING = '## 📊 Living Status Card';
-
-function slugify(name) {
-  return String(name)
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, '-')
-    .replace(/(^-|-$)/g, '') || 'card';
-}
 
 function sha256(s) {
   return createHash('sha256').update(s, 'utf8').digest('hex');
@@ -48,13 +41,6 @@ function notionPageId(url) {
   const m = url.match(/[0-9a-f]{8}-?[0-9a-f]{4}-?[0-9a-f]{4}-?[0-9a-f]{4}-?[0-9a-f]{12}/i)
     || url.match(/[0-9a-f]{32}/i);
   return m ? m[0].replace(/-/g, '') : null;
-}
-
-function asOfStamp(d = new Date()) {
-  return d.toLocaleString('en-US', {
-    weekday: 'short', month: 'short', day: 'numeric', year: 'numeric',
-    hour: '2-digit', minute: '2-digit',
-  });
 }
 
 function normalizeProject(page) {
@@ -94,55 +80,72 @@ function normalizeDecision(page) {
   };
 }
 
-function readState() {
-  if (!existsSync(STATE_PATH)) return { cards: {} };
-  const raw = JSON.parse(readFileSync(STATE_PATH, 'utf8'));
-  raw.cards = raw.cards || {};
-  return raw;
+// Resolve the stable slug/state-key for a project.
+//   1. Reuse the existing slug if a card already tracks this projectRowId, so a
+//      project keeps the same key (and output file) across runs — idempotent.
+//   2. Otherwise mint a fresh slug with util.slugify's collision guard, so two
+//      different projects whose names collapse to the same base never share a
+//      slug. `assigned` accumulates slugs minted earlier in this same run so a
+//      --all batch is internally collision-free too.
+function resolveSlug(project, state, assigned) {
+  for (const [slug, card] of Object.entries(state.cards)) {
+    if (card && card.projectRowId === project.rowId) return slug;
+  }
+  const taken = new Set([...Object.keys(state.cards), ...assigned]);
+  return slugify(project.name, taken);
 }
 
-// Atomic write: temp file + rename (never a torn state.json / card).
-function atomicWrite(path, contents) {
-  const tmp = `${path}.tmp`;
-  writeFileSync(tmp, contents, 'utf8');
-  renameSync(tmp, path);
+// Atomic write for a card HTML file: temp file + rename (never a torn card).
+function writeCard(htmlPath, html) {
+  mkdirSync(OUT_DIR, { recursive: true });
+  const tmp = `${htmlPath}.tmp`;
+  writeFileSync(tmp, html, 'utf8');
+  renameSync(tmp, htmlPath);
 }
 
 // Refresh one project; mutate `state`; return a manifest object.
-function refreshProject(projectPage, state) {
+// `assigned` is the set of slugs already minted in this run (collision guard).
+function refreshProject(projectPage, state, assigned) {
   const project = normalizeProject(projectPage);
   const decisions = queryDecisionsForProject(project.rowId, 5).map(normalizeDecision);
-  const slug = slugify(project.name);
+  const slug = resolveSlug(project, state, assigned);
+  assigned.add(slug);
 
-  const html = assembleCard(project, decisions, { asOf: asOfStamp() });
+  const html = assembleCard(project, decisions, { asOf: dateStamp() });
   const canonical = assembleCard(project, decisions, { asOf: '' });
   const contentHash = sha256(canonical);
 
   const nowIso = new Date().toISOString();
   const prev = state.cards[slug];
-  const published = !!(prev && prev.lastPublished);
   const pageId = (prev && prev.pageId) || notionPageId(project.projectPage);
   const htmlPath = join(OUT_DIR, `${slug}.html`);
 
+  // Shared publish decision (REL#1 self-heal): true when the card was never
+  // published OR its publishedHash lags the freshly-computed contentHash — so a
+  // card whose publish previously FAILED (publishedHash behind contentHash) is
+  // re-flagged needsPublish even when the content itself did not change.
+  const publish = needsPublish(prev, contentHash);
+
   // No-op when the canonical content is unchanged AND the card is already on disk.
-  // `needsPublish` still flags an unpublished (or publish-failed) card so the skill
-  // publishes it even though the content itself did not change.
+  // Even here, `publish` re-flags an unpublished / publish-failed card.
   if (prev && prev.contentHash === contentHash && existsSync(htmlPath)) {
     state.cards[slug] = { ...prev, projectRowId: project.rowId, lastRefreshAttempt: nowIso };
     return {
       projectName: project.name, slug, pageId, htmlPath, contentHash,
-      changed: false, needsPublish: !published, cardSectionHeading: CARD_HEADING,
+      changed: false, needsPublish: publish, cardSectionHeading: CARD_SECTION_HEADING,
     };
   }
 
-  mkdirSync(OUT_DIR, { recursive: true });
-  atomicWrite(htmlPath, html);
+  writeCard(htmlPath, html);
 
   state.cards[slug] = {
     projectRowId: project.rowId,
     pageId: pageId || null,
     attachmentId: (prev && prev.attachmentId) || null,
     contentHash,
+    // publishedHash only advances on a confirmed publish (state.recordPublish),
+    // never at refresh — preserve the prior value so needsPublish stays honest.
+    publishedHash: (prev && prev.publishedHash) || null,
     lastPublished: (prev && prev.lastPublished) || null,
     lastRefreshAttempt: nowIso,
   };
@@ -154,8 +157,8 @@ function refreshProject(projectPage, state) {
     htmlPath,
     contentHash,
     changed: true,
-    needsPublish: true,
-    cardSectionHeading: CARD_HEADING,
+    needsPublish: publish,
+    cardSectionHeading: CARD_SECTION_HEADING,
   };
 }
 
@@ -170,20 +173,21 @@ function main() {
   console.error(`ntn ${version}`); // human-facing contract log; stdout stays pure JSON
 
   const state = readState();
+  const assigned = new Set(); // slugs minted this run — collision guard for --all
   let output;
 
   if (args[0] === '--all') {
     const pages = queryProjects({ pageSize: 100 });
-    const results = pages.map((pg) => refreshProject(pg, state));
+    const results = pages.map((pg) => refreshProject(pg, state, assigned));
     output = { ntnVersion: version, count: results.length, results };
   } else {
     const name = args.join(' ');
     const page = getProjectByName(name);
-    const manifest = refreshProject(page, state);
+    const manifest = refreshProject(page, state, assigned);
     output = { ntnVersion: version, ...manifest };
   }
 
-  atomicWrite(STATE_PATH, `${JSON.stringify(state, null, 2)}\n`);
+  writeState(state);
   process.stdout.write(`${JSON.stringify(output, null, 2)}\n`);
 }
 

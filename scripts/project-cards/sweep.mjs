@@ -3,52 +3,45 @@
 //   node scripts/project-cards/sweep.mjs --dry-run  safe: refresh + preview only
 //
 // Flow: refresh every roster card (refresh.mjs --all) -> per-card MCP embed
-// publish for changed/unpublished cards -> refresh the Reporting Hub gallery
-// table -> append a run-log line. The per-card publish and the hub refresh are
+// publish for changed/unpublished cards -> read-back verify each publish landed
+// -> refresh the Reporting Hub gallery table -> ALWAYS append a run-log line and
+// (on full success) drop a heartbeat. The per-card publish and the hub refresh are
 // the ONE step the ntn CLI cannot do (S5): they run through the claude.ai Notion
 // connector via headless `claude -p`. The connector only loads when
 // ANTHROPIC_API_KEY is UNSET, so every spawned claude gets an env copy with that
 // key deleted. --dry-run spawns NO claude and mutates neither state nor Notion.
+//
+// Reliability contract:
+//   REL#1 self-heal — a publish only advances publishedHash on a CONFIRMED +
+//     read-back-VERIFIED publish (state.recordPublish with the card's contentHash);
+//     a failed/unverified publish leaves publishedHash behind so needsPublish()
+//     re-flags the card next sweep.
+//   REL#2 observability — main() runs inside try/catch/finally; the finally ALWAYS
+//     appends one sweep.jsonl row ({ts, phase, error|null, refreshed, publishedOk,
+//     publishFailed, hubRefreshed}). A fatal throw sets exit 1 and a distinct FATAL
+//     marker. The --dry-run early-exit is the only path that skips the append.
+//   REL#4 heartbeat — after a fully successful run, logs/last-success.json records
+//     {ts, publishedOk, cards} so an external watchdog can detect a stalled sweep.
 import { spawnSync } from 'node:child_process';
 import {
-  readFileSync, writeFileSync, renameSync, existsSync, mkdirSync, appendFileSync, realpathSync,
+  readFileSync, writeFileSync, mkdirSync, appendFileSync, realpathSync,
 } from 'node:fs';
 import { fileURLToPath } from 'node:url';
-import { dirname, join } from 'node:path';
+import { join } from 'node:path';
 import {
-  ntnVersion, queryProjects, title, selectName, statusName, urlVal,
+  ntnVersion, queryProjects, verifyCardEmbed,
+  title, selectName, statusName, urlVal,
 } from './lib/notion.mjs';
+import { readState, writeState, recordPublish } from './lib/state.mjs';
+import {
+  REFRESH_PATH, LOGS_DIR, SWEEP_LOG_PATH, REPORTING_HUB_PAGE_ID,
+  CARD_SECTION_HEADING, HUB_SECTION_HEADING, STATIC_EXTRA_CARDS,
+  CLAUDE_TIMEOUT_MS, REFRESH_TIMEOUT_MS,
+} from './lib/config.mjs';
+import { dateStamp } from './lib/util.mjs';
 
-const HERE = dirname(fileURLToPath(import.meta.url));
-const REFRESH = join(HERE, 'refresh.mjs');
-const STATE_PATH = join(HERE, 'state.json');
-const LOGS_DIR = join(HERE, 'logs');
-const LOG_PATH = join(LOGS_DIR, 'sweep.jsonl');
-
-// Absolute ntn exe (winget package path) — mirrors lib/notion.mjs. Kept here as
-// the documented reference for the ntn non-interactive contract; direct ntn calls
-// in this file go through lib/notion.mjs, which enforces the contract.
-const NTN = 'C:/Users/david.hayes/AppData/Local/Microsoft/WinGet/Packages/Notion.ntn_Microsoft.Winget.Source_8wekyb3d8bbwe/ntn-x86_64-pc-windows-msvc/ntn.exe';
-
-// The Reporting Hub page that hosts the shared project-card gallery.
-const REPORTING_HUB_PAGE_ID = '38f76fd7ac8280478e50dd2956ba6e8a';
-const CARD_HEADING = '## 📊 Living Status Card';
-const HUB_SECTION_HEADING = '## 📇 FourthOS Project Cards';
-
-// CCv3 is the engine's pilot but is NOT a FourthOS Projects-DB row, so it is
-// merged into the hub gallery from this static list rather than the live query.
-const STATIC_EXTRA_CARDS = [
-  {
-    projectName: 'CCv3 (pilot)',
-    health: 'Green',
-    status: 'Active',
-    hostKind: 'notion',
-    url: 'https://app.notion.com/p/39276fd7ac8281c697b8dc65e42168cb',
-  },
-];
-
-const CLAUDE_TIMEOUT_MS = 300000; // 5 min per headless claude publish
-const REFRESH_TIMEOUT_MS = 120000;
+// Heartbeat file written on a fully successful run (REL#4).
+const HEARTBEAT_PATH = join(LOGS_DIR, 'last-success.json');
 
 // --- pure, exported helpers (unit-tested without spawning claude/ntn) ---
 
@@ -60,49 +53,37 @@ export function classifyHostKind(url) {
   return 'none';
 }
 
-// Render the hub gallery Markdown table from classified roster rows.
+// Escape a value for a single Markdown table cell: collapse newlines to a space
+// and backslash-escape pipes so a stray '|' or line break in a project field can
+// never inject extra columns/rows into the hub gallery table.
+function mdCell(s) {
+  return String(s ?? '').replace(/\r?\n/g, ' ').replace(/\|/g, '\\|');
+}
+
+// Escape a URL for use inside a Markdown link target: drop newlines and
+// percent-encode pipes (a literal '|' would otherwise break the table row).
+function mdUrl(s) {
+  return String(s ?? '').replace(/\r?\n/g, '').replace(/\|/g, '%7C');
+}
+
+// Render the hub gallery Markdown table from classified roster rows. Every
+// interpolated project field is cell-escaped so untrusted content (project names,
+// health/status labels, page urls) cannot corrupt the table structure.
 export function buildHubTable(rows) {
   const header = '| Project | Health | Status | Card |\n| --- | --- | --- | --- |';
   const body = rows.map((r) => {
     let card;
-    if (r.hostKind === 'notion') card = `[Live card](${r.url})`;
+    if (r.hostKind === 'notion') card = `[Live card](${mdUrl(r.url)})`;
     else if (r.hostKind === 'github') card = 'GitHub-only — no Notion host page';
     else card = 'Pending host page';
-    return `| ${r.projectName} | ${r.health || '—'} | ${r.status || '—'} | ${card} |`;
+    const health = mdCell(r.health) || '—';
+    const status = mdCell(r.status) || '—';
+    return `| ${mdCell(r.projectName)} | ${health} | ${status} | ${card} |`;
   });
   return [header, ...body].join('\n');
 }
 
-// --- small local utilities ---
-
-// Human-readable stamp for the as-of captions.
-function humanDate(d = new Date()) {
-  return d.toLocaleString('en-US', {
-    weekday: 'short', month: 'short', day: 'numeric', year: 'numeric',
-    hour: '2-digit', minute: '2-digit',
-  });
-}
-
-function readState() {
-  if (!existsSync(STATE_PATH)) return { cards: {} };
-  const raw = JSON.parse(readFileSync(STATE_PATH, 'utf8'));
-  raw.cards = raw.cards || {};
-  return raw;
-}
-
-function atomicWrite(path, contents) {
-  const tmp = `${path}.tmp`;
-  writeFileSync(tmp, contents, 'utf8');
-  renameSync(tmp, path);
-}
-
-// Record a successful publish for one slug (attachmentId + lastPublished).
-function recordPublish(slug, attachmentId) {
-  const state = readState();
-  const prev = state.cards[slug] || {};
-  state.cards[slug] = { ...prev, attachmentId, lastPublished: new Date().toISOString() };
-  atomicWrite(STATE_PATH, `${JSON.stringify(state, null, 2)}\n`);
-}
+// --- spawns ---
 
 // Spawn headless claude with the connector enabled (ANTHROPIC_API_KEY deleted).
 function spawnClaude(prompt) {
@@ -120,7 +101,7 @@ function spawnClaude(prompt) {
 
 // Run refresh.mjs --all and parse its stdout manifest (stderr carries the banner).
 function runRefreshAll() {
-  const res = spawnSync(process.execPath, [REFRESH, '--all'], {
+  const res = spawnSync(process.execPath, [REFRESH_PATH, '--all'], {
     input: '',
     timeout: REFRESH_TIMEOUT_MS,
     windowsHide: true,
@@ -167,10 +148,10 @@ function buildPublishPrompt({ projectName, pageId, html, asOfHuman }) {
     '1. Call notion-create-attachment with the HTML string below as the file content'
       + ' (content type text/html). It returns file-upload://<id>.',
     `2. Call notion-update-page on page ${pageId} to insert-or-replace the job-owned section`
-      + ` titled exactly "${CARD_HEADING}" at the TOP of the page. The section body, in order, is:`,
+      + ` titled exactly "${CARD_SECTION_HEADING}" at the TOP of the page. The section body, in order, is:`,
     '   - an <embed src="file-upload://<id>"> block (the interactive sandboxed card)',
     `   - immediately below it, an italic caption line: "${caption}"`,
-    `   If the "${CARD_HEADING}" section already exists, REPLACE only its content. Never touch,`,
+    `   If the "${CARD_SECTION_HEADING}" section already exists, REPLACE only its content. Never touch,`,
     '   reorder, or overwrite any other section or content on the page.',
     '3. On success, print a single line exactly: PUBLISHED attachment=<id> (the id from step 1).',
     'If any step fails, print a single line: FAILED <reason> and stop.',
@@ -188,7 +169,7 @@ function buildHubPrompt({ table, asOfHuman, rowCount }) {
     'You are refreshing the FourthOS Project Cards gallery on the Reporting Hub.',
     `Target Notion page id: ${REPORTING_HUB_PAGE_ID}`,
     '',
-    `Using the claude.ai Notion connector, REPLACE only the body of the section titled exactly`,
+    'Using the claude.ai Notion connector, REPLACE only the body of the section titled exactly',
     `"${HUB_SECTION_HEADING}" with the content below. If that section does not exist, insert it`,
     'at the TOP of the page. Do not touch, reorder, or overwrite any other section or content.',
     '',
@@ -208,7 +189,12 @@ function buildHubPrompt({ table, asOfHuman, rowCount }) {
 
 // --- publish steps ---
 
-function publishCard(r, asOfHuman, publishedOk, publishFailed) {
+// Publish one card, then READ-BACK VERIFY the embed actually landed on the page
+// (ARCH): only a verified publish stamps publishedHash via state.recordPublish
+// with the card's manifest contentHash (REL#1 self-heal pairing). A confirmed
+// stdout marker whose embed is NOT found on read-back is recorded as a
+// publishFailed so the next sweep retries it. Mutates + persists `state`.
+function publishCard(r, state, asOfHuman, publishedOk, publishFailed) {
   let html;
   try {
     html = readFileSync(r.htmlPath, 'utf8');
@@ -221,14 +207,28 @@ function publishCard(r, asOfHuman, publishedOk, publishFailed) {
   }));
   if (res.error) {
     publishFailed.push({ slug: r.slug, reason: `spawn: ${res.error.message}` });
+    console.error(`[sweep] publish FAILED ${r.slug}: spawn: ${res.error.message}`);
     return;
   }
   const out = res.stdout || '';
   const ok = out.match(/PUBLISHED attachment=(\S+)/);
   if (ok) {
-    recordPublish(r.slug, ok[1]);
-    publishedOk.push(r.slug);
-    console.error(`[sweep] published ${r.slug} attachment=${ok[1]}`);
+    const attachmentId = ok[1];
+    // ARCH read-back verify: trust the page, not the stdout marker.
+    const verified = verifyCardEmbed(r.pageId);
+    if (verified) {
+      recordPublish(state, r.slug, {
+        attachmentId,
+        publishedHash: r.contentHash,
+        lastPublished: new Date().toISOString(),
+      });
+      writeState(state);
+      publishedOk.push(r.slug);
+      console.error(`[sweep] published+verified ${r.slug} attachment=${attachmentId}`);
+    } else {
+      publishFailed.push({ slug: r.slug, reason: 'read-back verify: no embed in card section' });
+      console.error(`[sweep] publish UNVERIFIED ${r.slug}: embed missing after PUBLISHED marker`);
+    }
     return;
   }
   const fail = out.match(/FAILED\s+(.*)/);
@@ -256,56 +256,104 @@ function refreshHub(table, asOfHuman, rowCount) {
 function main() {
   const dryRun = process.argv.includes('--dry-run');
   const startedIso = new Date().toISOString();
-  const asOfHuman = humanDate();
-  const version = ntnVersion();
-  console.error(`[sweep] start ${startedIso} · ntn ${version}${dryRun ? ' · DRY-RUN' : ''}`);
+  const asOfHuman = dateStamp();
 
-  // Step 2: deterministic refresh of every roster card.
-  const manifest = runRefreshAll();
-  const results = manifest.results || [];
-  console.error(`[sweep] refreshed ${results.length} card(s)`);
-
-  const publishable = results.filter((r) => r.pageId && (r.changed || r.needsPublish));
+  // Outcome accumulators — declared at function scope so the REL#2 finally block
+  // can always log them, even on a fatal throw partway through.
+  let phase = 'start';
+  let version = null;
+  let refreshed = 0;
   const publishedOk = [];
   const publishFailed = [];
-
-  if (dryRun) {
-    console.log(`\nWOULD PUBLISH (${publishable.length} card(s)):`);
-    if (publishable.length === 0) console.log('  (none — all cards published & unchanged)');
-    for (const r of publishable) {
-      console.log(`  - ${r.slug} (changed=${r.changed} needsPublish=${r.needsPublish} pageId=${r.pageId})`);
-    }
-  } else {
-    for (const r of publishable) publishCard(r, asOfHuman, publishedOk, publishFailed);
-  }
-
-  // Step 3: hub gallery table (live roster + static extras).
-  const rows = [...fetchRoster(), ...STATIC_EXTRA_CARDS];
-  const table = buildHubTable(rows);
   let hubRefreshed = false;
+  let fatalError = null;
+  let dryRunExit = false;
 
-  if (dryRun) {
-    console.log(`\nWOULD WRITE HUB TABLE (${rows.length} rows):`);
-    console.log(table);
-    console.log(`\nDry run complete — no claude spawned, state and Notion untouched.`);
-    process.exit(0);
+  try {
+    version = ntnVersion();
+    console.error(`[sweep] start ${startedIso} · ntn ${version}${dryRun ? ' · DRY-RUN' : ''}`);
+
+    // Step 2: deterministic refresh of every roster card.
+    phase = 'refresh';
+    const manifest = runRefreshAll();
+    const results = manifest.results || [];
+    refreshed = results.length;
+    console.error(`[sweep] refreshed ${refreshed} card(s)`);
+
+    const publishable = results.filter((r) => r.pageId && (r.changed || r.needsPublish));
+
+    if (dryRun) {
+      console.log(`\nWOULD PUBLISH (${publishable.length} card(s)):`);
+      if (publishable.length === 0) console.log('  (none — all cards published & unchanged)');
+      for (const r of publishable) {
+        console.log(`  - ${r.slug} (changed=${r.changed} needsPublish=${r.needsPublish} pageId=${r.pageId})`);
+      }
+    } else {
+      // Read state AFTER refresh.mjs has written the fresh contentHashes/pageIds.
+      phase = 'publish';
+      const state = readState();
+      for (const r of publishable) publishCard(r, state, asOfHuman, publishedOk, publishFailed);
+    }
+
+    // Step 3: hub gallery table (live roster + static extras).
+    phase = 'hub';
+    const rows = [...fetchRoster(), ...STATIC_EXTRA_CARDS];
+    const table = buildHubTable(rows);
+
+    if (dryRun) {
+      console.log(`\nWOULD WRITE HUB TABLE (${rows.length} rows):`);
+      console.log(table);
+      console.log('\nDry run complete — no claude spawned, state and Notion untouched.');
+      dryRunExit = true; // skip the REL#2 log append for the dry-run early exit
+      return;
+    }
+
+    hubRefreshed = refreshHub(table, asOfHuman, rows.length);
+    phase = 'done';
+  } catch (e) {
+    fatalError = e;
+    // Distinct fatal marker so a watchdog can grep the run apart from soft failures.
+    console.error(`[sweep] FATAL phase=${phase}: ${e && e.stack ? e.stack : (e && e.message) || e}`);
+  } finally {
+    // REL#2: ALWAYS record one run-log row — except on the dry-run early exit.
+    if (!dryRunExit) {
+      try {
+        mkdirSync(LOGS_DIR, { recursive: true });
+        appendFileSync(SWEEP_LOG_PATH, `${JSON.stringify({
+          ts: new Date().toISOString(),
+          phase,
+          error: fatalError ? (fatalError.message || String(fatalError)) : null,
+          ntnVersion: version,
+          refreshed,
+          publishedOk,
+          publishFailed,
+          hubRefreshed,
+        })}\n`, 'utf8');
+      } catch (logErr) {
+        console.error(`[sweep] WARN: could not append run-log: ${logErr.message}`);
+      }
+    }
   }
 
-  hubRefreshed = refreshHub(table, asOfHuman, rows.length);
+  // Dry run is always a clean exit — it attempts no publish and no hub write.
+  if (dryRunExit) process.exit(0);
 
-  // Step 4: run log.
-  mkdirSync(LOGS_DIR, { recursive: true });
-  appendFileSync(LOG_PATH, `${JSON.stringify({
-    ts: new Date().toISOString(),
-    ntnVersion: version,
-    refreshed: results.length,
-    publishedOk,
-    publishFailed,
-    hubRefreshed,
-  })}\n`, 'utf8');
+  // Step 5: exit red if anything we attempted failed (fatal, a publish, or hub).
+  const failed = !!fatalError || publishFailed.length > 0 || !hubRefreshed;
 
-  // Step 5: exit red if anything we attempted failed.
-  const failed = publishFailed.length > 0 || !hubRefreshed;
+  // REL#4 heartbeat: only stamp last-success.json on a fully green run.
+  if (!failed) {
+    try {
+      writeFileSync(HEARTBEAT_PATH, `${JSON.stringify({
+        ts: new Date().toISOString(),
+        publishedOk,
+        cards: refreshed,
+      }, null, 2)}\n`, 'utf8');
+    } catch (hbErr) {
+      console.error(`[sweep] WARN: could not write heartbeat: ${hbErr.message}`);
+    }
+  }
+
   process.exit(failed ? 1 : 0);
 }
 

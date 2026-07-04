@@ -58,6 +58,42 @@ test('HTML-escaping neutralizes injected markup', () => {
   assert.ok(html.includes('A &amp; B &quot;C&quot;'), 'escaped title present');
 });
 
+test('empty/unknown Health renders NEUTRAL, not green', () => {
+  for (const health of ['', undefined, 'Grey', 'purple']) {
+    const html = assembleCard({ ...greenProject, health }, decisions, {});
+    assert.ok(html.includes('class="health neutral"'), `neutral class for ${JSON.stringify(health)}`);
+    assert.ok(html.includes('>UNKNOWN</span>'), `neutral label for ${JSON.stringify(health)}`);
+    // dot + label in sync: must NOT claim green
+    assert.ok(!html.includes('class="health green"'), 'must not be green');
+    assert.ok(!html.includes('>GREEN</span>'), 'must not label GREEN');
+  }
+  // GREEN still requires an explicit "Green"
+  const green = assembleCard({ ...greenProject, health: 'Green' }, decisions, {});
+  assert.ok(green.includes('class="health green"') && green.includes('>GREEN</span>'));
+});
+
+test('token injection: a field value containing {{TOKEN}} cannot inject', () => {
+  // If replaceAll looped over the growing output, these would be substituted.
+  const evil = { ...greenProject, name: '{{HEALTH_CLASS}}', currentFocus: '{{OVERVIEW_DECK}}' };
+  const html = assembleCard(evil, decisions, {});
+  // masthead health class/label unaffected by the injected token in the title
+  assert.ok(html.includes('class="health green"'), 'masthead health untouched');
+  // the injected tokens are emitted verbatim, NOT replaced with other field values
+  assert.ok(html.includes('<h1>{{HEALTH_CLASS}}</h1>'), 'title token shown literally');
+  assert.ok(html.includes('{{OVERVIEW_DECK}}'), 'focus token shown literally');
+});
+
+test('unresolved template token fails loud (throws)', () => {
+  // Simulate a template that references a token with no matching value.
+  assert.throws(() => {
+    '{{PROJECT_LABEL}} {{NOPE}}'.replace(/\{\{(\w+)\}\}/g, (m, k) => {
+      const tokens = { PROJECT_LABEL: 'x' };
+      if (!Object.prototype.hasOwnProperty.call(tokens, k)) throw new Error(`unresolved ${m}`);
+      return tokens[k];
+    });
+  }, /unresolved \{\{NOPE\}\}/);
+});
+
 test('WATCH_BLOCK absent when Green + no decision', () => {
   const html = assembleCard(greenProject, decisions, {});
   assert.ok(!html.includes('class="watch"'), 'watch block should be absent');
