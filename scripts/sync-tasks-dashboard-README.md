@@ -5,9 +5,15 @@ A **zero-LLM** replacement for the `claude -p` + Notion-MCP job
 health & reliability"** section of the CCv3 Reporting Hub
 (Notion page `38f76fd7ac8280478e50dd2956ba6e8a`) from `Get-ScheduledTask`.
 
-Everything else on that page (the intro + "Last reviewed", "📚 Reports &
-Dashboards", "⚠️ Reporting health", "📥 Latest reports", "📇 FourthOS Project
-Cards") is hand-maintained and is left **byte-for-byte untouched**.
+It also refreshes the **"Last success"** column in the "📚 Reports &
+Dashboards" tables (added 2026-07-04): rows whose label prefix maps to a
+scheduled task (`REPORT_TASK_MAP` in `DashboardSync.psm1`) get a fresh
+timestamp when that task's `LastTaskResult == 0`; link tokens in the cell are
+preserved, and rows with non-text tokens (page mentions) or no mapping are
+skipped. Everything else on that page (the intro + "Last reviewed", the
+report descriptions/status/where cells, "⚠️ Reporting health", "📥 Latest
+reports", "📇 FourthOS Project Cards") is hand-maintained and left
+**byte-for-byte untouched**.
 
 ## Files
 

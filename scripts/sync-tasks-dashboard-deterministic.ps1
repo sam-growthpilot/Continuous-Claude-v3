@@ -69,6 +69,11 @@ function Invoke-Ntn {
 
     $psi = [System.Diagnostics.ProcessStartInfo]::new()
     $psi.FileName = $NtnExe
+    # Pin the Notion-Version header: without it every ntn call re-fetches the OpenAPI
+    # spec to discover "latest", and a transient 403 on that fetch aborts the run.
+    if (-not $psi.EnvironmentVariables.ContainsKey('NOTION_API_VERSION')) {
+        $psi.EnvironmentVariables['NOTION_API_VERSION'] = '2022-06-28'
+    }
     foreach ($a in $ArgList) { $psi.ArgumentList.Add($a) }
     $psi.RedirectStandardInput = $true
     $psi.RedirectStandardOutput = $true
@@ -262,6 +267,92 @@ function Invoke-ScopedWrite {
     Write-Log "Scoped write complete." 'INFO'
 }
 
+# --- Reports & Dashboards "Last success" refresh -----------------------------
+function Update-LastSuccessCells {
+    <#
+      Refresh the "Last success" column in the "Reports & Dashboards" tables for
+      rows backed by a scheduled task (REPORT_TASK_MAP). Only rows whose task's
+      LastTaskResult == 0 (a genuine success) get a new timestamp; link tokens in
+      the cell are preserved. Rows with non-text tokens (e.g. page mentions) or
+      no "Last success" column are skipped. -Apply performs the PATCHes; without
+      it, planned updates are only logged (preview).
+    #>
+    param([Parameter(Mandatory)][hashtable]$Inventory, [switch]$Apply)
+
+    $page = Get-BlockChildren -BlockId $PageId
+    $blocks = @($page.results)
+    $startIdx = -1
+    for ($i = 0; $i -lt $blocks.Count; $i++) {
+        if ($blocks[$i].type -eq 'heading_2' -and (Get-RichText $blocks[$i]) -match 'Reports & Dashboards') { $startIdx = $i; break }
+    }
+    if ($startIdx -lt 0) { Write-Log "Reports & Dashboards heading not found; skipping Last-success refresh" 'WARN'; return }
+    $endIdx = $blocks.Count
+    for ($i = $startIdx + 1; $i -lt $blocks.Count; $i++) {
+        if ($blocks[$i].type -eq 'divider') { $endIdx = $i; break }
+    }
+
+    foreach ($b in $blocks[$startIdx..($endIdx - 1)]) {
+        if ($b.type -ne 'table') { continue }
+        $tbl = Get-BlockChildren -BlockId $b.id
+        $rows = @($tbl.results | Where-Object { $_.type -eq 'table_row' })
+        if ($rows.Count -lt 2) { continue }
+
+        # Header row -> locate the "Last success" column.
+        $header = @($rows[0].table_row.cells | ForEach-Object { ($_ | ForEach-Object { $_.plain_text }) -join '' })
+        $lsCol = [array]::IndexOf($header, 'Last success')
+        if ($lsCol -lt 0) { continue }
+
+        for ($ri = 1; $ri -lt $rows.Count; $ri++) {
+            $row = $rows[$ri]
+            $cells = @($row.table_row.cells)
+            if ($cells.Count -le $lsCol) { continue }
+            $label = (@($cells[0]) | ForEach-Object { $_.plain_text }) -join ''
+            $taskName = Resolve-ReportTaskName -Label $label -Inventory $Inventory
+            if (-not $taskName) { continue }
+            $t = $Inventory[$taskName]
+            if ($t.LastTaskResult -ne 0 -or -not $t.LastRunTime) { continue }   # only genuine successes
+
+            $oldTokens = @($cells[$lsCol])
+            # Safety: never rebuild a cell containing non-text tokens (mentions etc.).
+            if (@($oldTokens | Where-Object { $_.type -ne 'text' }).Count -gt 0) {
+                Write-Log "Last-success: skipping '$label' (non-text tokens in cell)" 'WARN'; continue
+            }
+            $newStamp = Format-LastRun $t.LastRunTime
+            $oldText = ($oldTokens | ForEach-Object { $_.plain_text }) -join ''
+            if ($oldText.StartsWith($newStamp)) { continue }                    # already current
+
+            Write-Log ("Last-success: '{0}' [{1}] {2} -> {3}" -f $label.Substring(0, [Math]::Min(50, $label.Length)), $taskName, $oldText, $newStamp)
+            if (-not $Apply) { continue }
+
+            # Rebuild the full row: sanitize untouched cells token-by-token, swap the LS cell.
+            $cellsPayload = @()
+            $toks = @()
+            for ($ci = 0; $ci -lt $cells.Count; $ci++) {
+                if ($ci -eq $lsCol) {
+                    $cellsPayload += , (Build-LastSuccessRichText -LastRunTime $t.LastRunTime -OldTokens $oldTokens)
+                } else {
+                    $toks = @()
+                    foreach ($tok in @($cells[$ci])) {
+                        if ($tok.type -ne 'text') { $toks = $null; break }      # unsanitizable -> abort row
+                        $toks += , @{ type = 'text'; text = @{ content = $tok.text.content; link = $tok.text.link }; annotations = $tok.annotations }
+                    }
+                    if ($null -eq $toks) { break }
+                    $cellsPayload += , $toks
+                }
+            }
+            if ($null -eq $toks -or $cellsPayload.Count -ne $cells.Count) {
+                Write-Log "Last-success: skipping '$label' (row has non-text tokens elsewhere)" 'WARN'; continue
+            }
+            $body = @{ table_row = @{ cells = $cellsPayload } } | ConvertTo-Json -Depth 20 -Compress
+            $tmp = [IO.Path]::GetTempFileName()
+            Set-Content -Path $tmp -Value $body -Encoding utf8
+            Write-Log "PATCH table_row $($row.id) (Last success: $taskName)"
+            Invoke-Ntn -ArgList @('api', '-X', 'PATCH', "v1/blocks/$($row.id)", '-d', "@$tmp") | Out-Null
+            Remove-Item $tmp -ErrorAction SilentlyContinue
+        }
+    }
+}
+
 # --- self-test ---------------------------------------------------------------
 function Invoke-SelfTest {
     $G = Get-StatusEmoji Green; $Y = Get-StatusEmoji Yellow; $R = Get-StatusEmoji Red; $D = Get-StatusEmoji NoEntry
@@ -337,6 +428,24 @@ function Invoke-SelfTest {
         $fail++; Write-Host ("  FAIL  (k) CORR#3 Expand-RowCells threw: {0}" -f $_.Exception.Message) -ForegroundColor Red
     }
 
+    # --- (l) Build-LastSuccessRichText: fresh stamp + links preserved, pure ----
+    try {
+        $oldToks = @(
+            [pscustomobject]@{ type = 'text'; plain_text = '2026-06-30 08:03'; href = $null }
+            [pscustomobject]@{ type = 'text'; plain_text = 'results'; href = 'https://example.com/r' }
+        )
+        $rt = Build-LastSuccessRichText -LastRunTime ([datetime]'2026-07-04 06:15') -OldTokens $oldToks
+        $flat = ($rt | ForEach-Object { $_.text.content }) -join ''
+        $link = @($rt | Where-Object { $_.text.ContainsKey('link') })[0]
+        if ($flat -eq '2026-07-04 06:15 · results' -and $link -and $link.text.link.url -eq 'https://example.com/r') {
+            $pass++; Write-Host "  PASS  (l) Build-LastSuccessRichText -> fresh stamp, link preserved" -ForegroundColor Green
+        } else {
+            $fail++; Write-Host ("  FAIL  (l) Build-LastSuccessRichText unexpected: '{0}'" -f $flat) -ForegroundColor Red
+        }
+    } catch {
+        $fail++; Write-Host ("  FAIL  (l) Build-LastSuccessRichText threw: {0}" -f $_.Exception.Message) -ForegroundColor Red
+    }
+
     Write-Host ("---------------- {0} passed / {1} failed ----------------" -f $pass, $fail) -ForegroundColor Cyan
     if ($fail -gt 0) { exit 1 }
     Write-Host 'SELF-TEST GREEN' -ForegroundColor Green
@@ -371,7 +480,9 @@ Show-Diff -Result $result
 
 if ($Write) {
     Invoke-ScopedWrite -Section $section -Result $result -Inventory $inventory -Today $today
+    Update-LastSuccessCells -Inventory $inventory -Apply
     Write-Log "WRITE mode complete."
 } else {
-    Write-Log "PREVIEW mode: nothing written. Re-run with -Write to apply (scoped to the tasks section only)."
+    Update-LastSuccessCells -Inventory $inventory   # preview: logs planned Last-success updates only
+    Write-Log "PREVIEW mode: nothing written. Re-run with -Write to apply (scoped to the tasks + Last-success cells only)."
 }

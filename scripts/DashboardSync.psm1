@@ -220,6 +220,52 @@ function Expand-RowCells {
     return , ($list.ToArray())
 }
 
+# "Reports & Dashboards" row-label prefix -> scheduled TaskName that produces it.
+# Rows not listed here (event-driven/continuous reports) are never touched.
+$script:REPORT_TASK_MAP = [ordered]@{
+    'CCv3 Scheduled Tasks'            = 'CCv3-Dashboard-Sync'
+    'CCv3 Weekly Health Checks'       = 'CCv3-Health-Check'
+    'Braintrust session scores'       = 'CCv3-Judge-Batch'
+    'AI Enablement Exec Presentation' = 'AIWeeklyReport'
+    'AI Enablement Weekly Report'     = 'AIWeeklyReport'
+    'FourthOS Sponsor Decks'          = 'CCv3-FourthOS-Weekly'
+    'FourthOS Update Package'         = 'CCv3-FourthOS-Weekly'
+    'Self-Improvement Proposals'      = 'CCv3-Self-Improvement-Research'
+}
+
+function Resolve-ReportTaskName {
+    <# Map a Reports & Dashboards row label (which carries an inline description)
+       to a scheduled TaskName via prefix match. $null = row is not task-backed. #>
+    param([Parameter(Mandatory)][string]$Label, [Parameter(Mandatory)][hashtable]$Inventory)
+    foreach ($k in $script:REPORT_TASK_MAP.Keys) {
+        if ($Label.StartsWith($k)) {
+            $n = $script:REPORT_TASK_MAP[$k]
+            if ($Inventory.ContainsKey($n)) { return $n }
+        }
+    }
+    return $null
+}
+
+function Build-LastSuccessRichText {
+    <#
+      Build the replacement rich_text array for a "Last success" cell: fresh
+      success timestamp, then every link token preserved from the old cell
+      (result links survive the refresh). Pure — no API calls.
+    #>
+    param([Parameter(Mandatory)][datetime]$LastRunTime, [AllowNull()]$OldTokens)
+    $out = [System.Collections.Generic.List[object]]::new()
+    $out.Add(@{ type = 'text'; text = @{ content = (Format-LastRun $LastRunTime) } })
+    if ($OldTokens) {
+        foreach ($t in $OldTokens) {
+            if ($t.PSObject.Properties.Name -contains 'href' -and $t.href) {
+                $out.Add(@{ type = 'text'; text = @{ content = ' · ' } })
+                $out.Add(@{ type = 'text'; text = @{ content = [string]$t.plain_text; link = @{ url = [string]$t.href } } })
+            }
+        }
+    }
+    return , ($out.ToArray())
+}
+
 function Resolve-TaskName {
     <# Map a friendly table label to a real TaskName present in the inventory. #>
     param([Parameter(Mandatory)][string]$Label, [Parameter(Mandatory)][hashtable]$Inventory)
@@ -331,4 +377,5 @@ function Build-TasksSectionMarkdown {
 Export-ModuleMember -Function `
     Get-TaskInventory, Resolve-TaskStatus, Build-TasksSectionMarkdown, `
     Parse-StatusAnnotation, Get-LeadingStatusEmoji, Get-StatusEmoji, `
-    Format-TaskResult, Format-LastRun, Resolve-TaskName, Expand-RowCells
+    Format-TaskResult, Format-LastRun, Resolve-TaskName, Expand-RowCells, `
+    Resolve-ReportTaskName, Build-LastSuccessRichText
