@@ -424,7 +424,13 @@ function publishCockpit(html, asOfHuman) {
 async function main() {
   const dryRun = process.argv.includes('--dry-run');
   const startedIso = new Date().toISOString();
+  const startedMs = Date.now();
   const asOfHuman = dateStamp();
+  // Global time budget: reserve the tail of the scheduled-task window for the
+  // cockpit + hub steps so a slow card-publish batch can never starve them (or
+  // get the whole task killed mid-run). Cards past the budget are deferred and,
+  // because publishedHash never advanced, re-flagged next sweep (self-heal).
+  const CARD_PUBLISH_BUDGET_MS = 18 * 60_000;
 
   // Outcome accumulators — declared at function scope so the REL#2 finally block
   // can always log them, even on a fatal throw partway through.
@@ -463,7 +469,17 @@ async function main() {
       // Read state AFTER refresh.mjs has written the fresh contentHashes/pageIds.
       phase = 'publish';
       const state = readState();
-      for (const r of publishable) publishCard(r, state, asOfHuman, publishedOk, publishFailed);
+      for (const r of publishable) {
+        if (Date.now() - startedMs > CARD_PUBLISH_BUDGET_MS) {
+          const deferred = publishable.slice(publishable.indexOf(r));
+          for (const d of deferred) {
+            publishFailed.push({ slug: d.slug, reason: 'deferred: card-publish time budget exceeded' });
+          }
+          console.error(`[sweep] time budget reached — deferring ${deferred.length} card publish(es) to next sweep; proceeding to cockpit + hub`);
+          break;
+        }
+        publishCard(r, state, asOfHuman, publishedOk, publishFailed);
+      }
     }
 
     // Shared inputs for the history / cockpit / hub steps: the live roster, a
