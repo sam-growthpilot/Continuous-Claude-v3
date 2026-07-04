@@ -8,7 +8,7 @@
       "contentHash": "3028bd332ec24f88ea2bfaf32d67226082e1f5ed4c1a40c7cc541413f7f0cdd6",
       "publishedHash": "3028bd332ec24f88ea2bfaf32d67226082e1f5ed4c1a40c7cc541413f7f0cdd6",
       "lastPublished": "2026-07-04T06:01:15.403Z",
-      "lastRefreshAttempt": "2026-07-04T06:24:07.388Z"
+      "lastRefreshAttempt": "2026-07-04T16:17:54.403Z"
     },
     "ai-governance-research-cadence": {
       "projectRowId": "53320d1d-b2e4-405d-ac20-49274c6065a6",
@@ -17,7 +17,7 @@
       "contentHash": "2da2bf6e6334901843970405033086279b96a3275cc4b42b565ec5c4a9c5fcc9",
       "publishedHash": null,
       "lastPublished": null,
-      "lastRefreshAttempt": "2026-07-04T06:24:00.272Z"
+      "lastRefreshAttempt": "2026-07-04T16:17:43.686Z"
     },
     "fourth-fabric-architecture-alignment": {
       "projectRowId": "dd2e154a-2249-4c02-a2ad-f7bd7b880c6e",
@@ -26,7 +26,7 @@
       "contentHash": "3eb58f2827b6d861046a6ee2fc9045075e4c527d117125d1b99dfa00cc5a4b3c",
       "publishedHash": null,
       "lastPublished": null,
-      "lastRefreshAttempt": "2026-07-04T06:24:01.295Z"
+      "lastRefreshAttempt": "2026-07-04T16:17:46.658Z"
     },
     "everyday-business-ai-model-platform": {
       "projectRowId": "2c8d6a98-bd94-4408-b269-705766f836e8",
@@ -35,7 +35,7 @@
       "contentHash": "bb6c3c9683811684cea59a215b59a21a8a754b6a68f7962277b5ad319f313008",
       "publishedHash": null,
       "lastPublished": null,
-      "lastRefreshAttempt": "2026-07-04T06:24:02.291Z"
+      "lastRefreshAttempt": "2026-07-04T16:17:48.726Z"
     },
     "netsuite-connector": {
       "projectRowId": "39176fd7-ac82-819f-ad6c-d6709922b9ea",
@@ -44,7 +44,7 @@
       "contentHash": "540e3a4bd4deffb9e41642cab15487dda6d6c46f3f2ec51e515db39df4594637",
       "publishedHash": null,
       "lastPublished": null,
-      "lastRefreshAttempt": "2026-07-04T06:24:03.333Z"
+      "lastRefreshAttempt": "2026-07-04T16:17:51.034Z"
     },
     "salesforce-connector": {
       "projectRowId": "39076fd7-ac82-81a9-b583-f5e928be50f2",
@@ -53,7 +53,16 @@
       "contentHash": "ac47a8095e9f0aff00b5bae59dd833a9dd59f5a9ae7b0198997a4efd54ee4d12",
       "publishedHash": null,
       "lastPublished": null,
-      "lastRefreshAttempt": "2026-07-04T06:24:05.203Z"
+      "lastRefreshAttempt": "2026-07-04T16:17:52.543Z"
     }
+  },
+  "mobileCockpit": {
+    "pageId": "39376fd7-ac82-817e-b2b7-faa3da23078c",
+    "attachmentId": "39376fd7-ac82-8177-9e83-00b2bbd7d191",
+    "prevAttachmentId": "39376fd7-ac82-81bd-9e24-00b20e96478a",
+    "contentHash": "53ca9f852360936a233b4db8993483cd03357049f8bc9761432a119965542041",
+    "publishedHash": "53ca9f852360936a233b4db8993483cd03357049f8bc9761432a119965542041",
+    "lastPublished": "2026-07-04T16:59:30.585Z",
+    "lastDigestWrite": "2026-07-04T16:59:50.148Z"
   }
 }

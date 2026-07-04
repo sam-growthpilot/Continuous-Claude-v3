@@ -8,7 +8,9 @@ import assert from 'node:assert/strict';
 import { mkdtempSync, writeFileSync, existsSync, readdirSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { needsPublish, readState } from '../lib/state.mjs';
+import {
+  needsPublish, readState, writeState, getMobileCockpit, recordMobileCockpit,
+} from '../lib/state.mjs';
 import { STATE_VERSION } from '../lib/config.mjs';
 
 let pass = 0;
@@ -102,6 +104,48 @@ test('readState: non-object JSON (e.g. a bare array) -> fresh state', () => {
   assert.equal(typeof s, 'object');
   assert.deepEqual(s.cards, {});
   assert.equal(typeof s.version, 'number');
+});
+
+// --- mobileCockpit (additive block, tolerant readers) ----------------------
+
+test('getMobileCockpit: absent block -> full default shape (readers tolerate absence)', () => {
+  const shape = getMobileCockpit({ version: STATE_VERSION, cards: {} });
+  assert.deepEqual(shape, {
+    pageId: null, attachmentId: null, prevAttachmentId: null,
+    contentHash: null, publishedHash: null, lastPublished: null, lastDigestWrite: null,
+  });
+  assert.deepEqual(getMobileCockpit(null), getMobileCockpit(undefined));
+});
+
+test('getMobileCockpit: partial stored block is filled to the full shape', () => {
+  const s = { mobileCockpit: { pageId: 'p1', contentHash: 'h1' } };
+  const shape = getMobileCockpit(s);
+  assert.equal(shape.pageId, 'p1');
+  assert.equal(shape.contentHash, 'h1');
+  assert.equal(shape.prevAttachmentId, null);
+  assert.equal(shape.lastDigestWrite, null);
+});
+
+test('recordMobileCockpit: merges patch, preserves untouched fields, mutates state', () => {
+  const s = { version: STATE_VERSION, cards: {}, mobileCockpit: { pageId: 'p1', attachmentId: 'a1', publishedHash: 'h1' } };
+  recordMobileCockpit(s, { prevAttachmentId: 'a1', attachmentId: 'a2', publishedHash: 'h2' });
+  assert.equal(s.mobileCockpit.pageId, 'p1');
+  assert.equal(s.mobileCockpit.attachmentId, 'a2');
+  assert.equal(s.mobileCockpit.prevAttachmentId, 'a1');
+  assert.equal(s.mobileCockpit.publishedHash, 'h2');
+});
+
+test('writeState round-trip PRESERVES mobileCockpit alongside cards (atomic tmp+rename)', () => {
+  const p = join(workdir, 'roundtrip.json');
+  const s = { version: STATE_VERSION, cards: { foo: { contentHash: 'x' } } };
+  recordMobileCockpit(s, { pageId: 'p1', publishedHash: 'h1', lastDigestWrite: '2026-07-04T00:00:00.000Z' });
+  writeState(s, p);
+  assert.ok(!existsSync(`${p}.tmp`), 'tmp file must not linger after rename');
+  const back = readState(p);
+  assert.equal(back.cards.foo.contentHash, 'x');
+  assert.equal(getMobileCockpit(back).pageId, 'p1');
+  assert.equal(getMobileCockpit(back).publishedHash, 'h1');
+  assert.equal(getMobileCockpit(back).lastDigestWrite, '2026-07-04T00:00:00.000Z');
 });
 
 // --- cleanup ---------------------------------------------------------------

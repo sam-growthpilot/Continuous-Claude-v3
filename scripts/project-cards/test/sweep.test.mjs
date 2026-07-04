@@ -3,7 +3,13 @@
 // tested here; the live spawns (refresh.mjs, claude -p, ntn) are not unit-tested.
 // Run: node scripts/project-cards/test/sweep.test.mjs
 import assert from 'node:assert/strict';
-import { classifyHostKind, buildHubTable } from '../sweep.mjs';
+import { mkdtempSync, writeFileSync, readFileSync, existsSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import {
+  classifyHostKind, buildHubTable, markdownToBlocks,
+  acquireSweepLock, releaseSweepLock,
+} from '../sweep.mjs';
 
 let pass = 0;
 function test(name, fn) {
@@ -78,5 +84,68 @@ test('buildHubTable: row count matches input (header + one line per row)', () =>
   const lines = buildHubTable(rows).split('\n');
   assert.equal(lines.length, 2 + rows.length); // header + separator + 3 rows
 });
+
+// --- markdownToBlocks (AI-digest splice payload) ----------------------------
+
+test('markdownToBlocks: "## " headings DEMOTED to heading_3 (cannot end the digest section)', () => {
+  const blocks = markdownToBlocks('## Needs attention\ntext');
+  assert.equal(blocks[0].type, 'heading_3');
+  assert.equal(blocks[0].heading_3.rich_text[0].text.content, 'Needs attention');
+});
+
+test('markdownToBlocks: bullets -> bulleted_list_item, numbered lines stay paragraphs (rank fidelity)', () => {
+  const blocks = markdownToBlocks('- ProjA — health: Green\n1. 🔴 [task] Fix thing — blocked');
+  assert.equal(blocks[0].type, 'bulleted_list_item');
+  assert.equal(blocks[0].bulleted_list_item.rich_text[0].text.content, 'ProjA — health: Green');
+  assert.equal(blocks[1].type, 'paragraph');
+  assert.ok(blocks[1].paragraph.rich_text[0].text.content.startsWith('1. '));
+});
+
+test('markdownToBlocks: blank lines skipped; italic footer kept as paragraph', () => {
+  const blocks = markdownToBlocks('a\n\n\n_Updated: X by CCv3 sweep._\n');
+  assert.equal(blocks.length, 2);
+  assert.equal(blocks[1].paragraph.rich_text[0].text.content, '_Updated: X by CCv3 sweep._');
+});
+
+test('markdownToBlocks: rich_text content truncated to 2000 chars (Notion limit)', () => {
+  const blocks = markdownToBlocks(`x${'y'.repeat(3000)}`);
+  assert.equal(blocks[0].paragraph.rich_text[0].text.content.length, 2000);
+});
+
+// --- single-instance sweep lock (mitigation #2) ------------------------------
+
+const lockDir = mkdtempSync(join(tmpdir(), 'pc-lock-'));
+const lockPath = join(lockDir, '.sweep.lock');
+
+test('lock: clean acquire writes pid+ts payload; release removes it', () => {
+  assert.equal(acquireSweepLock(lockPath), 'acquired');
+  const payload = JSON.parse(readFileSync(lockPath, 'utf8'));
+  assert.equal(payload.pid, process.pid);
+  assert.ok(payload.ts);
+  releaseSweepLock(lockPath);
+  assert.ok(!existsSync(lockPath));
+});
+
+test('lock: fresh lock held by another run -> held', () => {
+  writeFileSync(lockPath, JSON.stringify({ pid: 99999, ts: new Date().toISOString() }), 'utf8');
+  assert.equal(acquireSweepLock(lockPath), 'held');
+  releaseSweepLock(lockPath);
+});
+
+test('lock: >30min-old lock is treated as stale and replaced', () => {
+  const old = new Date(Date.now() - 31 * 60_000).toISOString();
+  writeFileSync(lockPath, JSON.stringify({ pid: 99999, ts: old }), 'utf8');
+  assert.equal(acquireSweepLock(lockPath), 'stale-replaced');
+  assert.equal(JSON.parse(readFileSync(lockPath, 'utf8')).pid, process.pid);
+  releaseSweepLock(lockPath);
+});
+
+test('lock: corrupt/unreadable lock file counts as stale', () => {
+  writeFileSync(lockPath, 'not json at all', 'utf8');
+  assert.equal(acquireSweepLock(lockPath), 'stale-replaced');
+  releaseSweepLock(lockPath);
+});
+
+try { rmSync(lockDir, { recursive: true, force: true }); } catch { /* best-effort */ }
 
 console.log(`\n${pass} passed`);

@@ -82,6 +82,39 @@ export function recordPublish(state, slug, { attachmentId, publishedHash, lastPu
   return state;
 }
 
+// --- mobile cockpit (additive, single-object — NOT per-slug) -----------------
+// state.mobileCockpit shape:
+//   { pageId, attachmentId, prevAttachmentId, contentHash, publishedHash,
+//     lastPublished, lastDigestWrite }
+// Readers tolerate absence (older state.json files predate this block) and
+// writeState preserves it via the spread in the output shape.
+
+function freshMobileCockpit() {
+  return {
+    pageId: null,
+    attachmentId: null,
+    prevAttachmentId: null,
+    contentHash: null,
+    publishedHash: null,
+    lastPublished: null,
+    lastDigestWrite: null,
+  };
+}
+
+// Tolerant reader: always returns the full shape, filling absent fields.
+export function getMobileCockpit(state) {
+  const cur = state && state.mobileCockpit && typeof state.mobileCockpit === 'object'
+    ? state.mobileCockpit : {};
+  return { ...freshMobileCockpit(), ...cur };
+}
+
+// Merge a patch into state.mobileCockpit. Mutates and returns `state` (caller
+// persists via writeState) — mirrors recordPublish's contract.
+export function recordMobileCockpit(state, patch = {}) {
+  state.mobileCockpit = { ...getMobileCockpit(state), ...patch };
+  return state;
+}
+
 // Shared publish decision so refresh and sweep compute it identically.
 // A card needs (re)publishing when it was never published, OR its published
 // content is stale relative to the freshly-computed contentHash.

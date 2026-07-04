@@ -28,6 +28,22 @@ export const NTN_EXE = 'C:/Users/david.hayes/AppData/Local/Microsoft/WinGet/Pack
 // --- FourthOS Notion data source ids (databases) ---
 export const PROJECTS_DS = '852a60e1-9fa6-4361-9b55-1a9f59d566d8';
 export const DECISIONS_DS = 'e209f0f0-e7a6-45f1-9d2d-bc97d9811d60';
+// Personal Life-OS Tasks DB: the FourthOS inline Tasks DB (5209d2a6…) exposes no
+// data source to either integration, so v0 queries the personal DB scoped to the
+// FourthOS project relation and open tasks via TASKS_QUERY below.
+export const TASKS_DS = 'c3176fd7-ac82-825c-a03c-073837e5493c';
+export const SPONSOR_DS = '10c0358a-ad62-486d-8493-5046800e9af1'; // Sponsor Report Approvals
+export const TASKS_QUERY = {
+  filter: {
+    and: [
+      { property: 'Project', relation: { contains: '34076fd7-ac82-805d-ac89-dd26476e2c47' } },
+      { property: 'Completed?', checkbox: { equals: false } },
+    ],
+  },
+};
+
+// --- Mobile Cockpit (phone-first child page under the Daily Cockpit) ---
+export const MOBILE_COCKPIT_PAGE_ID = '39376fd7-ac82-817e-b2b7-faa3da23078c'; // created 2026-07-04
 
 // --- Reporting Hub (hosts the shared project-card gallery) ---
 export const REPORTING_HUB_PAGE_ID = '38f76fd7ac8280478e50dd2956ba6e8a';
@@ -35,6 +51,9 @@ export const REPORTING_HUB_PAGE_ID = '38f76fd7ac8280478e50dd2956ba6e8a';
 // --- section headings (matched verbatim by the MCP publish/hub steps) ---
 export const CARD_SECTION_HEADING = '## 📊 Living Status Card';
 export const HUB_SECTION_HEADING = '## 📇 FourthOS Project Cards';
+export const MOBILE_INTRO_HEADING = '# 📱 Mobile Cockpit';
+export const MOBILE_EMBED_HEADING = '## 🚨 Attention Queue';
+export const AI_DIGEST_HEADING = '## 🤖 AI digest (machine-written)';
 
 // --- timeouts (ms) ---
 export const NTN_TIMEOUT_MS = 30000;

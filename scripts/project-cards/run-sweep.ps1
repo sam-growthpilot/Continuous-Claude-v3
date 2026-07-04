@@ -5,6 +5,7 @@
 # Notion embed) runs via headless `claude -p` + the claude.ai Notion connector.
 #
 # Manual run:  powershell -NoProfile -ExecutionPolicy Bypass -File scripts\project-cards\run-sweep.ps1
+# Any extra args (e.g. --target mobile-cockpit) pass straight through to sweep.mjs.
 $ErrorActionPreference = 'Stop'
 
 $repo = 'C:\Users\david.hayes\continuous-claude'
@@ -28,7 +29,7 @@ $log = Join-Path $logDir "$date.log"
 # terminating NativeCommandError and would abort the wrapper on benign log output. Gate
 # success on the process exit code instead, so real failures still surface (code != 0).
 $ErrorActionPreference = 'Continue'
-& node (Join-Path $repo 'scripts\project-cards\sweep.mjs') 2>&1 | Tee-Object -FilePath $log -Append
+& node (Join-Path $repo 'scripts\project-cards\sweep.mjs') @args 2>&1 | Tee-Object -FilePath $log -Append
 $code = $LASTEXITCODE
 "[$(Get-Date -Format o)] sweep exited (code=$code)" | Tee-Object -FilePath $log -Append
 exit $code
