@@ -19,7 +19,7 @@ export const DECISIONS_DS = DECISIONS_DS_ID;
 // Transient failure signature — retry only these. A nonzero exit whose output
 // matches rate-limiting (429/rate), a timeout, a 5xx, or a dropped connection is
 // worth a backoff; anything else (bad request, auth, 4xx) fails loud immediately.
-const TRANSIENT_RE = /429|rate|timeout|5\d\d|ECONN|ETIMEDOUT/i;
+const TRANSIENT_RE = /429|rate|timeout|5\d\d|ECONN|ETIMEDOUT|Failed to execute public API request/i;
 const MAX_ATTEMPTS = 3;
 
 // Blocking sleep (spawnSync is synchronous, so async timers won't help here).
@@ -225,6 +225,114 @@ export function queryTasks(dsId = TASKS_DS, opts = {}) {
 export function querySponsorReports(dsId = SPONSOR_DS, opts = {}) {
   return queryDataSource(dsId, opts);
 }
+// PM Notes (mobile PM portal). Default filter = open-status rows only (the
+// queue/digest only surface open notes); caller may override via opts.filter.
+// Tolerance for an EMPTY dsId lives at the caller (sweep's fetchQueueInput),
+// matching the queryTasks/querySponsorReports contract.
+export function queryPmNotes(dsId, opts = {}) {
+  const filter = opts.filter ?? { property: 'Status', select: { equals: 'open' } };
+  return queryDataSource(dsId, { ...opts, filter });
+}
+
+// --- page creation (triage executor) ------------------------------------------
+// PURE body builder — testable without spawning ntn.
+export function buildCreatePageBody(dsId, properties) {
+  if (!dsId) throw new Error('createPage: dsId is empty (config placeholder not filled?)');
+  if (!properties || typeof properties !== 'object' || Array.isArray(properties)) {
+    throw new Error('createPage: properties must be a plain object');
+  }
+  return {
+    parent: { type: 'data_source_id', data_source_id: dsId },
+    properties,
+  };
+}
+
+// Generic row create via POST v1/pages. `post` is injectable for tests;
+// defaults to the retrying apiPost (runNtn contract). Returns the created
+// page object.
+export function createPage(dsId, properties, { post = apiPost } = {}) {
+  return post('v1/pages', buildCreatePageBody(dsId, properties));
+}
+
+// Rich-text CaptureId stamp (mitigation #3): every triage-created row carries
+// the SOURCE BLOCK id so ambiguous create failures can be de-duplicated by
+// querying the destination DS before any retry POST.
+function captureIdProp(captureId) {
+  if (!captureId) throw new Error('createRow: captureId (source block id) is required');
+  return { rich_text: [{ type: 'text', text: { content: String(captureId) } }] };
+}
+
+const rt = (s) => [{ type: 'text', text: { content: String(s) } }];
+
+// Personal Tasks DS "Priority" select options are High/Mid/Low, not the plan
+// grammar's P1/P2/P3 tokens — map rather than push a mismatched new option
+// into a shared personal database (mitigation #13 blast-radius care).
+const PRIORITY_TO_TASKS_SELECT = { P1: 'High', P2: 'Mid', P3: 'Low' };
+
+// Task row (personal Tasks DS). Extras: priority (select, mapped to the DS's
+// own High/Mid/Low options), due (date start; DS property is "Due Date"),
+// projectRelationId (relation). Returns the created page id.
+export function createTaskRow(dsId, { title: name, captureId, priority, due, projectRelationId }, opts = {}) {
+  const properties = {
+    Task: { title: rt(name) },
+    CaptureId: captureIdProp(captureId),
+  };
+  if (priority) properties.Priority = { select: { name: PRIORITY_TO_TASKS_SELECT[priority] || priority } };
+  if (due) properties['Due Date'] = { date: { start: due } };
+  if (projectRelationId) properties.Project = { relation: [{ id: projectRelationId }] };
+  const page = createPage(dsId, properties, opts);
+  return page.id;
+}
+
+// PM Notes row. type: note/idea/later/blocker/question; status open/addressed.
+export function createPmNoteRow(dsId, { title: name, captureId, type, status, projectRelationId, source }, opts = {}) {
+  const properties = {
+    Note: { title: rt(name) },
+    CaptureId: captureIdProp(captureId),
+  };
+  if (type) properties.Type = { select: { name: type } };
+  if (status) properties.Status = { select: { name: status } };
+  if (source) properties.Source = { select: { name: source } };
+  if (projectRelationId) properties.Project = { relation: [{ id: projectRelationId }] };
+  const page = createPage(dsId, properties, opts);
+  return page.id;
+}
+
+// Decisions & Outputs row. The DS's title property is "Output" (not "Name").
+export function createDecisionRow(dsId, { title: name, captureId, projectRelationId }, opts = {}) {
+  const properties = {
+    Output: { title: rt(name) },
+    CaptureId: captureIdProp(captureId),
+  };
+  if (projectRelationId) properties.Project = { relation: [{ id: projectRelationId }] };
+  const page = createPage(dsId, properties, opts);
+  return page.id;
+}
+
+// Duplicate guard (mitigation #3): before retrying an ambiguous create, query
+// the destination DS for an existing row stamped with this CaptureId. Returns
+// the first matching row or null. `query` injectable for tests.
+export function findByCaptureId(dsId, captureId, { query = queryDataSource } = {}) {
+  if (!captureId) throw new Error('findByCaptureId: captureId is required');
+  const rows = query(dsId, {
+    filter: { property: 'CaptureId', rich_text: { equals: String(captureId) } },
+  });
+  return rows.length > 0 ? rows[0] : null;
+}
+
+// Archive (delete) a single block. Idempotent via apiDelete's "already
+// archived" tolerance — safe for the triage crash-replay path.
+export function deleteBlock(blockId) {
+  if (!blockId) throw new Error('deleteBlock: blockId is required');
+  apiDelete(`v1/blocks/${blockId}`);
+}
+
+// Single-block fetch (mitigation #1 snapshot→delete race: re-fetch the block
+// and compare last_edited_time + text hash against the snapshot before delete).
+export function getBlock(blockId) {
+  if (!blockId) throw new Error('getBlock: blockId is required');
+  return apiGet(`v1/blocks/${blockId}`);
+}
 
 // --- block-level section editing (mitigation #1) ------------------------------
 // NEVER `ntn pages edit` full-page replace: that destroys MCP-only blocks
@@ -297,27 +405,32 @@ export function findSectionBlocks(blocks, heading) {
 }
 
 // Replace ONLY the blocks inside the `heading` section with `newBlocks`
-// (an array of Notion block objects). Deletes the old section body one block
-// at a time, then inserts the new blocks immediately after the heading via
-// PATCH v1/blocks/{pageId}/children with `after`. Throws if the heading is
-// missing — a silent append could land content in the wrong (human-owned)
-// section.
+// (an array of Notion block objects). INSERT-THEN-DELETE (never delete-first):
+// the new blocks are PATCHed in immediately after the heading FIRST, and only
+// once that lands are the old section blocks archived one at a time. This
+// mirrors the plan's own "create-THEN-delete, never delete-first" executor
+// principle (mitigation #3) at the block-replace layer: a process interrupted
+// between the two steps leaves the section with DUPLICATE (old + new)
+// content — recoverable and non-destructive — rather than the delete-first
+// order's failure mode of a momentarily EMPTY (or, if interrupted mid-delete-
+// loop, partially destroyed) section. Throws if the heading is missing — a
+// silent append could land content in the wrong (human-owned) section.
 export function replaceSectionBlocks(pageId, heading, newBlocks) {
   if (!pageId) throw new Error('replaceSectionBlocks: pageId is empty');
   const blocks = getPageBlocks(pageId);
   const section = findSectionBlocks(blocks, heading);
   if (!section) throw new Error(`replaceSectionBlocks: heading not found on page ${pageId}: ${heading}`);
 
-  for (const b of section.blocks) {
-    apiDelete(`v1/blocks/${b.id}`);
-  }
   if (newBlocks && newBlocks.length > 0) {
     apiPatch(`v1/blocks/${pageId}/children`, {
       children: newBlocks,
       after: blocks[section.headingIndex].id,
     });
   }
-  console.error(`[ntn] replaceSectionBlocks ${pageId} "${heading}": deleted ${section.blocks.length}, inserted ${(newBlocks || []).length}`);
+  for (const b of section.blocks) {
+    apiDelete(`v1/blocks/${b.id}`);
+  }
+  console.error(`[ntn] replaceSectionBlocks ${pageId} "${heading}": inserted ${(newBlocks || []).length}, deleted ${section.blocks.length}`);
 }
 
 // Update the single intro paragraph directly under `heading` WITHOUT section

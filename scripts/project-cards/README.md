@@ -60,7 +60,18 @@ only as a size/precheck; the authoritative publish is MCP create-attachment.
 ```bash
 node scripts/project-cards/refresh.mjs "Connector Ecosystem"   # one card
 node scripts/project-cards/refresh.mjs --all                    # whole roster
+node scripts/project-cards/sweep.mjs --target mobile-cockpit    # refresh phone cockpit (triage + embed + digest)
+node scripts/project-cards/sweep.mjs --target triage            # triage-only (exits 3 on triage failure)
+node scripts/project-cards/experiment/uat-triage.mjs            # live UAT pass (nonce'd, ID-exact cleanup)
 ```
+
+## Mobile PM Portal (page 39376fd7-ac82-817e-b2b7-faa3da23078c)
+
+Section ownership: intro callout / 🚨 Attention Queue embed / 🤖 AI digest / 🧾 Triage log = **machine** ·
+✅ Act now + 🗒️ Notes views = setup-owned · 📓 Capture = **human writes, triage consumes only fully-parsed+filed lines**
+(create → persist id → re-fetch conflict check → delete; receipt every consuming run, last 10 kept).
+Capture grammar + safety rails: see `.claude/skills/notion-dashboard/SKILL.md`. Triage is a pure regex parser —
+capture text never reaches an LLM/MCP prompt.
 
 Manifest fields: `projectName, slug, pageId, htmlPath, contentHash, changed,
 needsPublish, cardSectionHeading`. `changed:false` means the canonical content

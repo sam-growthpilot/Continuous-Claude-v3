@@ -9,6 +9,7 @@ import { join } from 'node:path';
 import {
   classifyHostKind, buildHubTable, markdownToBlocks,
   acquireSweepLock, releaseSweepLock,
+  triageFailureReceiptLine, TRIAGE_EXIT_CODE, mapPmNoteRow,
 } from '../sweep.mjs';
 
 let pass = 0;
@@ -147,5 +148,56 @@ test('lock: corrupt/unreadable lock file counts as stale', () => {
 });
 
 try { rmSync(lockDir, { recursive: true, force: true }); } catch { /* best-effort */ }
+
+// --- triage helpers (mitigation #6/#8) --------------------------------------
+
+test('TRIAGE_EXIT_CODE is 3 (distinct from generic failure 1 and lock-skip 0)', () => {
+  assert.equal(TRIAGE_EXIT_CODE, 3);
+});
+
+test('triageFailureReceiptLine: ⚠ prefix, timestamp, message included', () => {
+  const line = triageFailureReceiptLine('page read failed: boom', '2026-07-04T07:30');
+  assert.equal(line, '⚠ triage FAILED 2026-07-04T07:30 — page read failed: boom');
+});
+
+test('triageFailureReceiptLine: error text capped at 60 chars with ellipsis', () => {
+  const long = 'x'.repeat(200);
+  const line = triageFailureReceiptLine(long, 'T');
+  const msg = line.split(' — ')[1];
+  assert.equal(msg.length, 60);
+  assert.ok(msg.endsWith('…'));
+});
+
+test('triageFailureReceiptLine: newlines collapsed, empty -> "unknown"', () => {
+  assert.ok(!/\n/.test(triageFailureReceiptLine('a\nb\r\nc', 'T')));
+  assert.equal(triageFailureReceiptLine('', 'T'), '⚠ triage FAILED T — unknown');
+  assert.equal(triageFailureReceiptLine(null, 'T'), '⚠ triage FAILED T — unknown');
+});
+
+test('mapPmNoteRow: maps title/status/type/capturedISO from typed properties', () => {
+  const row = mapPmNoteRow({
+    id: 'pg1',
+    url: 'https://notion.so/pg1',
+    created_time: '2026-07-01T00:00:00.000Z',
+    properties: {
+      Note: { type: 'title', title: [{ plain_text: 'Try the thing' }] },
+      Status: { type: 'select', select: { name: 'open' } },
+      Type: { type: 'select', select: { name: 'later' } },
+      Captured: { type: 'created_time', created_time: '2026-07-02T00:00:00.000Z' },
+    },
+  });
+  assert.equal(row.title, 'Try the thing');
+  assert.equal(row.url, 'https://notion.so/pg1');
+  assert.equal(row.status, 'open');
+  assert.equal(row.type, 'later');
+  assert.equal(row.capturedISO, '2026-07-02T00:00:00.000Z');
+});
+
+test('mapPmNoteRow: degrades to page created_time and empty fields, never throws', () => {
+  const row = mapPmNoteRow({ id: 'pg2', created_time: '2026-06-30T00:00:00.000Z', properties: {} });
+  assert.equal(row.title, '');
+  assert.equal(row.capturedISO, '2026-06-30T00:00:00.000Z');
+  assert.equal(row.url, 'pg2');
+});
 
 console.log(`\n${pass} passed`);

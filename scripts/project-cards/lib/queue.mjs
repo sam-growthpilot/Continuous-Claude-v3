@@ -35,6 +35,7 @@
 //   over the sorted items.
 
 import { computeAttention } from './attention.mjs';
+import { PM_NOTES_AGE_DAYS } from './config.mjs';
 
 const DAY_MS = 86400000;
 const SPONSOR_STALE_DAYS = 7;
@@ -133,6 +134,37 @@ function collectSponsorReports(reports, nowMs, items, normal) {
   }
 }
 
+// PM notes (mobile PM portal captures). Rule (plan pm-notes surfacing):
+//   status open AND type 'blocker'          -> always high ("blocker note")
+//   status open AND type 'later'/'question' -> age > ageDays -> med (resurfaced)
+//   anything else (closed, young later/question) -> normal bucket.
+function collectPmNotes(pmNotes, nowMs, ageDays, items, normal) {
+  for (const n of pmNotes) {
+    const status = String(n.status ?? '').trim().toLowerCase();
+    const type = String(n.type ?? '').trim().toLowerCase();
+    if (status !== 'open') {
+      normal.push(normalEntry('pm-note', n.title, n.url));
+      continue;
+    }
+    const age = daysSince(n.capturedISO, nowMs);
+    if (type === 'blocker') {
+      items.push({
+        level: 'high', kind: 'pm-note', title: String(n.title ?? ''),
+        reason: age != null && age > 0 ? `blocker note (open ${age}d)` : 'blocker note',
+        url: n.url ?? null, ageDays: age ?? 0,
+      });
+    } else if ((type === 'later' || type === 'question') && age != null && age > ageDays) {
+      items.push({
+        level: 'med', kind: 'pm-note', title: String(n.title ?? ''),
+        reason: `resurfaced ${type} note (${age}d old)`,
+        url: n.url ?? null, ageDays: age,
+      });
+    } else {
+      normal.push(normalEntry('pm-note', n.title, n.url));
+    }
+  }
+}
+
 // Deterministic comparator: level, then age desc, then title asc.
 function compareItems(a, b) {
   const lv = LEVEL_ORDER[a.level] - LEVEL_ORDER[b.level];
@@ -150,6 +182,11 @@ export function buildQueue(opts = {}) {
   const tasks = Array.isArray(opts.tasks) ? opts.tasks : [];
   const decisions = Array.isArray(opts.decisions) ? opts.decisions : [];
   const sponsorReports = Array.isArray(opts.sponsorReports) ? opts.sponsorReports : [];
+  const pmNotes = Array.isArray(opts.pmNotes) ? opts.pmNotes : [];
+  // Injectable for tests; PM_NOTES_AGE_DAYS itself honors the env override
+  // (mitigation #14) at config-load time.
+  const pmNotesAgeDays = Number.isFinite(Number(opts.pmNotesAgeDays))
+    ? Number(opts.pmNotesAgeDays) : PM_NOTES_AGE_DAYS;
   const now = opts.now ?? new Date();
   const nowMs = toMs(now);
 
@@ -160,6 +197,7 @@ export function buildQueue(opts = {}) {
   collectTasks(tasks, nowMs, items, normal);
   collectDecisions(decisions, nowMs, items, normal);
   collectSponsorReports(sponsorReports, nowMs, items, normal);
+  collectPmNotes(pmNotes, nowMs, pmNotesAgeDays, items, normal);
 
   items.sort(compareItems);
   normal.sort((a, b) => a.title.localeCompare(b.title));

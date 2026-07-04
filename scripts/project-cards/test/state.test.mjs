@@ -10,6 +10,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
   needsPublish, readState, writeState, getMobileCockpit, recordMobileCockpit,
+  getTriage, recordTriage, getSetup, recordSetup,
 } from '../lib/state.mjs';
 import { STATE_VERSION } from '../lib/config.mjs';
 
@@ -146,6 +147,86 @@ test('writeState round-trip PRESERVES mobileCockpit alongside cards (atomic tmp+
   assert.equal(getMobileCockpit(back).pageId, 'p1');
   assert.equal(getMobileCockpit(back).publishedHash, 'h1');
   assert.equal(getMobileCockpit(back).lastDigestWrite, '2026-07-04T00:00:00.000Z');
+});
+
+// --- triage state (mobileCockpit.triage) ------------------------------------
+
+test('getTriage: absent block -> full default shape (counters at 0)', () => {
+  const shape = getTriage({ version: STATE_VERSION, cards: {} });
+  assert.deepEqual(shape, { recentHashes: [], created: [], lastRun: null, consumed: 0, skipped: 0 });
+});
+
+test('getTriage: legacy stored block (no counters) is filled to the full shape', () => {
+  const s = { mobileCockpit: { triage: { recentHashes: ['h1'], lastRun: 't1' } } };
+  const shape = getTriage(s);
+  assert.deepEqual(shape.recentHashes, ['h1']);
+  assert.equal(shape.lastRun, 't1');
+  assert.equal(shape.consumed, 0);
+  assert.equal(shape.skipped, 0);
+  assert.deepEqual(shape.created, []);
+});
+
+test('recordTriage: bumps lifetime consumed/skipped counters, stamps lastRun', () => {
+  const s = { version: STATE_VERSION, cards: {} };
+  recordTriage(s, { ranAt: '2026-07-04T07:00:00.000Z', consumed: 2, skipped: 1 });
+  recordTriage(s, { ranAt: '2026-07-05T07:00:00.000Z', consumed: 3, skipped: 0 });
+  const t = getTriage(s);
+  assert.equal(t.consumed, 5);
+  assert.equal(t.skipped, 1);
+  assert.equal(t.lastRun, '2026-07-05T07:00:00.000Z');
+});
+
+test('recordTriage: recentHashes is a ring of the last 50', () => {
+  const s = { version: STATE_VERSION, cards: {} };
+  for (let i = 0; i < 55; i += 1) recordTriage(s, { hash: `h${i}` });
+  const t = getTriage(s);
+  assert.equal(t.recentHashes.length, 50);
+  assert.equal(t.recentHashes[0], 'h5');
+  assert.equal(t.recentHashes[49], 'h54');
+});
+
+test('recordTriage: created refs accumulate and hashes/counters coexist', () => {
+  const s = { version: STATE_VERSION, cards: {} };
+  recordTriage(s, { created: { ds: 'ds1', id: 'row1' }, hash: 'hA' });
+  const t = getTriage(s);
+  assert.deepEqual(t.created, [{ ds: 'ds1', id: 'row1' }]);
+  assert.deepEqual(t.recentHashes, ['hA']);
+});
+
+// --- setup registry (mobileCockpit.setup, mitigation #9) ---------------------
+
+test('getSetup: absent -> {} (idempotent-setup reader tolerates absence)', () => {
+  assert.deepEqual(getSetup({ version: STATE_VERSION, cards: {} }), {});
+});
+
+test('recordSetup: merges patch and preserves prior keys', () => {
+  const s = { version: STATE_VERSION, cards: {} };
+  recordSetup(s, { pmNotesDs: 'ds-notes' });
+  recordSetup(s, { notesView: 'view-1' });
+  assert.deepEqual(getSetup(s), { pmNotesDs: 'ds-notes', notesView: 'view-1' });
+});
+
+test('writeState round-trip PRESERVES triage + setup blocks', () => {
+  const p = join(workdir, 'triage-roundtrip.json');
+  const s = { version: STATE_VERSION, cards: {} };
+  recordTriage(s, { ranAt: 'r1', consumed: 1, skipped: 2, hash: 'hZ' });
+  recordSetup(s, { pmNotesDs: 'ds-notes' });
+  writeState(s, p);
+  const back = readState(p);
+  const t = getTriage(back);
+  assert.equal(t.consumed, 1);
+  assert.equal(t.skipped, 2);
+  assert.deepEqual(t.recentHashes, ['hZ']);
+  assert.deepEqual(getSetup(back), { pmNotesDs: 'ds-notes' });
+});
+
+test('recordTriage + recordSetup: preserve each other and mobileCockpit fields', () => {
+  const s = { version: STATE_VERSION, cards: {}, mobileCockpit: { pageId: 'p1' } };
+  recordTriage(s, { consumed: 1 });
+  recordSetup(s, { k: 'v' });
+  assert.equal(s.mobileCockpit.pageId, 'p1');
+  assert.equal(getTriage(s).consumed, 1);
+  assert.deepEqual(getSetup(s), { k: 'v' });
 });
 
 // --- cleanup ---------------------------------------------------------------

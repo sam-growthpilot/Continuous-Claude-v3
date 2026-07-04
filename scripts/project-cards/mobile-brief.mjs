@@ -28,6 +28,7 @@ const SWEEP_STALE_MS = 26 * 60 * 60 * 1000; // 26h — one missed daily run.
 
 const KIND_LABEL = {
   project: 'Project', task: 'Task', decision: 'Decision', sponsor: 'Sponsor',
+  'pm-note': 'PM note',
 };
 
 // Coerce a Date | ISO string | ms into epoch ms. Returns NaN on bad input.
@@ -65,10 +66,12 @@ export function toHref(url) {
 function queueRow(item) {
   const lvl = item.level === 'high' ? 'high' : 'med';
   const kind = KIND_LABEL[item.kind] || esc(item.kind);
+  // pm-note items carry a 📌 chip so resurfaced captures read differently.
+  const pin = item.kind === 'pm-note' ? '<span class="kd pin">📌</span>' : '';
   const inner =
     `<span class="rk">${item.rank}</span>` +
     `<span class="body"><b class="ttl">${esc(item.title)}</b>` +
-    `<span class="meta"><span class="kd">${kind}</span>${esc(item.reason)}</span></span>`;
+    `<span class="meta"><span class="kd">${kind}</span>${pin}${esc(item.reason)}</span></span>`;
   const href = toHref(item.url);
   const core = href
     ? `<a class="tap" target="_blank" rel="noopener" href="${esc(href)}">${inner}</a>`
@@ -97,6 +100,10 @@ export function buildMobileBriefHtml(opts = {}) {
   const asOfLabel = esc(dateStamp(new Date(nowMs)));
 
   const highCount = items.filter((i) => i.level === 'high').length;
+  const pmNoteCount = items.filter((i) => i.kind === 'pm-note').length;
+  const pmNoteLine = pmNoteCount
+    ? `\n  <p class="sub">📌 Resurfaced notes: <b>${pmNoteCount}</b> capture${pmNoteCount === 1 ? '' : 's'} back on your radar</p>`
+    : '';
 
   const queueHtml = items.length
     ? items.map(queueRow).join('\n')
@@ -184,7 +191,7 @@ export function buildMobileBriefHtml(opts = {}) {
   </div>
 
   <h1>Good morning</h1>
-  <p class="sub"><b>${items.length}</b> item${items.length === 1 ? '' : 's'} need${items.length === 1 ? 's' : ''} you (${highCount} high) · ${roster.length} project${roster.length === 1 ? '' : 's'} tracked</p>
+  <p class="sub"><b>${items.length}</b> item${items.length === 1 ? '' : 's'} need${items.length === 1 ? 's' : ''} you (${highCount} high) · ${roster.length} project${roster.length === 1 ? '' : 's'} tracked</p>${pmNoteLine}
 
   <details open>
     <summary>Needs your attention <span class="cnt">${items.length}</span></summary>

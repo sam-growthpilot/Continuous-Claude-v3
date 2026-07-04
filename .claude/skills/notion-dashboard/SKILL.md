@@ -30,6 +30,18 @@ Machine-owned sections are replaced by heading match; human sections are NEVER t
 - Refresh: CCv3-Project-Cards task, daily 07:45 + 17:45. On-demand: `node scripts/project-cards/sweep.mjs --target mobile-cockpit` (that IS the "refresh mobile cockpit" command). Whole sweep holds `.sweep.lock` (30-min stale) — concurrent runs exit 0.
 - Per-step status in `logs/sweep.jsonl` (`mobileCockpit: {digestStatus, embedStatus, contentHash, runId, failureCode}`); digest write is independent of the embed bind, so the page stays AI-answerable when MCP flakes. Rollback: `out/mobile-cockpit.html.prev` + `prevAttachmentId` in state.
 
+## Capture triage (PM Portal layer, added 2026-07-04)
+
+The Mobile Cockpit is also a PM portal: lines jotted under `## 📓 Capture` are filed by a **deterministic regex triage** (`lib/triage.mjs` — capture text is UNTRUSTED and never reaches an LLM/MCP prompt; it may appear escaped + 60-char-capped in receipts/digest as data).
+
+**Grammar:** `t `/`todo:` task · `n `/`note:`/bare note · `i `/`idea:` idea · `later:` resurfaces after `PM_NOTES_AGE_DAYS` (default 3, env-overridable) · `b:`/`blocker:` surfaces immediately · `d `/`decision:` decision · leading `? ` question · `//` or `#` scratch (never touched). Modifiers: `@alias` (capture-aliases.json → Projects row), `!p1-3`, `due:today|tomorrow|mon..sun|YYYY-MM-DD|+Nd`. Unparseable/rich/multi-line/foreign-actor lines are left in place and flagged in the receipt.
+
+**Section ownership (revised):** intro callout, Attention Queue embed, AI digest, Triage log = machine. Act now + Notes views = setup-owned. Capture = human writes / **triage consumes only lines it fully parsed AND filed** (create-then-persist-then-verify-then-delete; conflict-checked against `last_edited_time` before every delete; every consuming run writes a receipt, last 10 kept).
+
+**Safety rails:** CaptureId stamp on every created row (duplicate guard + ID-exact UAT cleanup) · replay-hash ring (blockId+date) · actor allowlist (`TRIAGE_ACTOR_ALLOWLIST`) · `--target triage` exits 3 on failure, lock-skip logs `skipped:'lock'` · setup registry in `state.json.mobileCockpit.setup`.
+
+**Refresh:** triage runs FIRST in every sweep (07:45/17:45) and via `node scripts/project-cards/sweep.mjs --target triage` ("refresh mobile cockpit" also works). UAT: `experiment/uat-triage.mjs` (nonce'd scenarios, logs/uat.jsonl).
+
 ## Building a NEW machine-refreshed page (checklist)
 
 1. Create page via `ntn pages create --parent page:<id>` with the section skeleton (first `#` line becomes the page TITLE, not a block — intro updates must target the callout).

@@ -37,12 +37,13 @@ import { fileURLToPath } from 'node:url';
 import { join } from 'node:path';
 import {
   ntnVersion, queryProjects, verifyCardEmbed,
-  queryDataSource, queryTasks, querySponsorReports,
+  queryDataSource, queryTasks, querySponsorReports, queryPmNotes,
   getPageBlocks, findSectionBlocks, replaceSectionBlocks, updateIntroParagraph,
   title, selectName, statusName, urlVal, checkbox, dateStart,
 } from './lib/notion.mjs';
 import {
   readState, writeState, recordPublish, getMobileCockpit, recordMobileCockpit,
+  recordTriage,
 } from './lib/state.mjs';
 import { appendHealth, readSeries } from './lib/history.mjs';
 import { computeAttention } from './lib/attention.mjs';
@@ -51,6 +52,7 @@ import {
   CARD_SECTION_HEADING, HUB_SECTION_HEADING, STATIC_EXTRA_CARDS,
   MOBILE_COCKPIT_PAGE_ID, MOBILE_INTRO_HEADING, MOBILE_EMBED_HEADING,
   AI_DIGEST_HEADING, TASKS_DS, SPONSOR_DS, DECISIONS_DS, TASKS_QUERY,
+  PM_NOTES_DS, TRIAGE_LOG_HEADING,
   CLAUDE_TIMEOUT_MS, REFRESH_TIMEOUT_MS,
 } from './lib/config.mjs';
 import { dateStamp, slugify } from './lib/util.mjs';
@@ -480,6 +482,19 @@ function mapSponsorRow(pg) {
   };
 }
 
+// PM Notes row -> queue input shape ({ title, url, status, type, capturedISO }).
+export function mapPmNoteRow(pg) {
+  const p = pg.properties || {};
+  return {
+    title: title(pickProp(p, 'title')),
+    url: pg.url || pg.id || null,
+    status: statusName(pickProp(p, 'status') || pickProp(p, 'select', /status/i) || {}),
+    type: selectName(pickProp(p, 'select', /type/i) || {}),
+    capturedISO: pickProp(p, 'created_time', /captur/i)?.created_time
+      || dateStart(pickProp(p, 'date', /captur/i)) || pg.created_time || null,
+  };
+}
+
 // Fetch one queue input, tolerating an unconfigured DS or a query failure as [].
 function fetchQueueInput(label, dsId, fetcher, mapper) {
   if (!dsId) {
@@ -506,12 +521,99 @@ async function loadMobileBriefBuilder() {
   }
 }
 
+// --- STEP: TRIAGE (plan: Capture triage; mitigation #6 failure semantics) -----
+
+// Exit code for a failed `--target triage` run — distinct from the generic 1
+// (fatal/publish failure) and from 0 (success or lock-skip).
+export const TRIAGE_EXIT_CODE = 3;
+
+// PURE: the ⚠ failure receipt line written (best-effort) to the Triage log when
+// the triage step errors inside a full sweep. Error text is newline-collapsed
+// and capped at 60 chars (mitigation #8: echoes are bounded).
+export function triageFailureReceiptLine(errMsg, tsIso) {
+  const err = String(errMsg ?? 'unknown').replace(/[\r\n]+/g, ' ').trim() || 'unknown';
+  const capped = err.length > 60 ? `${err.slice(0, 59)}…` : err;
+  return `⚠ triage FAILED ${tsIso} — ${capped}`;
+}
+
+// Best-effort ⚠ receipt into the Triage log (never throws; a missing heading or
+// a Notion failure only warns). Reuses triage.mjs's receipt-block builder so the
+// keep-last-10 cap holds for failure lines too.
+async function writeTriageFailureReceipt(errMsg, tsIso) {
+  try {
+    const { buildReceiptBlocks } = await import('./lib/triage.mjs');
+    const blocks = getPageBlocks(MOBILE_COCKPIT_PAGE_ID);
+    const log = findSectionBlocks(blocks, TRIAGE_LOG_HEADING);
+    if (!log) {
+      console.error('[sweep] triage: Triage log heading not found — failure receipt skipped');
+      return;
+    }
+    replaceSectionBlocks(MOBILE_COCKPIT_PAGE_ID, TRIAGE_LOG_HEADING,
+      buildReceiptBlocks(log.blocks, triageFailureReceiptLine(errMsg, tsIso)));
+  } catch (e) {
+    console.error(`[sweep] triage: failure-receipt write failed: ${e.message}`);
+  }
+}
+
+// Append a structured triage row to sweep.jsonl (used for the full-sweep error
+// row and the --target triage lock-skip row). Best-effort.
+function appendTriageLogRow(fields) {
+  try {
+    mkdirSync(LOGS_DIR, { recursive: true });
+    appendFileSync(SWEEP_LOG_PATH,
+      `${JSON.stringify({ ts: new Date().toISOString(), step: 'triage', ...fields })}\n`, 'utf8');
+  } catch (e) {
+    console.error(`[sweep] WARN: could not append triage log row: ${e.message}`);
+  }
+}
+
+// Run the Capture-triage pass. Returns a per-step status object recorded in the
+// sweep.jsonl run row: { status: 'not-configured'|'dry-run'|'ok'|'failed',
+// error, consumed, skipped, conflicts, created }. Skips cleanly when the PM
+// Notes DS or the mobile-cockpit page is unconfigured. Never throws.
+async function runTriageStep({ dryRun }) {
+  const step = { status: 'skipped', error: null, consumed: 0, skipped: 0, conflicts: 0, created: 0 };
+  if (!PM_NOTES_DS || !MOBILE_COCKPIT_PAGE_ID) {
+    console.error('[sweep] triage: not configured — skipping');
+    step.status = 'not-configured';
+    return step;
+  }
+  try {
+    const { runTriage } = await import('./lib/triage.mjs');
+    const res = runTriage({ pageId: MOBILE_COCKPIT_PAGE_ID, dryRun });
+    step.consumed = res.consumed;
+    step.skipped = res.skipped;
+    step.conflicts = res.conflicts;
+    step.created = (res.created || []).length;
+    if (res.error) {
+      step.status = 'failed';
+      step.error = res.error;
+    } else {
+      step.status = dryRun ? 'dry-run' : 'ok';
+      if (!dryRun) {
+        // Lifetime counters + lastRun stamp (state schema: mobileCockpit.triage).
+        const state = readState();
+        recordTriage(state, {
+          ranAt: new Date().toISOString(), consumed: res.consumed, skipped: res.skipped,
+        });
+        writeState(state);
+      }
+    }
+  } catch (e) {
+    step.status = 'failed';
+    step.error = e.message || String(e);
+  }
+  if (step.status === 'failed') console.error(`[sweep] triage step FAILED: ${step.error}`);
+  else console.error(`[sweep] triage: ${step.status} · consumed=${step.consumed} skipped=${step.skipped} conflicts=${step.conflicts}`);
+  return step;
+}
+
 // --- STEP: MOBILE COCKPIT (plan step 4; mitigations #2,#3,#6,#7,#8,#9) --------
 // Build queue -> HTML brief -> size assert -> hash-gate -> (changed) keep .prev,
 // MCP embed publish, ntn READ-BACK verify before advancing publishedHash ->
 // ALWAYS write intro line + AI digest via block-level splice. Returns the
 // per-step status object recorded in the sweep.jsonl row (mitigation #3).
-async function publishMobileCockpit({ liveRoster, seriesBySlug, lastSweep, asOfHuman, startedIso, dryRun }) {
+async function publishMobileCockpit({ liveRoster, seriesBySlug, lastSweep, asOfHuman, startedIso, dryRun, skipEmbed = false }) {
   const mob = {
     digestStatus: 'skipped', embedStatus: 'skipped',
     contentHash: null, runId: startedIso, failureCode: null,
@@ -526,6 +628,8 @@ async function publishMobileCockpit({ liveRoster, seriesBySlug, lastSweep, asOfH
   const tasks = fetchQueueInput('tasks', TASKS_DS, () => queryTasks(TASKS_DS, TASKS_QUERY), mapTaskRow);
   const decisions = fetchQueueInput('decisions', DECISIONS_DS, () => queryDataSource(DECISIONS_DS, {}), mapDecisionRow);
   const sponsorReports = fetchQueueInput('sponsor', SPONSOR_DS, () => querySponsorReports(), mapSponsorRow);
+  // Open PM notes (mobile PM portal captures) — tolerant of an empty PM_NOTES_DS.
+  const pmNotes = fetchQueueInput('pm-notes', PM_NOTES_DS, () => queryPmNotes(PM_NOTES_DS), mapPmNoteRow);
 
   const roster = liveRoster.map((r) => ({
     name: r.projectName, slug: r.slug, url: r.url, health: r.health,
@@ -535,7 +639,7 @@ async function publishMobileCockpit({ liveRoster, seriesBySlug, lastSweep, asOfH
 
   const { buildQueue } = await import('./lib/queue.mjs');
   const { buildDigestMarkdown } = await import('./lib/digest.mjs');
-  const queue = buildQueue({ roster, seriesBySlug, tasks, decisions, sponsorReports });
+  const queue = buildQueue({ roster, seriesBySlug, tasks, decisions, sponsorReports, pmNotes });
 
   const buildMobileBriefHtml = await loadMobileBriefBuilder();
   if (!buildMobileBriefHtml) {
@@ -553,15 +657,25 @@ async function publishMobileCockpit({ liveRoster, seriesBySlug, lastSweep, asOfH
   mob.contentHash = contentHash;
 
   if (dryRun) {
-    console.log(`\nWOULD PUBLISH MOBILE COCKPIT to page ${MOBILE_COCKPIT_PAGE_ID}:`);
-    console.log(`  brief HTML: ${bytes} bytes (cap ${MOBILE_SIZE_CAP_BYTES}) · ${queue.items.length} attention item(s) · hash ${contentHash.slice(0, 12)}`);
-    console.log(`  would ALWAYS rewrite intro + "${AI_DIGEST_HEADING}" via block splice`);
-    mob.embedStatus = 'dry-run';
+    if (skipEmbed) {
+      console.log(`\nWOULD WRITE AI DIGEST ONLY (no embed publish, target=triage) to page ${MOBILE_COCKPIT_PAGE_ID}:`);
+      console.log(`  ${queue.items.length} attention item(s) · would rewrite intro + "${AI_DIGEST_HEADING}" via block splice`);
+      mob.embedStatus = 'skipped-target';
+    } else {
+      console.log(`\nWOULD PUBLISH MOBILE COCKPIT to page ${MOBILE_COCKPIT_PAGE_ID}:`);
+      console.log(`  brief HTML: ${bytes} bytes (cap ${MOBILE_SIZE_CAP_BYTES}) · ${queue.items.length} attention item(s) · hash ${contentHash.slice(0, 12)}`);
+      console.log(`  would ALWAYS rewrite intro + "${AI_DIGEST_HEADING}" via block splice`);
+      mob.embedStatus = 'dry-run';
+    }
     mob.digestStatus = 'dry-run';
     return mob;
   }
 
-  const sizeOk = bytes < MOBILE_SIZE_CAP_BYTES;
+  const sizeOk = !skipEmbed && bytes < MOBILE_SIZE_CAP_BYTES;
+  if (skipEmbed) {
+    // --target triage: digest/receipt only — the embed publish NEVER runs.
+    mob.embedStatus = 'skipped-target';
+  } else
   if (!sizeOk) {
     mob.embedStatus = 'failed';
     mob.failureCode = `size-cap: ${bytes} bytes >= ${MOBILE_SIZE_CAP_BYTES}`;
@@ -637,7 +751,7 @@ async function publishMobileCockpit({ liveRoster, seriesBySlug, lastSweep, asOfH
   // updated paragraph-scoped (H1 section-replace would eat the page — see the
   // FOOTGUN test in notion-section.test.mjs).
   try {
-    const digestMd = buildDigestMarkdown({ queue, roster, asOf: startedIso });
+    const digestMd = buildDigestMarkdown({ queue, roster, asOf: startedIso, pmNotes });
     replaceSectionBlocks(MOBILE_COCKPIT_PAGE_ID, AI_DIGEST_HEADING, markdownToBlocks(digestMd));
     updateIntroParagraph(
       MOBILE_COCKPIT_PAGE_ID, MOBILE_INTRO_HEADING,
@@ -768,11 +882,12 @@ async function main() {
   const dryRun = process.argv.includes('--dry-run');
   const targetIdx = process.argv.indexOf('--target');
   const target = targetIdx !== -1 ? process.argv[targetIdx + 1] : null;
-  if (target && target !== 'mobile-cockpit') {
-    console.error(`[sweep] unknown --target "${target}" (supported: mobile-cockpit)`);
+  if (target && target !== 'mobile-cockpit' && target !== 'triage') {
+    console.error(`[sweep] unknown --target "${target}" (supported: mobile-cockpit, triage)`);
     process.exit(1);
   }
   const mobileOnly = target === 'mobile-cockpit';
+  const triageOnly = target === 'triage';
   const startedIso = new Date().toISOString();
   const startedMs = Date.now();
   const asOfHuman = dateStamp();
@@ -792,6 +907,7 @@ async function main() {
   let hubRefreshed = false;
   let cockpitPublished = false;
   let mobileCockpit = null;
+  let triage = null;
   let fatalError = null;
   let dryRunExit = false;
   let lockHeld = false;
@@ -802,6 +918,9 @@ async function main() {
     const lock = acquireSweepLock();
     if (lock === 'held') {
       console.error('[sweep] WARN: another sweep holds .sweep.lock — exiting 0 (do-not-start-new-instance)');
+      // Mitigation #6: a --target triage lock-skip exits 0 but is OBSERVABLE —
+      // it logs a structured {step:'triage', skipped:'lock'} row to sweep.jsonl.
+      if (triageOnly) appendTriageLogRow({ skipped: 'lock', target: 'triage' });
       process.exit(0);
     }
     if (lock === 'stale-replaced') console.error('[sweep] WARN: replaced a stale (>30min) .sweep.lock');
@@ -810,12 +929,27 @@ async function main() {
 
   try {
     version = ntnVersion();
-    console.error(`[sweep] start ${startedIso} · ntn ${version}${dryRun ? ' · DRY-RUN' : ''}${mobileOnly ? ' · TARGET=mobile-cockpit' : ''}`);
+    console.error(`[sweep] start ${startedIso} · ntn ${version}${dryRun ? ' · DRY-RUN' : ''}${target ? ` · TARGET=${target}` : ''}`);
+
+    // --- STEP: TRIAGE — runs FIRST under the lock (full, mobile-cockpit, and
+    //     triage targets) so captures filed on the phone are reflected by the
+    //     queue/digest/embed built later in this same run. Failure semantics
+    //     (mitigation #6): never throws; a full/mobile run records a structured
+    //     jsonl error row + a best-effort ⚠ receipt and continues; --target
+    //     triage exits TRIAGE_EXIT_CODE after the finally block.
+    phase = 'triage';
+    triage = await runTriageStep({ dryRun });
+    if (triage.status === 'failed') {
+      appendTriageLogRow({ error: triage.error, target: target || 'full' });
+      if (!dryRun) await writeTriageFailureReceipt(triage.error, new Date().toISOString().slice(0, 16));
+    }
 
     // Step 2: deterministic refresh of every roster card.
     phase = 'refresh';
     let publishable = [];
-    if (mobileOnly) {
+    if (triageOnly) {
+      console.error('[sweep] --target triage: skipping card refresh/publish, cockpit, hub, and embed publish');
+    } else if (mobileOnly) {
       console.error('[sweep] --target mobile-cockpit: skipping card refresh/publish, cockpit, and hub steps');
     } else {
       const manifest = runRefreshAll();
@@ -827,8 +961,8 @@ async function main() {
 
     // --- STEP: per-card publishes (isolated; a card failure never aborts the
     //     history/cockpit/hub steps below — they run regardless in the try body).
-    if (mobileOnly) {
-      // no card publishes in mobile-only mode
+    if (mobileOnly || triageOnly) {
+      // no card publishes in mobile-only / triage-only mode
     } else if (dryRun) {
       console.log(`\nWOULD PUBLISH (${publishable.length} card(s)):`);
       if (publishable.length === 0) console.log('  (none — all cards published & unchanged)');
@@ -869,8 +1003,8 @@ async function main() {
     const historyEntries = liveRoster.map((r) => ({
       slug: r.slug, projectName: r.projectName, health: r.health, date: today,
     }));
-    if (mobileOnly) {
-      // mobile-only refresh: read series below, but append no history point.
+    if (mobileOnly || triageOnly) {
+      // mobile-only / triage-only run: read series below, append no history point.
     } else if (dryRun) {
       const applicable = historyEntries.filter((e) => e.slug && e.health);
       console.log(`\nWOULD APPEND HEALTH HISTORY (${applicable.length} point(s) for ${today}):`);
@@ -907,8 +1041,8 @@ async function main() {
       reviewDateISO: r.reviewDateISO,
     }));
     const lastSweep = readLastSweepSignal();
-    if (mobileOnly) {
-      // cockpit + hub intentionally skipped under --target mobile-cockpit
+    if (mobileOnly || triageOnly) {
+      // cockpit + hub intentionally skipped under --target mobile-cockpit/triage
     } else {
     try {
       const buildCockpitHtml = await loadCockpitBuilder();
@@ -935,6 +1069,7 @@ async function main() {
     try {
       mobileCockpit = await publishMobileCockpit({
         liveRoster, seriesBySlug, lastSweep, asOfHuman, startedIso, dryRun,
+        skipEmbed: triageOnly, // --target triage: digest/receipt only, NO embed publish
       });
     } catch (mobErr) {
       mobileCockpit = {
@@ -948,7 +1083,7 @@ async function main() {
     //     attention score DESC with an "Attention" reasons column. Isolated from
     //     the cockpit step above. Skipped entirely under --target mobile-cockpit.
     phase = 'hub';
-    if (!mobileOnly) {
+    if (!mobileOnly && !triageOnly) {
       const hubRows = enrichAndOrderHubRows(
         [...liveRoster, ...STATIC_EXTRA_CARDS], seriesBySlug, slugByRowId,
       );
@@ -990,6 +1125,7 @@ async function main() {
           cockpitPublished,
           target: target || 'full',
           mobileCockpit,
+          triage,
         })}\n`, 'utf8');
       } catch (logErr) {
         console.error(`[sweep] WARN: could not append run-log: ${logErr.message}`);
@@ -1008,9 +1144,20 @@ async function main() {
   const mobileFailed = !!mobileCockpit
     && (mobileCockpit.embedStatus === 'failed' || mobileCockpit.embedStatus === 'unverified'
       || mobileCockpit.digestStatus === 'failed');
+  const triageFailed = !!triage && triage.status === 'failed';
+
+  // --target triage failure semantics (mitigation #6): DISTINCT exit code 3 on
+  // a triage error (lock-skip already exited 0 above with its jsonl row).
+  if (triageOnly) {
+    if (fatalError) process.exit(1);
+    process.exit(triageFailed ? TRIAGE_EXIT_CODE
+      : (mobileCockpit && mobileCockpit.digestStatus === 'failed' ? 1 : 0));
+  }
+
   const failed = mobileOnly
-    ? (!!fatalError || mobileFailed)
-    : (!!fatalError || publishFailed.length > 0 || !hubRefreshed || !cockpitPublished || mobileFailed);
+    ? (!!fatalError || mobileFailed || triageFailed)
+    : (!!fatalError || publishFailed.length > 0 || !hubRefreshed || !cockpitPublished
+      || mobileFailed || triageFailed);
 
   // REL#4 heartbeat: only stamp last-success.json on a fully green FULL run
   // (a mobile-only refresh must not mask a stalled daily sweep).

@@ -115,6 +115,61 @@ export function recordMobileCockpit(state, patch = {}) {
   return state;
 }
 
+// --- triage (additive, under mobileCockpit.triage) ----------------------------
+// Shape: { recentHashes: string[] (ring, last 50), created: [{ds,id}], lastRun }
+// recentHashes is the replay guard (mitigation #12: hash = blockId+date);
+// created rows are persisted BEFORE the source block delete (mitigation #3).
+
+const TRIAGE_RING = 50;
+
+function freshTriage() {
+  return { recentHashes: [], created: [], lastRun: null, consumed: 0, skipped: 0 };
+}
+
+// Tolerant reader: always returns the full triage shape.
+export function getTriage(state) {
+  const mc = getMobileCockpit(state);
+  const cur = mc.triage && typeof mc.triage === 'object' ? mc.triage : {};
+  return {
+    ...freshTriage(),
+    ...cur,
+    recentHashes: Array.isArray(cur.recentHashes) ? cur.recentHashes : [],
+    created: Array.isArray(cur.created) ? cur.created : [],
+    consumed: Number.isFinite(cur.consumed) ? cur.consumed : 0,
+    skipped: Number.isFinite(cur.skipped) ? cur.skipped : 0,
+  };
+}
+
+// Record one triage event: push the created row ref and the replay hash
+// (ring-buffered to the last TRIAGE_RING), bump lifetime consumed/skipped
+// counters, stamp lastRun. Mutates and returns `state`.
+export function recordTriage(state, { created, hash, ranAt, consumed, skipped } = {}) {
+  const triage = getTriage(state);
+  if (created) triage.created = [...triage.created, created].slice(-200);
+  if (hash) triage.recentHashes = [...triage.recentHashes, hash].slice(-TRIAGE_RING);
+  if (ranAt) triage.lastRun = ranAt;
+  if (Number.isFinite(consumed)) triage.consumed += consumed;
+  if (Number.isFinite(skipped)) triage.skipped += skipped;
+  state.mobileCockpit = { ...getMobileCockpit(state), triage };
+  return state;
+}
+
+// --- one-time setup registry (mitigation #9) ----------------------------------
+// state.mobileCockpit.setup maps a setup-step key (e.g. pmNotesDs, triageLogHeading,
+// notesView) -> the created resource id/marker. Setup steps check this and skip
+// when the key is already present, making the one-time sequence idempotent.
+
+export function getSetup(state) {
+  const mc = getMobileCockpit(state);
+  return mc.setup && typeof mc.setup === 'object' ? { ...mc.setup } : {};
+}
+
+// Merge a patch into the setup registry. Mutates and returns `state`.
+export function recordSetup(state, patch = {}) {
+  state.mobileCockpit = { ...getMobileCockpit(state), setup: { ...getSetup(state), ...patch } };
+  return state;
+}
+
 // Shared publish decision so refresh and sweep compute it identically.
 // A card needs (re)publishing when it was never published, OR its published
 // content is stale relative to the freshly-computed contentHash.

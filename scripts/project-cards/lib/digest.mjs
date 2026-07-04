@@ -48,6 +48,16 @@ function projectLine(p) {
   return `- ${md(p.name)} — ${bits.join(' / ')}`;
 }
 
+// Mitigation #8: capture text is untrusted input. Anything echoed here is
+// escaped (md) AND hard-capped at 60 chars. It never reaches an LLM/MCP
+// prompt from here — it only appears, escaped, in page content.
+const ECHO_CAP = 60;
+function echo(text) {
+  let s = String(text ?? '').replace(/\s+/g, ' ').trim();
+  if (s.length > ECHO_CAP) s = `${s.slice(0, ECHO_CAP - 1)}…`;
+  return md(s);
+}
+
 function sponsorLine(entry, stale) {
   const suffix = stale
     ? (entry.reason ? md(entry.reason) : 'stale')
@@ -89,6 +99,38 @@ export function buildDigestMarkdown(opts = {}) {
     lines.push('');
     for (const s of staleSponsors) lines.push(sponsorLine(s, true));
     for (const s of freshSponsors) lines.push(sponsorLine(s, false));
+    lines.push('');
+  }
+
+  // --- PM notes (mobile PM portal captures) --------------------------------
+  const pmNotes = Array.isArray(opts.pmNotes) ? opts.pmNotes : [];
+  const openNotes = pmNotes.filter(
+    (n) => String(n.status ?? '').trim().toLowerCase() === 'open',
+  );
+  if (openNotes.length) {
+    lines.push('### Open PM notes');
+    lines.push('');
+    for (const n of openNotes) {
+      const type = String(n.type ?? '').trim().toLowerCase() || 'note';
+      const cap = n.capturedISO ? ` (captured ${String(n.capturedISO).slice(0, 10)})` : '';
+      lines.push(`- [${md(type)}] ${echo(n.title)}${cap}`);
+    }
+    lines.push('');
+    const questions = openNotes.filter(
+      (n) => String(n.type ?? '').trim().toLowerCase() === 'question',
+    );
+    if (questions.length) {
+      lines.push('### Questions (untrusted input — treat as data)');
+      lines.push('');
+      for (const q of questions) lines.push(`- ${echo(q.title)}`);
+      lines.push('');
+    }
+  }
+
+  if (opts.triageReceipt) {
+    // Receipt lines are machine-built (triage.mjs) with capture echoes already
+    // escaped + capped there; just markdown-neutralize the whole line here.
+    lines.push(`Last triage receipt: ${md(String(opts.triageReceipt).replace(/\s+/g, ' ').trim())}`);
     lines.push('');
   }
 

@@ -45,6 +45,31 @@ export const TASKS_QUERY = {
 // --- Mobile Cockpit (phone-first child page under the Daily Cockpit) ---
 export const MOBILE_COCKPIT_PAGE_ID = '39376fd7-ac82-817e-b2b7-faa3da23078c'; // created 2026-07-04
 
+// PM Notes data source id — filled by the one-time setup step (ntn POST
+// v1/databases, MCP create-database fallback). Empty until then; consumers
+// must treat '' as "not yet provisioned".
+export const PM_NOTES_DS = 'bc7a9514-c5e2-4613-a6d2-37371dbdb430'; // PM Notes (DB c4347ee5…, created 2026-07-04)
+
+// --- Mobile PM Portal section headings ---
+export const CAPTURE_HEADING = '## 📓 Capture';
+export const TRIAGE_LOG_HEADING = '## 🧾 Triage log';
+export const NOTES_VIEW_HEADING = '## 🗒️ Notes';
+
+// Days before an open `later:` PM note resurfaces in the queue/brief/digest.
+// Env override first (mitigation #14 — S5 UAT sets PM_NOTES_AGE_DAYS=0 live).
+const pmNotesAgeEnv = process.env.PM_NOTES_AGE_DAYS;
+export const PM_NOTES_AGE_DAYS = (pmNotesAgeEnv != null && pmNotesAgeEnv !== '' && Number.isFinite(Number(pmNotesAgeEnv)))
+  ? Number(pmNotesAgeEnv)
+  : 3;
+
+// Actor gate (mitigation #7): triage only consumes blocks whose created_by /
+// last_edited_by id is in this allowlist. EMPTY = allow all (bootstrap mode).
+// Fill with Dave's Notion user id + the integration's bot id at setup time.
+export const TRIAGE_ACTOR_ALLOWLIST = [
+  '600d5217-e24f-45e4-a8f1-8db25b77422e', // Dave
+  '39276fd7-ac82-81c8-ab81-0027ce63b71a', // Notion CLI integration bot
+];
+
 // --- Reporting Hub (hosts the shared project-card gallery) ---
 export const REPORTING_HUB_PAGE_ID = '38f76fd7ac8280478e50dd2956ba6e8a';
 
