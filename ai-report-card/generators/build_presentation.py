@@ -15,6 +15,7 @@ def build_presentation(
     manual_inputs: dict,
     config: dict,
     output_path: str,
+    degraded_banner: str | None = None,
 ) -> str:
     """Build the HTML presentation from the Jinja2 template."""
     template_dir = Path(__file__).parent.parent / "templates"
@@ -86,6 +87,26 @@ def build_presentation(
 
     # Render
     html = template.render(**context)
+
+    # mit #6: inject a visible degraded banner as a fixed bar just inside <body>, so a template
+    # (non-AI) presentation is obvious at a glance — not just a line in the run log.
+    if degraded_banner:
+        safe = (
+            degraded_banner.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+        )
+        banner = (
+            '<div style="position:fixed;top:0;left:0;right:0;z-index:99999;'
+            'background:#f87171;color:#1a2332;font-family:system-ui,-apple-system,sans-serif;'
+            'font-weight:700;text-align:center;padding:10px 16px;font-size:14px;'
+            'letter-spacing:.02em;box-shadow:0 2px 8px rgba(0,0,0,.35);">' + safe + "</div>"
+        )
+        lower = html.lower()
+        idx = lower.find("<body")
+        if idx != -1:
+            gt = html.find(">", idx)
+            html = (html[: gt + 1] + banner + html[gt + 1:]) if gt != -1 else (banner + html)
+        else:
+            html = banner + html
 
     output_file = Path(output_path)
     output_file.parent.mkdir(parents=True, exist_ok=True)
@@ -162,13 +183,13 @@ def _update_hub(hub_path: Path, meta: dict, summary: str) -> None:
     hub_path.write_text(html, encoding="utf-8")
 
 
-def build(snapshot: dict, narratives: dict, manual_inputs: dict, config: dict) -> str:
+def build(snapshot: dict, narratives: dict, manual_inputs: dict, config: dict, degraded_banner: str | None = None) -> str:
     """Main entry point for presentation generation."""
     output_dir = Path(__file__).parent.parent / "output" / "latest"
     output_path = output_dir / "presentation.html"
 
     result_path = build_presentation(
-        snapshot, narratives, manual_inputs, config, str(output_path)
+        snapshot, narratives, manual_inputs, config, str(output_path), degraded_banner=degraded_banner
     )
 
     # Deploy into the multi-week archive: reports/<week>/index.html + a hub card

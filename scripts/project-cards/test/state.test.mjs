@@ -10,7 +10,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
   needsPublish, readState, writeState, getMobileCockpit, recordMobileCockpit,
-  getTriage, recordTriage, getSetup, recordSetup,
+  getCockpit, recordCockpit, getTriage, recordTriage, getSetup, recordSetup,
 } from '../lib/state.mjs';
 import { STATE_VERSION } from '../lib/config.mjs';
 
@@ -147,6 +147,62 @@ test('writeState round-trip PRESERVES mobileCockpit alongside cards (atomic tmp+
   assert.equal(getMobileCockpit(back).pageId, 'p1');
   assert.equal(getMobileCockpit(back).publishedHash, 'h1');
   assert.equal(getMobileCockpit(back).lastDigestWrite, '2026-07-04T00:00:00.000Z');
+});
+
+// --- cockpit (additive block, tolerant readers) ----------------------------
+
+test('getCockpit: absent block -> full default shape (readers tolerate absence)', () => {
+  const shape = getCockpit({ version: STATE_VERSION, cards: {} });
+  assert.deepEqual(shape, {
+    pageId: null, attachmentId: null, contentHash: null,
+    publishedHash: null, lastPublished: null,
+  });
+  assert.deepEqual(getCockpit(null), getCockpit(undefined));
+});
+
+test('getCockpit: partial stored block is filled to the full shape', () => {
+  const s = { cockpit: { pageId: 'hub1', publishedHash: 'h1' } };
+  const shape = getCockpit(s);
+  assert.equal(shape.pageId, 'hub1');
+  assert.equal(shape.publishedHash, 'h1');
+  assert.equal(shape.attachmentId, null);
+  assert.equal(shape.contentHash, null);
+  assert.equal(shape.lastPublished, null);
+});
+
+test('recordCockpit: merges patch, preserves untouched fields, mutates state', () => {
+  const s = { version: STATE_VERSION, cards: {}, cockpit: { pageId: 'hub1', publishedHash: 'h1' } };
+  recordCockpit(s, { attachmentId: 'a2', contentHash: 'h2', publishedHash: 'h2', lastPublished: '2026-07-05T00:00:00.000Z' });
+  assert.equal(s.cockpit.pageId, 'hub1');           // untouched
+  assert.equal(s.cockpit.attachmentId, 'a2');
+  assert.equal(s.cockpit.contentHash, 'h2');
+  assert.equal(s.cockpit.publishedHash, 'h2');
+  assert.equal(s.cockpit.lastPublished, '2026-07-05T00:00:00.000Z');
+});
+
+test('getCockpit: legacy state.json with NO cockpit key -> default shape (no throw)', () => {
+  const p = join(workdir, 'legacy-nocockpit.json');
+  writeFileSync(p, JSON.stringify({ version: STATE_VERSION, cards: { a: { contentHash: 'x' } } }), 'utf8');
+  const back = readState(p);
+  assert.deepEqual(getCockpit(back), {
+    pageId: null, attachmentId: null, contentHash: null,
+    publishedHash: null, lastPublished: null,
+  });
+});
+
+test('writeState round-trip PRESERVES cockpit alongside cards + mobileCockpit', () => {
+  const p = join(workdir, 'cockpit-roundtrip.json');
+  const s = { version: STATE_VERSION, cards: { foo: { contentHash: 'x' } } };
+  recordMobileCockpit(s, { pageId: 'mob1' });
+  recordCockpit(s, { pageId: 'hub1', publishedHash: 'h1', lastPublished: '2026-07-05T00:00:00.000Z' });
+  writeState(s, p);
+  assert.ok(!existsSync(`${p}.tmp`), 'tmp file must not linger after rename');
+  const back = readState(p);
+  assert.equal(back.cards.foo.contentHash, 'x');
+  assert.equal(getMobileCockpit(back).pageId, 'mob1');   // coexists
+  assert.equal(getCockpit(back).pageId, 'hub1');
+  assert.equal(getCockpit(back).publishedHash, 'h1');
+  assert.equal(getCockpit(back).lastPublished, '2026-07-05T00:00:00.000Z');
 });
 
 // --- triage state (mobileCockpit.triage) ------------------------------------

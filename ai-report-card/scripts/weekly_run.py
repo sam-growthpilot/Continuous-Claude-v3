@@ -14,6 +14,7 @@ Main entry point that:
 import argparse
 import json
 import logging
+import os
 import shutil
 import subprocess
 import sys
@@ -28,7 +29,7 @@ import yaml
 from collectors.git_metrics import collect_all as collect_git
 from collectors.system_counts import collect_all as collect_system
 from collectors.memory_insights import collect_all as collect_memory
-from generators.ai_narrator import generate_narratives
+from generators.ai_narrator import generate_narratives, NarrativeGenerationError
 from generators.build_report import build as build_report
 from generators.build_presentation import build as build_presentation
 
@@ -132,16 +133,38 @@ def load_latest_snapshot() -> dict | None:
         return json.load(f)
 
 
-def generate(snapshot: dict, config: dict, manual_inputs: dict) -> dict:
+def generate(snapshot: dict, config: dict, manual_inputs: dict, allow_template: bool = False) -> dict:
     """Run generators to produce report and presentation."""
     log.info("Generating AI narratives...")
-    narratives = generate_narratives(snapshot, config)
+    try:
+        narratives = generate_narratives(snapshot, config, strict=not allow_template)
+    except NarrativeGenerationError as e:
+        log.error(
+            "\n" + "=" * 72 + "\n"
+            "  ABORTING -- AI narratives could not be generated\n"
+            f"  Reason: {e}\n"
+            "  The VP report requires AI-written narratives; refusing to ship template text.\n"
+            "  Fix: set ANTHROPIC_API_KEY, or pass --allow-template to force a template report.\n"
+            + "=" * 72
+        )
+        sys.exit(2)
+
     if narratives.get("ai_generated"):
         log.info("  AI narratives generated successfully")
     else:
         log.info("  Using fallback template narratives (AI unavailable)")
         if narratives.get("ai_error"):
             log.warning(f"  AI error: {narratives['ai_error']}")
+
+    # mit #6: thread the degraded signal into the artifacts so the DOCX + HTML render a
+    # visible banner (not just a log line). Only set when template fallback was actually used
+    # (i.e. under --allow-template / ALLOW_TEMPLATE_NARRATIVES).
+    degraded_banner = None
+    if narratives.get("_degraded"):
+        degraded_banner = (
+            "\u26a0 TEMPLATE NARRATIVES -- set ANTHROPIC_API_KEY (AI generation unavailable)"
+        )
+        log.warning(f"  Degraded report: {narratives.get('_reason', 'AI narratives unavailable')}")
 
     # Hand-written manual_inputs override the narrative fields the deck + report render,
     # so a curated executive_note / this_week_highlights / outlook takes precedence over AI/template.
@@ -153,11 +176,11 @@ def generate(snapshot: dict, config: dict, manual_inputs: dict) -> dict:
             log.info(f"  Manual override applied: {_nk}")
 
     log.info("Generating Word report...")
-    report_path = build_report(snapshot, narratives, manual_inputs, config)
+    report_path = build_report(snapshot, narratives, manual_inputs, config, degraded_banner=degraded_banner)
     log.info(f"  Report saved: {report_path}")
 
     log.info("Generating HTML presentation...")
-    pres_path = build_presentation(snapshot, narratives, manual_inputs, config)
+    pres_path = build_presentation(snapshot, narratives, manual_inputs, config, degraded_banner=degraded_banner)
     log.info(f"  Presentation saved: {pres_path}")
 
     return {
@@ -218,11 +241,42 @@ def main():
     parser.add_argument("--collect-only", action="store_true", help="Only collect data, skip generation")
     parser.add_argument("--generate-only", action="store_true", help="Only generate from latest snapshot")
     parser.add_argument("--no-deploy", action="store_true", help="Skip GitHub Pages deployment")
+    parser.add_argument(
+        "--allow-template",
+        action="store_true",
+        help="Force a template (non-AI) report when ANTHROPIC_API_KEY is unavailable, "
+             "instead of failing loud. Also honored via env ALLOW_TEMPLATE_NARRATIVES=1.",
+    )
     args = parser.parse_args()
 
     log.info("=" * 60)
     log.info(f"Weekly Report Run - {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
     log.info("=" * 60)
+
+    # mit #3 + #7: API-key preflight at the VERY TOP of main(), BEFORE any collect()/save_snapshot(),
+    # so a keyless fail-loud writes NO snapshot/artifact (avoids partial-write / stale-snapshot
+    # pollution). POLARITY NOTE: this task is the OPPOSITE of the project-cards sweep -- the VP
+    # report REQUIRES ANTHROPIC_API_KEY SET (AI narratives); the sweep needs it UNSET so the
+    # claude.ai Notion connector loads. --collect-only produces no report, so it is exempt.
+    allow_template = args.allow_template or os.environ.get("ALLOW_TEMPLATE_NARRATIVES") == "1"
+    if not args.collect_only and not os.environ.get("ANTHROPIC_API_KEY") and not allow_template:
+        log.error(
+            "\n" + "=" * 72 + "\n"
+            "  ABORTING -- ANTHROPIC_API_KEY is not set\n"
+            "  The VP weekly report requires AI-written narratives and will NOT ship\n"
+            "  silently-degraded template text to the VP.\n"
+            "  Fix ONE of:\n"
+            "    - set ANTHROPIC_API_KEY (User-scope env), then re-run; OR\n"
+            "    - pass --allow-template (or set ALLOW_TEMPLATE_NARRATIVES=1) to force a\n"
+            "      clearly-marked template report.\n"
+            + "=" * 72
+        )
+        sys.exit(2)
+    if allow_template:
+        trigger = "--allow-template flag" if args.allow_template else "ALLOW_TEMPLATE_NARRATIVES=1 env var"
+        log.warning(
+            f"Template narratives ALLOWED via {trigger} -- the report may contain non-AI placeholder text."
+        )
 
     config = load_config()
     manual_inputs = load_manual_inputs()
@@ -246,7 +300,7 @@ def main():
         return
 
     # Generate
-    result = generate(snapshot, config, manual_inputs)
+    result = generate(snapshot, config, manual_inputs, allow_template)
 
     # Archive
     week = datetime.now().isocalendar()[1]

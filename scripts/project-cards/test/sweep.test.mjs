@@ -10,6 +10,7 @@ import {
   classifyHostKind, buildHubTable, markdownToBlocks,
   acquireSweepLock, releaseSweepLock,
   triageFailureReceiptLine, TRIAGE_EXIT_CODE, mapPmNoteRow,
+  cockpitContentHash,
 } from '../sweep.mjs';
 
 let pass = 0;
@@ -198,6 +199,65 @@ test('mapPmNoteRow: degrades to page created_time and empty fields, never throws
   assert.equal(row.title, '');
   assert.equal(row.capturedISO, '2026-06-30T00:00:00.000Z');
   assert.equal(row.url, 'pg2');
+});
+
+// --- cockpitContentHash (Fix 1 hash-gate) -----------------------------------
+// A fresh copy each call so a mutation in one test never leaks into another.
+const cockpitInputs = () => ({
+  roster: [
+    { name: 'Alpha', slug: 'alpha', health: 'Green' },
+    { name: 'Beta', slug: 'beta', health: 'Yellow' },
+  ],
+  seriesBySlug: { alpha: [{ date: '2026-07-01', health: 'Green' }], beta: [] },
+  lastSweepOk: true,
+  rendererVersion: 1,
+});
+
+test('cockpitContentHash: deterministic — equal inputs produce equal hash', () => {
+  assert.equal(cockpitContentHash(cockpitInputs()), cockpitContentHash(cockpitInputs()));
+});
+
+test('cockpitContentHash: returns a 64-char hex sha256 digest', () => {
+  assert.match(cockpitContentHash(cockpitInputs()), /^[0-9a-f]{64}$/);
+});
+
+test('cockpitContentHash: changed roster health -> different hash', () => {
+  const base = cockpitContentHash(cockpitInputs());
+  const changed = cockpitInputs();
+  changed.roster[0].health = 'Red';
+  assert.notEqual(cockpitContentHash(changed), base);
+});
+
+test('cockpitContentHash: changed lastSweepOk (health signal) -> different hash', () => {
+  const base = cockpitContentHash(cockpitInputs());
+  const changed = cockpitInputs();
+  changed.lastSweepOk = false;
+  assert.notEqual(cockpitContentHash(changed), base);
+});
+
+test('cockpitContentHash: changed health series -> different hash', () => {
+  const base = cockpitContentHash(cockpitInputs());
+  const changed = cockpitInputs();
+  changed.seriesBySlug.beta = [{ date: '2026-07-02', health: 'Red' }];
+  assert.notEqual(cockpitContentHash(changed), base);
+});
+
+test('cockpitContentHash: bumped rendererVersion -> different hash (mitigation #8)', () => {
+  const base = cockpitContentHash(cockpitInputs());
+  const changed = cockpitInputs();
+  changed.rendererVersion = 2;
+  assert.notEqual(cockpitContentHash(changed), base);
+});
+
+test('cockpit gate decision: same hash -> SKIP; different hash -> PUBLISH', () => {
+  // The live gate is `prev.publishedHash !== hash`; model it on the hashes.
+  const publishedHash = cockpitContentHash(cockpitInputs());
+  // Unchanged inputs -> hash matches publishedHash -> gate = skip.
+  assert.equal(cockpitContentHash(cockpitInputs()) !== publishedHash, false, 'unchanged must SKIP');
+  // Changed inputs -> hash differs -> gate = publish.
+  const changed = cockpitInputs();
+  changed.roster[1].health = 'Red';
+  assert.equal(cockpitContentHash(changed) !== publishedHash, true, 'changed must PUBLISH');
 });
 
 console.log(`\n${pass} passed`);

@@ -43,7 +43,7 @@ import {
 } from './lib/notion.mjs';
 import {
   readState, writeState, recordPublish, getMobileCockpit, recordMobileCockpit,
-  recordTriage,
+  getCockpit, recordCockpit, recordTriage,
 } from './lib/state.mjs';
 import { appendHealth, readSeries } from './lib/history.mjs';
 import { computeAttention } from './lib/attention.mjs';
@@ -61,6 +61,14 @@ import { dateStamp, slugify } from './lib/util.mjs';
 // heading, ABOVE the existing card gallery. This heading is a sweep-local
 // contract (config.mjs owns the card/hub headings; the cockpit is added here).
 const COCKPIT_SECTION_HEADING = '## 🎯 Portfolio Cockpit';
+
+// Renderer versions (mitigation #8) — folded into the SEMANTIC content hash so a
+// template/CSS/JS change in a renderer (which does NOT change the roster/queue
+// inputs) still forces a republish instead of being silently hash-skipped.
+// BUMP COCKPIT_RENDERER_VERSION on any cockpit.mjs render change; bump
+// MOBILE_RENDERER_VERSION on any mobile-brief.mjs render change.
+export const COCKPIT_RENDERER_VERSION = 1;
+export const MOBILE_RENDERER_VERSION = 1;
 
 // Heartbeat file written on a fully successful run (REL#4).
 const HEARTBEAT_PATH = join(LOGS_DIR, 'last-success.json');
@@ -83,6 +91,24 @@ export function classifyHostKind(url) {
   if (/notion\.(so|com)/i.test(url)) return 'notion';
   if (/github\.com/i.test(url)) return 'github';
   return 'none';
+}
+
+// PURE, exported: the SEMANTIC content hash of the portfolio cockpit — the gate
+// signal for whether the cockpit embed must be republished this sweep. Hashes
+// ONLY the inputs that change the rendered MEANING (roster health/status, the
+// per-slug health series, the last-sweep ok signal, and the renderer version) —
+// deliberately NOT the timestamped HTML (asOf / lastSweep.ts live in the markup
+// and would defeat the gate, forcing an MCP publish every run). Same reasoning
+// as the mobile-cockpit hash, which hashes {queue, roster} not the HTML.
+export function cockpitContentHash({ roster, seriesBySlug, lastSweepOk, rendererVersion } = {}) {
+  return createHash('sha256')
+    .update(JSON.stringify({
+      roster: roster ?? null,
+      seriesBySlug: seriesBySlug ?? null,
+      lastSweepOk: lastSweepOk ?? null,
+      rendererVersion: rendererVersion ?? null,
+    }), 'utf8')
+    .digest('hex');
 }
 
 // Escape a value for a single Markdown table cell: collapse newlines to a space
@@ -651,9 +677,11 @@ async function publishMobileCockpit({ liveRoster, seriesBySlug, lastSweep, asOfH
   const html = buildMobileBriefHtml({ queue, roster, asOf: startedIso, lastSweep });
   const bytes = Buffer.byteLength(html, 'utf8');
   // Hash the SEMANTIC payload, not the HTML: the HTML embeds the run timestamp,
-  // which would defeat the hash-gate and force an MCP publish every run.
+  // which would defeat the hash-gate and force an MCP publish every run. The
+  // renderer version is folded in (mitigation #8) so a mobile-brief render-only
+  // change still republishes instead of being silently skipped.
   const contentHash = createHash('sha256')
-    .update(JSON.stringify({ queue, roster }), 'utf8').digest('hex');
+    .update(JSON.stringify({ queue, roster, rendererVersion: MOBILE_RENDERER_VERSION }), 'utf8').digest('hex');
   mob.contentHash = contentHash;
 
   if (dryRun) {
@@ -683,7 +711,19 @@ async function publishMobileCockpit({ liveRoster, seriesBySlug, lastSweep, asOfH
   }
 
   const prev = getMobileCockpit(readState());
-  const changed = prev.publishedHash !== contentHash;
+  let changed = prev.publishedHash !== contentHash;
+
+  // Mitigation #1 self-heal: on a hash-match SKIP, cheaply confirm the embed is
+  // actually still on the page. A manual delete or a half-failed prior publish
+  // can leave publishedHash advanced but the embed gone — in that case force a
+  // republish rather than trusting the stale hash.
+  if (sizeOk && !changed) {
+    const stillThere = verifyCardEmbed(MOBILE_COCKPIT_PAGE_ID, MOBILE_EMBED_HEADING);
+    if (!stillThere) {
+      changed = true;
+      console.error('[sweep] mobile-cockpit embed MISSING on hash-match — forcing republish (self-heal)');
+    }
+  }
 
   if (sizeOk && !changed) {
     mob.embedStatus = 'unchanged';
@@ -839,41 +879,59 @@ function refreshHub(table, asOfHuman, rowCount) {
   return false;
 }
 
-// Publish the portfolio cockpit as an <embed> at the TOP of the hub. Success is
-// gated on the COCKPITDONE marker from the connector step.
-//
-// Read-back note: verifyCardEmbed is hardcoded to the CARD section heading
-// ("## 📊 Living Status Card") — it scans only for an embed under THAT heading.
-// The cockpit lives under "## 🎯 Portfolio Cockpit", so verifyCardEmbed cannot
-// structurally confirm it on the hub page. Because notion.mjs is owned by a peer
-// (I own only sweep.mjs) and exposes no heading-parameterized reader, I call
-// verifyCardEmbed as the instructed best-effort read-back and LOG its result,
-// but do NOT gate success on it — otherwise a genuinely successful cockpit
-// publish would be falsely reported failed every sweep. The cockpit republishes
-// each sweep (no per-slug publishedHash), so there is no self-heal hash to
-// corrupt. Proper fix (peer follow-up): generalize verifyCardEmbed to accept an
-// optional heading text and pass COCKPIT_SECTION_HEADING here.
+// Publish the portfolio cockpit as an <embed> at the TOP of the hub, under
+// "## 🎯 Portfolio Cockpit". Returns { ok, verified, attachmentId }:
+//   ok           — the COCKPITDONE marker was printed (the connector step ran).
+//                  Drives cockpitPublished / the exit code, so a noisy read-back
+//                  never falsely reddens a good publish.
+//   attachmentId — the file-upload id parsed from that marker (or null).
+//   verified     — read-back CONFIRMED an embed whose src CONTAINS attachmentId,
+//                  UNDER the cockpit heading (mitigation #2: verify THE specific
+//                  attachment, not merely "an embed" — a failed section-replace
+//                  that left a stale embed must NOT pass). The caller advances
+//                  state.cockpit.publishedHash ONLY when verified (REL#1 self-heal:
+//                  an unverified publish re-runs next sweep). The read-back is
+//                  heading-scoped (verifyCardEmbed / findSectionBlocks) because the
+//                  cockpit and card sections use DIFFERENT headings — hence
+//                  COCKPIT_SECTION_HEADING is passed rather than the card default.
 function publishCockpit(html, asOfHuman) {
   const res = spawnClaude(buildCockpitPrompt({ html, asOfHuman }));
   if (res.error) {
     console.error(`[sweep] cockpit publish FAILED: spawn: ${res.error.message}`);
-    return false;
+    return { ok: false, verified: false, attachmentId: null };
   }
   const out = res.stdout || '';
-  const ok = out.match(/COCKPITDONE(?:\s+attachment=(\S+))?/);
-  if (!ok) {
+  const marker = out.match(/COCKPITDONE(?:\s+attachment=(\S+))?/);
+  if (!marker) {
     const fail = out.match(/FAILED\s+(.*)/);
     const reason = fail ? fail[1].trim()
       : (res.status === null ? 'timeout/no-marker' : 'no COCKPITDONE marker');
     console.error(`[sweep] cockpit publish FAILED: ${reason}`);
-    return false;
+    return { ok: false, verified: false, attachmentId: null };
   }
-  // Heading-scoped read-back: the cockpit lives under the cockpit heading, NOT
-  // the card heading — verify the correct section (bug fix: was defaulting to the
-  // card section and always returning false).
-  const verified = verifyCardEmbed(REPORTING_HUB_PAGE_ID, COCKPIT_SECTION_HEADING);
-  console.error(`[sweep] cockpit published${ok[1] ? ` attachment=${ok[1]}` : ''} · read-back(cockpit-section-scoped)=${verified}`);
-  return true;
+  const attachmentId = marker[1] || null;
+  // Mitigation #2 read-back: require an embed whose src CONTAINS the returned
+  // attachment id, UNDER the cockpit heading. getPageBlocks + findSectionBlocks
+  // scope to the section; the embed url is checked against the id (the connector
+  // binds src="file-upload://<id>", so the id is a substring). When the marker
+  // carried no id (defensive optional match), fall back to the heading-scoped
+  // generic embed check so a good publish that merely didn't echo its id is not
+  // looped forever.
+  let verified = false;
+  try {
+    if (attachmentId) {
+      const blocks = getPageBlocks(REPORTING_HUB_PAGE_ID);
+      const section = findSectionBlocks(blocks, COCKPIT_SECTION_HEADING);
+      verified = !!(section && section.blocks.some((b) => b && b.type === 'embed'
+        && String(b.embed?.url ?? b.embed?.src ?? '').includes(attachmentId)));
+    } else {
+      verified = verifyCardEmbed(REPORTING_HUB_PAGE_ID, COCKPIT_SECTION_HEADING);
+    }
+  } catch (e) {
+    console.error(`[sweep] cockpit read-back failed: ${e.message}`);
+  }
+  console.error(`[sweep] cockpit published${attachmentId ? ` attachment=${attachmentId}` : ''} · read-back(cockpit-section-scoped, attachment-specific)=${verified}`);
+  return { ok: true, verified, attachmentId };
 }
 
 // --- main ---
@@ -891,6 +949,16 @@ async function main() {
   const startedIso = new Date().toISOString();
   const startedMs = Date.now();
   const asOfHuman = dateStamp();
+
+  // --- API-key polarity contract (Fix 2) ------------------------------------
+  // This sweep's Notion connector loads ONLY when ANTHROPIC_API_KEY is UNSET
+  //   (spawnClaude strips it per-child so the claude.ai connector authorizes).
+  // The ai-report-card VP narrator is the OPPOSITE — it REQUIRES the key SET.
+  // A set key here is non-fatal (the per-child strip still protects the
+  // connector) but usually means the wrapper (run-sweep.ps1) forgot to unset it.
+  if (process.env.ANTHROPIC_API_KEY) {
+    console.error('[sweep] WARN: ANTHROPIC_API_KEY is set — the claude.ai Notion connector needs it UNSET; the sweep strips it per-child (spawnClaude), but the wrapper (run-sweep.ps1) should unset it.');
+  }
   // Global time budget: reserve the tail of the scheduled-task window for the
   // cockpit + hub steps so a slow card-publish batch can never starve them (or
   // get the whole task killed mid-run). Cards past the budget are deferred and,
@@ -1050,12 +1118,53 @@ async function main() {
       const cockpitHtml = buildCockpitHtml({
         roster: cockpitRoster, seriesBySlug, asOf: startedIso, lastSweep,
       });
+      // Hash-gate (mirrors the mobile-cockpit gate): republish ONLY when the
+      // SEMANTIC inputs change. Excludes the timestamped HTML (asOf / lastSweep.ts).
+      const cockpitHash = cockpitContentHash({
+        roster: cockpitRoster,
+        seriesBySlug,
+        lastSweepOk: lastSweep?.ok ?? null,
+        rendererVersion: COCKPIT_RENDERER_VERSION,
+      });
+      const prevCockpit = getCockpit(readState());
+      let cockpitChanged = prevCockpit.publishedHash !== cockpitHash;
       if (dryRun) {
-        console.log(`\nWOULD PUBLISH COCKPIT under "${COCKPIT_SECTION_HEADING}" at TOP of hub ${REPORTING_HUB_PAGE_ID}:`);
-        console.log(`  cockpit HTML: ${Buffer.byteLength(cockpitHtml, 'utf8')} bytes · ${cockpitRoster.length} roster project(s)`);
+        console.log(`\n${cockpitChanged ? 'WOULD PUBLISH (hash changed)' : 'WOULD SKIP (unchanged, hash-gated)'} COCKPIT under "${COCKPIT_SECTION_HEADING}" at TOP of hub ${REPORTING_HUB_PAGE_ID}:`);
+        console.log(`  cockpit HTML: ${Buffer.byteLength(cockpitHtml, 'utf8')} bytes · ${cockpitRoster.length} roster project(s) · hash ${cockpitHash.slice(0, 12)}`);
         console.log(`  lastSweep signal: ${lastSweep ? `ts=${lastSweep.ts} ok=${lastSweep.ok}` : 'none recorded'}`);
       } else {
-        cockpitPublished = publishCockpit(cockpitHtml, asOfHuman);
+        // Mitigation #1 self-heal: on a hash-match SKIP, cheaply confirm the
+        // cockpit embed is still on the hub. If it's gone (manual delete, or a
+        // later hub write clobbered it), force a republish rather than trusting
+        // the stale hash.
+        if (!cockpitChanged) {
+          const stillThere = verifyCardEmbed(REPORTING_HUB_PAGE_ID, COCKPIT_SECTION_HEADING);
+          if (!stillThere) {
+            cockpitChanged = true;
+            console.error('[sweep] cockpit embed MISSING on hash-match — forcing republish (self-heal)');
+          }
+        }
+        if (!cockpitChanged) {
+          // Unchanged + still live = success (matches mobile's 'unchanged' skip).
+          cockpitPublished = true;
+          console.error('[sweep] cockpit unchanged (hash-gated) — skipping publish');
+        } else {
+          const { ok, verified, attachmentId } = publishCockpit(cockpitHtml, asOfHuman);
+          cockpitPublished = ok;
+          // Advance publishedHash ONLY on a verified publish (REL#1 self-heal:
+          // an unverified publish re-runs next sweep).
+          if (ok && verified) {
+            const state = readState();
+            recordCockpit(state, {
+              pageId: REPORTING_HUB_PAGE_ID,
+              attachmentId,
+              contentHash: cockpitHash,
+              publishedHash: cockpitHash,
+              lastPublished: startedIso,
+            });
+            writeState(state);
+          }
+        }
       }
     } catch (cockErr) {
       console.error(`[sweep] cockpit step FAILED: ${cockErr.message}`);
@@ -1098,6 +1207,13 @@ async function main() {
       }
 
       hubRefreshed = refreshHub(table, asOfHuman, hubRows.length);
+      // Mitigation #9: the hub refresh writes the SAME shared page as the cockpit
+      // (the gallery section, BELOW the cockpit). Cheaply confirm the hub write
+      // did not clobber the cockpit embed above it. A WARN here is self-healing —
+      // the next sweep's mitigation #1 skip-branch read-back republishes it.
+      if (!verifyCardEmbed(REPORTING_HUB_PAGE_ID, COCKPIT_SECTION_HEADING)) {
+        console.error('[sweep] WARN: cockpit embed missing after hub refresh — hub write may have clobbered it (self-heals next sweep)');
+      }
     } else if (dryRun) {
       console.log('\nDry run complete — no claude spawned; state, history, and Notion untouched.');
       dryRunExit = true;

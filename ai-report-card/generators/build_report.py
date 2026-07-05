@@ -60,6 +60,7 @@ def build_report(
     manual_inputs: dict,
     config: dict,
     output_path: str,
+    degraded_banner: str | None = None,
 ) -> str:
     """Build the weekly Word document report."""
     doc = Document()
@@ -69,6 +70,16 @@ def build_report(
     style.font.name = "Calibri"
     style.font.size = Pt(10)
     style.font.color.rgb = TEXT_PRIMARY
+
+    # mit #6: visible degraded banner at the very top of the report artifact, so a template
+    # (non-AI) report is obvious to the VP — not just a line in the run log.
+    if degraded_banner:
+        banner_p = doc.add_paragraph()
+        banner_p.alignment = WD_ALIGN_PARAGRAPH.CENTER
+        run = banner_p.add_run(degraded_banner)
+        run.font.bold = True
+        run.font.size = Pt(12)
+        run.font.color.rgb = RGBColor(0xF8, 0x71, 0x71)
 
     recipients = config.get("recipients", {})
     author = recipients.get("author", "David Hayes")
@@ -333,12 +344,14 @@ def build_report(
     return str(output_file)
 
 
-def build(snapshot: dict, narratives: dict, manual_inputs: dict, config: dict) -> str:
+def build(snapshot: dict, narratives: dict, manual_inputs: dict, config: dict, degraded_banner: str | None = None) -> str:
     """Main entry point for report generation."""
     output_dir = Path(__file__).parent.parent / "output" / "latest"
     output_path = output_dir / "report.docx"
 
-    result_path = build_report(snapshot, narratives, manual_inputs, config, str(output_path))
+    result_path = build_report(
+        snapshot, narratives, manual_inputs, config, str(output_path), degraded_banner=degraded_banner
+    )
 
     # Copy to Documents
     report_dest = config.get("output", {}).get("report_dest")

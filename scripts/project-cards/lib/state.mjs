@@ -115,6 +115,38 @@ export function recordMobileCockpit(state, patch = {}) {
   return state;
 }
 
+// --- portfolio cockpit (additive, single-object — hub-page cockpit embed) -----
+// state.cockpit shape:
+//   { pageId, attachmentId, contentHash, publishedHash, lastPublished }
+// Mirrors the mobileCockpit gate: contentHash advances when the cockpit HTML is
+// regenerated, but publishedHash advances ONLY on a confirmed + read-back-verified
+// publish (REL#1 self-heal). Readers tolerate absence (older state.json files
+// predate this block) and writeState preserves it via the output-shape spread.
+
+function freshCockpit() {
+  return {
+    pageId: null,
+    attachmentId: null,
+    contentHash: null,
+    publishedHash: null,
+    lastPublished: null,
+  };
+}
+
+// Tolerant reader: always returns the full shape, filling absent fields.
+export function getCockpit(state) {
+  const cur = state && state.cockpit && typeof state.cockpit === 'object'
+    ? state.cockpit : {};
+  return { ...freshCockpit(), ...cur };
+}
+
+// Merge a patch into state.cockpit. Mutates and returns `state` (caller persists
+// via writeState) — mirrors recordMobileCockpit's contract.
+export function recordCockpit(state, patch = {}) {
+  state.cockpit = { ...getCockpit(state), ...patch };
+  return state;
+}
+
 // --- triage (additive, under mobileCockpit.triage) ----------------------------
 // Shape: { recentHashes: string[] (ring, last 50), created: [{ds,id}], lastRun }
 // recentHashes is the replay guard (mitigation #12: hash = blockId+date);
