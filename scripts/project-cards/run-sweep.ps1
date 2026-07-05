@@ -29,7 +29,13 @@ $log = Join-Path $logDir "$date.log"
 # terminating NativeCommandError and would abort the wrapper on benign log output. Gate
 # success on the process exit code instead, so real failures still surface (code != 0).
 $ErrorActionPreference = 'Continue'
-& node (Join-Path $repo 'scripts\project-cards\sweep.mjs') @args 2>&1 | Tee-Object -FilePath $log -Append
+# 2>&1 also wraps each stderr line as an ErrorRecord; Tee/host then renders it with error
+# formatting (red "NativeCommandError" + CategoryInfo block) even under 'Continue', making
+# benign progress logs look like failures. Stringify each record ("$_") before Tee so it
+# lands as a plain log line. $LASTEXITCODE still reflects node's exit code (cmdlets don't
+# reset it), so exit-code gating below is unaffected.
+& node (Join-Path $repo 'scripts\project-cards\sweep.mjs') @args 2>&1 |
+    ForEach-Object { "$_" } | Tee-Object -FilePath $log -Append
 $code = $LASTEXITCODE
 "[$(Get-Date -Format o)] sweep exited (code=$code)" | Tee-Object -FilePath $log -Append
 exit $code
