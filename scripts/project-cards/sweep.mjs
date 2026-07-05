@@ -879,22 +879,60 @@ function refreshHub(table, asOfHuman, rowCount) {
   return false;
 }
 
+// The cockpit embed's stable IDENTITY, for a freshness read-back. Notion rewrites
+// the transient file-upload id into a PERMANENT attachment uuid when it binds the
+// embed, so the marker's file-upload id NEVER matches the stored src (verified live
+// 2026-07-05: marker 39476fd7… vs stored attachment:147607d1…). We therefore
+// compare the embed's identity BEFORE vs AFTER the publish rather than matching the
+// marker id: a genuine re-bind changes the src uuid (a new attachment) / block id;
+// a failed section-replace that left the stale embed does not. Returns the uuid
+// (preferred) or the block id, or null if there is no embed under the heading.
+// PURE: derive a stable-per-attachment identity from an embed block's url. The
+// url from getPageBlocks (REST) is an S3 presigned link whose ?X-Amz-… signature
+// is regenerated on EVERY read, so it MUST be stripped first (else two reads of
+// the SAME embed look different -> false "fresh"). The stable signal is the
+// file-uuid path segment (.../<space>/<file-uuid>/<filename>), which changes on
+// every re-upload. Falls back to the ntn-markdown attachment/file-upload form,
+// then the block id. Exported for unit testing (this parsing was a live bug).
+export function cockpitEmbedIdFromUrl(raw, blockId = null) {
+  const path = String(raw ?? '').split('?')[0];
+  let m = path.match(/\/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})\/[^/]+$/i);
+  if (m) return m[1];
+  m = path.match(/(?:attachment(?:%3A|:)|file-upload:\/\/)([0-9a-f-]{36})/i);
+  return m ? m[1] : (blockId || 'present');
+}
+
+function cockpitEmbedIdentity() {
+  try {
+    const blocks = getPageBlocks(REPORTING_HUB_PAGE_ID);
+    const section = findSectionBlocks(blocks, COCKPIT_SECTION_HEADING);
+    if (!section) return null;
+    const embed = section.blocks.find((b) => b && b.type === 'embed');
+    if (!embed) return null;
+    return cockpitEmbedIdFromUrl(embed.embed?.url ?? embed.embed?.src ?? '', embed.id);
+  } catch (e) {
+    console.error(`[sweep] cockpit embed read failed: ${e.message}`);
+    return null;
+  }
+}
+
 // Publish the portfolio cockpit as an <embed> at the TOP of the hub, under
 // "## 🎯 Portfolio Cockpit". Returns { ok, verified, attachmentId }:
 //   ok           — the COCKPITDONE marker was printed (the connector step ran).
 //                  Drives cockpitPublished / the exit code, so a noisy read-back
 //                  never falsely reddens a good publish.
-//   attachmentId — the file-upload id parsed from that marker (or null).
-//   verified     — read-back CONFIRMED an embed whose src CONTAINS attachmentId,
-//                  UNDER the cockpit heading (mitigation #2: verify THE specific
-//                  attachment, not merely "an embed" — a failed section-replace
-//                  that left a stale embed must NOT pass). The caller advances
-//                  state.cockpit.publishedHash ONLY when verified (REL#1 self-heal:
-//                  an unverified publish re-runs next sweep). The read-back is
-//                  heading-scoped (verifyCardEmbed / findSectionBlocks) because the
-//                  cockpit and card sections use DIFFERENT headings — hence
-//                  COCKPIT_SECTION_HEADING is passed rather than the card default.
+//   verified     — a FRESH embed is now under the cockpit heading: an embed exists
+//                  AND its identity changed vs before the publish (or there was
+//                  none before). Corrected after a live run showed the marker's
+//                  file-upload id can never match the stored attachment uuid
+//                  (Notion rewrites it). This still catches Codex's stale-embed
+//                  case: a failed section-replace leaves the SAME identity -> not
+//                  verified. The caller advances state.cockpit.publishedHash ONLY
+//                  when verified (REL#1 self-heal: an unverified publish re-runs).
+//   attachmentId — the permanent embed identity now on the page (or the marker's
+//                  file-upload id as a fallback) — recorded in state for reference.
 function publishCockpit(html, asOfHuman) {
+  const beforeId = cockpitEmbedIdentity();
   const res = spawnClaude(buildCockpitPrompt({ html, asOfHuman }));
   if (res.error) {
     console.error(`[sweep] cockpit publish FAILED: spawn: ${res.error.message}`);
@@ -909,29 +947,20 @@ function publishCockpit(html, asOfHuman) {
     console.error(`[sweep] cockpit publish FAILED: ${reason}`);
     return { ok: false, verified: false, attachmentId: null };
   }
-  const attachmentId = marker[1] || null;
-  // Mitigation #2 read-back: require an embed whose src CONTAINS the returned
-  // attachment id, UNDER the cockpit heading. getPageBlocks + findSectionBlocks
-  // scope to the section; the embed url is checked against the id (the connector
-  // binds src="file-upload://<id>", so the id is a substring). When the marker
-  // carried no id (defensive optional match), fall back to the heading-scoped
-  // generic embed check so a good publish that merely didn't echo its id is not
-  // looped forever.
+  const markerId = marker[1] || null;
+  // Freshness read-back (mitigation #2, corrected): the embed under the heading
+  // must now have a DIFFERENT identity than before (a real re-bind), or there was
+  // none before. Works with Notion's file-upload -> attachment id rewrite.
   let verified = false;
+  let afterId = null;
   try {
-    if (attachmentId) {
-      const blocks = getPageBlocks(REPORTING_HUB_PAGE_ID);
-      const section = findSectionBlocks(blocks, COCKPIT_SECTION_HEADING);
-      verified = !!(section && section.blocks.some((b) => b && b.type === 'embed'
-        && String(b.embed?.url ?? b.embed?.src ?? '').includes(attachmentId)));
-    } else {
-      verified = verifyCardEmbed(REPORTING_HUB_PAGE_ID, COCKPIT_SECTION_HEADING);
-    }
+    afterId = cockpitEmbedIdentity();
+    verified = !!afterId && (beforeId === null || afterId !== beforeId);
   } catch (e) {
     console.error(`[sweep] cockpit read-back failed: ${e.message}`);
   }
-  console.error(`[sweep] cockpit published${attachmentId ? ` attachment=${attachmentId}` : ''} · read-back(cockpit-section-scoped, attachment-specific)=${verified}`);
-  return { ok: true, verified, attachmentId };
+  console.error(`[sweep] cockpit published${markerId ? ` attachment=${markerId}` : ''} · read-back(fresh-embed)=${verified}${afterId ? ` id=${String(afterId).slice(0, 8)}` : ''}`);
+  return { ok: true, verified, attachmentId: afterId || markerId };
 }
 
 // --- main ---

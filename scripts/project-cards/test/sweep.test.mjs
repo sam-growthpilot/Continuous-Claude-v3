@@ -10,7 +10,7 @@ import {
   classifyHostKind, buildHubTable, markdownToBlocks,
   acquireSweepLock, releaseSweepLock,
   triageFailureReceiptLine, TRIAGE_EXIT_CODE, mapPmNoteRow,
-  cockpitContentHash,
+  cockpitContentHash, cockpitEmbedIdFromUrl,
 } from '../sweep.mjs';
 
 let pass = 0;
@@ -258,6 +258,41 @@ test('cockpit gate decision: same hash -> SKIP; different hash -> PUBLISH', () =
   const changed = cockpitInputs();
   changed.roster[1].health = 'Red';
   assert.equal(cockpitContentHash(changed) !== publishedHash, true, 'changed must PUBLISH');
+});
+
+// --- cockpitEmbedIdFromUrl (Fix 1 read-back — live-bug regression) -----------
+// Notion returns the embed as an S3 presigned URL whose ?X-Amz signature changes
+// on every read; the freshness identity must be the stable file-uuid path segment.
+const S3 = (fileUuid) => `https://prod-files-secure.s3.us-west-2.amazonaws.com/`
+  + `a512f781-a8e7-400d-b2e2-b76690fde865/${fileUuid}/fourthos-cockpit.html`
+  + `?X-Amz-Algorithm=AWS4-HMAC-SHA256&X-Amz-Credential=ASIAZI2LB4665PJPFKIT`;
+
+test('cockpitEmbedIdFromUrl: extracts the file-uuid from an S3 presigned url', () => {
+  assert.equal(cockpitEmbedIdFromUrl(S3('0f49d69e-833e-462e-8d5b-1858a9caaf78')),
+    '0f49d69e-833e-462e-8d5b-1858a9caaf78');
+});
+
+test('cockpitEmbedIdFromUrl: presigned query is IGNORED (same file, two reads -> same id)', () => {
+  const a = cockpitEmbedIdFromUrl(S3('0f49d69e-833e-462e-8d5b-1858a9caaf78'));
+  const b = cockpitEmbedIdFromUrl(S3('0f49d69e-833e-462e-8d5b-1858a9caaf78') + '&X-Amz-Signature=DIFFERENT');
+  assert.equal(a, b); // the whole point: a re-read must NOT look "fresh"
+});
+
+test('cockpitEmbedIdFromUrl: a republish (new attachment) changes the id', () => {
+  const before = cockpitEmbedIdFromUrl(S3('0f49d69e-833e-462e-8d5b-1858a9caaf78'));
+  const after = cockpitEmbedIdFromUrl(S3('11111111-2222-3333-4444-555555555555'));
+  assert.notEqual(after, before);
+});
+
+test('cockpitEmbedIdFromUrl: falls back to the ntn-markdown attachment form', () => {
+  assert.equal(
+    cockpitEmbedIdFromUrl('file://%7B%22source%22%3A%22attachment%3A147607d1-a86e-4583-8f4d-41f88a02c11c%3Ax.html%22%7D'),
+    '147607d1-a86e-4583-8f4d-41f88a02c11c');
+});
+
+test('cockpitEmbedIdFromUrl: unrecognized url -> block id fallback (never crashes)', () => {
+  assert.equal(cockpitEmbedIdFromUrl('https://example.com/no-uuid', 'blk-123'), 'blk-123');
+  assert.equal(cockpitEmbedIdFromUrl('', null), 'present');
 });
 
 console.log(`\n${pass} passed`);
