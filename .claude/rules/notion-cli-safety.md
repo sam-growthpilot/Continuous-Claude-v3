@@ -34,6 +34,7 @@ Before running ANY of these, explain what it does and wait for explicit user app
 
 Registered scheduled jobs may write WITHOUT per-run confirmation ONLY to pages declared job-owned:
 - Reports hub scheduled-tasks section (dashboard-sync job)
+- The **Report Runs** registry database `4e4c9460-8818-4352-a056-88badbaa94ce` (data source `c7d2d9e3-d388-4640-a66e-88f7dd50f854`) under the Reports hub — **row upserts only** (`ntn api v1/pages` create/update keyed by unique `Run ID`, append-all-attempts) by the 6 report pipelines via `scripts/report-registry/upsert.mjs`. Machine-owned; humans read the views, don't hand-edit rows. Its 6 report-type child pages (VP Weekly / FourthOS Sponsor / Team Dashboard / System Health / Project Portfolio / Self-Improvement) are likewise job-owned for machine `## Current run` refreshes. IDs pinned in `scripts/report-registry/report-runs.ids.json`.
 - The Helm page + `Helm Projects` DB (helm sync job, once created)
 Everything else in the workspace is human/Eve territory — confirm first.
 
