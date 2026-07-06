@@ -86,3 +86,11 @@ Hosted TS runtime in Notion's sandbox: `ntn workers new/deploy/exec`, scheduled 
 ## Known workspace IDs (safety rule references these)
 
 Bridge HQ `30e76fd7ac8281e99fe1c0b257088b34` · Reports hub `38f76fd7ac8280478e50dd2956ba6e8a` · Bridge Archive `30e76fd7ac8281258cd9d281aa873298` — mutating any of these via `ntn` is confirm-first (see `.claude/rules/notion-cli-safety.md`).
+
+## Report Runs registry — the report-history spine
+
+Every scheduled report (VP Weekly, FourthOS Sponsor, Team Dashboard, System Health, Project Portfolio, Self-Improvement) upserts one **append-all-attempts** row into the **Report Runs** database. This is the uniform history surface for both humans (Notion views under the Reports hub) and AI — prefer it over per-pipeline file globs when you need "what did report X do recently / did it fail".
+
+- **DB** `4e4c9460-8818-4352-a056-88badbaa94ce` · **data source** `c7d2d9e3-d388-4640-a66e-88f7dd50f854` (child of the Reports hub). All IDs (DB + DS + 6 child pages + 7 views) pinned in `scripts/report-registry/report-runs.ids.json`.
+- **AI history read (deterministic, no LLM):** `"$NTN" datasources query c7d2d9e3-d388-4640-a66e-88f7dd50f854 --json` then filter by the `Report Type` select and sort `Run Date` desc. Row shape: `{Report Run, Run ID, Report Type, Run Date, Period, Status, Artifact URL, Docx/Deck, Summary, Source}`. Run ID = `<type>|<period>|<ISO-ts>` (unique per run).
+- **Writes are job-owned** (see `notion-cli-safety.md`): pipelines upsert via `scripts/report-registry/upsert.mjs` keyed by unique Run ID; humans read the views, don't hand-edit rows. `check-drift.mjs` flags any report type with no fresh row.
