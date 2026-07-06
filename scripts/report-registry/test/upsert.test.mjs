@@ -126,6 +126,67 @@ test('distinct runId does NOT reuse another run row (append, never overwrite)', 
   assert.equal(m.calls.query[0].opts.filter.rich_text.equals, 'VP Weekly|2026-W27|B');
 });
 
+// --- idempotent create (T5.1): timeout-retry-dedup -----------------------------
+
+test('transient create failure that LANDED server-side is adopted, not re-created', () => {
+  // create throws a transient (timeout) error once; the row committed anyway, so
+  // the re-query by Run ID returns it. Expect: ADOPT (update in place), and NO
+  // second create POST (the duplicate the naive retry would have made).
+  let createCalls = 0;
+  let queryCalls = 0;
+  const landed = {
+    id: 'landed-page',
+    properties: { 'Run ID': { rich_text: [{ plain_text: baseRun.runId }] } },
+  };
+  const calls = { update: [] };
+  const m = {
+    dsId: DS,
+    // 1st query (initial upsert lookup) -> no match; 2nd query (post-failure
+    // re-query) -> the row that landed server-side.
+    query: () => { queryCalls += 1; return queryCalls === 1 ? [] : [landed]; },
+    create: () => { createCalls += 1; throw new Error('ntn exited 1 [api v1/pages -X POST]: request ETIMEDOUT timeout'); },
+    update: (pageId, props) => { calls.update.push({ pageId, props }); return { id: pageId }; },
+  };
+  const res = upsertReportRun(baseRun, m);
+  assert.equal(res.action, 'adopted');
+  assert.equal(res.pageId, 'landed-page');
+  assert.equal(createCalls, 1, 'must NOT re-create after adopting the landed row');
+  assert.equal(calls.update.length, 1, 'adopts by updating the landed row in place');
+  assert.equal(calls.update[0].pageId, 'landed-page');
+});
+
+test('transient create failure that did NOT land is retried, then succeeds', () => {
+  // create throws transient once; re-query finds NO row (it never landed) -> the
+  // create is retried and the second attempt succeeds. Net: a genuine create.
+  let createCalls = 0;
+  const m = {
+    dsId: DS,
+    query: () => [], // never any existing row
+    create: () => {
+      createCalls += 1;
+      if (createCalls === 1) throw new Error('ntn failed after 3 attempts: 429 rate limited');
+      return { id: 'fresh-page' };
+    },
+    update: () => { throw new Error('should not update'); },
+  };
+  const res = upsertReportRun(baseRun, m);
+  assert.equal(res.action, 'created');
+  assert.equal(res.pageId, 'fresh-page');
+  assert.equal(createCalls, 2, 'retries the create when re-query proves it never landed');
+});
+
+test('non-transient create failure throws immediately (no adopt, no retry)', () => {
+  let createCalls = 0;
+  const m = {
+    dsId: DS,
+    query: () => [],
+    create: () => { createCalls += 1; throw new Error('ntn exited 400 [api v1/pages]: validation_error body failed'); },
+    update: () => {},
+  };
+  assert.throws(() => upsertReportRun(baseRun, m), /validation_error/);
+  assert.equal(createCalls, 1, 'a non-transient failure is not retried');
+});
+
 // --- input resolution ----------------------------------------------------------
 
 test('readInput handles --emit inline json', () => {

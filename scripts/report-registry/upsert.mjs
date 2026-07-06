@@ -35,6 +35,17 @@ import {
 
 const REQUIRED_KEYS = ['runId', 'type', 'period', 'runDate', 'status', 'source'];
 
+// Transient failure signature (mirrors lib/notion.mjs). A create POST that fails
+// with one of these MAY have already committed server-side (a timed-out POST can
+// still land), so before retrying we re-query by the unique Run ID and adopt an
+// existing row instead of blindly creating a duplicate (T5.1).
+const TRANSIENT_RE = /429|rate|timeout|5\d\d|ECONN|ETIMEDOUT|Failed to execute public API request|failed after \d+ attempts/i;
+const CREATE_MAX_ATTEMPTS = 3;
+
+function isTransientError(err) {
+  return TRANSIENT_RE.test(String((err && err.message) || err || ''));
+}
+
 // --- validation (pure) ---------------------------------------------------------
 // Throws on the first violation with an actionable message. Verified keys:
 // required set present + non-empty, type in REPORT_TYPES, status in STATUSES.
@@ -97,8 +108,54 @@ function newestRow(rows) {
   })[0];
 }
 
+// Re-query the DS for the run's unique Run ID; return the matching rows (0..n).
+function queryByRunId(run, dsId, query) {
+  return query(dsId, {
+    filter: { property: 'Run ID', rich_text: { equals: String(run.runId) } },
+  }) || [];
+}
+
+// --- idempotent create (T5.1) --------------------------------------------------
+// The create POST is NOT safe to blindly retry: a transient failure (timeout /
+// 429 / 5xx / dropped connection) can surface AFTER the row has already committed
+// server-side, so a naive retry appends a DUPLICATE. Guard: on a transient create
+// failure, re-query by the unique Run ID BEFORE retrying — if a row now exists,
+// ADOPT it (switch to update) instead of re-creating. Only when no row is found
+// (the create genuinely never landed) do we retry the create, bounded. A
+// non-transient failure (bad request/auth/validation) throws immediately.
+function createOrAdopt(run, properties, { dsId, query, create, update }) {
+  let lastErr;
+  for (let attempt = 1; attempt <= CREATE_MAX_ATTEMPTS; attempt += 1) {
+    try {
+      const page = create(dsId, properties);
+      return { action: 'created', pageId: page?.id, duplicates: 0 };
+    } catch (err) {
+      lastErr = err;
+      if (!isTransientError(err)) throw err;
+      const rows = queryByRunId(run, dsId, query);
+      if (rows.length > 0) {
+        const target = rows.length > 1 ? newestRow(rows) : rows[0];
+        if (rows.length > 1) {
+          console.error(`[report-registry] WARN: ${rows.length} rows share Run ID "${run.runId}" after a retried create — adopting the newest (a timed-out create landed more than once).`);
+        } else {
+          console.error(`[report-registry] transient create failure for Run ID "${run.runId}" — the row landed server-side; adopting it instead of re-creating.`);
+        }
+        update(target.id, properties);
+        return { action: 'adopted', pageId: target.id, duplicates: rows.length };
+      }
+      if (attempt < CREATE_MAX_ATTEMPTS) {
+        console.error(`[report-registry] transient create failure for Run ID "${run.runId}" attempt ${attempt}/${CREATE_MAX_ATTEMPTS}; no row found on re-query — retrying create.`);
+        continue;
+      }
+      throw err;
+    }
+  }
+  throw lastErr;
+}
+
 // --- core upsert (transport injectable for tests) ------------------------------
-// Returns { action: 'created'|'updated', pageId, duplicates }. Throws on failure.
+// Returns { action: 'created'|'adopted'|'updated', pageId, duplicates }. Throws
+// on failure.
 export function upsertReportRun(run, {
   dsId = REPORT_RUNS_DS_ID,
   query = queryDataSource,
@@ -107,13 +164,10 @@ export function upsertReportRun(run, {
 } = {}) {
   validateRun(run);
   const properties = buildProperties(run);
-  const matches = query(dsId, {
-    filter: { property: 'Run ID', rich_text: { equals: String(run.runId) } },
-  });
+  const matches = queryByRunId(run, dsId, query);
 
-  if (!matches || matches.length === 0) {
-    const page = create(dsId, properties);
-    return { action: 'created', pageId: page?.id, duplicates: 0 };
+  if (matches.length === 0) {
+    return createOrAdopt(run, properties, { dsId, query, create, update });
   }
 
   if (matches.length > 1) {

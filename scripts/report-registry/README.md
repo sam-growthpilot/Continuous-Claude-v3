@@ -10,7 +10,17 @@ when, and whether it landed* is queryable in one place.
 - **Emit:** `make-run.mjs` — build + write a valid `report-run.json`.
 - **Upsert:** `upsert.mjs` — read one `report-run.json` and UPSERT it into the DB
   keyed by the unique `Run ID` (append-all-attempts; a distinct runId always
-  appends a new row, the same runId updates its row in place).
+  appends a new row, the same runId updates its row in place). The CREATE path is
+  **idempotent under retries** (T5.1): a transient create failure may have already
+  committed server-side, so before retrying the upsert re-queries by `Run ID` and
+  **adopts** an existing row instead of blindly creating a duplicate.
+- **Backfill:** `backfill.mjs` — seed the DB from existing on-disk history (VP
+  archives, Sponsor decks, Self-Improvement index, System Health reports). Uses
+  **deterministic** runIds (`<type>|<period>|<stable-marker>`) so re-running
+  upserts in place and never duplicates. `--dry-run` previews without writing.
+- **Drift:** `check-drift.mjs` — READ-ONLY freshness check. Flags any report type
+  whose newest registry row is older than `--max-age-hours` (default 48) or has no
+  rows at all; exits nonzero on any drift (health-check gateable).
 - **Data source:** `c7d2d9e3-d388-4640-a66e-88f7dd50f854`.
 
 The out-of-repo `ai-report-card` codebase (and any future pipeline) codes against
@@ -143,5 +153,28 @@ node scripts/report-registry/upsert.mjs "$TEMP\report-run-Project-Cards.json"
 
 `upsert.mjs` is **non-fatal-but-loud**: on any failure it prints
 `[report-registry] ERROR: …` and exits nonzero, and the DESIGN INTENT is that
-callers wrap it so that nonzero exit never reddens the parent report run. A
-Phase-4 missing-row detector catches any resulting drift.
+callers wrap it so that nonzero exit never reddens the parent report run. The
+drift detector (below) catches any resulting missing-row drift.
+
+### Backfill (one-time / repeatable history seed)
+
+```
+node scripts/report-registry/backfill.mjs --dry-run   # preview counts, no writes
+node scripts/report-registry/backfill.mjs             # upsert real historical rows
+```
+
+Idempotent: every backfilled row has a deterministic runId keyed to its source
+artifact (archive folder / deck id / proposal file / health file stem), so a
+re-run updates in place and the DS row count is unchanged. These rows are **real,
+permanent history** — do not trash them.
+
+### Drift detection (scheduler / health-check gate)
+
+```
+node scripts/report-registry/check-drift.mjs                     # 48h threshold
+node scripts/report-registry/check-drift.mjs --max-age-hours 72
+```
+
+Prints a JSON array of `{ type, newestRunDate, ageHours, drift }` per report type
+and exits **nonzero** if any type is in drift (stale beyond the threshold, or has
+no rows at all). Read-only — it only queries the DS.

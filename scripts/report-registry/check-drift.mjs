@@ -1,0 +1,98 @@
+// check-drift.mjs — Report Runs freshness / drift detector (Phase 4, T4.2).
+//
+// READ-ONLY. For each report type, finds the newest registry row and its age, and
+// flags any type whose newest row is older than a threshold (default 48h) — or has
+// NO rows at all. This catches a scheduled report that silently stopped landing
+// (the registry stops gaining rows) even when the pipeline itself reports success
+// elsewhere. Intended to be invoked standalone or from the system health_check.
+//
+// CLI:
+//   node check-drift.mjs                     # default 48h threshold
+//   node check-drift.mjs --max-age-hours 72  # custom threshold
+//
+// Output: a JSON array of { type, newestRunDate, ageHours, drift } (one per known
+// report type) plus a `drift: true|false` summary line on stderr. EXIT CODE is
+// NONZERO if ANY type is in drift, so a scheduler/health-check can gate on it.
+//
+// Queries the Report Runs DS only — never writes. ESM, no external deps.
+import { pathToFileURL } from 'node:url';
+import { queryDataSource, selectName, dateStart } from '../project-cards/lib/notion.mjs';
+import { REPORT_RUNS_DS_ID, REPORT_TYPES } from './config.mjs';
+
+export const DEFAULT_MAX_AGE_HOURS = 48;
+
+// Newest (max) Run Date string across a set of rows, or '' if none / unparseable.
+export function newestRunDate(rows) {
+  let best = '';
+  for (const r of rows || []) {
+    const d = dateStart(r?.properties?.['Run Date']) || r?.last_edited_time || '';
+    if (d && (!best || d.localeCompare(best) > 0)) best = d;
+  }
+  return best;
+}
+
+// Group DS rows by their Report Type select value.
+export function groupByType(rows) {
+  const byType = {};
+  for (const r of rows || []) {
+    const t = selectName(r?.properties?.['Report Type']);
+    if (!t) continue;
+    (byType[t] ||= []).push(r);
+  }
+  return byType;
+}
+
+// --- pure drift core -----------------------------------------------------------
+// newestByType: { [type]: newestRunDateString | '' }. Every type in `types` gets a
+// row in the result; a type with no/unparseable date is drift=true, ageHours=null.
+export function computeDrift(newestByType, { maxAgeHours = DEFAULT_MAX_AGE_HOURS, now = Date.now(), types = REPORT_TYPES } = {}) {
+  const nowMs = typeof now === 'number' ? now : Date.parse(now);
+  return types.map((type) => {
+    const raw = newestByType[type] || '';
+    const ms = raw ? Date.parse(raw) : NaN;
+    if (!raw || Number.isNaN(ms)) {
+      return { type, newestRunDate: raw || null, ageHours: null, drift: true };
+    }
+    const ageHours = Math.round(((nowMs - ms) / 3_600_000) * 100) / 100;
+    return { type, newestRunDate: raw, ageHours, drift: ageHours > maxAgeHours };
+  });
+}
+
+// --- CLI -----------------------------------------------------------------------
+export function parseMaxAgeHours(argv) {
+  const idx = argv.indexOf('--max-age-hours');
+  if (idx !== -1 && argv[idx + 1] != null) return Number(argv[idx + 1]);
+  const eq = argv.find((a) => a.startsWith('--max-age-hours='));
+  if (eq) return Number(eq.slice('--max-age-hours='.length));
+  return DEFAULT_MAX_AGE_HOURS;
+}
+
+export function checkDrift({ maxAgeHours = DEFAULT_MAX_AGE_HOURS, query = queryDataSource, dsId = REPORT_RUNS_DS_ID, now = Date.now() } = {}) {
+  const rows = query(dsId, {});
+  const byType = groupByType(rows);
+  const newestByType = {};
+  for (const type of REPORT_TYPES) newestByType[type] = newestRunDate(byType[type] || []);
+  const report = computeDrift(newestByType, { maxAgeHours, now });
+  return report;
+}
+
+function main() {
+  const maxAgeHours = parseMaxAgeHours(process.argv.slice(2));
+  const report = checkDrift({ maxAgeHours });
+  const drifting = report.filter((r) => r.drift);
+  console.log(JSON.stringify(report, null, 2));
+  console.error(`[check-drift] threshold=${maxAgeHours}h — ${drifting.length}/${report.length} type(s) in drift${drifting.length ? ': ' + drifting.map((d) => d.type).join(', ') : ''}`);
+  process.exit(drifting.length > 0 ? 1 : 0);
+}
+
+const invokedDirectly = process.argv[1]
+  && import.meta.url === pathToFileURL(process.argv[1]).href;
+
+if (invokedDirectly) {
+  try {
+    main();
+  } catch (e) {
+    console.error(`[check-drift] FATAL: ${e.message}`);
+    process.exit(2);
+  }
+}
