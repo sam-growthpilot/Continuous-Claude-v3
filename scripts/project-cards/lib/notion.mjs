@@ -254,6 +254,19 @@ export function createPage(dsId, properties, { post = apiPost } = {}) {
   return post('v1/pages', buildCreatePageBody(dsId, properties));
 }
 
+// Update an existing page row's properties via PATCH v1/pages/<pageId>. This is
+// the missing UPDATE path (createPage handles insert; this handles the in-place
+// update the registry upsert needs when a row with the same key already exists).
+// `patch` is injectable for tests; defaults to the retrying apiPatch (runNtn
+// contract). Returns the updated page object.
+export function updatePageProperties(pageId, properties, { patch = apiPatch } = {}) {
+  if (!pageId) throw new Error('updatePageProperties: pageId is empty');
+  if (!properties || typeof properties !== 'object' || Array.isArray(properties)) {
+    throw new Error('updatePageProperties: properties must be a plain object');
+  }
+  return patch(`v1/pages/${pageId}`, { properties });
+}
+
 // Rich-text CaptureId stamp (mitigation #3): every triage-created row carries
 // the SOURCE BLOCK id so ambiguous create failures can be de-duplicated by
 // querying the destination DS before any retry POST.
