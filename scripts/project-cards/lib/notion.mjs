@@ -150,25 +150,47 @@ export function verifyCardEmbed(pageId, sectionHeading = CARD_SECTION_HEADING) {
   return false;
 }
 
-// Query the Projects data source. filter/sorts are raw Notion query objects.
-export function queryProjects({ filter, sorts, pageSize = 100 } = {}) {
-  const body = { page_size: pageSize };
-  if (filter) body.filter = filter;
-  if (sorts) body.sorts = sorts;
-  const res = apiPost(`v1/data_sources/${PROJECTS_DS}/query`, body);
-  return res.results || [];
+// Query the Projects data source, paginating to EXHAUSTION. filter/sorts are raw
+// Notion query objects. Routed through queryDataSource so the next_cursor walk
+// (mitigation #17: a single page_size=100 call silently truncates a >100-row
+// roster) and its fetched-count log are shared, single-source. `pageSize` is
+// accepted for back-compat but ignored — pagination always uses 100/page.
+export function queryProjects({ filter, sorts } = {}) {
+  return queryDataSource(PROJECTS_DS, { filter, sorts });
 }
 
-// Resolve a single Projects row by (case-insensitive) title. Prefers an exact match.
+// PURE + exported (testable without spawning ntn): resolve the intended Projects
+// row from a title-`contains` query result set. Prefers an EXACT (case-insensitive)
+// title match. With no exact match: a single candidate is accepted (unambiguous),
+// but MORE THAN ONE candidate THROWS an ambiguous-match error rather than silently
+// guessing results[0] — a substring query for "Foo" can return "Foo", "Foo v2",
+// "Foobar", so guessing could resolve the WRONG project (#6). Zero rows throws
+// not-found.
+export function resolveProjectMatch(results, name) {
+  const rows = results || [];
+  if (rows.length === 0) throw new Error(`No FourthOS project matched "${name}"`);
+  const lower = String(name).toLowerCase();
+  const exact = rows.find((r) => title(r.properties?.Project).toLowerCase() === lower);
+  if (exact) return exact;
+  if (rows.length > 1) {
+    const names = rows.map((r) => title(r.properties?.Project)).filter(Boolean).join(', ');
+    throw new Error(
+      `Ambiguous project name "${name}" matched ${rows.length} rows (${names}) `
+      + 'with no exact title match — refine the name to the exact project title',
+    );
+  }
+  return rows[0];
+}
+
+// Resolve a single Projects row by (case-insensitive) title. Paginates the
+// title-`contains` query to exhaustion (#6: pageSize:10 could hide the exact
+// match past page 1), then delegates the exact/ambiguous/not-found decision to
+// the pure, tested resolveProjectMatch.
 export function getProjectByName(name) {
   const results = queryProjects({
     filter: { property: 'Project', title: { contains: name } },
-    pageSize: 10,
   });
-  if (results.length === 0) throw new Error(`No FourthOS project matched "${name}"`);
-  const lower = name.toLowerCase();
-  const exact = results.find((r) => title(r.properties.Project).toLowerCase() === lower);
-  return exact || results[0];
+  return resolveProjectMatch(results, name);
 }
 
 // Recent Decisions & Outputs rows for a project, newest first.

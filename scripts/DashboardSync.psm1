@@ -318,6 +318,10 @@ function Build-TasksSectionMarkdown {
         [void]$sb.AppendLine('| ' + ($header -join ' | ') + ' |')
         [void]$sb.AppendLine('|' + (($header | ForEach-Object { '---' }) -join '|') + '|')
 
+        # Header-only group: PowerShell's `1..0` range yields @(1,0) (descending),
+        # which would index the header row and crash under StrictMode. Skip the body
+        # loop when there are no data rows (#13).
+        if ($rows.Count -le 1) { [void]$sb.AppendLine(); continue }
         foreach ($row in $rows[1..($rows.Count - 1)]) {
             $cells   = @($row.Cells)
             $label   = $cells[0]
@@ -343,7 +347,10 @@ function Build-TasksSectionMarkdown {
                 # Only for a genuine nonzero result: on recovery ($LastTaskResult -eq 0)
                 # newRes is '0', and a loose StartsWith('0') would wrongly retain a stale
                 # failing hex like '0x5 (failed)'. Exact-zero success never preserves.
-                if ($t.LastTaskResult -ne 0 -and $oldRes -and $oldRes.StartsWith($newRes)) { $newRes = $oldRes }
+                # Space-anchor the prefix test (#15): a bare StartsWith("0x5") would also
+                # match a DIFFERENT stale hex like "0x50 ..." (0x5 is a prefix of 0x50).
+                # Accept only an exact match or the same hex followed by a space (parenthetical).
+                if ($t.LastTaskResult -ne 0 -and $oldRes -and ($oldRes -eq $newRes -or $oldRes.StartsWith("$newRes "))) { $newRes = $oldRes }
 
                 $changed = ($newEmoji -ne $oldEmoji)
                 $diff.Add([pscustomobject]@{

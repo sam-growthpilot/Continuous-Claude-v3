@@ -49,4 +49,7 @@ export const REPORT_RUN_KEYS = ids.reportRunContract.keys;
 // --- ntn CLI (absolute winget exe — solves the ntn-PATH problem) ---
 // Re-exported for callers that want the exe path without importing project-cards
 // config. lib/notion.mjs already enforces the non-interactive contract around it.
-export const NTN_EXE = 'C:/Users/david.hayes/AppData/Local/Microsoft/WinGet/Packages/Notion.ntn_Microsoft.Winget.Source_8wekyb3d8bbwe/ntn-x86_64-pc-windows-msvc/ntn.exe';
+// SINGLE SOURCE OF TRUTH (T8.1 #5): the literal path (and the NTN_EXE_PATH env
+// override) live ONLY in scripts/project-cards/lib/config.mjs — re-exported here
+// so both spines share one definition instead of two copy-pasted literals.
+export { NTN_EXE } from '../project-cards/lib/config.mjs';

@@ -99,9 +99,26 @@ function Invoke-Ntn {
 }
 
 function Get-BlockChildren {
+    <#
+      Fetch ALL child blocks of a block/page, walking has_more/next_cursor to
+      exhaustion (#14: a single page_size=100 call only sees the first page, so a
+      long page or a wide table silently truncates). Returns a shape whose
+      .results holds the accumulated blocks across every page.
+    #>
     param([Parameter(Mandatory)][string]$BlockId)
-    $json = Invoke-Ntn -ArgList @('api', "v1/blocks/$BlockId/children?page_size=100")
-    return ($json | ConvertFrom-Json)
+    $all = [System.Collections.Generic.List[object]]::new()
+    $cursor = $null
+    do {
+        $path = "v1/blocks/$BlockId/children?page_size=100"
+        if ($cursor) { $path += "&start_cursor=$cursor" }
+        $resp = (Invoke-Ntn -ArgList @('api', $path)) | ConvertFrom-Json
+        if ($resp.PSObject.Properties.Name -contains 'results' -and $resp.results) {
+            foreach ($r in $resp.results) { $all.Add($r) }
+        }
+        $hasMore = ($resp.PSObject.Properties.Name -contains 'has_more') -and $resp.has_more
+        $cursor  = if ($hasMore) { $resp.next_cursor } else { $null }
+    } while ($cursor)
+    return [pscustomobject]@{ results = $all.ToArray() }
 }
 
 function Get-RichText {
@@ -250,7 +267,8 @@ function Invoke-ScopedWrite {
             $newRes = Format-TaskResult $t.LastTaskResult
             # Same fix as Build-TasksSectionMarkdown: only preserve a curated parenthetical
             # for a genuine nonzero result; on recovery (result 0) never keep a stale hex.
-            if ($t.LastTaskResult -ne 0 -and $newCells[3] -and $newCells[3].StartsWith($newRes)) { $newRes = $newCells[3] }
+            # Space-anchored (#15): a bare StartsWith("0x5") also matches a stale "0x50 ...".
+            if ($t.LastTaskResult -ne 0 -and $newCells[3] -and ($newCells[3] -eq $newRes -or $newCells[3].StartsWith("$newRes "))) { $newRes = $newCells[3] }
             $newCells[3] = $newRes
             $newCells[4] = $newStat
 
@@ -444,6 +462,50 @@ function Invoke-SelfTest {
         }
     } catch {
         $fail++; Write-Host ("  FAIL  (l) Build-LastSuccessRichText threw: {0}" -f $_.Exception.Message) -ForegroundColor Red
+    }
+
+    # --- (m) #13: a header-only group must NOT crash on PowerShell's 1..0 range ---
+    try {
+        $secHdrOnly = @{
+            CapturedLine = 'captured 2026-07-03'
+            Groups = @(
+                [pscustomobject]@{ Title = 'empty-group'; Rows = @(
+                    [pscustomobject]@{ Cells = @('Task', 'Schedule', 'Last run', 'Result', 'Status') }
+                ) }
+            )
+        }
+        $bHdr = Build-TasksSectionMarkdown -Section $secHdrOnly -Inventory @{} -Today ([datetime]'2026-07-03')
+        if ($bHdr.Markdown -match '### empty-group' -and $bHdr.Markdown -match '\| Task \|') {
+            $pass++; Write-Host "  PASS  (m) #13 header-only group renders header without crashing (no 1..0 range bug)" -ForegroundColor Green
+        } else {
+            $fail++; Write-Host "  FAIL  (m) #13 header-only group Markdown unexpected" -ForegroundColor Red
+        }
+    } catch {
+        $fail++; Write-Host ("  FAIL  (m) #13 header-only group threw: {0}" -f $_.Exception.Message) -ForegroundColor Red
+    }
+
+    # --- (n) #15: a stale '0x50 ...' hex must NOT be preserved when the new result is '0x5' ---
+    # Old Result cell '0x50 (curated)' is a hex-prefix superset of the new '0x5'; the fixed,
+    # space-anchored StartsWith must reject it so the cell shows the fresh '0x5'.
+    $secColl = @{
+        CapturedLine = 'captured 2026-07-03'
+        Groups = @(
+            [pscustomobject]@{ Title = 'core'; Rows = @(
+                [pscustomobject]@{ Cells = @('Task', 'Schedule', 'Last run', 'Result', 'Status') }
+                [pscustomobject]@{ Cells = @('Health-Check', 'daily', '2026-06-01', '0x50 (curated)', "$R failed") }
+            ) }
+        )
+    }
+    $invColl = @{ 'CCv3-Health-Check' = [pscustomobject]@{
+        Name = 'CCv3-Health-Check'; State = 'Ready'; LastRunTime = [datetime]'2026-07-03'
+        LastTaskResult = [long]5; NextRunTime = $null } }
+    $bColl = Build-TasksSectionMarkdown -Section $secColl -Inventory $invColl -Today ([datetime]'2026-07-03')
+    if ($bColl.Markdown -match '0x50') {
+        $fail++; Write-Host "  FAIL  (n) #15 stale '0x50 ...' wrongly preserved for new result '0x5' (prefix collision)" -ForegroundColor Red
+    } elseif ($bColl.Markdown -match '\|\s*0x5\s*\|') {
+        $pass++; Write-Host "  PASS  (n) #15 new result '0x5' shown; stale prefix-colliding '0x50 ...' dropped" -ForegroundColor Green
+    } else {
+        $fail++; Write-Host "  FAIL  (n) #15 expected clean '0x5' result cell not found" -ForegroundColor Red
     }
 
     Write-Host ("---------------- {0} passed / {1} failed ----------------" -f $pass, $fail) -ForegroundColor Cyan

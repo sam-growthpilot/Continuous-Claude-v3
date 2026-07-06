@@ -12,6 +12,7 @@
 import { mkdirSync, writeFileSync, renameSync, existsSync } from 'node:fs';
 import { createHash } from 'node:crypto';
 import { join } from 'node:path';
+import { pathToFileURL } from 'node:url';
 import {
   ntnVersion,
   queryProjects,
@@ -189,6 +190,26 @@ function refreshProject(projectPage, state, assigned) {
   };
 }
 
+// Batch-refresh every roster page, ISOLATING a per-project failure (#8): one
+// throwing project must not abort the whole `--all` batch and lose the state
+// already computed for the projects processed before it. A failure is captured
+// as a `{ projectName, error }` result row; every success still mutates `state`,
+// and the caller ALWAYS persists `state` afterwards. `refreshFn` is injectable so
+// the isolation contract is unit-testable without live Notion calls. Exported.
+export function refreshAll(pages, state, assigned, refreshFn = refreshProject) {
+  const results = [];
+  for (const pg of pages) {
+    const name = title(pg.properties?.Project);
+    try {
+      results.push(refreshFn(pg, state, assigned));
+    } catch (e) {
+      results.push({ projectName: name, error: e.message });
+      console.error(`[refresh] project "${name || '(unnamed)'}" failed (batch continues): ${e.message}`);
+    }
+  }
+  return results;
+}
+
 function main() {
   const args = process.argv.slice(2);
   if (args.length === 0) {
@@ -203,19 +224,30 @@ function main() {
   const assigned = new Set(); // slugs minted this run — collision guard for --all
   let output;
 
-  if (args[0] === '--all') {
-    const pages = queryProjects({ pageSize: 100 });
-    const results = pages.map((pg) => refreshProject(pg, state, assigned));
-    output = { ntnVersion: version, count: results.length, results };
-  } else {
-    const name = args.join(' ');
-    const page = getProjectByName(name);
-    const manifest = refreshProject(page, state, assigned);
-    output = { ntnVersion: version, ...manifest };
+  try {
+    if (args[0] === '--all') {
+      const pages = queryProjects();
+      const results = refreshAll(pages, state, assigned);
+      const failed = results.filter((r) => r && r.error).length;
+      output = {
+        ntnVersion: version, count: results.length, failed, results,
+      };
+    } else {
+      const name = args.join(' ');
+      const page = getProjectByName(name);
+      const manifest = refreshProject(page, state, assigned);
+      output = { ntnVersion: version, ...manifest };
+    }
+  } finally {
+    // ALWAYS persist whatever state was computed — even if the single-project
+    // path threw after some `--all` cards were already refreshed in a prior loop.
+    writeState(state);
   }
-
-  writeState(state);
   process.stdout.write(`${JSON.stringify(output, null, 2)}\n`);
 }
 
-main();
+// Only run the live pipeline when invoked directly (not when imported by tests),
+// so refreshAll and the helpers stay importable without spawning ntn.
+if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+  main();
+}
