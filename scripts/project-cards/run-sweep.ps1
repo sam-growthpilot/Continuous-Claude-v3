@@ -64,8 +64,24 @@ if (Test-Path $emitFile) {
     } catch {
         "[$(Get-Date -Format o)] report-run upsert threw (non-fatal): $_" | Tee-Object -FilePath $log -Append
     }
+
+    # T7.1 FINAL step: refresh the 6 report child pages' "Current run" callouts +
+    # the Reports hub launcher from the newest registry row per type. Deterministic
+    # (ntn-only, NO MCP), READ-then-splice -- never touches the human hub narrative
+    # or the History linked views. NON-FATAL by the same contract as the upsert: the
+    # page refresh is observability, not the sweep's product, so it must NEVER change
+    # $code. Runs only on a full real sweep (gated by $emitFile, same as the upsert)
+    # and AFTER the upsert, so it reflects this run's just-upserted Project Portfolio
+    # row. Wrapped in try/catch; never touches $code.
+    try {
+        & $node (Join-Path $repo 'scripts\report-registry\refresh-pages.mjs') 2>&1 |
+            ForEach-Object { "$_" } | Tee-Object -FilePath $log -Append
+        "[$(Get-Date -Format o)] report-page refresh exit=$LASTEXITCODE (non-fatal)" | Tee-Object -FilePath $log -Append
+    } catch {
+        "[$(Get-Date -Format o)] report-page refresh threw (non-fatal): $_" | Tee-Object -FilePath $log -Append
+    }
 } else {
-    "[$(Get-Date -Format o)] no report-run.json emitted (dry-run or sub-target) -- skipping registry upsert" | Tee-Object -FilePath $log -Append
+    "[$(Get-Date -Format o)] no report-run.json emitted (dry-run or sub-target) -- skipping registry upsert + page refresh" | Tee-Object -FilePath $log -Append
 }
 
 exit $code

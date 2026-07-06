@@ -455,6 +455,21 @@ export function replaceSectionBlocks(pageId, heading, newBlocks) {
   console.error(`[ntn] replaceSectionBlocks ${pageId} "${heading}": inserted ${(newBlocks || []).length}, deleted ${section.blocks.length}`);
 }
 
+// Insert `newBlocks` immediately AFTER the block `afterBlockId` on `pageId`.
+// A generic primitive over the children PATCH `after` cursor (the same one
+// replaceSectionBlocks uses internally) — exposed so callers can CREATE a new
+// section at a chosen position (e.g. a launcher section near the top of a hub).
+// When `afterBlockId` is null/undefined, Notion APPENDS at the END of the page.
+// No-op on an empty block list. Returns nothing.
+export function insertBlocksAfter(pageId, afterBlockId, newBlocks) {
+  if (!pageId) throw new Error('insertBlocksAfter: pageId is empty');
+  if (!newBlocks || newBlocks.length === 0) return;
+  const body = { children: newBlocks };
+  if (afterBlockId) body.after = afterBlockId;
+  apiPatch(`v1/blocks/${pageId}/children`, body);
+  console.error(`[ntn] insertBlocksAfter ${pageId} after=${afterBlockId || '(end)'}: inserted ${newBlocks.length}`);
+}
+
 // Update the single intro paragraph directly under `heading` WITHOUT section
 // replacement. The mobile-cockpit intro lives under the page's sole heading_1,
 // whose "section" (next same-or-higher heading) spans the WHOLE page — so
