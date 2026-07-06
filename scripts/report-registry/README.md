@@ -132,7 +132,7 @@ const run = buildRun({
   artifactUrl: 'https://www.notion.so/38f76fd7ac8280478e50dd2956ba6e8a',
   summary: 'cards refreshed=8 · published=3 · failed=0 · hub=ok · cockpit=ok',
 });
-const path = writeRun(run, { source: 'Project-Cards' }); // -> $TEMP/report-run-Project-Cards.json
+const path = writeRun(run); // -> $TEMP/report-run-Project-Cards.json (derived from run.source)
 ```
 
 ### From a shell / PowerShell wrapper

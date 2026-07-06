@@ -46,10 +46,13 @@ REM Task Scheduler minimal PATH does not include node.
 set "NODE=C:\Program Files\nodejs\node.exe"
 if not exist "%NODE%" set "NODE=node"
 set "REGISTRY=C:\Users\david.hayes\continuous-claude\scripts\report-registry"
+REM Map exit code -> Status, DEFAULTING TO THE WORSE state (T6.1 #3): an unrecognized or
+REM unexpected nonzero code (2, 3, 9009 command-not-found, or anything else) must NOT be
+REM silently recorded as OK. Order matters: start OK, downgrade ANY nonzero to Failed, then
+REM upgrade ONLY the known warnings-code 1 to Warn. Net: 0->OK, 1->Warn, everything-else->Failed.
 set "RUNSTATUS=OK"
+if not "%EXIT_CODE%"=="0" set "RUNSTATUS=Failed"
 if "%EXIT_CODE%"=="1" set "RUNSTATUS=Warn"
-if "%EXIT_CODE%"=="2" set "RUNSTATUS=Failed"
-if "%EXIT_CODE%"=="3" set "RUNSTATUS=Failed"
 
 REM period = today's date YYYY-MM-DD, built locale-independently via PowerShell (System32,
 REM always on PATH). RUNJSON is cleared first so a make-run failure cannot upsert a stale file.
@@ -61,6 +64,15 @@ echo [%date% %time%] Emitting health-check report run (status=%RUNSTATUS%)...
 "%NODE%" "%REGISTRY%\make-run.mjs" --type "System Health" --source "Health-Check" --status "%RUNSTATUS%" --period "%TODAY%" --artifactUrl "https://www.notion.so/innovativemusings/CCv3-Weekly-Health-Checks-34c76fd7ac8280a984afc486a9844290" --summary "health check exit=%EXIT_CODE% status=%RUNSTATUS%" --out "%RUNJSON%"
 if exist "%RUNJSON%" "%NODE%" "%REGISTRY%\upsert.mjs" "%RUNJSON%"
 echo [%date% %time%] Registry emit/upsert finished (non-fatal).
+
+REM --- Report Runs drift check (T4.2 wired to schedule, T6.1 #7) ---
+REM FINAL non-fatal step: run the freshness/drift detector so a report type that silently
+REM stopped landing rows gets flagged here (it exits nonzero when any type is stale). This
+REM must NEVER change %EXIT_CODE% -- that is captured above and untouched; the final
+REM exit /b uses it regardless of what check-drift returns.
+echo [%date% %time%] Running report-registry drift check...
+"%NODE%" "%REGISTRY%\check-drift.mjs"
+echo [%date% %time%] Drift check finished exit=%ERRORLEVEL% (non-fatal).
 
 REM Exit code contract:
 REM   0 = all pass

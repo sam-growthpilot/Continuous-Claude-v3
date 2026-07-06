@@ -83,17 +83,21 @@ $proposal = "docs/self-improvement/proposals/$date-$($c.id).md"
 $prevEAP = $ErrorActionPreference
 $ErrorActionPreference = 'Continue'
 try {
+  # T6.1 #8: resolve an absolute node path for the registry make-run/upsert calls
+  # (parity with the .bat wrappers under Task Scheduler's minimal PATH). Harmless
+  # when bare node already resolves.
+  $node = if (Test-Path 'C:\Program Files\nodejs\node.exe') { 'C:\Program Files\nodejs\node.exe' } else { 'node' }
   if (Test-Path $proposal) {
     $siStatus = 'OK'; $artifact = $proposal; $verdict = 'proposal recorded'
   } else {
     $siStatus = 'Warn'; $artifact = 'docs/self-improvement/INDEX.md'; $verdict = "no proposal (record-index exit=$recordExit)"
   }
-  $emit = & node (Join-Path $repo 'scripts\report-registry\make-run.mjs') `
+  $emit = & $node (Join-Path $repo 'scripts\report-registry\make-run.mjs') `
     --type 'Self-Improvement' --source 'Self-Improvement' --period $date --status $siStatus `
     --artifactUrl $artifact --summary "$($c.id): $verdict"
   $emit = ($emit | Select-Object -Last 1)
   if ($LASTEXITCODE -eq 0 -and $emit) {
-    & node (Join-Path $repo 'scripts\report-registry\upsert.mjs') $emit 2>&1 |
+    & $node (Join-Path $repo 'scripts\report-registry\upsert.mjs') $emit 2>&1 |
       ForEach-Object { "$_" } | Tee-Object -FilePath $log -Append
     Log "report-run upsert exit=$LASTEXITCODE (non-fatal)"
   } else {

@@ -304,6 +304,20 @@ def build_report_run_record(
     return record
 
 
+def _url_or_none(val) -> str | None:
+    """Return val only when it is a real http(s) URL, else None (T6.1 #2).
+
+    The registry's Artifact URL / Docx/Deck are Notion ``url``-typed properties; a bare
+    filesystem path would 400 the whole request. Prefer a real URL and OMIT (None)
+    rather than pass a local path — the upsert's central guard omits it too, but keeping
+    the emitted JSON clean avoids relying on that safety net.
+    """
+    if val is None:
+        return None
+    s = str(val)
+    return s if s.startswith(("http://", "https://")) else None
+
+
 def emit_report_run(snapshot: dict, config: dict, result: dict, deployed: bool):
     """Write report-run.json to %TEMP% for the wrapper .bat to upsert (T3.2).
 
@@ -316,18 +330,25 @@ def emit_report_run(snapshot: dict, config: dict, result: dict, deployed: bool):
         week = snapshot.get("week", datetime.now().isocalendar()[1])
         period = f"{year}-W{week:02d}"
 
+        # Status (T6.1 #1): a successful generate+deploy is OK. A deploy that did NOT
+        # happen (--no-deploy, or deploy skipped/failed) OR a template-degraded narrative
+        # is Warn — the report shipped but with a caveat worth recording. (A hard crash /
+        # early exit never reaches here; the wrapper .bat synthesizes a Failed row for that.)
+        narratives = (result or {}).get("narratives", {}) or {}
+        degraded = bool(narratives.get("_degraded"))
+        status = "OK" if (deployed and not degraded) else "Warn"
+
+        # Prefer a REAL url; omit rather than pass a local path (T6.1 #2). artifactUrl is
+        # the GH Pages url only when a deploy actually landed; the local archive dir is a
+        # filesystem path and would be dropped by the url-typed Notion property, so we
+        # omit it here rather than emit it.
         github_url = (config.get("output", {}) or {}).get("github_pages_url", "")
-        if deployed and github_url:
-            artifact_url = github_url
-        else:
-            # --no-deploy (or deploy skipped/failed): point at the local archive dir.
-            archive_dir = (
-                Path(__file__).parent.parent / "output" / "archive" / f"{year}-W{week:02d}"
-            )
-            artifact_url = str(archive_dir)
+        artifact_url = github_url if (deployed and github_url) else None
 
         report_path = result.get("report_path") if result else None
-        docx_url = str(report_path) if report_path else None
+        # report_path is always a local .docx path -> not a url -> omitted. Kept via the
+        # helper so a future real Docx url would still pass through.
+        docx_url = _url_or_none(report_path)
 
         git = snapshot.get("git", {}) or {}
         system = snapshot.get("system", {}) or {}
@@ -341,7 +362,7 @@ def emit_report_run(snapshot: dict, config: dict, result: dict, deployed: bool):
 
         record = build_report_run_record(
             period=period,
-            status="OK",
+            status=status,
             artifact_url=artifact_url,
             docx_url=docx_url,
             summary=summary,

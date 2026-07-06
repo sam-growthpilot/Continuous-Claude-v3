@@ -36,6 +36,10 @@ export const STATUSES = ids.statuses;
 // type -> originating scheduled job (Source select value). Callers that omit an
 // explicit `source` in report-run.json can derive it from the report type.
 export const SOURCE_BY_TYPE = ids.sourceByType;
+// The KNOWN Source select values (dedup of SOURCE_BY_TYPE's values). The upsert +
+// make-run validate `source` against this set so a typo can't mint a stray Notion
+// select option (T6.1 #4). Single source of truth = SOURCE_BY_TYPE.
+export const SOURCES = [...new Set(Object.values(SOURCE_BY_TYPE))];
 
 // --- report-run.json contract keys (Phase 2a) ---
 // runId = `<type>|<period>|<ISO-timestamp>`. Required vs optional split lives in

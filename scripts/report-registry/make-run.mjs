@@ -23,7 +23,13 @@ import { writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { pathToFileURL } from 'node:url';
-import { REPORT_TYPES, STATUSES } from './config.mjs';
+import { REPORT_TYPES, STATUSES, SOURCES } from './config.mjs';
+
+// ACCEPTED RISK (T6.1): two runs of the SAME source share the canonical
+// $TEMP/report-run-<source>.json emit path, so overlapping same-job invocations could
+// clobber each other's emit. That requires OVERLAPPING runs of one scheduled job, which
+// Task Scheduler's no-overlap setting prevents. Not guarded; the upsert's orphan-cleanup
+// is the self-heal if a duplicate ever lands.
 
 // The optional string fields (omitted from the emitted JSON when absent, so a
 // partial emit never writes empty strings the upsert would have to strip).
@@ -48,6 +54,11 @@ export function buildRun({
   }
   if (!STATUSES.includes(status)) {
     throw new Error(`buildRun: invalid status "${status}" (allowed: ${STATUSES.join(', ')})`);
+  }
+  // Guard `source` against the known Source select values so a wrapper typo can't mint
+  // a stray option in the shared Notion select (T6.1 #4).
+  if (!SOURCES.includes(source)) {
+    throw new Error(`buildRun: invalid source "${source}" (allowed: ${SOURCES.join(', ')})`);
   }
   const ts = (runDate != null && String(runDate).trim() !== '')
     ? String(runDate)
@@ -94,8 +105,18 @@ export function parseFlags(argv) {
     if (!a.startsWith('--')) continue;
     const eq = a.indexOf('=');
     if (eq !== -1) {
-      flags[a.slice(2, eq)] = a.slice(eq + 1);
+      // Guard a `--key=--value` form: a value that itself leads with `--` is almost
+      // certainly a missing value swallowed from the next flag — fail loud rather than
+      // write a garbage field (T6.1 #9).
+      const val = a.slice(eq + 1);
+      if (val.startsWith('--')) {
+        throw new Error(`parseFlags: flag "${a.slice(2, eq)}" has a "--"-leading value "${val}" (likely a missing value)`);
+      }
+      flags[a.slice(2, eq)] = val;
     } else {
+      // Space form: only consume the next token as a value when it is NOT itself a
+      // flag. A following `--flag` means this flag's value was omitted, so record it
+      // as a bare boolean (buildRun's required/enum checks then fail loud on it).
       const next = argv[i + 1];
       if (next != null && !next.startsWith('--')) { flags[a.slice(2)] = next; i += 1; } else { flags[a.slice(2)] = true; }
     }

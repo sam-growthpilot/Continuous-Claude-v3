@@ -23,13 +23,14 @@ const baseRun = {
 
 // Capturing mock transport set.
 function mocks({ matches = [] } = {}) {
-  const calls = { query: [], create: [], update: [] };
+  const calls = { query: [], create: [], update: [], trash: [] };
   return {
     calls,
     dsId: DS,
     query: (dsId, opts) => { calls.query.push({ dsId, opts }); return matches; },
     create: (dsId, props) => { calls.create.push({ dsId, props }); return { id: 'new-page' }; },
     update: (pageId, props) => { calls.update.push({ pageId, props }); return { id: pageId }; },
+    trash: (pageId) => { calls.trash.push({ pageId }); return { id: pageId, in_trash: true }; },
   };
 }
 
@@ -46,6 +47,10 @@ test('validateRun throws on invalid type', () => {
 
 test('validateRun throws on invalid status', () => {
   assert.throws(() => validateRun({ ...baseRun, status: 'Green' }), /invalid status/);
+});
+
+test('validateRun throws on invalid source (unknown Source select)', () => {
+  assert.throws(() => validateRun({ ...baseRun, source: 'Bogus-Source' }), /invalid source/);
 });
 
 test('validateRun accepts a well-formed run', () => {
@@ -82,6 +87,29 @@ test('buildProperties includes urls, commit, attempt when present', () => {
   assert.equal(p.Attempt.number, 2);
 });
 
+test('buildProperties OMITS url props holding a non-URL filesystem path (T6.1 #2)', () => {
+  // A deploy-fail path can leave a local path in artifactUrl/docxUrl. A Notion url
+  // property would 400 on that and drop the whole row, so it must be omitted.
+  const p = buildProperties({
+    ...baseRun,
+    artifactUrl: 'C:/Users/david.hayes/continuous-claude/ai-report-card/output/archive/2026-W27',
+    docxUrl: 'docs/self-improvement/INDEX.md',
+  });
+  assert.equal(p['Artifact URL'], undefined);
+  assert.equal(p['Docx/Deck'], undefined);
+  // The rest of the row still lands.
+  assert.equal(p['Run ID'].rich_text[0].text.content, baseRun.runId);
+  assert.equal(p.Status.select.name, 'OK');
+});
+
+test('buildProperties keeps http(s) urls, omits only the non-URL one', () => {
+  const p = buildProperties({
+    ...baseRun, artifactUrl: 'https://example.com/report', docxUrl: '/tmp/local/report.docx',
+  });
+  assert.equal(p['Artifact URL'].url, 'https://example.com/report');
+  assert.equal(p['Docx/Deck'], undefined);
+});
+
 // --- upsert key logic (the append-all-attempts contract) -----------------------
 
 test('0 matches -> CREATE (append), queries by Run ID equals', () => {
@@ -106,7 +134,7 @@ test('1 match -> UPDATE in place (same runId retried)', () => {
   assert.equal(m.calls.update[0].pageId, 'existing-1');
 });
 
-test('>1 match -> dedup-warn + UPDATE the newest by Run Date', () => {
+test('>1 match -> dedup-warn + UPDATE the newest by Run Date + TRASH the older', () => {
   const m = mocks({ matches: [
     { id: 'older', properties: { 'Run Date': { date: { start: '2026-07-09T06:00:00' } } } },
     { id: 'newer', properties: { 'Run Date': { date: { start: '2026-07-09T07:00:00' } } } },
@@ -115,6 +143,36 @@ test('>1 match -> dedup-warn + UPDATE the newest by Run Date', () => {
   assert.equal(res.action, 'updated');
   assert.equal(res.duplicates, 2);
   assert.equal(m.calls.update[0].pageId, 'newer');
+  // orphan cleanup (T6.1 #6): the older duplicate is trashed, the newest kept.
+  assert.equal(m.calls.trash.length, 1);
+  assert.equal(m.calls.trash[0].pageId, 'older');
+});
+
+test('>1 match -> trashes ALL older duplicates, keeps only the newest', () => {
+  const m = mocks({ matches: [
+    { id: 'oldest', properties: { 'Run Date': { date: { start: '2026-07-09T05:00:00Z' } } } },
+    { id: 'mid', properties: { 'Run Date': { date: { start: '2026-07-09T06:00:00Z' } } } },
+    { id: 'newest', properties: { 'Run Date': { date: { start: '2026-07-09T07:00:00Z' } } } },
+  ] });
+  const res = upsertReportRun(baseRun, m);
+  assert.equal(res.pageId, 'newest');
+  assert.equal(m.calls.update.length, 1);
+  assert.equal(m.calls.update[0].pageId, 'newest');
+  const trashed = m.calls.trash.map((t) => t.pageId).sort();
+  assert.deepEqual(trashed, ['mid', 'oldest']);
+});
+
+test('newestRow picks CHRONOLOGICALLY newest across mixed tz formats (not lexicographic)', () => {
+  // '...06:00:00-05:00' == 11:00Z is chronologically NEWER than '...10:00:00Z',
+  // but lexicographically SMALLER ('06' < '10'). The numeric compare must pick the
+  // offset row; a string compare would wrongly pick the Z row.
+  const m = mocks({ matches: [
+    { id: 'z-row', properties: { 'Run Date': { date: { start: '2026-07-09T10:00:00Z' } } } },
+    { id: 'offset-row', properties: { 'Run Date': { date: { start: '2026-07-09T06:00:00-05:00' } } } },
+  ] });
+  const res = upsertReportRun(baseRun, m);
+  assert.equal(res.pageId, 'offset-row');
+  assert.equal(m.calls.trash[0].pageId, 'z-row');
 });
 
 test('distinct runId does NOT reuse another run row (append, never overwrite)', () => {

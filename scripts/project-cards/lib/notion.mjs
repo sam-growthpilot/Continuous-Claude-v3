@@ -267,6 +267,15 @@ export function updatePageProperties(pageId, properties, { patch = apiPatch } = 
   return patch(`v1/pages/${pageId}`, { properties });
 }
 
+// Trash (soft-delete) a page row via PATCH v1/pages/<id> { in_trash: true }. Used by
+// the registry upsert to self-heal orphan DUPLICATE rows that share an idempotency
+// key. Recoverable (Notion trash, not a hard delete). `patch` is injectable for
+// tests; defaults to the retrying apiPatch (runNtn contract). Returns the page object.
+export function trashPage(pageId, { patch = apiPatch } = {}) {
+  if (!pageId) throw new Error('trashPage: pageId is empty');
+  return patch(`v1/pages/${pageId}`, { in_trash: true });
+}
+
 // Rich-text CaptureId stamp (mitigation #3): every triage-created row carries
 // the SOURCE BLOCK id so ambiguous create failures can be de-duplicated by
 // querying the destination DS before any retry POST.

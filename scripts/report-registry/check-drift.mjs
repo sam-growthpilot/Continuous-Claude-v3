@@ -21,12 +21,21 @@ import { REPORT_RUNS_DS_ID, REPORT_TYPES } from './config.mjs';
 
 export const DEFAULT_MAX_AGE_HOURS = 48;
 
-// Newest (max) Run Date string across a set of rows, or '' if none / unparseable.
+// Newest (max) Run Date string across a set of rows, or '' if none.
+// CHRONOLOGICAL, not lexicographic (T6.1 #5): different pipelines emit `-05:00` / `Z` /
+// bare `YYYY-MM-DD` for the same type, so a raw string compare picks the wrong "newest".
+// Compares by epoch ms (Date.parse); a parseable date always beats an unparseable one,
+// and if ALL are unparseable the first non-empty string is kept (downstream computeDrift
+// then treats it as drift). Never throws.
 export function newestRunDate(rows) {
   let best = '';
+  let bestMs = -Infinity;
   for (const r of rows || []) {
     const d = dateStart(r?.properties?.['Run Date']) || r?.last_edited_time || '';
-    if (d && (!best || d.localeCompare(best) > 0)) best = d;
+    if (!d) continue;
+    const ms = Date.parse(d);
+    const cmp = Number.isNaN(ms) ? -Infinity : ms;
+    if (best === '' || cmp > bestMs) { best = d; bestMs = cmp; }
   }
   return best;
 }

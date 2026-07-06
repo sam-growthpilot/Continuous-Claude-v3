@@ -64,6 +64,26 @@ test('newestRunDate returns the max Run Date, tolerating last_edited_time fallba
   assert.equal(newestRunDate([]), '');
 });
 
+test('newestRunDate compares CHRONOLOGICALLY across mixed tz formats (T6.1 #5)', () => {
+  // Same instant family: '...06:00:00-05:00' == 11:00Z is the NEWEST, but a raw string
+  // compare would pick '...10:00:00Z' ('10' > '06'). A bare 'YYYY-MM-DD' (00:00Z) is
+  // oldest. The numeric compare must return the -05:00 offset row.
+  const rows = [
+    { properties: { 'Run Date': { date: { start: '2026-07-09' } } } },
+    { properties: { 'Run Date': { date: { start: '2026-07-09T10:00:00Z' } } } },
+    { properties: { 'Run Date': { date: { start: '2026-07-09T06:00:00-05:00' } } } },
+  ];
+  assert.equal(newestRunDate(rows), '2026-07-09T06:00:00-05:00');
+});
+
+test('newestRunDate: a parseable date beats an unparseable one', () => {
+  const rows = [
+    { properties: { 'Run Date': { date: { start: 'not-a-date' } } } },
+    { properties: { 'Run Date': { date: { start: '2026-07-04T00:00:00Z' } } } },
+  ];
+  assert.equal(newestRunDate(rows), '2026-07-04T00:00:00Z');
+});
+
 test('groupByType buckets rows by Report Type select', () => {
   const rows = [
     { properties: { 'Report Type': { select: { name: 'VP Weekly' } } } },

@@ -34,14 +34,18 @@ $code = $LASTEXITCODE
 # registry outage can NEVER change $code -- the registry is observability, not the
 # dashboard's product.
 try {
+  # T6.1 #8: resolve an absolute node path for the registry make-run/upsert calls
+  # (parity with the .bat wrappers, which must hardcode it under Task Scheduler's
+  # minimal PATH). Harmless when bare node already resolves.
+  $node = if (Test-Path 'C:\Program Files\nodejs\node.exe') { 'C:\Program Files\nodejs\node.exe' } else { 'node' }
   $status = if ($code -eq 0) { 'OK' } else { 'Warn' }
-  $emit = & node (Join-Path $repo 'scripts\report-registry\make-run.mjs') `
+  $emit = & $node (Join-Path $repo 'scripts\report-registry\make-run.mjs') `
     --type 'Team Dashboard' --source 'Dashboard-Sync' --period $date --status $status `
     --artifactUrl 'https://www.notion.so/38f76fd7ac8280478e50dd2956ba6e8a' `
     --summary "scheduled-tasks section refreshed (exit=$code)"
   $emit = ($emit | Select-Object -Last 1)
   if ($LASTEXITCODE -eq 0 -and $emit) {
-    & node (Join-Path $repo 'scripts\report-registry\upsert.mjs') $emit 2>&1 |
+    & $node (Join-Path $repo 'scripts\report-registry\upsert.mjs') $emit 2>&1 |
       ForEach-Object { "$_" } | Tee-Object -FilePath $log -Append
     "[$(Get-Date -Format o)] report-run upsert exit=$LASTEXITCODE (non-fatal)" | Tee-Object -FilePath $log -Append
   } else {

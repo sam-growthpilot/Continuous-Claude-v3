@@ -101,7 +101,9 @@ async function emitPortfolioReportRun(fields) {
       artifactUrl: REPORTING_HUB_URL,
       summary: buildReportSummary(fields),
     });
-    const path = writeRun(run, { source: 'Project-Cards' });
+    // writeRun's signature is (run, { out }); it derives the canonical
+    // $TEMP/report-run-<source>.json path from run.source itself, so no option needed.
+    const path = writeRun(run);
     console.error(`[sweep] emitted report-run (${run.status}) -> ${path}`);
     return path;
   } catch (e) {

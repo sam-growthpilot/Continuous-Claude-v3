@@ -34,6 +34,20 @@ test('buildRun throws on an invalid status', () => {
   assert.throws(() => buildRun({ ...base, status: 'Green' }), /invalid status/);
 });
 
+test('buildRun throws on an invalid source (T6.1 #4)', () => {
+  assert.throws(() => buildRun({ ...base, source: 'Bogus-Source' }), /invalid source/);
+});
+
+test('buildRun accepts every known Source select value', () => {
+  const knownSources = [
+    'AIWeeklyReport', 'FourthOS-Weekly', 'Dashboard-Sync',
+    'Health-Check', 'Project-Cards', 'Self-Improvement',
+  ];
+  for (const source of knownSources) {
+    assert.doesNotThrow(() => buildRun({ ...base, source }));
+  }
+});
+
 // --- runId derivation ----------------------------------------------------------
 
 test('buildRun derives runId = type|period|runDate and echoes runDate', () => {
@@ -107,4 +121,17 @@ test('parseFlags handles --k v, --k=v, and bare boolean flags', () => {
     parseFlags(['--type', 'Project Portfolio', '--period=2026-07-05', '--verbose']),
     { type: 'Project Portfolio', period: '2026-07-05', verbose: true },
   );
+});
+
+test('parseFlags: a following flag is NOT consumed as a value (omitted value -> boolean)', () => {
+  // `--status --period X`: status's value was omitted; it becomes boolean true, which
+  // buildRun's enum check then rejects loud rather than writing a garbage status.
+  assert.deepEqual(
+    parseFlags(['--status', '--period', '2026-07-05']),
+    { status: true, period: '2026-07-05' },
+  );
+});
+
+test('parseFlags throws on a --key=--value form (T6.1 #9 guard)', () => {
+  assert.throws(() => parseFlags(['--period=--oops']), /"--"-leading value/);
 });

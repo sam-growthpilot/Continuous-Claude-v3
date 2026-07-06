@@ -27,11 +27,18 @@
 import { readFileSync } from 'node:fs';
 import { pathToFileURL } from 'node:url';
 import {
-  queryDataSource, createPage, updatePageProperties, richText, dateStart,
+  queryDataSource, createPage, updatePageProperties, trashPage, richText, dateStart,
 } from '../project-cards/lib/notion.mjs';
 import {
-  REPORT_RUNS_DS_ID, REPORT_TYPES, STATUSES, REPORT_RUN_KEYS,
+  REPORT_RUNS_DS_ID, REPORT_TYPES, STATUSES, SOURCES, REPORT_RUN_KEYS,
 } from './config.mjs';
+
+// ACCEPTED RISK (T6.1): two same-job processes that both re-query and see 0 matches
+// can each CREATE a row for the same runId (a create/create race), and any two runs
+// of the same source share the $TEMP/report-run-<source>.json emit path. Both require
+// OVERLAPPING invocations of the SAME scheduled job, which Task Scheduler's no-overlap
+// setting (MultipleInstances=IgnoreNew) prevents. Not guarded here; the >1-match
+// orphan-cleanup below is the self-heal if it ever fires.
 
 const REQUIRED_KEYS = ['runId', 'type', 'period', 'runDate', 'status', 'source'];
 
@@ -64,6 +71,11 @@ export function validateRun(run) {
   if (!STATUSES.includes(run.status)) {
     throw new Error(`invalid status "${run.status}" (allowed: ${STATUSES.join(', ')})`);
   }
+  // Guard `source` against the known Source select values so a typo can't mint a
+  // stray option in the shared Notion select (T6.1 #4).
+  if (!SOURCES.includes(run.source)) {
+    throw new Error(`invalid source "${run.source}" (allowed: ${SOURCES.join(', ')})`);
+  }
   // Unknown keys are non-fatal but surfaced (schema-drift signal for out-of-repo
   // pipelines coding against the pinned contract).
   const known = new Set([...REPORT_RUN_KEYS, 'attempt']);
@@ -75,6 +87,23 @@ export function validateRun(run) {
 }
 
 const rt = (s) => [{ type: 'text', text: { content: String(s) } }];
+
+// A Notion `url`-typed property rejects a value that is not a real URL — a bare
+// filesystem path (deploy-fail fallback) would 400 the whole request and drop the
+// entire row. Accept only http(s) values (T6.1 #2).
+const HTTP_URL_RE = /^https?:\/\//i;
+
+// Set a `url`-typed property ONLY when the value is a real http(s) URL; otherwise
+// OMIT it (and log loudly) so one bad path can never 400 and drop the whole row.
+function setUrlProp(props, field, value) {
+  if (value == null || value === '') return;
+  const v = String(value);
+  if (HTTP_URL_RE.test(v)) {
+    props[field] = { url: v };
+  } else {
+    console.error(`[report-registry] non-URL ${field} omitted: ${v}`);
+  }
+}
 
 // --- field -> Notion property mapping (pure) -----------------------------------
 // Title = "<type> — <period> — <runDate>". Optional fields are omitted (not sent
@@ -91,21 +120,58 @@ export function buildProperties(run) {
   };
   if (run.summary != null && run.summary !== '') props.Summary = { rich_text: rt(run.summary) };
   if (run.commit != null && run.commit !== '') props.Commit = { rich_text: rt(run.commit) };
-  if (run.artifactUrl != null && run.artifactUrl !== '') props['Artifact URL'] = { url: String(run.artifactUrl) };
-  if (run.docxUrl != null && run.docxUrl !== '') props['Docx/Deck'] = { url: String(run.docxUrl) };
+  setUrlProp(props, 'Artifact URL', run.artifactUrl);
+  setUrlProp(props, 'Docx/Deck', run.docxUrl);
   if (run.attempt != null && Number.isFinite(Number(run.attempt))) props.Attempt = { number: Number(run.attempt) };
   return props;
 }
 
-// Pick the newest row from a >1-match dedup set: max Run Date, tie-broken by
-// Notion last_edited_time. Deterministic so concurrent double-writes converge.
+// Parse a date-ish string to epoch ms; unparseable/empty -> -Infinity (sorts as the
+// OLDEST). CHRONOLOGICAL, not lexicographic: different pipelines emit `-05:00` / `Z` /
+// bare `YYYY-MM-DD` for the same type, so a string compare picks the wrong "newest"
+// (T6.1 #5). Never throws.
+function toEpochMs(s) {
+  const ms = Date.parse(s || '');
+  return Number.isNaN(ms) ? -Infinity : ms;
+}
+function runDateMs(row) {
+  return toEpochMs(dateStart(row?.properties?.['Run Date']) || row?.last_edited_time || '');
+}
+function editedMs(row) {
+  return toEpochMs(row?.last_edited_time || '');
+}
+
+// Pick the newest row from a >1-match dedup set: max Run Date (numeric/chronological),
+// tie-broken by Notion last_edited_time. Deterministic so concurrent double-writes
+// converge.
 function newestRow(rows) {
   return [...rows].sort((a, b) => {
-    const da = dateStart(a.properties?.['Run Date']) || a.last_edited_time || '';
-    const db = dateStart(b.properties?.['Run Date']) || b.last_edited_time || '';
-    if (da !== db) return db.localeCompare(da);
-    return String(b.last_edited_time || '').localeCompare(String(a.last_edited_time || ''));
+    const da = runDateMs(a);
+    const db = runDateMs(b);
+    if (da !== db) return db - da; // descending: newest first
+    const ea = editedMs(a);
+    const eb = editedMs(b);
+    if (ea !== eb) return eb - ea;
+    return 0;
   })[0];
+}
+
+// Trash every row in `matches` EXCEPT the kept `targetId` (the newest). Self-heals
+// orphan duplicates that share an idempotency key (T6.1 #6). Loud + non-fatal: a
+// trash that fails is logged but never aborts the upsert. Returns the count trashed.
+function trashOlderDuplicates(matches, targetId, runId, trash) {
+  const older = matches.filter((m) => m.id && m.id !== targetId);
+  let trashed = 0;
+  for (const dup of older) {
+    try {
+      trash(dup.id);
+      trashed += 1;
+      console.error(`[report-registry] trashed orphan duplicate row ${dup.id} for Run ID "${runId}" (kept newest ${targetId}).`);
+    } catch (e) {
+      console.error(`[report-registry] WARN: could not trash duplicate row ${dup.id} for Run ID "${runId}" (non-fatal): ${e.message}`);
+    }
+  }
+  return trashed;
 }
 
 // Re-query the DS for the run's unique Run ID; return the matching rows (0..n).
@@ -123,7 +189,7 @@ function queryByRunId(run, dsId, query) {
 // ADOPT it (switch to update) instead of re-creating. Only when no row is found
 // (the create genuinely never landed) do we retry the create, bounded. A
 // non-transient failure (bad request/auth/validation) throws immediately.
-function createOrAdopt(run, properties, { dsId, query, create, update }) {
+function createOrAdopt(run, properties, { dsId, query, create, update, trash }) {
   let lastErr;
   for (let attempt = 1; attempt <= CREATE_MAX_ATTEMPTS; attempt += 1) {
     try {
@@ -136,11 +202,12 @@ function createOrAdopt(run, properties, { dsId, query, create, update }) {
       if (rows.length > 0) {
         const target = rows.length > 1 ? newestRow(rows) : rows[0];
         if (rows.length > 1) {
-          console.error(`[report-registry] WARN: ${rows.length} rows share Run ID "${run.runId}" after a retried create — adopting the newest (a timed-out create landed more than once).`);
+          console.error(`[report-registry] WARN: ${rows.length} rows share Run ID "${run.runId}" after a retried create — adopting the newest and trashing the older duplicate(s) (a timed-out create landed more than once).`);
         } else {
           console.error(`[report-registry] transient create failure for Run ID "${run.runId}" — the row landed server-side; adopting it instead of re-creating.`);
         }
         update(target.id, properties);
+        if (rows.length > 1) trashOlderDuplicates(rows, target.id, run.runId, trash);
         return { action: 'adopted', pageId: target.id, duplicates: rows.length };
       }
       if (attempt < CREATE_MAX_ATTEMPTS) {
@@ -161,19 +228,21 @@ export function upsertReportRun(run, {
   query = queryDataSource,
   create = createPage,
   update = updatePageProperties,
+  trash = trashPage,
 } = {}) {
   validateRun(run);
   const properties = buildProperties(run);
   const matches = queryByRunId(run, dsId, query);
 
   if (matches.length === 0) {
-    return createOrAdopt(run, properties, { dsId, query, create, update });
+    return createOrAdopt(run, properties, { dsId, query, create, update, trash });
   }
 
   if (matches.length > 1) {
-    console.error(`[report-registry] WARN: ${matches.length} rows share Run ID "${run.runId}" — updating the newest (dedup drift; a distinct runId should never collide).`);
+    console.error(`[report-registry] WARN: ${matches.length} rows share Run ID "${run.runId}" — updating the newest and trashing the older duplicate(s) (dedup drift; a distinct runId should never collide).`);
     const target = newestRow(matches);
     update(target.id, properties);
+    trashOlderDuplicates(matches, target.id, run.runId, trash);
     return { action: 'updated', pageId: target.id, duplicates: matches.length };
   }
 

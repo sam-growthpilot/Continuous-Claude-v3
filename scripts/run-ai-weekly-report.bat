@@ -54,10 +54,31 @@ REM minimal PATH does not include node (same reason %PY% is hardcoded above).
 set "NODE=C:\Program Files\nodejs\node.exe"
 if not exist "%NODE%" set "NODE=node"
 set "REGISTRY=C:\Users\david.hayes\continuous-claude\scripts\report-registry"
+
+REM Resolve the ISO period (YYYY-Www) ONCE so the crash-path below can synthesize a Failed
+REM row even when weekly_run.py never emitted report-run.json. PowerShell is always on the
+REM System32 PATH; -UFormat %%Y-W%%V yields calendar-year + ISO-week -- the SAME format
+REM weekly_run.py uses (datetime.year + isocalendar week), so the row lines up. In a .bat the
+REM literal percents must be doubled (%%Y/%%V); the loop var is %%P to avoid colliding with them.
+set "PERIOD="
+for /f "usebackq delims=" %%P in (`powershell -NoProfile -Command "Get-Date -UFormat '%%Y-W%%V'"`) do set "PERIOD=%%P"
+
 if exist "%RUNJSON%" (
   echo [%date% %time%] Upserting report run into registry... >> "%LOG%" 2>&1
   "%NODE%" "%REGISTRY%\upsert.mjs" "%RUNJSON%" >> "%LOG%" 2>&1
   echo [%date% %time%] Registry upsert finished exit=%ERRORLEVEL% ^(non-fatal^) >> "%LOG%" 2>&1
+) else if not "%EC%"=="0" (
+  REM weekly_run.py exited nonzero and produced NO report-run.json -- a crash or an early
+  REM exit BEFORE emit (e.g. the API-key sys.exit^(2^)). Synthesize a Failed row so the
+  REM failure still lands in the registry. NON-FATAL: %EC% is captured above and never touched.
+  if defined PERIOD (
+    echo [%date% %time%] python exited %EC% with no report-run.json -- synthesizing a Failed registry row... >> "%LOG%" 2>&1
+    "%NODE%" "%REGISTRY%\make-run.mjs" --type "VP Weekly" --source "AIWeeklyReport" --status "Failed" --period "%PERIOD%" --summary "weekly_run.py exited %EC% before emitting report-run.json" --out "%RUNJSON%" >> "%LOG%" 2>&1
+    if exist "%RUNJSON%" "%NODE%" "%REGISTRY%\upsert.mjs" "%RUNJSON%" >> "%LOG%" 2>&1
+    echo [%date% %time%] Synthesized failure-row upsert finished exit=%ERRORLEVEL% ^(non-fatal^) >> "%LOG%" 2>&1
+  ) else (
+    echo [%date% %time%] could not resolve PERIOD -- skipping synthesized failure row ^(non-fatal^) >> "%LOG%" 2>&1
+  )
 )
 
 exit /b %EC%

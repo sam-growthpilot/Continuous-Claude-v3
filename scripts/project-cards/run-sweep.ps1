@@ -52,9 +52,13 @@ $code = $LASTEXITCODE
 # sweep's product, so a registry outage must NEVER change the sweep's exit code.
 # Only runs when the sweep actually emitted the file (full real sweep); wrapped in
 # try/catch and never touches $code.
+# T6.1 #8: resolve an absolute node path for the registry call (the .bat wrappers
+# hardcode it because Task Scheduler's minimal PATH omits node; the .ps1 empirically
+# resolves bare node today, but harden for parity).
+$node = if (Test-Path 'C:\Program Files\nodejs\node.exe') { 'C:\Program Files\nodejs\node.exe' } else { 'node' }
 if (Test-Path $emitFile) {
     try {
-        & node (Join-Path $repo 'scripts\report-registry\upsert.mjs') $emitFile 2>&1 |
+        & $node (Join-Path $repo 'scripts\report-registry\upsert.mjs') $emitFile 2>&1 |
             ForEach-Object { "$_" } | Tee-Object -FilePath $log -Append
         "[$(Get-Date -Format o)] report-run upsert exit=$LASTEXITCODE (non-fatal)" | Tee-Object -FilePath $log -Append
     } catch {
