@@ -230,7 +230,7 @@
 ## Recent Planning Sessions
 ### 2026-07-03: Notion Platform Integration + Helm Notion-First Pivot
 **Key Decisions:**
-- Helm pivots Notion-first: the approved Helm plan's *engine (collectors, salience rules, brief pipeline + its premortem constraints) survives unchanged, but the v0 *presentation layer becomes a Notion surface (Projects DB + views + HTML daily brief) synced via `ntn`. The local SPA (:3005, launchers, drawer, palette) is **deferred* behind the same daily-use gate — the graveyard lesson applied: ship the simplest surface tied to the key resource (Notion = Bridge/Eve/reports home).
+- Helm pivots Notion-first: the approved Helm plan's **engine** (collectors, salience rules, brief pipeline + its premortem constraints) survives unchanged, but the v0 **presentation** layer becomes a Notion surface (Projects DB + views + HTML daily brief) synced via `ntn`. The local SPA (:3005, launchers, drawer, palette) is **deferred** behind the same daily-use gate — the graveyard lesson applied: ship the simplest surface tied to the key resource (Notion = Bridge/Eve/reports home).
 - `ntn` surface: `login/logout` (keychain; `NOTION_API_TOKEN` env override; `NOTION_KEYRING=0` → file auth for headless), `api <path>` (httpie-style `=`/`:=`/`==`, `-X`, `--spec`, JSON stdout), `pages get/create/edit` (**Markdown I/O**; `--allow-deleting-content` gate), `datasources query/resolve`, `files`, `workers …` (deploy/exec/syncs/webhooks/env/oauth/runs), `doctor`, `--json/--plain/--yes` throughout. Windows Workers support added in 3.6.
 - Live MCP server already exposes the new tools (`notion-create-view` incl. dashboard type, `notion-query-data-sources` SQL, `notion-update-view`, `notion-query-database-view`, `notion-query-meeting-notes`, `notion-duplicate-page`, `notion-move-pages`, `notion-update-data-source`, `notion-get-async-task`, `notion-create-attachment`).
 - S1 CLI on Windows: `curl -fsSL https://ntn.dev | bash` under Git Bash → `ntn doctor`, `ntn login`, `ntn api v1/users` → 200. Headless: `NOTION_KEYRING=0` file auth works from a scheduled-task context. Never echo tokens.
@@ -242,7 +242,7 @@
 
 ### 2026-07-01: Plan — Close out `snapshot/ccv3-system-update` + stage the fourthos v4 build
 **Key Decisions:**
-- Decisions (confirmed): stage v4 → build later; PR to main now but **keep* the branch.
+- Decisions (confirmed): stage v4 → build later; PR to main now but **keep** the branch.
 - -title "feat(scheduled-tasks): self-improvement loop + 6 job fixes + Notion dashboard; stage fourthos v4" \
 - -body "<summary of the ~8 commits since PR #11: SI-01 loop, judge/health/AIWeeklyReport/blocklist/fourthos-restore fixes, dashboard-sync, + the 3 fourthos v4 staging commits>"
 - Merge the PR: into `fork/main` (`gh pr merge <n> --merge`, or the GitHub UI). Confirm the merge.
@@ -250,10 +250,10 @@
 
 ### 2026-06-10: CCv3 Fable-5 Deep Review — "Hone to Elegance" (2026-06-10)
 **Key Decisions:**
-- User decisions (locked): (1) **merge PRs #8/#9/#10 first* — review one unified main; (2) **whole-system scope, recent-weighted* (extra depth on the 145 commits since the 2026-05-16 memory-upgrade era); (3) deliver **report + ratified backlog + quick-wins executed* this arc (structural refactors are a later ratified arc).
-- Push **`fork`* (Rev4nchist), never `origin`. Never change BGE model/dim (`BAAI/bge-large-en-v1.5`, 1024).
+- User decisions (locked): (1) **merge PRs #8/#9/#10 first** — review one unified main; (2) **whole-system scope, recent-weighted** (extra depth on the 145 commits since the 2026-05-16 memory-upgrade era); (3) deliver **report + ratified backlog + quick-wins executed** this arc (structural refactors are a later ratified arc).
+- Push **`fork`** (Rev4nchist), never `origin`. Never change BGE model/dim (`BAAI/bge-large-en-v1.5`, 1024).
 - The review is READ-ONLY: — no fixes during discovery/verification/synthesis. Fixes happen only in Phase 4 (quick wins) after ratification.
-- Windows-safe commands (array-arg spawns, `Remove-Item -LiteralPath`, no brace expansion). **Never run the full parallel vitest suite* (known hang on a Windows daemon/socket suite) — no test execution during the review at all.
+- Windows-safe commands (array-arg spawns, `Remove-Item -LiteralPath`, no brace expansion). **Never run the full parallel vitest suite** (known hang on a Windows daemon/socket suite) — no test execution during the review at all.
 - Gates G4 (no parallel edits to memory files), G5 (WS-0.1 blocked), G6 (P3 archive cross-check) remain binding for the fix arc.
 
 ### 2026-06-06: CCv3-Hardening — Session 9 (reconciliation + P1 bus-bias)

@@ -19,7 +19,7 @@ Dave's workspace (`David Hayes's Notion`, id `a512f781-a8e7-400d-b2e2-b76690fde8
 - **Install**: `winget install Notion.ntn` (native x64; the `curl|bash` path is macOS/Linux — Codex premortem finding confirmed by docs). Installed **ntn 0.18.1 (latest)**.
 - **Absolute exe path** (for Task Scheduler actions — winget's shim was NOT added as a Links alias):
   `C:\Users\david.hayes\AppData\Local\Microsoft\WinGet\Packages\Notion.ntn_Microsoft.Winget.Source_8wekyb3d8bbwe\ntn-x86_64-pc-windows-msvc\ntn.exe`
-- **Auth**: `ntn login` = device-code browser flow (`ntn login` prints URL + verification code → `ntn login poll` waits). Credentials in system keychain; config at `%APPDATA%\Roaming\notion` (⚠ roaming dir — if `NOTION_KEYRING=0` file auth is ever used, pin `NOTION_HOME` local + ACL per premortem S1c).
+- **Auth**: `ntn login` = device-code browser flow (`ntn login` prints URL + verification code → `ntn login poll` waits). Credentials in system keychain; config at `%APPDATA%\notion` (⚠ roaming dir — if `NOTION_KEYRING=0` file auth is ever used, pin `NOTION_HOME` local + ACL per premortem S1c).
 - **`ntn doctor` after login**: 6 pass / 1 warn — the warn is **"no Workers access"** (Workers not enabled for this account; the parked Workers charter should note enablement is a prerequisite).
 - **PAT nuance**: `ntn api v1/users` → `403 restricted_resource: Personal access tokens cannot list users`. This endpoint is NOT a valid auth probe. Use `ntn doctor` ("Public API authenticated") or a `pages get` on a known page instead.
 - Session-shell note: a shell opened before install won't have `ntn` on PATH — use the absolute path or a fresh shell.

@@ -100,7 +100,7 @@ Every handoff is two things:
 
 Example:
 ```
-[HANDOFF] 2026-02-22 — /codex-review Skill Setup → [Eve→Code] /codex-review Setup — 2026-02-22](url)
+[HANDOFF] 2026-02-22 — /codex-review Skill Setup → [[Eve→Code] /codex-review Setup — 2026-02-22](url)
 	From: Eve | Priority: High | Install Codex CLI + create skill file
 ```
 
@@ -176,7 +176,7 @@ Templates live at `references/handoff-templates/`:
 ```
 
 ### Claude Code Writing Back
-```
+```text
 1. notion-fetch: Claude Bridge HQ page (read current)
 2. notion-create-pages: Create child page under Bridge HQ with implementation summary (use code-to-eve or code-to-donna template)
 3b. Mirror to Weekly Work Tracker (auto-mirror): Before inserting the HQ one-liner, also create a Tracker row in the AI Enablement Weekly Work Tracker database. This feeds /weekly-report at report time. See "Auto-Mirror Protocol" below for field mapping + dedup rules.

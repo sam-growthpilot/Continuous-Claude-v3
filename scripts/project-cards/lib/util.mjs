@@ -35,10 +35,11 @@ export function slugify(name, existing) {
 }
 
 // Normalize the various "existing slugs" shapes into a Set for membership tests.
-function toSlugSet(existing) {
+export function toSlugSet(existing) {
   if (!existing) return new Set();
   if (existing instanceof Set) return existing;
   if (Array.isArray(existing)) return new Set(existing);
+  if (existing instanceof Map) return new Set(existing.keys());
   if (typeof existing === 'object') return new Set(Object.keys(existing));
   return new Set();
 }

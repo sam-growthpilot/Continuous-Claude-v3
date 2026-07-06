@@ -41,6 +41,7 @@ Everything else in the workspace is human/Eve territory — confirm first.
 ## Non-interactive contract (prevents hangs, not just accidents)
 
 - Every scripted call: stdin redirected from NUL (`</dev/null`) — `ntn` waits on open stdin (proven hang).
+- Confirm-gated verbs (e.g. `ntn workers delete`, `ntn workers env pull/push`, `ntn pages trash`) need `--yes` (or the equivalent confirm flag) — without it they error `Cannot confirm in a non-interactive environment` and deadlock automation.
 - Hard timeout; nonzero exit fails loud; log `ntn --version` per run.
 - Payloads via stdin JSON / `--data`; never inline fields with `:` or spaces in values.
 - Auth probe = `ntn doctor` or `pages get` on a known page; `v1/users` 403s on personal tokens by design.
