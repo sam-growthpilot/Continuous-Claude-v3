@@ -24,6 +24,14 @@ $log = Join-Path $logDir "$date.log"
 
 "[$(Get-Date -Format o)] CCv3-Project-Cards sweep starting" | Tee-Object -FilePath $log -Append
 
+# T3.1: the sweep emits a Project Portfolio report-run.json to $TEMP for the
+# registry spine. Remove any stale emit from a prior run FIRST so the final
+# upsert step below only fires when THIS run actually emitted (a --dry-run or a
+# mobile-cockpit/triage sub-target emits nothing -- the file stays absent and the
+# upsert is skipped, never re-upserting a stale record).
+$emitFile = Join-Path $env:TEMP 'report-run-Project-Cards.json'
+Remove-Item $emitFile -ErrorAction SilentlyContinue
+
 # sweep.mjs logs progress to stderr and spawns claude/ntn that also write stderr. Under
 # ErrorActionPreference='Stop', a native command's stderr (via 2>&1) is raised as a
 # terminating NativeCommandError and would abort the wrapper on benign log output. Gate
@@ -38,4 +46,22 @@ $ErrorActionPreference = 'Continue'
     ForEach-Object { "$_" } | Tee-Object -FilePath $log -Append
 $code = $LASTEXITCODE
 "[$(Get-Date -Format o)] sweep exited (code=$code)" | Tee-Object -FilePath $log -Append
+
+# T3.1 FINAL step: upsert the emitted report-run.json into the Report Runs
+# registry. NON-FATAL by contract -- the registry is observability, not the
+# sweep's product, so a registry outage must NEVER change the sweep's exit code.
+# Only runs when the sweep actually emitted the file (full real sweep); wrapped in
+# try/catch and never touches $code.
+if (Test-Path $emitFile) {
+    try {
+        & node (Join-Path $repo 'scripts\report-registry\upsert.mjs') $emitFile 2>&1 |
+            ForEach-Object { "$_" } | Tee-Object -FilePath $log -Append
+        "[$(Get-Date -Format o)] report-run upsert exit=$LASTEXITCODE (non-fatal)" | Tee-Object -FilePath $log -Append
+    } catch {
+        "[$(Get-Date -Format o)] report-run upsert threw (non-fatal): $_" | Tee-Object -FilePath $log -Append
+    }
+} else {
+    "[$(Get-Date -Format o)] no report-run.json emitted (dry-run or sub-target) -- skipping registry upsert" | Tee-Object -FilePath $log -Append
+}
+
 exit $code

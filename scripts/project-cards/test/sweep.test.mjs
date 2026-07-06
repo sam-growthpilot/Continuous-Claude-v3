@@ -11,6 +11,7 @@ import {
   acquireSweepLock, releaseSweepLock,
   triageFailureReceiptLine, TRIAGE_EXIT_CODE, mapPmNoteRow,
   cockpitContentHash, cockpitEmbedIdFromUrl,
+  deriveReportStatus, buildReportSummary,
 } from '../sweep.mjs';
 
 let pass = 0;
@@ -293,6 +294,58 @@ test('cockpitEmbedIdFromUrl: falls back to the ntn-markdown attachment form', ()
 test('cockpitEmbedIdFromUrl: unrecognized url -> block id fallback (never crashes)', () => {
   assert.equal(cockpitEmbedIdFromUrl('https://example.com/no-uuid', 'blk-123'), 'blk-123');
   assert.equal(cockpitEmbedIdFromUrl('', null), 'present');
+});
+
+// --- T3.1: Project Portfolio report-run derivation (registry emit contract) ---
+
+test('deriveReportStatus: clean run -> OK', () => {
+  assert.equal(deriveReportStatus({
+    fatalError: null, publishFailed: [], hubRefreshed: true, cockpitPublished: true,
+  }), 'OK');
+});
+
+test('deriveReportStatus: a fatal throw -> Failed (dominates everything)', () => {
+  assert.equal(deriveReportStatus({
+    fatalError: new Error('boom'), publishFailed: [], hubRefreshed: true, cockpitPublished: true,
+  }), 'Failed');
+});
+
+test('deriveReportStatus: a failed card publish -> Warn', () => {
+  assert.equal(deriveReportStatus({
+    fatalError: null, publishFailed: [{ slug: 'x', reason: 'y' }],
+    hubRefreshed: true, cockpitPublished: true,
+  }), 'Warn');
+});
+
+test('deriveReportStatus: hub not refreshed -> Warn', () => {
+  assert.equal(deriveReportStatus({
+    fatalError: null, publishFailed: [], hubRefreshed: false, cockpitPublished: true,
+  }), 'Warn');
+});
+
+test('deriveReportStatus: cockpit not published -> Warn', () => {
+  assert.equal(deriveReportStatus({
+    fatalError: null, publishFailed: [], hubRefreshed: true, cockpitPublished: false,
+  }), 'Warn');
+});
+
+test('deriveReportStatus: mobile/triage degradation -> Warn', () => {
+  assert.equal(deriveReportStatus({
+    fatalError: null, publishFailed: [], hubRefreshed: true, cockpitPublished: true,
+    mobileFailed: true,
+  }), 'Warn');
+  assert.equal(deriveReportStatus({
+    fatalError: null, publishFailed: [], hubRefreshed: true, cockpitPublished: true,
+    triageFailed: true,
+  }), 'Warn');
+});
+
+test('buildReportSummary: 1-line headline with counts + ok/fail flags', () => {
+  const s = buildReportSummary({
+    refreshed: 8, publishedOk: ['a', 'b', 'c'], publishFailed: [{ slug: 'd' }],
+    hubRefreshed: true, cockpitPublished: false,
+  });
+  assert.equal(s, 'cards refreshed=8 · published=3 · failed=1 · hub=ok · cockpit=fail');
 });
 
 console.log(`\n${pass} passed`);

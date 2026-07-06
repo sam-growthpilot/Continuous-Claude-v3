@@ -57,6 +57,59 @@ import {
 } from './lib/config.mjs';
 import { dateStamp, slugify } from './lib/util.mjs';
 
+// Reporting Hub artifact URL for the Project Portfolio report-run emit (T3.1).
+// The registry row's "Artifact URL" points a reader straight at the gallery/hub
+// this sweep maintains. Built from the same hub page id the sweep publishes to.
+const REPORTING_HUB_URL = `https://www.notion.so/${REPORTING_HUB_PAGE_ID.replace(/-/g, '')}`;
+
+// Derive the Project Portfolio report-run Status (registry enum) from the sweep
+// outcome accumulators. PURE + exported so the mapping is unit-testable without
+// running a sweep: a fatal throw -> Failed; any degraded step -> Warn; else OK.
+export function deriveReportStatus({
+  fatalError, publishFailed = [], hubRefreshed, cockpitPublished,
+  mobileFailed = false, triageFailed = false,
+} = {}) {
+  if (fatalError) return 'Failed';
+  if ((publishFailed && publishFailed.length > 0) || !hubRefreshed || !cockpitPublished
+    || mobileFailed || triageFailed) return 'Warn';
+  return 'OK';
+}
+
+// PURE + exported: the 1-line registry summary headline for a Project Portfolio
+// run. Kept separate so tests can assert the headline shape.
+export function buildReportSummary({
+  refreshed = 0, publishedOk = [], publishFailed = [], hubRefreshed, cockpitPublished,
+} = {}) {
+  return `cards refreshed=${refreshed} · published=${publishedOk.length}`
+    + ` · failed=${publishFailed.length} · hub=${hubRefreshed ? 'ok' : 'fail'}`
+    + ` · cockpit=${cockpitPublished ? 'ok' : 'fail'}`;
+}
+
+// Best-effort: emit a Project Portfolio report-run.json for the registry spine
+// (T3.1). Fully isolated — a broken/absent registry module or a write error is
+// LOGGED and swallowed so the emit can NEVER change the sweep's outcome or exit
+// code (the run-sweep.ps1 upsert step is likewise wrapped non-fatal). Returns the
+// written path, or null on any failure. NEVER called on --dry-run (per plan).
+async function emitPortfolioReportRun(fields) {
+  try {
+    const { buildRun, writeRun } = await import('../report-registry/make-run.mjs');
+    const run = buildRun({
+      type: 'Project Portfolio',
+      period: new Date().toISOString().slice(0, 10),
+      status: deriveReportStatus(fields),
+      source: 'Project-Cards',
+      artifactUrl: REPORTING_HUB_URL,
+      summary: buildReportSummary(fields),
+    });
+    const path = writeRun(run, { source: 'Project-Cards' });
+    console.error(`[sweep] emitted report-run (${run.status}) -> ${path}`);
+    return path;
+  } catch (e) {
+    console.error(`[sweep] WARN: report-run emit failed (non-fatal): ${e.message}`);
+    return null;
+  }
+}
+
 // The cockpit publishes at the TOP of the Reporting Hub under its OWN section
 // heading, ABOVE the existing card gallery. This heading is a sweep-local
 // contract (config.mjs owns the card/hub headings; the cockpit is added here).
@@ -1316,6 +1369,19 @@ async function main() {
     } catch (hbErr) {
       console.error(`[sweep] WARN: could not write heartbeat: ${hbErr.message}`);
     }
+  }
+
+  // --- T3.1: emit the Project Portfolio report-run.json for the registry spine.
+  // Only on a real FULL sweep — --dry-run exited earlier (dryRunExit) and never
+  // reaches here, and the mobile-cockpit/triage sub-targets don't refresh the
+  // portfolio so they must not emit a Project Portfolio row. The write is
+  // best-effort (emitPortfolioReportRun swallows all errors); the run-sweep.ps1
+  // upsert step that consumes the file is likewise wrapped non-fatal.
+  if (!mobileOnly && !triageOnly) {
+    await emitPortfolioReportRun({
+      fatalError, publishFailed, hubRefreshed, cockpitPublished,
+      mobileFailed, triageFailed, refreshed, publishedOk,
+    });
   }
 
   process.exit(failed ? 1 : 0);
