@@ -1,9 +1,48 @@
 """Generate AI narrative summaries using Claude API."""
 
 import json
+import logging
 import os
 from datetime import datetime
 from pathlib import Path
+
+log = logging.getLogger("ai_narrator")
+
+
+class NarrativeGenerationError(Exception):
+    """Raised in strict mode when AI narratives cannot be generated.
+
+    Trips on: no ANTHROPIC_API_KEY, missing 'anthropic' SDK, or an API/parse failure.
+    The caller (weekly_run) catches it to fail loud (non-zero exit) instead of silently
+    shipping degraded template narratives to the VP.
+    """
+
+
+def _degrade_or_raise(
+    snapshot: dict, reason: str, strict: bool, extra: dict | None = None
+) -> dict:
+    """Strict -> raise NarrativeGenerationError(reason); non-strict -> loud banner + degraded stamp.
+
+    In non-strict mode the template fallback is preserved but the returned dict is stamped
+    ``{"_degraded": True, "_reason": reason}`` so downstream rendering can show a visible
+    banner in the artifact (not just the log).
+    """
+    if strict:
+        raise NarrativeGenerationError(reason)
+    log.warning(
+        "\n" + "=" * 72 + "\n"
+        "  TEMPLATE NARRATIVES  --  AI narrative generation DEGRADED\n"
+        f"  Reason: {reason}\n"
+        "  This report contains TEMPLATE placeholder text, NOT AI-written narratives.\n"
+        "  Fix: set ANTHROPIC_API_KEY (the VP report requires it), or drop --allow-template.\n"
+        + "=" * 72
+    )
+    fallback = _fallback_narratives(snapshot)
+    fallback["_degraded"] = True
+    fallback["_reason"] = reason
+    if extra:
+        fallback.update(extra)
+    return fallback
 
 
 def load_previous_snapshot(snapshots_dir: str) -> dict | None:
@@ -120,16 +159,25 @@ Do NOT make up metrics - use only the data provided below. But DO translate raw 
 Respond with ONLY a JSON object. No markdown, no code fences."""
 
 
-def generate_narratives(snapshot: dict, config: dict) -> dict:
-    """Generate AI narratives using Claude API."""
+def generate_narratives(snapshot: dict, config: dict, strict: bool = True) -> dict:
+    """Generate AI narratives using Claude API.
+
+    strict=True (default): raise NarrativeGenerationError when narratives cannot be
+    AI-generated (no ANTHROPIC_API_KEY, missing 'anthropic' SDK, or API/parse error) so the
+    caller fails loud rather than shipping template text.
+    strict=False: keep the template fallback but log a loud banner and stamp the result
+    ``{"_degraded": True, "_reason": ...}`` so the degraded state is visible in the artifact.
+    """
     api_key = os.environ.get("ANTHROPIC_API_KEY")
     if not api_key:
-        return _fallback_narratives(snapshot)
+        return _degrade_or_raise(snapshot, "ANTHROPIC_API_KEY is not set", strict)
 
     try:
         import anthropic
     except ImportError:
-        return _fallback_narratives(snapshot)
+        return _degrade_or_raise(
+            snapshot, "the 'anthropic' package is not installed", strict
+        )
 
     ai_config = config.get("ai", {})
     model = ai_config.get("model", "claude-sonnet-4-5-20250929")
@@ -167,9 +215,9 @@ def generate_narratives(snapshot: dict, config: dict) -> dict:
         return narratives
 
     except (json.JSONDecodeError, Exception) as e:
-        fallback = _fallback_narratives(snapshot)
-        fallback["ai_error"] = str(e)
-        return fallback
+        return _degrade_or_raise(
+            snapshot, f"Claude API call failed: {e}", strict, extra={"ai_error": str(e)}
+        )
 
 
 def _fallback_narratives(snapshot: dict) -> dict:
@@ -227,7 +275,14 @@ if __name__ == "__main__":
     if snapshots:
         with open(snapshots[0]) as f:
             snapshot = json.load(f)
-        result = generate_narratives(snapshot, config)
-        print(json.dumps(result, indent=2))
+        try:
+            result = generate_narratives(snapshot, config, strict=True)
+            print(json.dumps(result, indent=2))
+        except NarrativeGenerationError as e:
+            print(f"NarrativeGenerationError: {e}")
+            print(
+                "Set ANTHROPIC_API_KEY, or call generate_narratives(..., strict=False) "
+                "for template output."
+            )
     else:
         print("No snapshots found. Run weekly_run.py --collect-only first.")

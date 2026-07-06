@@ -23,4 +23,39 @@ $prompt = Join-Path $repo 'scripts\sync-tasks-dashboard-prompt.md'
 Get-Content -Raw $prompt |
   & claude -p --allowedTools "Bash,ReadMcpResourceTool,mcp__claude_ai_Notion__notion-fetch,mcp__claude_ai_Notion__notion-update-page" 2>&1 |
   Tee-Object -FilePath $log -Append
-"[$(Get-Date -Format o)] dashboard-sync finished (exit=$LASTEXITCODE)" | Tee-Object -FilePath $log -Append
+# Capture the claude -p exit code FIRST -- before any cmdlet/native call below can
+# perturb $LASTEXITCODE (premortem X3: the registry Status needs a reliable signal).
+$code = $LASTEXITCODE
+"[$(Get-Date -Format o)] dashboard-sync finished (exit=$code)" | Tee-Object -FilePath $log -Append
+
+# --- Report Runs registry (T3.4): non-fatal final step. --------------------------
+# Status is synthesized DETERMINISTICALLY from the captured exit code (0 -> OK,
+# nonzero -> Warn), NOT from the claude -p prompt output. Wrapped in try/catch so a
+# registry outage can NEVER change $code -- the registry is observability, not the
+# dashboard's product.
+try {
+  # T6.1 #8: resolve an absolute node path for the registry make-run/upsert calls
+  # (parity with the .bat wrappers, which must hardcode it under Task Scheduler's
+  # minimal PATH). Harmless when bare node already resolves.
+  $node = if (Test-Path 'C:\Program Files\nodejs\node.exe') { 'C:\Program Files\nodejs\node.exe' } else { 'node' }
+  $status = if ($code -eq 0) { 'OK' } else { 'Warn' }
+  $emit = & $node (Join-Path $repo 'scripts\report-registry\make-run.mjs') `
+    --type 'Team Dashboard' --source 'Dashboard-Sync' --period $date --status $status `
+    --artifactUrl 'https://www.notion.so/38f76fd7ac8280478e50dd2956ba6e8a' `
+    --summary "scheduled-tasks section refreshed (exit=$code)"
+  $emit = ($emit | Select-Object -Last 1)
+  if ($LASTEXITCODE -eq 0 -and $emit) {
+    & $node (Join-Path $repo 'scripts\report-registry\upsert.mjs') $emit 2>&1 |
+      ForEach-Object { "$_" } | Tee-Object -FilePath $log -Append
+    "[$(Get-Date -Format o)] report-run upsert exit=$LASTEXITCODE (non-fatal)" | Tee-Object -FilePath $log -Append
+  } else {
+    "[$(Get-Date -Format o)] make-run emitted no path (exit=$LASTEXITCODE) -- skipping upsert" | Tee-Object -FilePath $log -Append
+  }
+} catch {
+  "[$(Get-Date -Format o)] report-run registry step threw (non-fatal): $_" | Tee-Object -FilePath $log -Append
+}
+
+# X3 fix: the script previously logged $LASTEXITCODE but never `exit`ed with it, so
+# Task Scheduler always recorded success. Exit with the captured claude -p code so
+# the scheduler's Last Run Result and the registry Status agree on the outcome.
+exit $code
