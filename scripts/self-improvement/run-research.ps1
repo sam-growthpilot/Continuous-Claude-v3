@@ -70,6 +70,41 @@ Log "claude -p exited (code=$claudeExit)"
 $recordExit = $LASTEXITCODE
 
 $proposal = "docs/self-improvement/proposals/$date-$($c.id).md"
+
+# --- Report Runs registry (T3.6): non-fatal final step, in THIS parent PS process
+# AFTER claude -p has exited. ntn authenticates via the OS keychain through its
+# ABSOLUTE exe (NTN_EXE in lib/notion.mjs); the NOTION_* env scrub above (line ~25)
+# does NOT touch keychain creds, so make-run + upsert still authenticate here.
+# Status is synthesized DETERMINISTICALLY: OK if the proposal file was recorded
+# (record-index succeeded and the file exists), else Warn. Non-fatal (try/catch) and
+# the block does NOT change the script's existing exit semantics below. The script's
+# EAP is 'Stop'; drop to 'Continue' locally so upsert's benign stderr (via 2>&1)
+# cannot raise a NativeCommandError.
+$prevEAP = $ErrorActionPreference
+$ErrorActionPreference = 'Continue'
+try {
+  if (Test-Path $proposal) {
+    $siStatus = 'OK'; $artifact = $proposal; $verdict = 'proposal recorded'
+  } else {
+    $siStatus = 'Warn'; $artifact = 'docs/self-improvement/INDEX.md'; $verdict = "no proposal (record-index exit=$recordExit)"
+  }
+  $emit = & node (Join-Path $repo 'scripts\report-registry\make-run.mjs') `
+    --type 'Self-Improvement' --source 'Self-Improvement' --period $date --status $siStatus `
+    --artifactUrl $artifact --summary "$($c.id): $verdict"
+  $emit = ($emit | Select-Object -Last 1)
+  if ($LASTEXITCODE -eq 0 -and $emit) {
+    & node (Join-Path $repo 'scripts\report-registry\upsert.mjs') $emit 2>&1 |
+      ForEach-Object { "$_" } | Tee-Object -FilePath $log -Append
+    Log "report-run upsert exit=$LASTEXITCODE (non-fatal)"
+  } else {
+    Log "make-run emitted no path (exit=$LASTEXITCODE) -- skipping upsert"
+  }
+} catch {
+  Log "report-run registry step threw (non-fatal): $_"
+} finally {
+  $ErrorActionPreference = $prevEAP
+}
+
 if ($recordExit -eq 0) {
   Log "Done. Proposal: $proposal"
   exit 0

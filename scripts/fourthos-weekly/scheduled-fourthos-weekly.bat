@@ -33,4 +33,40 @@ REM   0 = OK (preview staged + Dave notified)  OR  SKIP (Notion MCP unavailable;
 REM   1 = FAILED (see Slack/Notion notice and fourthos/preview/_ERROR.md in the decks repo)
 REM The stable live sponsor deck is never overwritten by this task; promotion is manual.
 
+REM --- Report Runs registry (T3.3): FINAL non-fatal step. -------------------------
+REM Resolve an ABSOLUTE node path. A cmd .bat inherits a minimal PATH under Task
+REM Scheduler and bare `node` may not resolve (same class of failure that lost 4
+REM months to bare `python`). Fall back to bare `node` only if the standard path is
+REM absent. This step is observability, not the report's product -- it NEVER changes
+REM the exit contract above: EXIT_CODE is already captured, and we still
+REM `exit /b %EXIT_CODE%` at the end regardless of what the registry step does.
+set "NODE_EXE=C:\Program Files\nodejs\node.exe"
+if not exist "%NODE_EXE%" set "NODE_EXE=node"
+
+REM Today's date (YYYY-MM-DD). Use powershell (always on the System32 PATH) rather
+REM than %date% (locale-formatted) or node-in-`for /f` (the quoted spaced node path
+REM breaks cmd's for/f parsing). GUARD: if the date can't be resolved, skip the
+REM registry step entirely -- an empty --period would otherwise emit a garbage row.
+set "RUN_DATE="
+for /f "usebackq delims=" %%d in (`powershell -NoProfile -Command "(Get-Date).ToString('yyyy-MM-dd')"`) do set "RUN_DATE=%%d"
+if not defined RUN_DATE (
+    echo [%date% %time%] could not resolve RUN_DATE -- skipping registry upsert ^(non-fatal^)
+    exit /b %EXIT_CODE%
+)
+
+REM Status synthesized DETERMINISTICALLY from EXIT_CODE (not the claude -p output,
+REM which is fragile). exit 0 = OK-or-SKIP -- indistinguishable from the code alone,
+REM so recorded as OK; exit 1 = Failed.
+if "%EXIT_CODE%"=="0" (set "RUN_STATUS=OK") else (set "RUN_STATUS=Failed")
+
+set "RUN_EMIT=%TEMP%\report-run-FourthOS-Weekly.json"
+del "%RUN_EMIT%" 2>nul
+"%NODE_EXE%" scripts\report-registry\make-run.mjs --type "FourthOS Sponsor" --source "FourthOS-Weekly" --period %RUN_DATE% --status %RUN_STATUS% --artifactUrl "https://rev4nchist.github.io/ai-enablement-decks/fourthos/preview/" --summary "sponsor update staged (exit=%EXIT_CODE%)"
+if exist "%RUN_EMIT%" (
+    "%NODE_EXE%" scripts\report-registry\upsert.mjs "%RUN_EMIT%"
+    echo [%date% %time%] report-run upsert done ^(exit=%ERRORLEVEL%, non-fatal^)
+) else (
+    echo [%date% %time%] no report-run.json emitted -- skipping registry upsert
+)
+
 exit /b %EXIT_CODE%
