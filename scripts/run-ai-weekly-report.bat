@@ -35,9 +35,29 @@ if errorlevel 1 (
   )
 )
 
+REM Clear any stale report-run.json from a PRIOR run so a FAILED run this week can never
+REM re-upsert last week's success. weekly_run.py rewrites it only when a report is produced.
+set "RUNJSON=%TEMP%\report-run-AIWeeklyReport.json"
+if exist "%RUNJSON%" del /q "%RUNJSON%"
+
 REM mit #5: forward args (%*) so --allow-template (and any future flags) actually reach
 REM weekly_run.py. Previously there was no %*, so passed flags were silently dropped.
 "%PY%" scripts\weekly_run.py %* >> "%LOG%" 2>&1
 set "EC=%ERRORLEVEL%"
 echo [%date% %time%] AIWeeklyReport finished exit=%EC% >> "%LOG%" 2>&1
+
+REM --- Report Runs registry (T3.2) ---
+REM FINAL step, NON-FATAL: if weekly_run.py emitted report-run.json, upsert it into the
+REM Report Runs Notion DB. A registry outage must NEVER change this task's exit code, so we
+REM never touch %EC% here. node is resolved to an ABSOLUTE path because Task Scheduler's
+REM minimal PATH does not include node (same reason %PY% is hardcoded above).
+set "NODE=C:\Program Files\nodejs\node.exe"
+if not exist "%NODE%" set "NODE=node"
+set "REGISTRY=C:\Users\david.hayes\continuous-claude\scripts\report-registry"
+if exist "%RUNJSON%" (
+  echo [%date% %time%] Upserting report run into registry... >> "%LOG%" 2>&1
+  "%NODE%" "%REGISTRY%\upsert.mjs" "%RUNJSON%" >> "%LOG%" 2>&1
+  echo [%date% %time%] Registry upsert finished exit=%ERRORLEVEL% ^(non-fatal^) >> "%LOG%" 2>&1
+)
+
 exit /b %EC%

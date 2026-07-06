@@ -18,6 +18,7 @@ import os
 import shutil
 import subprocess
 import sys
+import tempfile
 from datetime import datetime
 from pathlib import Path
 
@@ -236,6 +237,129 @@ def deploy(config: dict):
         return False
 
 
+# ---------------------------------------------------------------------------
+# Report Runs registry emit (T3.2)
+# The wrapper .bat upserts %TEMP%/report-run-AIWeeklyReport.json into the Report
+# Runs Notion DB after this script exits. We synthesize that record here from the
+# run's own known outcome (deterministic: exit-reached => a report was produced),
+# NOT from any claude -p prompt. Keys match REPORT_RUN_KEYS in
+# scripts/report-registry/config.mjs. type/source are fixed for this pipeline.
+# ---------------------------------------------------------------------------
+REPORT_TYPE = "VP Weekly"
+REPORT_SOURCE = "AIWeeklyReport"
+
+
+def _iso_now() -> str:
+    """Local-time ISO 8601 timestamp with offset (valid Notion date start)."""
+    return datetime.now().astimezone().isoformat()
+
+
+def _git_commit(repo: Path) -> str | None:
+    """Best-effort short commit for the given repo. None if git is unavailable."""
+    try:
+        out = subprocess.run(
+            ["git", "-C", str(repo), "rev-parse", "--short", "HEAD"],
+            capture_output=True, text=True, timeout=10,
+        )
+        if out.returncode == 0 and out.stdout.strip():
+            return out.stdout.strip()
+    except Exception:
+        pass
+    return None
+
+
+def build_report_run_record(
+    *,
+    period: str,
+    status: str = "OK",
+    run_date: str | None = None,
+    artifact_url: str | None = None,
+    docx_url: str | None = None,
+    summary: str | None = None,
+    commit: str | None = None,
+) -> dict:
+    """Build a report-run.json record for the Report Runs registry (T3.2).
+
+    Pure/deterministic. Keys match REPORT_RUN_KEYS; runId = ``type|period|runDate``
+    (runDate defaults to now). Optional fields are omitted when empty so a partial
+    emit never writes blank values the upsert would have to strip.
+    """
+    ts = run_date if (run_date is not None and str(run_date).strip() != "") else _iso_now()
+    record = {
+        "runId": f"{REPORT_TYPE}|{period}|{ts}",
+        "type": REPORT_TYPE,
+        "period": str(period),
+        "runDate": ts,
+        "status": status,
+        "source": REPORT_SOURCE,
+    }
+    for key, val in (
+        ("artifactUrl", artifact_url),
+        ("docxUrl", docx_url),
+        ("summary", summary),
+        ("commit", commit),
+    ):
+        if val is not None and str(val).strip() != "":
+            record[key] = str(val)
+    return record
+
+
+def emit_report_run(snapshot: dict, config: dict, result: dict, deployed: bool):
+    """Write report-run.json to %TEMP% for the wrapper .bat to upsert (T3.2).
+
+    Best-effort: any failure is logged and swallowed so a registry hiccup never
+    affects the report run itself. Returns the written Path or None. Callers must
+    NOT invoke this for --collect-only (no report is produced).
+    """
+    try:
+        year = snapshot.get("year", datetime.now().year)
+        week = snapshot.get("week", datetime.now().isocalendar()[1])
+        period = f"{year}-W{week:02d}"
+
+        github_url = (config.get("output", {}) or {}).get("github_pages_url", "")
+        if deployed and github_url:
+            artifact_url = github_url
+        else:
+            # --no-deploy (or deploy skipped/failed): point at the local archive dir.
+            archive_dir = (
+                Path(__file__).parent.parent / "output" / "archive" / f"{year}-W{week:02d}"
+            )
+            artifact_url = str(archive_dir)
+
+        report_path = result.get("report_path") if result else None
+        docx_url = str(report_path) if report_path else None
+
+        git = snapshot.get("git", {}) or {}
+        system = snapshot.get("system", {}) or {}
+        commits = (git.get("totals", {}) or {}).get("week_commits", "?")
+        summary = (
+            f"{commits} commits / {system.get('hooks', '?')} hooks / "
+            f"{system.get('skills', '?')} skills / {system.get('agents', '?')} agents"
+        )
+
+        commit = _git_commit(Path(__file__).parent.parent.parent)
+
+        record = build_report_run_record(
+            period=period,
+            status="OK",
+            artifact_url=artifact_url,
+            docx_url=docx_url,
+            summary=summary,
+            commit=commit,
+        )
+
+        temp_dir = os.environ.get("TEMP") or os.environ.get("TMP") or tempfile.gettempdir()
+        out_path = Path(temp_dir) / "report-run-AIWeeklyReport.json"
+        with open(out_path, "w", encoding="utf-8") as f:
+            json.dump(record, f, indent=2)
+            f.write("\n")
+        log.info(f"  Report run emitted for registry: {out_path}")
+        return out_path
+    except Exception as e:  # never let registry emit break the report run
+        log.warning(f"  Could not emit report-run.json (non-fatal): {e}")
+        return None
+
+
 def main():
     parser = argparse.ArgumentParser(description="AI Enablement Weekly Report Generator")
     parser.add_argument("--collect-only", action="store_true", help="Only collect data, skip generation")
@@ -309,9 +433,10 @@ def main():
 
     # Deploy
     if not args.no_deploy:
-        deploy(config)
+        deployed = deploy(config)
     else:
         log.info("Deployment skipped (--no-deploy)")
+        deployed = False
 
     # Summary
     log.info("")
@@ -322,6 +447,11 @@ def main():
     github_url = config.get("output", {}).get("github_pages_url", "")
     if github_url and not args.no_deploy:
         log.info(f"  GitHub Pages: {github_url}")
+
+    # Report Runs registry emit (T3.2): synthesize report-run.json for the wrapper
+    # .bat to upsert. Reached only when a report was produced (collect-only returns
+    # earlier). Best-effort — never raises.
+    emit_report_run(snapshot, config, result, deployed)
 
     log.info("=" * 60)
 

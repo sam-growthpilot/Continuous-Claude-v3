@@ -38,6 +38,30 @@ if exist %NOTION_PROMPT% (
     echo [%date% %time%] WARN: %NOTION_PROMPT% not found -- skipping Notion update.
 )
 
+REM --- Report Runs registry (T3.5) ---
+REM FINAL step, NON-FATAL: map the health check exit code to a registry Status, build a
+REM report-run.json via make-run.mjs, then upsert it. This must NEVER change %EXIT_CODE%
+REM (captured above and untouched below). node is resolved to an ABSOLUTE path because the
+REM Task Scheduler minimal PATH does not include node.
+set "NODE=C:\Program Files\nodejs\node.exe"
+if not exist "%NODE%" set "NODE=node"
+set "REGISTRY=C:\Users\david.hayes\continuous-claude\scripts\report-registry"
+set "RUNSTATUS=OK"
+if "%EXIT_CODE%"=="1" set "RUNSTATUS=Warn"
+if "%EXIT_CODE%"=="2" set "RUNSTATUS=Failed"
+if "%EXIT_CODE%"=="3" set "RUNSTATUS=Failed"
+
+REM period = today's date YYYY-MM-DD, built locale-independently via PowerShell (System32,
+REM always on PATH). RUNJSON is cleared first so a make-run failure cannot upsert a stale file.
+for /f %%D in ('powershell -NoProfile -Command "Get-Date -Format yyyy-MM-dd"') do set "TODAY=%%D"
+set "RUNJSON=%TEMP%\report-run-Health-Check.json"
+if exist "%RUNJSON%" del /q "%RUNJSON%"
+
+echo [%date% %time%] Emitting health-check report run (status=%RUNSTATUS%)...
+"%NODE%" "%REGISTRY%\make-run.mjs" --type "System Health" --source "Health-Check" --status "%RUNSTATUS%" --period "%TODAY%" --artifactUrl "https://www.notion.so/innovativemusings/CCv3-Weekly-Health-Checks-34c76fd7ac8280a984afc486a9844290" --summary "health check exit=%EXIT_CODE% status=%RUNSTATUS%" --out "%RUNJSON%"
+if exist "%RUNJSON%" "%NODE%" "%REGISTRY%\upsert.mjs" "%RUNJSON%"
+echo [%date% %time%] Registry emit/upsert finished (non-fatal).
+
 REM Exit code contract:
 REM   0 = all pass
 REM   1 = warnings only
