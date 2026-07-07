@@ -13,13 +13,14 @@ One row per `/codex` run (the `codex-worker` agent). Distinct from `codex-lift.j
   "model": "gpt-5.5",                    // always in {gpt-5.5, gpt-5.4, gpt-5.4-mini}
   "effort": "high" | "xhigh" | "medium" | "low",
   "sandbox": "read-only" | "workspace-write",
-  "multi_agent": false,                  // true only for the (v2) --complex opt-in
+  "multi_agent": false,                  // true for the --complex opt-in (multi_agent fan-out; ask/implement)
   "scope": "ephemeral" | "worktree" | "in-place" | "resume:<id>",  // ephemeral=ask (read-only, no worktree); worktree/in-place=implement; resume embeds the captured thread id
   "task_summary": "add --limit flag to query.mjs",
   "exit_code": 0,                        // codex exec return code
   "git_diff_stat": "1 file changed, 22 insertions(+), 3 deletions(-)",  // "" for ask
-  "verification": "answered" | "diff_reviewed_and_applied" | "diff_reviewed_and_discarded" | "apply_conflict",  // answered=ask; the diff_* trio=implement/resume
+  "verification": "answered" | "diff_reviewed_and_applied" | "diff_reviewed_and_discarded" | "apply_conflict" | "usage_limited",  // answered=ask; diff_* trio=implement/resume; usage_limited=any mode blocked by the quota cap
   "session_id": "019f3987-...",          // implement/resume only: the Codex thread id (thread_id from the --json thread.started event); "" for ask
+  "usage_limited": false,                // true if the run hit the ChatGPT subscription quota cap (reactive detect — no result produced, non-zero exit_code)
   "via": "claude-code" | "ralph" | "scheduled"
 }
 ```
@@ -30,7 +31,7 @@ Optional richer fields when `--json` per-turn token events are parsed (v1+): `wa
 
 ## Why this metric
 
-`/codex` spends ChatGPT-subscription quota (no dollar price). This log is how a running weekly token total is reconstructed (the subscription has a rolling-5h + weekly-cap model, and a known cost-regression, openai/codex#28879). It also records whether a write run's diff was actually reviewed-and-applied vs discarded — the review-gate audit trail.
+`/codex` spends ChatGPT-subscription quota (no dollar price). This log is how a running weekly token total is reconstructed (the subscription has a rolling-5h + weekly-cap model, and a known cost-regression, openai/codex#28879). It also records whether a write run's diff was actually reviewed-and-applied vs discarded — the review-gate audit trail. A run blocked by the subscription quota is flagged `usage_limited:true` (reactive — Codex exposes no queryable quota surface to preflight; the cap is detected from the `You've hit your usage limit … try again at <time>` runtime error).
 
 ## Query patterns
 
@@ -47,6 +48,11 @@ jq -s 'group_by(.mode) | map({mode: .[0].mode, runs: length})' .claude/logs/code
 ### Non-zero exits (failed runs)
 ```bash
 jq -c 'select(.exit_code != 0)' .claude/logs/codex-worker.jsonl
+```
+
+### Runs blocked by the subscription usage limit
+```bash
+jq -c 'select(.usage_limited == true)' .claude/logs/codex-worker.jsonl
 ```
 
 ### Reconstruct token usage (once v1 populates .tokens)

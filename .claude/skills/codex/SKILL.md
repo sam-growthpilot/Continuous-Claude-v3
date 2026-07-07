@@ -25,7 +25,7 @@ Hands an arbitrary request to OpenAI Codex on Dave's **ChatGPT subscription** (n
 | **resume** | `/codex --resume <followup>` | inherits | yes | inherits | same worktree/thread |
 | **review** (alias) | `/codex --review [base]` | read-only | no | xhigh | delegates to `codex-adversary` unchanged |
 
-**Flags:** `--model gpt-5.5|gpt-5.4|gpt-5.4-mini` (default `gpt-5.5`; any `-codex` id is rejected — it 400s on the subscription). `--effort low|medium|high|xhigh`. `--yes` (skip the interactive confirm for orchestrator/Ralph use — still sandboxed, still logged, still produces a reviewable patch). `--complex` (multi_agent — **v2, not yet available**).
+**Flags:** `--model gpt-5.5|gpt-5.4|gpt-5.4-mini` (default `gpt-5.5`; any `-codex` id is rejected — it 400s on the subscription). `--effort low|medium|high|xhigh`. `--yes` (skip the interactive confirm for orchestrator/Ralph use — still sandboxed, still logged, still produces a reviewable patch). `--complex` (multi_agent fan-out for genuinely BROAD ask/implement tasks — opt-in; requires `~/.codex/agents/explorer.toml` pinned to gpt-5.5 or it refuses; ~1,940 tok/call + fan-out latency; NOT re-applied on resume).
 
 ## Execution
 
@@ -49,6 +49,9 @@ Task(
 
   ## Autonomy
   confirm            # or "yes" if the user passed --yes
+
+  ## Complex
+  false              # or "true" if the user passed --complex (multi_agent fan-out; ask/implement only)
 
   ## Scope           # resume only — the Codex session id (UUID) from the implement run's summary
   <SESSION_ID>       # leave EMPTY to fall back to --last (do NOT pass the literal "last")
@@ -89,6 +92,8 @@ Task(
 - **Review-gate** — never auto-commits/auto-merges; produces a patch you approve first.
 - **Model allowlist** — `gpt-5.5/gpt-5.4/gpt-5.4-mini` only.
 - **No hook can see inside Codex's sandbox** — enforcement is `--sandbox` + this preflight, not any Claude Code hook.
+- **Usage-limit aware** — if the ChatGPT subscription quota is exhausted, `/codex` returns a clean "usage limit hit; resets ~<time>" message (never a fabricated result) and logs `usage_limited:true`. Detection is reactive — the subscription exposes no queryable quota surface to preflight.
+- **`--complex` is gated** — multi_agent fan-out (ask/implement) runs only after asserting `~/.codex/agents/explorer.toml` pins gpt-5.5 (prevents the gpt-4.1 role-fallback 400); opt-in, never default, with a standing Windows re-probe caveat (openai/codex#19399).
 
 ## Examples
 
@@ -100,6 +105,12 @@ User: /codex --implement add a --limit flag to scripts/report-registry/query.mjs
 → implement mode. Shows the codex exec command + worktree path, waits for your OK,
   runs Codex with workspace-write in an isolated worktree, shows you the diff,
   applies it to your working tree on approval. Logs a telemetry row.
+
+User: /codex --implement --complex refactor the report-registry pipeline end-to-end
+→ implement + multi_agent fan-out (explorer/worker sub-agents on gpt-5.5). Asserts
+  ~/.codex/agents/explorer.toml is pinned to gpt-5.5 first, prints the #19399 re-probe
+  caveat, then the usual worktree + diff-review flow. For genuinely BROAD tasks; costs
+  extra tokens + latency. Refuses if the explorer pin is missing.
 
 User: /codex --resume also add a test for the new flag
 → continues the same Codex thread + worktree.

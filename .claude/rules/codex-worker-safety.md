@@ -38,7 +38,7 @@ Hard-reject any `--model` not in `{gpt-5.5, gpt-5.4, gpt-5.4-mini}`, citing the 
 
 ## multi_agent
 
-`--disable multi_agent` on every call by default. Global config has `[features] multi_agent = true`; leaving it on makes a complex task spawn built-in explorer/worker sub-agents that fall back to `gpt-4.1` (400 on subscription) and adds ~1,940 tokens/call even unused. The `--complex` opt-in (v2) will require `~/.codex/agents/explorer.toml` to pin `model = "gpt-5.5"` first, plus a fresh Windows re-verification probe (openai/codex#19399), plus its own confirm.
+`--disable multi_agent` on every call by default. Global config has `[features] multi_agent = true`; leaving it on makes a complex task spawn built-in explorer/worker sub-agents that fall back to `gpt-4.1` (400 on subscription) and adds ~1,940 tokens/call even unused. The **`--complex` opt-in** (ask/implement; NOT resume) swaps in `--enable multi_agent`, but the agent HARD-REQUIRES `~/.codex/agents/explorer.toml` to pin `model = "gpt-5.5"` FIRST — else it refuses (the pin mitigates the gpt-4.1 role-fallback 400; openai/codex #19399 / #16893). Standing caveat printed every `--complex` run: the pin was verified ONCE on Windows 2026-07-07 — **re-probe before trusting `--complex` unattended** (#19399: subagent TOML can be ignored on Windows). Confirm-gated like any write (implement already confirms); on read-only ask the explicit flag + printed caveat is the acknowledgment.
 
 ## Startup profile — `--ignore-user-config` (latency, v1)
 
@@ -62,7 +62,9 @@ Installed CLI is `0.131.0`; upstream is newer (`0.142.x`). Official docs describ
 
 ## Cost / quota (subscription, not dollars)
 
-There is no per-call dollar price — the cost is ChatGPT-subscription quota (two clocks: a rolling 5-hour message window + a separate weekly cap; the 5h meter can look healthy while the weekly cap is exhausted). A multi-file `gpt-5.5` implement run can be a meaningful fraction of a Plus-tier weekly allowance, and a known unresolved regression (openai/codex#28879) inflates per-token cost for some accounts. The telemetry log records per-run usage so a weekly total can be reconstructed; a quota-preflight warning is a v2 item.
+There is no per-call dollar price — the cost is ChatGPT-subscription quota (two clocks: a rolling 5-hour message window + a separate weekly cap; the 5h meter can look healthy while the weekly cap is exhausted). A multi-file `gpt-5.5` implement run can be a meaningful fraction of a Plus-tier weekly allowance, and a known unresolved regression (openai/codex#28879) inflates per-token cost for some accounts. The telemetry log records per-run usage so a weekly total can be reconstructed.
+
+**Usage-limit handling (v2, reactive).** A quota **preflight** is impossible — `codex doctor --json` exposes no usage/quota surface (only `checks`/`codexVersion`/`generatedAt`/`overallStatus`/`schemaVersion`; verified 2026-07-07). Detection is **reactive**: the worker greps every run's log for `You've hit your usage limit … try again at <time>` (present in all modes — the `-o` clean file is EMPTY on a cap hit, and the run exits non-zero), returns a clean "usage limit hit; resets ~<time>" message instead of a fabricated result, and records `usage_limited:true` + the non-zero exit in telemetry. Implement/resume additionally skip verify/apply (no changes exist) and remove the worktree.
 
 ## Hooks-collision question — RESOLVED (spike, 2026-07-07)
 

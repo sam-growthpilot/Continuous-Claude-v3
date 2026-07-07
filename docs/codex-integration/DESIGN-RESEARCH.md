@@ -241,16 +241,18 @@ Every invocation additionally carries `--skip-git-repo-check` (worktrees are rea
 ### 5.3 Config/plumbing
 
 - **Guaranteeing subscription auth at call time:** the agent's spawn step explicitly unsets `OPENAI_API_KEY` and `CODEX_API_KEY` from the child process environment before invoking `codex exec` (defensive — docs themselves warn *"Do not set `OPENAI_API_KEY` or `CODEX_API_KEY` as a job-level environment variable in workflows that check out or run repository-controlled code"*), and asserts `codex login status` reports `Logged in using ChatGPT` as a preflight check, failing loudly (not silently falling back to an API key path) if it doesn't.
-- **Isolated worktree scope (default for `implement`):**
+- **Isolated worktree scope (default for `implement`):** **[UPDATED — v0 dogfood moved worktrees OUT of the repo; see §10/§11. The in-repo path in the original design was superseded.]** Worktrees are a **sibling of the repo** (`../.codex-worktrees/<repo>-<ts>-<pid>`), never inside `$PROJECT`:
   ```bash
-  WORKTREE_DIR="C:/Users/david.hayes/continuous-claude/.codex-worktrees/$(date +%Y%m%d-%H%M%S)"
-  git worktree add "$WORKTREE_DIR" -b "codex/$(date +%Y%m%d-%H%M%S)"
-  # invoke codex exec with -C "$WORKTREE_DIR"
-  # after: git -C "$WORKTREE_DIR" status --porcelain / git -C "$WORKTREE_DIR" diff
-  # present diff to user; on approval, cherry-pick/merge; then:
-  git worktree remove "$WORKTREE_DIR"
+  TS="$(date +%Y%m%d-%H%M%S)-$$"                        # -$$ (pid) avoids same-second collisions
+  WT_BASE="$(dirname "$PROJECT")/.codex-worktrees"      # SIBLING of the repo, NOT under it
+  WORKTREE="$WT_BASE/$(basename "$PROJECT")-$TS"
+  git -C "$PROJECT" worktree prune                       # GC metadata for manually-removed worktrees
+  git -C "$PROJECT" worktree add "$WORKTREE" -b "codex/$TS"
+  # invoke codex exec with -C "$WORKTREE"
+  # after: git -C "$WORKTREE" add -A && git -C "$WORKTREE" diff --cached HEAD   # present the patch to the user
+  # on approval: git -C "$PROJECT" apply --3way <patch>; always: git -C "$PROJECT" worktree remove --force "$WORKTREE"
   ```
-  `.codex-worktrees/` added to `.gitignore`. This sidesteps the `file_claims` DB entirely for v0/v1 (no concurrent-edit collision possible against an isolated worktree) — see §8 for the `--in-place` alternative and its tradeoffs.
+  Being outside the repo, worktrees need **no** `.gitignore` entry — the `.codex-worktrees/` line is kept only as a harmless backstop against an accidental in-repo path — and they cannot pollute Claude Code's skill scan (one of the two in-repo failures §10 fixed). This sidesteps the `file_claims` DB entirely (no concurrent-edit collision possible against an isolated worktree). `--in-place` (§8) was **dropped in v2** (Dave-approved) — worktree isolation is the retained safety win.
 - **`multi_agent` handling:** default `--disable multi_agent`. The `--complex` opt-in requires `~/.codex/agents/explorer.toml` to already have `model = "gpt-5.5"` pinned (the documented 2026-06-01 mitigation) — the skill checks this file exists and contains the pin before honoring `--complex`, and prints a standing caveat every time it's used: *"Windows subagent TOML pinning is unverified on this host per `openai/codex#19399` — re-verify with a probe before trusting `--complex` unattended."*
 - **Profile overlay (v1+):** ~~`--profile-v2 worker` layering `$CODEX_HOME/worker.config.toml` to disable the 16 noisy MCP-server connection attempts specifically for worker invocations, without touching Dave's interactive config.~~ **REFUTED in v1 (2026-07-07) — see §11.** `--profile-v2` layering deep-merges, so an empty `[mcp_servers]` overlay (and `-c mcp_servers={}`) does NOT remove the base MCP servers. The confirmed replacement is **`--ignore-user-config`** (skips the whole base config where the MCP servers live; ~47s→18s; no machine-local file).
 
@@ -326,7 +328,7 @@ Companion `.claude/logs/codex-worker.README.md` documents the schema (mirrors th
 - `.claude/skills/codex/SKILL.md` (`/codex <request>`, `--implement` flag switches mode; defaults to `ask`)
 - `.claude/rules/codex-worker-safety.md`
 - `.claude/logs/codex-worker.jsonl` + `.claude/logs/codex-worker.README.md`
-- `.codex-worktrees/` added to `.gitignore`
+- `.codex-worktrees/` added to `.gitignore` (v0; worktrees were later moved OUTSIDE the repo per §10, so this entry is now a vestigial backstop — see §5.3)
 - Registration in the relevant `skill-rules.json` (slash-command only, no keywords)
 
 **Acceptance criteria:**
