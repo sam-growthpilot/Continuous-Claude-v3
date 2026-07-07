@@ -91,10 +91,11 @@ if [ "$COMPLEX" = "true" ] && [ "${MODE:-ask}" != "resume" ]; then
   fi
   MULTI_AGENT_FLAG="--enable multi_agent"
   echo "NOTE (--complex): multi_agent fan-out ENABLED; explorer pinned to gpt-5.5. Verified ONCE on Windows 2026-07-07 — RE-PROBE before unattended use (openai/codex#19399: subagent TOML can be ignored on Windows). Extra ~1,940 tok/call + fan-out latency."
-  # PROBE-PENDING (Step 0): --ignore-user-config skips config.toml, but explorer.toml lives in
-  # ~/.codex/agents/. If the live probe shows explorer.toml is NOT honored under --ignore-user-config
-  # (explorer 400s on gpt-4.1), drop it for --complex so the agents dir is read:
-  #   CFG_FLAG=""
+  # VERIFIED 2026-07-07 (live probe): --ignore-user-config skips config.toml, but explorer.toml
+  # lives in ~/.codex/agents/ and IS still honored. A `--enable multi_agent --ignore-user-config`
+  # probe spawned an explorer that ran on gpt-5 (the pinned family), with ZERO gpt-4.1 400s — so
+  # we KEEP --ignore-user-config (the fast path) for --complex. (If the pin/CLI ever changes and an
+  # explorer 400s on gpt-4.1, drop it for --complex — set CFG_FLAG="" — so ~/.codex/agents/ is read.)
 fi
 # telemetry truth: reflect what ACTUALLY ran (resume forces --disable regardless of $COMPLEX).
 MULTI_AGENT_ON=false; [ "$MULTI_AGENT_FLAG" = "--enable multi_agent" ] && MULTI_AGENT_ON=true
@@ -102,11 +103,19 @@ MULTI_AGENT_ON=false; [ "$MULTI_AGENT_FLAG" = "--enable multi_agent" ] && MULTI_
 
 Every `codex exec` below is wrapped in `env -u OPENAI_API_KEY -u CODEX_API_KEY` to guarantee subscription auth.
 
+**Run Step 2 and your chosen Step 3 mode block in the SAME shell (one Bash invocation)** so the resolved `$MULTI_AGENT_FLAG`/`$CFG_FLAG`/`$COMPLEX`/`$MULTI_AGENT_ON` carry into the `codex exec`. `--complex` fan-out only actually happens when they do. Each Step 3 block ALSO re-defaults the two flags to safe non-complex values if unset — so a split shell degrades safely (it never silently drops `--disable multi_agent`), but a split shell will NOT fan out even with `--complex`.
+
 ## Step 3a: Mode = `ask` (read-only research / Q&A)
 
 No confirmation needed (read-only, matches the reviewer posture). Codex reads the repo itself — do NOT pre-paste large context.
 
 ```bash
+# defensive re-default (cross-model finding): $MULTI_AGENT_FLAG/$CFG_FLAG come from Step 2; if it
+# ran in a SEPARATE shell they'd be unset here and the codex exec below would silently DROP
+# --disable multi_agent (gpt-4.1 crash risk) + --ignore-user-config (latency). Re-default to the
+# SAFE non-complex values when unset. (Run Step 2 + this block in ONE shell for --complex to fan out.)
+[ -n "${MULTI_AGENT_FLAG:-}" ] || MULTI_AGENT_FLAG="--disable multi_agent"
+[ -n "${CFG_FLAG+x}" ] || CFG_FLAG="--ignore-user-config"     # +x preserves a deliberate empty (probe fallback)
 PROMPT_FILE="$(mktemp -t codex-ask-XXXXXX.txt)"
 printf '%s' "$REQUEST" > "$PROMPT_FILE"
 FINAL="$CACHE/codex-final.txt"; LOG="$CACHE/latest-output.md"
@@ -142,6 +151,12 @@ fi
 **Confirm-first unless Autonomy=`yes`.** Before invoking, show the user: the exact `codex exec` command line, the target worktree path, model+effort, and get explicit approval (skip the pause only if `yes`). This is the approval gate (there is no Codex-side one).
 
 ```bash
+# defensive re-default (cross-model finding): $MULTI_AGENT_FLAG/$CFG_FLAG come from Step 2; if it
+# ran in a SEPARATE shell they'd be unset here and the codex exec below would silently DROP
+# --disable multi_agent (gpt-4.1 crash risk) + --ignore-user-config. Re-default to SAFE values when unset.
+[ -n "${MULTI_AGENT_FLAG:-}" ] || MULTI_AGENT_FLAG="--disable multi_agent"
+[ -n "${CFG_FLAG+x}" ] || CFG_FLAG="--ignore-user-config"     # +x preserves a deliberate empty (probe fallback)
+
 # 1) git-clean note (worktree branches from HEAD, NOT the working tree's uncommitted changes)
 # List uncommitted paths, robust to spaces + renames. (`awk '{print $2}' | paste -sd', '`
 # is WRONG: awk splits spaced paths, and `paste -sd', '` cycles the delimiter's CHARACTERS
@@ -165,28 +180,28 @@ mkdir -p "$WT_BASE"
 WORKTREE="$WT_BASE/$(basename "$PROJECT")-$TS"
 BRANCH="codex/$TS"
 
-# opportunistic GC (v2): reclaim THIS repo's genuinely-ABANDONED, CLEAN worktree dirs (~190MB
-# each) before creating a new one. Idempotent. SAFETY: it must never reclaim a worktree that
-# still holds UNREVIEWED work — `implement` STAGES (git add -A) but never commits, so a
-# dormant/awaiting-resume worktree is DIRTY; we skip any dirty worktree regardless of age (its
-# staged diff is unreviewed and only recoverable via git fsck). The age threshold ALONE is NOT a
-# safety guarantee (a resume worktree can sit for days past a WEEKLY quota cap — see usage-limit
-# handling). `git worktree remove` clears BOTH the dir + metadata for a registered worktree (the
-# normal case). A rare UNREGISTERED orphan is left for the manual scripts/codex/gc-worktrees.sh
-# (invoked as `bash …`, so its recursive-delete fallback is guard-invisible) — we never force-
-# delete it inline (the destructive-guard denies a recursive delete in this subagent context).
-# Skip-dirty + fixture-verified 2026-07-07.
+# opportunistic GC (v2): reclaim THIS repo's genuinely-ABANDONED, CONFIRMED-CLEAN worktree dirs
+# (~190MB each) before creating a new one. Idempotent. SAFETY: never reclaim a worktree holding
+# UNREVIEWED work — `implement` STAGES (git add -A) but never commits, so a dormant/awaiting-resume
+# worktree is DIRTY; we skip it (and any worktree whose `git status` even FAILS) regardless of age
+# (staged diffs are unreviewed, only recoverable via git fsck). Age ALONE is NOT a safety guarantee
+# (a resume worktree can sit for days past a WEEKLY quota cap — see usage-limit handling).
+# `git worktree remove` clears BOTH dir + metadata for a registered worktree (the normal case).
+# A rare UNREGISTERED orphan is REPORTED, never deleted — there is NO `rm -rf` here (that would
+# route a recursive delete around the destructive-guard); the manual scripts/codex/gc-worktrees.sh
+# follows the same no-rm rule. Skip-dirty (exit-code checked) + fixture-verified 2026-07-07.
 GC_DAYS="${CODEX_WT_GC_DAYS:-7}"                      # conservative; a resume worktree may sit for days
 git -C "$PROJECT" worktree prune                     # clear metadata for manually-deleted worktrees
 while IFS= read -r _old; do
   [ -z "$_old" ] && continue
-  if [ -n "$(git -C "$_old" status --porcelain 2>/dev/null)" ]; then
-    echo "GC: KEPT (unreviewed changes present) $_old"; continue    # never reclaim unreviewed work
+  _st="$(git -C "$_old" status --porcelain 2>/dev/null)"; _rc=$?
+  if [ "$_rc" -ne 0 ] || [ -n "$_st" ]; then                        # only reclaim CONFIRMED-clean
+    echo "GC: KEPT (dirty or unreadable — status rc=$_rc) $_old"; continue
   fi
   if git -C "$PROJECT" worktree remove --force "$_old" 2>/dev/null; then
     echo "GC: removed stale CLEAN worktree $_old"
   else
-    echo "GC: left orphan (unregistered) — clean via scripts/codex/gc-worktrees.sh: $_old"
+    echo "GC: ORPHAN (unregistered — inspect + remove manually) $_old"
   fi
 done < <(find "$WT_BASE" -mindepth 1 -maxdepth 1 -type d -name "$(basename "$PROJECT")-*" -mtime +"$GC_DAYS" 2>/dev/null)
 git -C "$PROJECT" worktree prune                     # clear metadata orphaned by the removals above
