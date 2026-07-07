@@ -316,7 +316,7 @@ Then repeat the Step 3b verification (add -A → diff → **RUN the changed arti
 
 The ChatGPT subscription exposes **no queryable quota surface** — `codex doctor --json` reports only `checks`/`codexVersion`/`generatedAt`/`overallStatus`/`schemaVersion`, no usage counters (verified 2026-07-07). A **preflight** cap-check is therefore impossible; detection is **reactive**. When the rolling-5h or weekly cap is exhausted, `codex exec` prints to the **log** (never the `-o` `$FINAL`, which stays EMPTY):
 
-```
+```text
 ERROR: You've hit your usage limit. To get more access now, send a request to your admin or try again at 1:08 PM.
 ```
 

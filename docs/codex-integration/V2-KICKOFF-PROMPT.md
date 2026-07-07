@@ -23,6 +23,6 @@ We're continuing the CCv3 Codex integration. `/codex` v0 + v1 are shipped and me
 - **Item 3** — worktree GC automation (v1 deferral).
 - **Item 4** — doc sweep (DESIGN-RESEARCH §5.3/§7 stale in-repo-gitignore refs).
 
-**Hard constraints — do NOT regress** (from v0/v1): model allowlist gpt-5.5/5.4/5.4-mini; subscription-only (`env -u`); worktrees OUTSIDE the repo; `resume` takes no `--sandbox`/`-C` and prefers the captured UUID over `--last`; Windows `workspace-write` blocks subprocesses so YOU run changed code; stdin-from-file + `-o` + `--ignore-user-config` on every worker call.
+**Hard constraints — do NOT regress** (from v0/v1): model allowlist gpt-5.5/5.4/5.4-mini; subscription-only (`env -u`); worktrees OUTSIDE the repo; `resume` takes no `--sandbox`/`-C` and prefers the captured UUID over `--last`; Windows `workspace-write` blocks subprocesses so YOU run changed code; stdin-from-file + `-o` + external timeout; **`--ignore-user-config` is `ask`-ONLY** (v2 correction: it silently breaks Windows workspace-write, so implement/resume keep the config path — see DESIGN-RESEARCH §12).
 
 **Process:** `.md`/`.toml`/`.sh` changes (plan-to-ralph won't block). Dogfood every change through the live `codex-worker` agent + a Claude wiring audit + a cross-model `codex-adversary` pass on the diff (reuse the v1 dogfood workflow pattern); verify shell fixes on synthetic inputs first. Re-sync active, verify with real runs before claiming done. Ultracode expected — use workflows for research/verify.

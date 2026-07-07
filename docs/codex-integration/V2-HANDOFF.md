@@ -22,7 +22,7 @@
 2. Worktrees OUTSIDE the repo (sibling `../.codex-worktrees/<repo>-<ts>-<pid>`). Review-gate; never auto-commit/merge.
 3. `resume` takes NO `--sandbox`/`-C`; `cd` into the worktree. Prefer captured `thread_id` (UUID) over `--last`; a non-UUID (incl. literal "last") to `resume` silently starts a NEW disconnected session.
 4. Windows `workspace-write` blocks subprocess launches → the orchestrator RUNS changed code out-of-sandbox (not just `--check`).
-5. Stdin-from-file, `-o` clean-capture, external timeout, `--ignore-user-config` on every worker call (v1 latency fix; ~47s→18s).
+5. Stdin-from-file, `-o` clean-capture, external timeout. **`--ignore-user-config` is `ask`-ONLY** (v2 correction — it silently breaks workspace-write file creation on Windows; `config.toml` carries the sandbox writable-root/approval policy, so implement/resume DROP it and take the slower cold-start. See DESIGN-RESEARCH §12).
 
 ## Step 0 — BEFORE building (do these first)
 
