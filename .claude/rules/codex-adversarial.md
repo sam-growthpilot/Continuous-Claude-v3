@@ -5,6 +5,8 @@ OpenAI Codex (default `gpt-5.5 @ xhigh`; override via `CODEX_ADVERSARY_MODEL` en
 - `codex-adversary` agent (used by `/review` and `/premortem`)
 - `plan-exit-premortem-prompt` hook (auto-offers `/premortem` after every approved plan)
 
+**This rule governs read-only REVIEW only.** For write-capable task *execution* via Codex (`/codex` — ask/implement/resume, `workspace-write` in an isolated worktree), see the sibling rule `.claude/rules/codex-worker-safety.md` and the `codex-worker` agent. `/codex --review` delegates back to the `codex-adversary` agent covered here.
+
 ## When Codex Review Fires (default behavior)
 
 | Trigger | Codex involvement |
