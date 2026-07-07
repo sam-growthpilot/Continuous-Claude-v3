@@ -1,7 +1,7 @@
 ---
 name: pathfinder
 description: External repository research and analysis
-model: opus
+model: sonnet
 tools: [Read, Bash, Grep, Glob]
 ---
 

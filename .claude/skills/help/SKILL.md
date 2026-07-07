@@ -113,14 +113,14 @@ Spawn via Task tool with subagent_type.
 | Agent | Purpose | Model |
 |-------|---------|-------|
 | arbiter | Test execution, validation | sonnet |
-| critic | Code review | sonnet |
+| critic | Code review | opus |
 | judge | Refactoring review | sonnet |
 
 ### Investigation
 | Agent | Purpose | Model |
 |-------|---------|-------|
-| sleuth | Bug investigation, root cause | sonnet |
-| debug-agent | Issue investigation with logs | sonnet |
+| sleuth | Bug investigation, root cause | opus |
+| debug-agent | Issue investigation with logs | opus |
 | profiler | Performance, race conditions | sonnet |
 
 ### Documentation & Handoff

@@ -1,7 +1,7 @@
 ---
 name: kraken
 description: Implementation and refactoring agent using TDD workflow
-model: opus
+model: sonnet
 tools: [Read, Edit, Write, Bash, Grep, Glob]
 ---
 

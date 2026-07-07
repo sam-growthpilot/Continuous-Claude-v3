@@ -1,7 +1,7 @@
 ---
 name: critic
 description: Feature and implementation code review
-model: sonnet
+model: opus
 tools: [Read, Grep, Glob]
 ---
 

@@ -1,7 +1,7 @@
 ---
 name: plan-reviewer
 description: Reviews feature plans (from architect) and change plans (from phoenix)
-model: sonnet
+model: opus
 tools: [Read, Grep, Glob]
 ---
 

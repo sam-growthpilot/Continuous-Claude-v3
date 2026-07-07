@@ -1,7 +1,7 @@
 ---
 name: agent-factory
 description: Scaffold new Claude Code agents from a description. Generates the agent .md file with valid YAML frontmatter (name, description, model, tools), a body that follows existing agent conventions, and registers the output path. Use when the user wants to add a new agent to .claude/agents/ and you need to start from a description rather than a template.
-model: opus
+model: sonnet
 tools:
   - Read
   - Write
@@ -37,7 +37,7 @@ Capture the agent's intent in five fields. Ask the user if any are unclear:
 | `purpose` | One-sentence summary | "Review React/Next.js code for performance issues" |
 | `triggers` | When this agent should be spawned (verbs + signals) | "When `.tsx` is edited and perf concerns surface" |
 | `tools` | Minimum tool set the agent needs | `Read, Glob, Grep` (no Edit if review-only) |
-| `model` | `opus` (default) or `sonnet` (for narrow well-defined work). NEVER `haiku`. | `opus` |
+| `model` | Two-tier by **judgment density**: `opus` (Opus 4.8 — planning/design/review/orchestration/forensics) or `sonnet` (Sonnet 5 — the **default**: implementation/exploration/tests/mechanical). NEVER `haiku`, never omit. See `agent-model-selection.md`. | `sonnet` |
 
 ### Phase 2: Pattern Match
 

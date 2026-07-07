@@ -1,7 +1,7 @@
 ---
 name: atlas
 description: End-to-end and acceptance test execution
-model: opus
+model: sonnet
 tools: [Bash, Read, Write, Glob, Grep]
 ---
 

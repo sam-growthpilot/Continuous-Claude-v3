@@ -1,7 +1,7 @@
 ---
 name: profiler
 description: Performance profiling, race conditions, memory issues
-model: opus
+model: sonnet
 tools: [Read, Bash, Grep, Glob]
 ---
 

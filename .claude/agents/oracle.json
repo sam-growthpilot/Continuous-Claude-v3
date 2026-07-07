@@ -7,7 +7,7 @@
     "Bash",
     "WebSearch"
   ],
-  "model": "opus",
+  "model": "sonnet",
   "permissions": "skip",
   "blocked_patterns": [],
   "inherit_blocks": true
