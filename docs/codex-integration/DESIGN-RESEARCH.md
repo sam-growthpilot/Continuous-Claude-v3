@@ -241,16 +241,18 @@ Every invocation additionally carries `--skip-git-repo-check` (worktrees are rea
 ### 5.3 Config/plumbing
 
 - **Guaranteeing subscription auth at call time:** the agent's spawn step explicitly unsets `OPENAI_API_KEY` and `CODEX_API_KEY` from the child process environment before invoking `codex exec` (defensive — docs themselves warn *"Do not set `OPENAI_API_KEY` or `CODEX_API_KEY` as a job-level environment variable in workflows that check out or run repository-controlled code"*), and asserts `codex login status` reports `Logged in using ChatGPT` as a preflight check, failing loudly (not silently falling back to an API key path) if it doesn't.
-- **Isolated worktree scope (default for `implement`):**
+- **Isolated worktree scope (default for `implement`):** **[UPDATED — v0 dogfood moved worktrees OUT of the repo; see §10/§11. The in-repo path in the original design was superseded.]** Worktrees are a **sibling of the repo** (`../.codex-worktrees/<repo>-<ts>-<pid>`), never inside `$PROJECT`:
   ```bash
-  WORKTREE_DIR="C:/Users/david.hayes/continuous-claude/.codex-worktrees/$(date +%Y%m%d-%H%M%S)"
-  git worktree add "$WORKTREE_DIR" -b "codex/$(date +%Y%m%d-%H%M%S)"
-  # invoke codex exec with -C "$WORKTREE_DIR"
-  # after: git -C "$WORKTREE_DIR" status --porcelain / git -C "$WORKTREE_DIR" diff
-  # present diff to user; on approval, cherry-pick/merge; then:
-  git worktree remove "$WORKTREE_DIR"
+  TS="$(date +%Y%m%d-%H%M%S)-$$"                        # -$$ (pid) avoids same-second collisions
+  WT_BASE="$(dirname "$PROJECT")/.codex-worktrees"      # SIBLING of the repo, NOT under it
+  WORKTREE="$WT_BASE/$(basename "$PROJECT")-$TS"
+  git -C "$PROJECT" worktree prune                       # GC metadata for manually-removed worktrees
+  git -C "$PROJECT" worktree add "$WORKTREE" -b "codex/$TS"
+  # invoke codex exec with -C "$WORKTREE"
+  # after: git -C "$WORKTREE" add -A && git -C "$WORKTREE" diff --cached HEAD   # present the patch to the user
+  # on approval: git -C "$PROJECT" apply --3way <patch>; always: git -C "$PROJECT" worktree remove --force "$WORKTREE"
   ```
-  `.codex-worktrees/` added to `.gitignore`. This sidesteps the `file_claims` DB entirely for v0/v1 (no concurrent-edit collision possible against an isolated worktree) — see §8 for the `--in-place` alternative and its tradeoffs.
+  Being outside the repo, worktrees need **no** `.gitignore` entry — the `.codex-worktrees/` line is kept only as a harmless backstop against an accidental in-repo path — and they cannot pollute Claude Code's skill scan (one of the two in-repo failures §10 fixed). This sidesteps the `file_claims` DB entirely (no concurrent-edit collision possible against an isolated worktree). `--in-place` (§8) was **dropped in v2** (Dave-approved) — worktree isolation is the retained safety win.
 - **`multi_agent` handling:** default `--disable multi_agent`. The `--complex` opt-in requires `~/.codex/agents/explorer.toml` to already have `model = "gpt-5.5"` pinned (the documented 2026-06-01 mitigation) — the skill checks this file exists and contains the pin before honoring `--complex`, and prints a standing caveat every time it's used: *"Windows subagent TOML pinning is unverified on this host per `openai/codex#19399` — re-verify with a probe before trusting `--complex` unattended."*
 - **Profile overlay (v1+):** ~~`--profile-v2 worker` layering `$CODEX_HOME/worker.config.toml` to disable the 16 noisy MCP-server connection attempts specifically for worker invocations, without touching Dave's interactive config.~~ **REFUTED in v1 (2026-07-07) — see §11.** `--profile-v2` layering deep-merges, so an empty `[mcp_servers]` overlay (and `-c mcp_servers={}`) does NOT remove the base MCP servers. The confirmed replacement is **`--ignore-user-config`** (skips the whole base config where the MCP servers live; ~47s→18s; no machine-local file).
 
@@ -326,7 +328,7 @@ Companion `.claude/logs/codex-worker.README.md` documents the schema (mirrors th
 - `.claude/skills/codex/SKILL.md` (`/codex <request>`, `--implement` flag switches mode; defaults to `ask`)
 - `.claude/rules/codex-worker-safety.md`
 - `.claude/logs/codex-worker.jsonl` + `.claude/logs/codex-worker.README.md`
-- `.codex-worktrees/` added to `.gitignore`
+- `.codex-worktrees/` added to `.gitignore` (v0; worktrees were later moved OUTSIDE the repo per §10, so this entry is now a vestigial backstop — see §5.3)
 - Registration in the relevant `skill-rules.json` (slash-command only, no keywords)
 
 **Acceptance criteria:**
@@ -351,7 +353,9 @@ Companion `.claude/logs/codex-worker.README.md` documents the schema (mirrors th
 
 ### v2
 
-**Artifacts to create/edit:**
+> **RECON DONE 2026-07-07 — scope narrowed. See `V2-HANDOFF.md` (the authoritative build brief) + `V2-KICKOFF-PROMPT.md`.** The original list below is superseded by the approved **lean scope**: (1) `--complex` — **probe-verified viable** (explorer.toml `gpt-5.5` pin honored on Windows, no gpt-4.1 trap; #19399 does not reproduce); (2) reactive usage-limit handling — **quota preflight REFUTED** (`codex doctor --json` has no quota/usage surface); (3) worktree GC automation; (4) doc sweep (this §7 + §5.3 in-repo-gitignore staleness IS that sweep). **OUT (Dave-approved):** `--in-place` (worktree isolation kept) + the `codex-plugin-cc` writeup (bespoke decided; plugin used for review). Open interaction for the build session: does `--enable multi_agent` honor `explorer.toml` under the worker's default `--ignore-user-config`? (verify after quota reset).
+
+**Artifacts to create/edit (original scope — see the recon banner above for what actually ships):**
 - `--complex` opt-in enabling `multi_agent` for genuinely broad tasks, gated behind the `explorer.toml` pin check + a fresh Windows-specific re-verification probe of `openai/codex#19399`
 - Quota-awareness preflight (`codex doctor --json` parse + weekly-cap warning)
 - `--in-place` mode for trusted, git-clean repos (still confirm-gated) as an alternative to worktree isolation, per the open decision in §8
@@ -360,8 +364,8 @@ Companion `.claude/logs/codex-worker.README.md` documents the schema (mirrors th
 
 **Acceptance criteria:**
 1. A `--complex` run against a genuinely multi-file exploratory task completes without a `gpt-4.1` rejection, with the explorer-pin verification banner shown.
-2. Quota preflight correctly warns before a run that would meaningfully deplete a weekly allowance (tested against a synthetic high-token-count task).
-3. A written recommendation exists on plugin-vs-bespoke, with a clear decision recorded (not left open indefinitely).
+2. ~~Quota preflight correctly warns...~~ **REFUTED** — reframed to reactive usage-limit-error handling (detect + surface reset time + telemetry flag); preflight is impossible (no quota surface).
+3. A written recommendation exists on plugin-vs-bespoke, with a clear decision recorded — **DONE** (bespoke for writes; plugin complements review, already used).
 
 ---
 
@@ -369,7 +373,7 @@ Companion `.claude/logs/codex-worker.README.md` documents the schema (mirrors th
 
 **1. Default `implement` scope: isolated git worktree vs. write-in-place to the live repo.**
 - *Options:* (a) worktree-isolated by default (this doc's recommendation), requiring an explicit merge step; (b) write directly into the shared working tree with only a git-clean-gate + confirm.
-- *Recommendation:* (a). Rationale: strongest cross-source consensus in this entire research pass is "review-gate before merge, never let headless writes land directly" (§4.4); worktree isolation is the only pattern found that structurally prevents collision with the concurrent Claude Code session's own edits and the `file_claims` coordination DB, without needing new DB-awareness code in `codex-worker`. Tradeoff: extra ceremony (worktree create/remove, merge step) for every `implement` call, even trivial ones — v2's `--in-place` opt-in exists specifically to relieve this for trusted, small, git-clean-repo cases.
+- *Recommendation:* (a). Rationale: strongest cross-source consensus in this entire research pass is "review-gate before merge, never let headless writes land directly" (§4.4); worktree isolation is the only pattern found that structurally prevents collision with the concurrent Claude Code session's own edits and the `file_claims` coordination DB, without needing new DB-awareness code in `codex-worker`. Tradeoff: extra ceremony (worktree create/remove, merge step) for every `implement` call, even trivial ones — a v2 `--in-place` opt-in was proposed to relieve this for trusted, small, git-clean-repo cases, but was **dropped in v2** (see the §7 recon banner); worktree isolation is retained as the safety win.
 
 **2. Autonomy: confirm-gate every `implement` call vs. allow a Ralph-style `--yes` full-auto path.**
 - *Options:* (a) always confirm-first, no exceptions; (b) allow an explicit `--yes` flag for orchestrator-driven calls (e.g. from a Ralph loop) that skips the interactive confirm but still logs and still worktree-isolates.
@@ -449,6 +453,26 @@ Conclusion: resume-by-captured-id is concurrency-safe; `--last` is cwd-global "m
 2. The resume contract invited the literal `SESSION_ID="last"`, but `codex exec resume last` **silently starts a NEW disconnected session** (exit 0, wrong thread — Codex verified vs a nonexistent UUID which errors loudly). Added a UUID guard (non-UUID → `--last`) and reworded the Step 1 / skill contract to "leave EMPTY for fallback."
 
 Also hardened: resume now captures its own `RC` (the resume telemetry row's `exit_code` was stale), re-passes `--model` (constraint-6 precision), and the `thread_id` capture uses `grep + jq` (whitespace/field-order robust) instead of `grep + sed`; the telemetry variable seam (`SID`/`REQUEST_SUMMARY`/`DIFFSTAT` vs `SESSION_ID`/`REQUEST`) was reconciled so implement/resume rows actually populate `session_id`. Each shell fix was re-verified on synthetic inputs before wiring.
+
+## 12. v2 Build Findings (2026-07-07)
+
+v2 shipped the approved **lean scope** (4 items) AND — via mandated dogfooding — surfaced and fixed a **latent v1 regression that had silently broken every `implement` write**. Branch `feature/codex-worker-v2`. Built during a ChatGPT-quota-down window (non-Codex items first), then gated on the ~1:08 PM reset for the live/cross-model passes.
+
+**The four items (all verified):**
+- **Item 1 — `--complex` (multi_agent).** Opt-in that swaps `--disable`→`--enable multi_agent` for ask/implement, gated on `~/.codex/agents/explorer.toml` pinning `model = "gpt-5.5"` (regex accepts single- or double-quoted TOML; rejects `gpt-5.5-codex`/commented pins). **Live probe (decisive):** `--enable multi_agent --ignore-user-config` spawned an explorer that ran on **gpt-5**, ZERO gpt-4.1 400s — so `explorer.toml` (in `~/.codex/agents/`, not `config.toml`) IS honored even under `--ignore-user-config`. Mode-scoped to ask/implement (resume never re-fans-out); telemetry `multi_agent` reflects the actual flag (`MULTI_AGENT_ON`), not the raw request.
+- **Item 2 — reactive usage-limit handling.** Preflight is impossible (`codex doctor --json` has no quota surface). All modes grep the log for `You've hit your usage limit … try again at <time>` (the `-o` clean file is EMPTY on a cap hit), short-circuit with a clean message (never a fabricated result), and log `usage_limited:true` + non-zero exit. Parser verified against the **real captured error** (the quota-down window handed us a genuine sample) + synthetic cases.
+- **Item 3 — worktree GC.** Opportunistic reclaim before each implement, of THIS repo's CONFIRMED-CLEAN worktrees older than `$CODEX_WT_GC_DAYS` (default 7d). **Never touches unreviewed work** — implement only stages (never commits) → a dormant/awaiting-resume worktree is dirty → skipped; the skip is exit-code-checked, so a broken/unreadable worktree is kept, not deleted. No `rm -rf` in the auto path (removal only via `git worktree remove`; orphans reported). Fixture-verified across clean/dirty/broken/orphan/recent + `CODEX_WT_GC_FORCE_DIRTY`.
+- **Item 4 — doc sweep.** §5.3/§7/§8 + the safety rule/skill corrected to the out-of-repo worktree reality and the dropped `--in-place`.
+
+**Headline finding — `--ignore-user-config` silently broke every `implement` write (v1 regression).** The v1 latency fix (`--ignore-user-config`, ~47s→18s) was applied to EVERY worker call but only ever verified on a read-only `ask` smoke. The v2 live implement dogfood + an independent A/B proved it makes Codex's **workspace-write sandbox silently reject file writes on Windows** (`config.toml` carries the sandbox writable-root/approval policy): `exit 0`, ZERO diff — a no-op that looks like success. **Fix: `--ignore-user-config` is now `ask`-ONLY**; implement/resume drop it (mode-scoped `CFG_FLAG=""` + re-default fallback) and take the slower cold-start for a working write. Confirming re-dogfood: implement created the file (`1 file changed`, byte-verified), command line confirmed free of the flag.
+
+**Review cascade (four passes, every finding fixed + re-validated):**
+1. **Claude wiring audit** — 8 findings, incl. a **CRITICAL** GC data-loss (the "in-flight = recent" safety claim was false for the dormant awaiting-resume state → skip-dirty), a guard-landmine (`rm -rf` in a comment the destructive-guard matches), `--complex` mode-scope, single-quote regex, `COMPLEX` normalization.
+2. **Cross-model codex-adversary (gpt-5.5 xhigh) on the diff** — 4 findings: a **regression I'd introduced** (parameterizing the invocation flags made a split-shell run silently drop `--disable multi_agent`/`--ignore-user-config` → defensive re-default + same-shell instruction), skip-dirty swallowing git-status's exit code, the script's recursive-delete fallback routing a delete around the guard (dropped entirely), and a low-probability GC race (mitigated by the age filter).
+3. **Item 1 live probe** — explorer spawns on gpt-5, no gpt-4.1.
+4. **Live dogfoods** — ask `--complex` (plumbing: gate + `--enable` + telemetry `multi_agent:true`, no 400) and implement (surfaced the write-bug, then confirmed the fix).
+
+**Deferred to v3 (premortem findings — acceptable-as-designed for the lean scope):** version+hash-keyed `--complex` re-verification (today's failure is a loud 400, not silent); `subagents_spawned`/`subagent_models` telemetry (current `multi_agent` = fan-out ENABLED, not spawned — clarified in the README); a local burn-rate heuristic before expensive runs; fail-loud-on-split-shell `--complex` (currently degrades safely + a same-shell instruction); a keep/resume GC sentinel (committed work already survives as a branch, so low impact).
 
 ## 9. Sources Appendix
 

@@ -25,12 +25,16 @@ Grounding: verified 2026-07-06 against `codex-cli 0.131.0`, `Logged in using Cha
 
 ## Write-mode hard rules (`implement` / `resume`)
 
-1. **Worktree isolation is the default, and worktrees live OUTSIDE the repo.** Writes happen in `$(dirname "$PROJECT")/.codex-worktrees/<repo>-<ts>-<pid>` — a throwaway git worktree branched from HEAD, a SIBLING of the repo, **never inside `$PROJECT`** and never in-place against the live tree. This structurally prevents collision with the concurrent Claude Code session's edits and the `file_claims` DB. **Out-of-repo is mandatory (verified 2026-07-07 dogfood):** an in-repo worktree makes Claude Code re-scan the whole `.claude/skills` tree as ~150 duplicate path-scoped skills (context pollution) and is a ~190MB full checkout. The `-<pid>` suffix prevents same-second name collisions. (`--in-place` is a deferred v2 opt-in, still confirm-gated.)
+1. **Worktree isolation is the default, and worktrees live OUTSIDE the repo.** Writes happen in `$(dirname "$PROJECT")/.codex-worktrees/<repo>-<ts>-<pid>` — a throwaway git worktree branched from HEAD, a SIBLING of the repo, **never inside `$PROJECT`** and never in-place against the live tree. This structurally prevents collision with the concurrent Claude Code session's edits and the `file_claims` DB. **Out-of-repo is mandatory (verified 2026-07-07 dogfood):** an in-repo worktree makes Claude Code re-scan the whole `.claude/skills` tree as ~150 duplicate path-scoped skills (context pollution) and is a ~190MB full checkout. The `-<pid>` suffix prevents same-second name collisions. (An `--in-place` mode was considered and **dropped** in v2 — worktree isolation is the retained safety win.)
 2. **Git-clean note before creating a worktree.** A worktree branches from HEAD, not the working tree's uncommitted changes — if `git status --porcelain` is non-empty, warn the user that Codex won't see those pending edits.
 3. **Independent verification, always.** After the run, the worker itself runs `git add -A && git diff --cached HEAD` in the worktree and shows that patch. Codex's own summary is never the sole evidence of what changed (RULES.md "External Verification").
 4. **Review-gate — never auto-commit/auto-merge.** `implement` produces a patch the human reviews before it's applied to the working tree (`git apply --3way`). This is the strongest cross-source consensus in the research: it defends against prompt-injection via any content Codex reads (commit messages, issue text, fetched web content).
 5. **Writable-root scoping.** `-C` is always the worktree path. `--add-dir` only for genuinely shared scratch space, never the live repo root, in v0/v1.
 6. **Network stays off.** `workspace-write` keeps network access `false` by default. Enabling it requires an explicit flag + confirm (prompt-injection risk via fetched content).
+
+## Worktree GC (v2) — reclaims only CLEAN abandoned worktrees
+
+Before each `implement` run the worker opportunistically GCs stale worktree dirs in `../.codex-worktrees/` (each is a ~190MB checkout): `git worktree prune` + remove THIS repo's `<repo>-*` dirs older than `$CODEX_WT_GC_DAYS` (default **7**). **It skips any worktree with uncommitted changes** — `implement` only STAGES (never commits), so a dormant / awaiting-`resume` worktree holds UNREVIEWED work and is never reclaimed regardless of age (age alone is not a safety guarantee — a resume worktree can sit past a weekly quota cap). Reclaim is CONFIRMED-clean only: `git status --porcelain` must EXIT 0 AND be empty (a broken/unreadable worktree is KEPT, never mistaken for clean). Removal is ONLY via `git worktree remove --force` — there is **no `rm -rf`** anywhere in the auto path (that would route a recursive delete around the destructive-guard); an unregistered orphan is **reported, never auto-deleted**. The manual `scripts/codex/gc-worktrees.sh` follows the same rules (skips dirty/unreadable by default; `CODEX_WT_GC_FORCE_DIRTY=1` reclaims dirty *registered* worktrees; still no `rm -rf`). Race: the clean-check and remove aren't locked, but the age filter (a worktree you're resuming is recent, so never GC-eligible) makes the residual negligible.
 
 ## Model allowlist (enforced before shelling out)
 
@@ -38,11 +42,13 @@ Hard-reject any `--model` not in `{gpt-5.5, gpt-5.4, gpt-5.4-mini}`, citing the 
 
 ## multi_agent
 
-`--disable multi_agent` on every call by default. Global config has `[features] multi_agent = true`; leaving it on makes a complex task spawn built-in explorer/worker sub-agents that fall back to `gpt-4.1` (400 on subscription) and adds ~1,940 tokens/call even unused. The `--complex` opt-in (v2) will require `~/.codex/agents/explorer.toml` to pin `model = "gpt-5.5"` first, plus a fresh Windows re-verification probe (openai/codex#19399), plus its own confirm.
+`--disable multi_agent` on every call by default. Global config has `[features] multi_agent = true`; leaving it on makes a complex task spawn built-in explorer/worker sub-agents that fall back to `gpt-4.1` (400 on subscription) and adds ~1,940 tokens/call even unused. The **`--complex` opt-in** (ask/implement; NOT resume) swaps in `--enable multi_agent`, but the agent HARD-REQUIRES `~/.codex/agents/explorer.toml` to pin `model = "gpt-5.5"` FIRST — else it refuses (the pin mitigates the gpt-4.1 role-fallback 400; openai/codex #19399 / #16893). Standing caveat printed every `--complex` run: the pin was verified ONCE on Windows 2026-07-07 — **re-probe before trusting `--complex` unattended** (#19399: subagent TOML can be ignored on Windows). Confirm-gated like any write (implement already confirms); on read-only ask the explicit flag + printed caveat is the acknowledgment.
 
-## Startup profile — `--ignore-user-config` (latency, v1)
+## Startup profile — `--ignore-user-config` is `ask`-ONLY (latency v1; write-bug v2)
 
-Every worker `codex exec`/`resume` passes **`--ignore-user-config`**. It skips loading Dave's interactive `~/.codex/config.toml` (which defines ~16 MCP servers whose network handshakes dominate cold-start), cutting a read-only smoke **~47s → ~18s** and removing the config-defined MCP connection-failure noise (verified 2026-07-07 v1 benchmark; 2 residual failures remain, sourced from plugins/runtime, not `config.toml`).
+The **`ask`** mode passes **`--ignore-user-config`** to skip loading Dave's interactive `~/.codex/config.toml` (~16 MCP servers whose network handshakes dominate cold-start), cutting a read-only smoke **~47s → ~18s** and removing the config-defined MCP connection-failure noise (verified 2026-07-07 v1 benchmark).
+
+**`implement`/`resume` must NOT pass `--ignore-user-config`** (corrected 2026-07-07). A v2 dogfood + an independent A/B proved it **silently BREAKS workspace-write file creation on Windows**: `config.toml` carries the sandbox writable-root / approval policy, so stripping it makes Codex's sandbox reject the write (`exit 0`, **ZERO diff** — a silent no-op that looks like success). The v1 benchmark only exercised read-only `ask`, so this went unseen. Write modes take the slower cold-start in exchange for actually writing.
 
 - **Auth is NOT affected.** `--ignore-user-config` still reads `CODEX_HOME`/`auth.json` (the flag's own doc guarantee; the benchmark ran rc=0 on the subscription). The model / `model_reasoning_effort` / `multi_agent=false` the worker needs are passed as explicit CLI flags regardless, so nothing worker-relevant is dropped.
 - **Tradeoff to know:** Codex's shell also loses the base config's `shell_environment_policy.set` extras (e.g. `DATABASE_URL`, `CLAUDE_OPC_DIR`). Moot on Windows where `workspace-write` cannot spawn subprocesses anyway; if a specific task needs one, add `-c shell_environment_policy.set.KEY=VALUE` for that call.
@@ -62,7 +68,9 @@ Installed CLI is `0.131.0`; upstream is newer (`0.142.x`). Official docs describ
 
 ## Cost / quota (subscription, not dollars)
 
-There is no per-call dollar price — the cost is ChatGPT-subscription quota (two clocks: a rolling 5-hour message window + a separate weekly cap; the 5h meter can look healthy while the weekly cap is exhausted). A multi-file `gpt-5.5` implement run can be a meaningful fraction of a Plus-tier weekly allowance, and a known unresolved regression (openai/codex#28879) inflates per-token cost for some accounts. The telemetry log records per-run usage so a weekly total can be reconstructed; a quota-preflight warning is a v2 item.
+There is no per-call dollar price — the cost is ChatGPT-subscription quota (two clocks: a rolling 5-hour message window + a separate weekly cap; the 5h meter can look healthy while the weekly cap is exhausted). A multi-file `gpt-5.5` implement run can be a meaningful fraction of a Plus-tier weekly allowance, and a known unresolved regression (openai/codex#28879) inflates per-token cost for some accounts. The telemetry log records per-run usage so a weekly total can be reconstructed.
+
+**Usage-limit handling (v2, reactive).** A quota **preflight** is impossible — `codex doctor --json` exposes no usage/quota surface (only `checks`/`codexVersion`/`generatedAt`/`overallStatus`/`schemaVersion`; verified 2026-07-07). Detection is **reactive**: the worker greps every run's log for `You've hit your usage limit … try again at <time>` (present in all modes — the `-o` clean file is EMPTY on a cap hit, and the run exits non-zero), returns a clean "usage limit hit; resets ~<time>" message instead of a fabricated result, and records `usage_limited:true` + the non-zero exit in telemetry. Implement/resume additionally skip verify/apply (no changes exist) and remove the worktree.
 
 ## Hooks-collision question — RESOLVED (spike, 2026-07-07)
 
@@ -78,4 +86,5 @@ There is no per-call dollar price — the cost is ChatGPT-subscription quota (tw
 | `/codex --review …` (delegates to codex-adversary) | No (read-only) |
 | Applying the worktree patch to the live tree | **Yes** — human reviews the diff first |
 | `git branch -D codex/<ts>` cleanup (interactive) | Yes (destructive-commands rule) |
-| Enabling network / `danger-full-access` / `--complex` | **Yes**, never default |
+| Enabling network / `danger-full-access` | **Yes**, never default |
+| `--complex` (multi_agent; ask/implement) | Never default; confirms on write (implement already does); on read-only ask the explicit flag + printed caveat is the ack |
