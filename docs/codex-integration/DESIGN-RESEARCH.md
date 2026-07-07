@@ -454,6 +454,26 @@ Conclusion: resume-by-captured-id is concurrency-safe; `--last` is cwd-global "m
 
 Also hardened: resume now captures its own `RC` (the resume telemetry row's `exit_code` was stale), re-passes `--model` (constraint-6 precision), and the `thread_id` capture uses `grep + jq` (whitespace/field-order robust) instead of `grep + sed`; the telemetry variable seam (`SID`/`REQUEST_SUMMARY`/`DIFFSTAT` vs `SESSION_ID`/`REQUEST`) was reconciled so implement/resume rows actually populate `session_id`. Each shell fix was re-verified on synthetic inputs before wiring.
 
+## 12. v2 Build Findings (2026-07-07)
+
+v2 shipped the approved **lean scope** (4 items) AND — via mandated dogfooding — surfaced and fixed a **latent v1 regression that had silently broken every `implement` write**. Branch `feature/codex-worker-v2`, 7 commits. Built during a ChatGPT-quota-down window (non-Codex items first), then gated on the ~1:08 PM reset for the live/cross-model passes.
+
+**The four items (all verified):**
+- **Item 1 — `--complex` (multi_agent).** Opt-in that swaps `--disable`→`--enable multi_agent` for ask/implement, gated on `~/.codex/agents/explorer.toml` pinning `model = "gpt-5.5"` (regex accepts single- or double-quoted TOML; rejects `gpt-5.5-codex`/commented pins). **Live probe (decisive):** `--enable multi_agent --ignore-user-config` spawned an explorer that ran on **gpt-5**, ZERO gpt-4.1 400s — so `explorer.toml` (in `~/.codex/agents/`, not `config.toml`) IS honored even under `--ignore-user-config`. Mode-scoped to ask/implement (resume never re-fans-out); telemetry `multi_agent` reflects the actual flag (`MULTI_AGENT_ON`), not the raw request.
+- **Item 2 — reactive usage-limit handling.** Preflight is impossible (`codex doctor --json` has no quota surface). All modes grep the log for `You've hit your usage limit … try again at <time>` (the `-o` clean file is EMPTY on a cap hit), short-circuit with a clean message (never a fabricated result), and log `usage_limited:true` + non-zero exit. Parser verified against the **real captured error** (the quota-down window handed us a genuine sample) + synthetic cases.
+- **Item 3 — worktree GC.** Opportunistic reclaim before each implement, of THIS repo's CONFIRMED-CLEAN worktrees older than `$CODEX_WT_GC_DAYS` (default 7d). **Never touches unreviewed work** — implement only stages (never commits) → a dormant/awaiting-resume worktree is dirty → skipped; the skip is exit-code-checked, so a broken/unreadable worktree is kept, not deleted. No `rm -rf` in the auto path (removal only via `git worktree remove`; orphans reported). Fixture-verified across clean/dirty/broken/orphan/recent + `CODEX_WT_GC_FORCE_DIRTY`.
+- **Item 4 — doc sweep.** §5.3/§7/§8 + the safety rule/skill corrected to the out-of-repo worktree reality and the dropped `--in-place`.
+
+**Headline finding — `--ignore-user-config` silently broke every `implement` write (v1 regression).** The v1 latency fix (`--ignore-user-config`, ~47s→18s) was applied to EVERY worker call but only ever verified on a read-only `ask` smoke. The v2 live implement dogfood + an independent A/B proved it makes Codex's **workspace-write sandbox silently reject file writes on Windows** (`config.toml` carries the sandbox writable-root/approval policy): `exit 0`, ZERO diff — a no-op that looks like success. **Fix: `--ignore-user-config` is now `ask`-ONLY**; implement/resume drop it (mode-scoped `CFG_FLAG=""` + re-default fallback) and take the slower cold-start for a working write. Confirming re-dogfood: implement created the file (`1 file changed`, byte-verified), command line confirmed free of the flag.
+
+**Review cascade (four passes, every finding fixed + re-validated):**
+1. **Claude wiring audit** — 8 findings, incl. a **CRITICAL** GC data-loss (the "in-flight = recent" safety claim was false for the dormant awaiting-resume state → skip-dirty), a guard-landmine (`rm -rf` in a comment the destructive-guard matches), `--complex` mode-scope, single-quote regex, `COMPLEX` normalization.
+2. **Cross-model codex-adversary (gpt-5.5 xhigh) on the diff** — 4 findings: a **regression I'd introduced** (parameterizing the invocation flags made a split-shell run silently drop `--disable multi_agent`/`--ignore-user-config` → defensive re-default + same-shell instruction), skip-dirty swallowing git-status's exit code, the script's recursive-delete fallback routing a delete around the guard (dropped entirely), and a low-probability GC race (mitigated by the age filter).
+3. **Item 1 live probe** — explorer spawns on gpt-5, no gpt-4.1.
+4. **Live dogfoods** — ask `--complex` (plumbing: gate + `--enable` + telemetry `multi_agent:true`, no 400) and implement (surfaced the write-bug, then confirmed the fix).
+
+**Deferred to v3 (premortem findings — acceptable-as-designed for the lean scope):** version+hash-keyed `--complex` re-verification (today's failure is a loud 400, not silent); `subagents_spawned`/`subagent_models` telemetry (current `multi_agent` = fan-out ENABLED, not spawned — clarified in the README); a local burn-rate heuristic before expensive runs; fail-loud-on-split-shell `--complex` (currently degrades safely + a same-shell instruction); a keep/resume GC sentinel (committed work already survives as a branch, so low impact).
+
 ## 9. Sources Appendix
 
 ### Internal-A (current-state audit)
