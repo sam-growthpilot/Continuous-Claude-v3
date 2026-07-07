@@ -119,3 +119,26 @@ Do not rely on spark's self-reported `Audit: PASS` alone — spark may have run 
 4. Append the incident to `docs/spark-agent-issues-2026-05-23.md` (or a follow-up `spark-agent-issues-YYYY-MM-DD.md`) with: the failing edit diff, the spark's task ID, what regression slipped, and what recovery path was taken.
 
 This is the missing exit ramp — without it, the orchestrator can loop on the same regression by re-prompting the same spark.
+
+## Multi-Agent Orchestration (kraken/Ralph waves)
+
+Hard-won from the PR #14 build (a registry + 6-pipeline feature built by ~8 sequential kraken waves, 2026-07-06):
+
+### Serialize commits to the SAME repo — parallelize only on disjoint surfaces
+
+When multiple agents (kraken/spark) both **edit and commit to the same repo**, run them **SEQUENTIALLY** — one wave completes and commits before the next starts. Two agents committing to one repo at once race on `.git/index.lock` (a stale `index.lock` from a killed op already blocked a commit once this session). Parallelize agents ONLY when they:
+- work on **disjoint files AND don't commit** (orchestrator commits after), or
+- use **`isolation: "worktree"`** (each gets its own working tree + index), or
+- operate on **separate repos** (e.g. one on `continuous-claude`, one on the decks repo — safe to run concurrently).
+
+Batch related work into one agent when files overlap (e.g. the `#5 NTN_EXE` de-dup touched a file the Phase-3 agent also edited → gate the second wave behind the first).
+
+### Externally verify every agent — NEVER trust `ralph_status` alone [C:9]
+
+After an agent reports `{"ralph_status": {"status": "complete"}}`, the orchestrator **independently re-checks against REAL state** before marking done:
+- **`git show <commit> --stat`** — the claimed files/commit actually landed.
+- **Re-run the test suite yourself** — agents can run the audit *before* their last edit, or over-report ("5 passed" when the summary line said `tests 1`). Use the exact reporter (`--test-reporter=spec` when the top-line count looks wrong).
+- **Query the real external system** — the actual Notion DB row count, the live page, the DB state — not the agent's narration. (Kraken correctly *declined* a live mutating smoke per the confirm-first rule; the orchestrator ran it + cleaned up.)
+- **Confirm no leftover test data** — an agent's real-API smoke must return the surface to baseline (e.g. DB back to its backfilled row count, temp rows trashed).
+
+A timed-out agent/command (exit 143) is **not** proof of failure — verify state (see `windows-platform.md`). The orchestrator's job is coordination + independent verification; the agents do the work.
