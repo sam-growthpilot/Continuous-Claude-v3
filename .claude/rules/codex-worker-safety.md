@@ -25,12 +25,16 @@ Grounding: verified 2026-07-06 against `codex-cli 0.131.0`, `Logged in using Cha
 
 ## Write-mode hard rules (`implement` / `resume`)
 
-1. **Worktree isolation is the default, and worktrees live OUTSIDE the repo.** Writes happen in `$(dirname "$PROJECT")/.codex-worktrees/<repo>-<ts>-<pid>` — a throwaway git worktree branched from HEAD, a SIBLING of the repo, **never inside `$PROJECT`** and never in-place against the live tree. This structurally prevents collision with the concurrent Claude Code session's edits and the `file_claims` DB. **Out-of-repo is mandatory (verified 2026-07-07 dogfood):** an in-repo worktree makes Claude Code re-scan the whole `.claude/skills` tree as ~150 duplicate path-scoped skills (context pollution) and is a ~190MB full checkout. The `-<pid>` suffix prevents same-second name collisions. (`--in-place` is a deferred v2 opt-in, still confirm-gated.)
+1. **Worktree isolation is the default, and worktrees live OUTSIDE the repo.** Writes happen in `$(dirname "$PROJECT")/.codex-worktrees/<repo>-<ts>-<pid>` — a throwaway git worktree branched from HEAD, a SIBLING of the repo, **never inside `$PROJECT`** and never in-place against the live tree. This structurally prevents collision with the concurrent Claude Code session's edits and the `file_claims` DB. **Out-of-repo is mandatory (verified 2026-07-07 dogfood):** an in-repo worktree makes Claude Code re-scan the whole `.claude/skills` tree as ~150 duplicate path-scoped skills (context pollution) and is a ~190MB full checkout. The `-<pid>` suffix prevents same-second name collisions. (An `--in-place` mode was considered and **dropped** in v2 — worktree isolation is the retained safety win.)
 2. **Git-clean note before creating a worktree.** A worktree branches from HEAD, not the working tree's uncommitted changes — if `git status --porcelain` is non-empty, warn the user that Codex won't see those pending edits.
 3. **Independent verification, always.** After the run, the worker itself runs `git add -A && git diff --cached HEAD` in the worktree and shows that patch. Codex's own summary is never the sole evidence of what changed (RULES.md "External Verification").
 4. **Review-gate — never auto-commit/auto-merge.** `implement` produces a patch the human reviews before it's applied to the working tree (`git apply --3way`). This is the strongest cross-source consensus in the research: it defends against prompt-injection via any content Codex reads (commit messages, issue text, fetched web content).
 5. **Writable-root scoping.** `-C` is always the worktree path. `--add-dir` only for genuinely shared scratch space, never the live repo root, in v0/v1.
 6. **Network stays off.** `workspace-write` keeps network access `false` by default. Enabling it requires an explicit flag + confirm (prompt-injection risk via fetched content).
+
+## Worktree GC (v2) — reclaims only CLEAN abandoned worktrees
+
+Before each `implement` run the worker opportunistically GCs stale worktree dirs in `../.codex-worktrees/` (each is a ~190MB checkout): `git worktree prune` + remove THIS repo's `<repo>-*` dirs older than `$CODEX_WT_GC_DAYS` (default **7**). **It skips any worktree with uncommitted changes** — `implement` only STAGES (never commits), so a dormant / awaiting-`resume` worktree holds UNREVIEWED work and is never reclaimed regardless of age (age alone is not a safety guarantee — a resume worktree can sit past a weekly quota cap). Registered clean worktrees are removed via `git worktree remove --force`; a rare unregistered orphan is left for the manual `scripts/codex/gc-worktrees.sh` (which also skips dirty by default; set `CODEX_WT_GC_FORCE_DIRTY=1` for a deliberate full reclaim).
 
 ## Model allowlist (enforced before shelling out)
 
@@ -80,4 +84,5 @@ There is no per-call dollar price — the cost is ChatGPT-subscription quota (tw
 | `/codex --review …` (delegates to codex-adversary) | No (read-only) |
 | Applying the worktree patch to the live tree | **Yes** — human reviews the diff first |
 | `git branch -D codex/<ts>` cleanup (interactive) | Yes (destructive-commands rule) |
-| Enabling network / `danger-full-access` / `--complex` | **Yes**, never default |
+| Enabling network / `danger-full-access` | **Yes**, never default |
+| `--complex` (multi_agent; ask/implement) | Never default; confirms on write (implement already does); on read-only ask the explicit flag + printed caveat is the ack |

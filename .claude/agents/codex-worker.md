@@ -75,16 +75,19 @@ case "$MODEL" in
   *) echo "REJECTED model '$MODEL' — only gpt-5.5/gpt-5.4/gpt-5.4-mini work on the ChatGPT subscription (any -codex id 400s)."; exit 2 ;;
 esac
 
-# (c) multi_agent resolution (Item 1) — default OFF (fast path); --complex opts in (ask/implement).
+# (c) multi_agent resolution (Item 1) — default OFF (fast path); --complex opts in (ask/implement ONLY).
 MULTI_AGENT_FLAG="--disable multi_agent"     # global config has it ON -> gpt-4.1 fallback 400 trap; keep OFF by default
 CFG_FLAG="--ignore-user-config"              # v1 latency fix (~47s->18s); see the --complex interaction note below
-if [ "${COMPLEX:-false}" = "true" ]; then
+case "${COMPLEX:-false}" in true|TRUE|True|yes|1|on) COMPLEX=true ;; *) COMPLEX=false ;; esac   # normalize to strict bool (jq --argjson only accepts true/false)
+# --complex is ask/implement ONLY — resume inherits its thread's config and never re-fans-out, so
+# mode-scope the gate: a resume with --complex must NOT be refused/mislabelled here.
+if [ "$COMPLEX" = "true" ] && [ "${MODE:-ask}" != "resume" ]; then
   # --complex opt-in: enable multi_agent fan-out for a genuinely BROAD task. HARD-REQUIRE
   # ~/.codex/agents/explorer.toml pinned to gpt-5.5 — else the built-in explorer role drops to
   # gpt-4.1 (400 on the subscription; openai/codex #19399 / #16893). Refuse, don't crash mid-run.
   EXPLORER="$HOME/.codex/agents/explorer.toml"
-  if [ ! -f "$EXPLORER" ] || ! grep -Eq '^[[:space:]]*model[[:space:]]*=[[:space:]]*"gpt-5\.5"' "$EXPLORER"; then
-    echo "REFUSED --complex: $EXPLORER must exist AND pin model = \"gpt-5.5\" (mitigates the gpt-4.1 fallback 400). Fix it or drop --complex."; exit 2
+  if [ ! -f "$EXPLORER" ] || ! grep -Eq "^[[:space:]]*model[[:space:]]*=[[:space:]]*[\"']gpt-5\.5[\"']" "$EXPLORER"; then
+    echo "REFUSED --complex: $EXPLORER must exist AND pin model = \"gpt-5.5\" (double- or single-quoted; mitigates the gpt-4.1 fallback 400). Fix it or drop --complex."; exit 2
   fi
   MULTI_AGENT_FLAG="--enable multi_agent"
   echo "NOTE (--complex): multi_agent fan-out ENABLED; explorer pinned to gpt-5.5. Verified ONCE on Windows 2026-07-07 — RE-PROBE before unattended use (openai/codex#19399: subagent TOML can be ignored on Windows). Extra ~1,940 tok/call + fan-out latency."
@@ -93,6 +96,8 @@ if [ "${COMPLEX:-false}" = "true" ]; then
   # (explorer 400s on gpt-4.1), drop it for --complex so the agents dir is read:
   #   CFG_FLAG=""
 fi
+# telemetry truth: reflect what ACTUALLY ran (resume forces --disable regardless of $COMPLEX).
+MULTI_AGENT_ON=false; [ "$MULTI_AGENT_FLAG" = "--enable multi_agent" ] && MULTI_AGENT_ON=true
 ```
 
 Every `codex exec` below is wrapped in `env -u OPENAI_API_KEY -u CODEX_API_KEY` to guarantee subscription auth.
@@ -160,20 +165,26 @@ mkdir -p "$WT_BASE"
 WORKTREE="$WT_BASE/$(basename "$PROJECT")-$TS"
 BRANCH="codex/$TS"
 
-# opportunistic GC (v2): reclaim THIS repo's abandoned worktree dirs (each ~190MB) before
-# creating a new one. Idempotent + safe — the age threshold (default 3d; $CODEX_WT_GC_DAYS)
-# can never match an in-flight worktree (always recent), and -name scoping leaves sibling
-# repos alone. `git worktree remove` cleans BOTH the dir + metadata for a REGISTERED worktree
-# (the normal case — the agent always creates via `worktree add`). We deliberately do NOT
-# `rm -rf` a rare unregistered orphan INLINE: the destructive-guard denies recursive rm in this
-# subagent context (it would block this whole Step-3b block). The manual scripts/codex/gc-worktrees.sh
-# (invoked as `bash …`, so its internal rm is guard-invisible) is the orphan sweep. Fixture-verified 2026-07-07.
-GC_DAYS="${CODEX_WT_GC_DAYS:-3}"
+# opportunistic GC (v2): reclaim THIS repo's genuinely-ABANDONED, CLEAN worktree dirs (~190MB
+# each) before creating a new one. Idempotent. SAFETY: it must never reclaim a worktree that
+# still holds UNREVIEWED work — `implement` STAGES (git add -A) but never commits, so a
+# dormant/awaiting-resume worktree is DIRTY; we skip any dirty worktree regardless of age (its
+# staged diff is unreviewed and only recoverable via git fsck). The age threshold ALONE is NOT a
+# safety guarantee (a resume worktree can sit for days past a WEEKLY quota cap — see usage-limit
+# handling). `git worktree remove` clears BOTH the dir + metadata for a registered worktree (the
+# normal case). A rare UNREGISTERED orphan is left for the manual scripts/codex/gc-worktrees.sh
+# (invoked as `bash …`, so its recursive-delete fallback is guard-invisible) — we never force-
+# delete it inline (the destructive-guard denies a recursive delete in this subagent context).
+# Skip-dirty + fixture-verified 2026-07-07.
+GC_DAYS="${CODEX_WT_GC_DAYS:-7}"                      # conservative; a resume worktree may sit for days
 git -C "$PROJECT" worktree prune                     # clear metadata for manually-deleted worktrees
 while IFS= read -r _old; do
   [ -z "$_old" ] && continue
+  if [ -n "$(git -C "$_old" status --porcelain 2>/dev/null)" ]; then
+    echo "GC: KEPT (unreviewed changes present) $_old"; continue    # never reclaim unreviewed work
+  fi
   if git -C "$PROJECT" worktree remove --force "$_old" 2>/dev/null; then
-    echo "GC: removed stale worktree $_old"
+    echo "GC: removed stale CLEAN worktree $_old"
   else
     echo "GC: left orphan (unregistered) — clean via scripts/codex/gc-worktrees.sh: $_old"
   fi
@@ -238,7 +249,7 @@ git -C "$WORKTREE" diff --cached --stat HEAD        # human-readable summary
 **If `$USAGE_LIMITED` is true, short-circuit here:** there is no diff — skip verification/apply, remove the worktree (`git -C "$PROJECT" worktree remove --force "$WORKTREE"`, then delete the branch), emit the telemetry row with `usage_limited:true` + non-zero `exit_code`, and return the clean usage-limit message (Step 5). Otherwise, **show the user the patch/diff-stat before doing anything with it.** Then:
 - On approval → apply to the live working tree: `git -C "$PROJECT" apply --3way "$PATCH"` (report + leave the worktree intact if apply conflicts, so the user can reconcile manually).
 - On reject → discard.
-- Clean up: `git -C "$PROJECT" worktree remove --force "$WORKTREE"` (then `git -C "$PROJECT" branch -D "$BRANCH"` if not merged — confirm-gate this branch delete per destructive-commands rule if run interactively). Stale worktrees are GC'd automatically before each implement run (the opportunistic GC above; default 3d, override with `$CODEX_WT_GC_DAYS`); `scripts/codex/gc-worktrees.sh [PROJECT] [DAYS]` is the manual equivalent to reclaim disk on demand.
+- Clean up: `git -C "$PROJECT" worktree remove --force "$WORKTREE"` (then `git -C "$PROJECT" branch -D "$BRANCH"` if not merged — confirm-gate this branch delete per destructive-commands rule if run interactively). Stale *clean* worktrees are GC'd automatically before each implement run (the opportunistic GC above; default 7d, override with `$CODEX_WT_GC_DAYS`; a worktree with unreviewed changes is never touched); `scripts/codex/gc-worktrees.sh [PROJECT] [DAYS]` is the manual equivalent to reclaim disk on demand.
 
 Never auto-commit or auto-merge into the main branch — patch-as-artifact + human review is the strongest cross-source consensus (prompt-injection defense).
 
@@ -317,7 +328,7 @@ jq -nc \
   --arg task "$REQUEST_SUMMARY" --argjson rc "$RC" \
   --arg diffstat "${DIFFSTAT:-}" --arg verification "$VERIFICATION" \
   --arg sid "${SID:-}" --argjson usage_limited "${USAGE_LIMITED:-false}" \
-  --argjson multi_agent "${COMPLEX:-false}" \
+  --argjson multi_agent "${MULTI_AGENT_ON:-false}" \
   '{ts:$ts, mode:$mode, model:$model, effort:$effort, sandbox:$sandbox,
     multi_agent:$multi_agent, scope:$scope, task_summary:$task, exit_code:$rc,
     git_diff_stat:$diffstat, verification:$verification, session_id:$sid,

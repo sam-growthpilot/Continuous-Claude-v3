@@ -88,7 +88,8 @@ Task(
 
 - **Subscription only.** The worker asserts `codex login status` = "Logged in using ChatGPT" and strips `OPENAI_API_KEY`/`CODEX_API_KEY` from Codex's env. Fails loud, never silently uses an API key.
 - **Confirm-first for `implement`/`resume`** (the only approval gate — `codex exec` has none). `--yes` skips only the interactive pause.
-- **Worktree isolation by default** — write runs happen in a throwaway git worktree **outside** the repo (sibling `../.codex-worktrees/<repo>-<ts>`), never in-place, so they can't collide with your live session or the `file_claims` DB. (`--in-place` is a v2 opt-in.)
+- **Worktree isolation by default** — write runs happen in a throwaway git worktree **outside** the repo (sibling `../.codex-worktrees/<repo>-<ts>-<pid>`), never in-place, so they can't collide with your live session or the `file_claims` DB. (An `--in-place` mode was considered and **dropped** in v2 — worktree isolation is the retained safety win.)
+- **Auto worktree GC** — before each implement run, stale *clean* worktree dirs (~190MB each) older than `$CODEX_WT_GC_DAYS` (default 7d) are reclaimed; a worktree with unreviewed (dirty) changes is never touched, so a dormant awaiting-`resume` one is safe. Manual sweep: `scripts/codex/gc-worktrees.sh`.
 - **Review-gate** — never auto-commits/auto-merges; produces a patch you approve first.
 - **Model allowlist** — `gpt-5.5/gpt-5.4/gpt-5.4-mini` only.
 - **No hook can see inside Codex's sandbox** — enforcement is `--sandbox` + this preflight, not any Claude Code hook.

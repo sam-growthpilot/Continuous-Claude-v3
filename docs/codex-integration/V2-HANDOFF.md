@@ -47,7 +47,7 @@ Detect the usage-limit error (preflight impossible — no quota surface) and han
 - **Acceptance:** parser check against the recorded error line → clean message + reset time + telemetry flag + non-zero exit (can't force a real limit).
 
 ### Item 3 — worktree GC automation (v1 deferral)
-Opportunistic GC before each implement worktree-create: `git -C "$PROJECT" worktree prune` + remove `../.codex-worktrees/*` older than N days. Idempotent, never touches an active worktree. Optional `scripts/codex/gc-worktrees.sh`.
+Opportunistic GC before each implement worktree-create: `git -C "$PROJECT" worktree prune` + remove `../.codex-worktrees/*` older than N days. Idempotent; **skips any worktree with unreviewed (dirty) changes** — never an active OR a dormant awaiting-`resume` one (an `implement` worktree only STAGES, never commits, so it stays dirty until applied). Optional `scripts/codex/gc-worktrees.sh`.
 - **Files:** `.claude/agents/codex-worker.md` (Step 3b), optional `scripts/codex/gc-worktrees.sh`.
 - **Acceptance:** after several runs, stale dirs cleaned; active preserved.
 
