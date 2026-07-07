@@ -7,7 +7,14 @@
 - Helm local SPA deferred behind the daily-use gate; card engine is the Notion-first v0 surface.
 - Plan: `~/.claude/plans/review-ccv3-system-wondrous-cascade.md` · Started: 2026-07-03
 
+## Codex Integration — /codex worker (parallel track)
+- **v0 SHIPPED (2026-07-07):** `/codex` write-capable Codex task worker (ask / implement / resume, on the ChatGPT subscription, no API key). PR #15 (`feature/codex-worker`), commit `12a21dd`. Built from an 8-agent research pass, dogfood-hardened, hooks-collision safety spike RESOLVED.
+- **v1 SHIPPED (2026-07-07):** (A) session-id capture (`thread_id` → concurrency-safe `resume <id>`, live-verified vs `--last`); (B) startup latency via `--ignore-user-config` (~47s→18s, MCP-fails 6→2 — the planned `--profile-v2` overlay was empirically REFUTED); + telemetry one-row-per-turn/enum cleanups. Dogfood-hardened: a cross-model `codex-adversary` pass caught 2 real shell bugs (spaced-path/delimiter parsing + a `"last"` silent-failure), both fixed. Commit `832ce5a`. Evidence: `docs/codex-integration/DESIGN-RESEARCH.md` §11.
+- **v2 QUEUED:** `--complex` (multi_agent, needs explorer.toml pin + #19399 re-probe), quota preflight, `--in-place` opt-in, formal `codex-plugin-cc` eval (DESIGN-RESEARCH §7).
+
 ## Completed
+- [x] feat(codex): /codex worker v1 — robust resume + --ignore-user-config latency + telemetry cleanups (dogfood-hardened) (2026-07-07) `832ce5a`
+- [x] feat(codex): /codex Codex task worker v0 — ship + dogfood-harden + safety-spike (PR #15) (2026-07-07) `12a21dd`
 - [x] docs(self-improvement): 07-01 hooks + 07-02 agents proposals + digest queue (2026-07-03) `7c4c79c`
 - [x] feat(fourthos-weekly): Thu-cadence reschedule + v3.1 render rules (2026-07-02) `6472a4d`
 - [x] feat(ai-report-card): version-control the VP weekly-report pipeline + Week 27 narratives (2026-07-01) `5ce12d6`
