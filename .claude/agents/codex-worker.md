@@ -22,7 +22,7 @@ You are a thin orchestrator that delegates a real task to OpenAI Codex (default 
 3. **Model allowlist = `{gpt-5.5, gpt-5.4, gpt-5.4-mini}`.** Any `-codex`-suffixed id returns HTTP 400 under ChatGPT auth (empirically proven). **Reject a bad `--model` before ever shelling out.**
 4. **`--disable multi_agent` by default; `--complex` opts in.** Global config has `multi_agent = true`; leaving it on makes Codex spawn built-in sub-agents that fall back to `gpt-4.1` (400 on subscription) AND taxes ~1,940 tokens/call even when unused — so every call passes `--disable multi_agent` unless `--complex` is set. `--complex` (ask/implement, NOT resume) swaps in `--enable multi_agent` for genuinely broad tasks, but ONLY after Step 2 asserts `~/.codex/agents/explorer.toml` pins `model = "gpt-5.5"` (else the explorer role drops to gpt-4.1 → 400; it refuses). Standing caveat: the pin was verified once on Windows 2026-07-07 — re-probe before unattended use (openai/codex#19399).
 5. **Windows stdin discipline.** Always feed the prompt from a FILE via `- < "$PROMPT_FILE"`, never an inherited TTY (documented hang, openai/codex#20919).
-6. **Startup profile (latency, v1).** Every worker `codex exec`/`resume` passes **`--ignore-user-config`** to skip loading Dave's interactive `~/.codex/config.toml`. That config defines ~16 MCP servers whose network handshakes dominate cold-start; skipping it cut a read-only smoke **47s → 18s** and dropped the config-defined MCP connection failures (verified 2026-07-07 v1 benchmark; 2 residual come from plugins/runtime, not config). **Auth is unaffected** — `--ignore-user-config` still reads `CODEX_HOME`/`auth.json` (subscription); the model / `model_reasoning_effort` / `multi_agent=false` this agent needs are passed as explicit CLI flags regardless (resume re-passes `--model` and inherits effort from the resumed session's stored config), so nothing worker-relevant is lost. Tradeoff: Codex's shell also loses the base `shell_environment_policy.set` extras (e.g. `DATABASE_URL`) — moot on Windows where `workspace-write` can't spawn subprocesses; if a task genuinely needs one, add `-c shell_environment_policy.set.KEY=VALUE`. **Do NOT use `--profile-v2 worker` / a `worker.config.toml`** — verified 2026-07-07 that overlay layering deep-merges and does NOT remove the base MCP servers (the design-doc §5.3 approach was empirically refuted; `--ignore-user-config` replaced it).
+6. **Startup profile (latency, v1) — `ask` ONLY.** The **`ask`** mode passes **`--ignore-user-config`** to skip loading Dave's interactive `~/.codex/config.toml` (which defines ~16 MCP servers whose network handshakes dominate cold-start): it cut a read-only smoke **47s → 18s** and dropped the config-defined MCP connection failures (verified 2026-07-07 v1 benchmark). **`implement`/`resume` must NOT pass it** — verified 2026-07-07 (v2 dogfood + independent A/B) that `--ignore-user-config` **silently BREAKS workspace-write file creation on Windows**: `config.toml` carries the sandbox writable-root/approval policy, so stripping it makes the sandbox reject writes (**exit 0, ZERO diff — a silent no-op**). Write modes accept the slower cold-start for a working write. **Auth is unaffected either way** — the flag still reads `CODEX_HOME`/`auth.json` (subscription); model / `model_reasoning_effort` / `multi_agent` are explicit CLI flags regardless. **Do NOT use `--profile-v2 worker` / a `worker.config.toml`** — verified 2026-07-07 that overlay layering deep-merges and does NOT remove the base MCP servers (the design-doc §5.3 approach was empirically refuted).
 
 ## Step 1: Parse Your Inputs
 
@@ -77,7 +77,11 @@ esac
 
 # (c) multi_agent resolution (Item 1) — default OFF (fast path); --complex opts in (ask/implement ONLY).
 MULTI_AGENT_FLAG="--disable multi_agent"     # global config has it ON -> gpt-4.1 fallback 400 trap; keep OFF by default
-CFG_FLAG="--ignore-user-config"              # v1 latency fix (~47s->18s); see the --complex interaction note below
+CFG_FLAG="--ignore-user-config"              # v1 latency fix (~47s->18s); ask-ONLY (see the write-bug note below)
+# CRITICAL (verified 2026-07-07 v2 dogfood + A/B): --ignore-user-config BREAKS workspace-write FILE
+# CREATION on Windows (config.toml carries the sandbox writable-root/approval policy; stripping it makes
+# the sandbox silently reject writes — exit 0, ZERO diff). So it is ask-ONLY. Drop it for implement/resume:
+case "${MODE:-ask}" in implement|resume) CFG_FLAG="" ;; esac
 case "${COMPLEX:-false}" in true|TRUE|True|yes|1|on) COMPLEX=true ;; *) COMPLEX=false ;; esac   # normalize to strict bool (jq --argjson only accepts true/false)
 # --complex is ask/implement ONLY — resume inherits its thread's config and never re-fans-out, so
 # mode-scope the gate: a resume with --complex must NOT be refused/mislabelled here.
@@ -91,11 +95,11 @@ if [ "$COMPLEX" = "true" ] && [ "${MODE:-ask}" != "resume" ]; then
   fi
   MULTI_AGENT_FLAG="--enable multi_agent"
   echo "NOTE (--complex): multi_agent fan-out ENABLED; explorer pinned to gpt-5.5. Verified ONCE on Windows 2026-07-07 — RE-PROBE before unattended use (openai/codex#19399: subagent TOML can be ignored on Windows). Extra ~1,940 tok/call + fan-out latency."
-  # VERIFIED 2026-07-07 (live probe): --ignore-user-config skips config.toml, but explorer.toml
-  # lives in ~/.codex/agents/ and IS still honored. A `--enable multi_agent --ignore-user-config`
-  # probe spawned an explorer that ran on gpt-5 (the pinned family), with ZERO gpt-4.1 400s — so
-  # we KEEP --ignore-user-config (the fast path) for --complex. (If the pin/CLI ever changes and an
-  # explorer 400s on gpt-4.1, drop it for --complex — set CFG_FLAG="" — so ~/.codex/agents/ is read.)
+  # VERIFIED 2026-07-07 (live probe): for ASK, --ignore-user-config skips config.toml but explorer.toml
+  # (in ~/.codex/agents/) IS still honored — a `--enable multi_agent --ignore-user-config` probe spawned
+  # an explorer on gpt-5 (the pinned family), ZERO gpt-4.1 400s. So ASK --complex keeps the fast path.
+  # IMPLEMENT --complex runs WITHOUT --ignore-user-config anyway (the ask-ONLY write-bug note above),
+  # which loads config.toml fully — explorer.toml is honored there too.
 fi
 # telemetry truth: reflect what ACTUALLY ran (resume forces --disable regardless of $COMPLEX).
 MULTI_AGENT_ON=false; [ "$MULTI_AGENT_FLAG" = "--enable multi_agent" ] && MULTI_AGENT_ON=true
@@ -153,9 +157,11 @@ fi
 ```bash
 # defensive re-default (cross-model finding): $MULTI_AGENT_FLAG/$CFG_FLAG come from Step 2; if it
 # ran in a SEPARATE shell they'd be unset here and the codex exec below would silently DROP
-# --disable multi_agent (gpt-4.1 crash risk) + --ignore-user-config. Re-default to SAFE values when unset.
+# --disable multi_agent (gpt-4.1 crash risk); and for IMPLEMENT the safe CFG_FLAG is EMPTY —
+# --ignore-user-config BREAKS workspace-write FILE CREATION on Windows (config.toml carries the
+# sandbox writable-root/approval policy; verified 2026-07-07). Re-default to SAFE values when unset.
 [ -n "${MULTI_AGENT_FLAG:-}" ] || MULTI_AGENT_FLAG="--disable multi_agent"
-[ -n "${CFG_FLAG+x}" ] || CFG_FLAG="--ignore-user-config"     # +x preserves a deliberate empty (probe fallback)
+[ -n "${CFG_FLAG+x}" ] || CFG_FLAG=""     # implement drops --ignore-user-config (breaks writes); +x preserves Step 2's value
 
 # 1) git-clean note (worktree branches from HEAD, NOT the working tree's uncommitted changes)
 # List uncommitted paths, robust to spaces + renames. (`awk '{print $2}' | paste -sd', '`
@@ -289,7 +295,6 @@ printf '%s' "$REQUEST" > "$FOLLOWUP_FILE"
 ( cd "$WORKTREE" && env -u OPENAI_API_KEY -u CODEX_API_KEY codex exec resume "$RESUME_TARGET" \
     --model "$MODEL" \
     --disable multi_agent \
-    --ignore-user-config \
     -o "$CACHE/codex-final.txt" \
     - < "$FOLLOWUP_FILE" ) > "$CACHE/latest-output.md" 2>&1
 RC=$?    # capture the resume turn's exit code for its own telemetry row (Step 4)

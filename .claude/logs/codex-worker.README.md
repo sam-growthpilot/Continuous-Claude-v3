@@ -13,7 +13,7 @@ One row per `/codex` run (the `codex-worker` agent). Distinct from `codex-lift.j
   "model": "gpt-5.5",                    // always in {gpt-5.5, gpt-5.4, gpt-5.4-mini}
   "effort": "high" | "xhigh" | "medium" | "low",
   "sandbox": "read-only" | "workspace-write",
-  "multi_agent": false,                  // true for the --complex opt-in (multi_agent fan-out; ask/implement)
+  "multi_agent": false,                  // true = --complex ENABLED fan-out (--enable passed) for this run — NOT proof sub-agents spawned. Codex only fans out for tasks it deems complex, so a trivial --complex task logs true yet runs single-agent. ask/implement only. (A future `subagents_spawned`/`subagent_models` field parsing the --json stream is a v3 candidate.)
   "scope": "ephemeral" | "worktree" | "in-place" | "resume:<id>",  // ephemeral=ask (read-only, no worktree); worktree/in-place=implement; resume embeds the captured thread id
   "task_summary": "add --limit flag to query.mjs",
   "exit_code": 0,                        // codex exec return code
