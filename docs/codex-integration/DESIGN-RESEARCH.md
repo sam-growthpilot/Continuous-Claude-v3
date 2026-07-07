@@ -456,7 +456,7 @@ Also hardened: resume now captures its own `RC` (the resume telemetry row's `exi
 
 ## 12. v2 Build Findings (2026-07-07)
 
-v2 shipped the approved **lean scope** (4 items) AND — via mandated dogfooding — surfaced and fixed a **latent v1 regression that had silently broken every `implement` write**. Branch `feature/codex-worker-v2`, 7 commits. Built during a ChatGPT-quota-down window (non-Codex items first), then gated on the ~1:08 PM reset for the live/cross-model passes.
+v2 shipped the approved **lean scope** (4 items) AND — via mandated dogfooding — surfaced and fixed a **latent v1 regression that had silently broken every `implement` write**. Branch `feature/codex-worker-v2`, 6 commits. Built during a ChatGPT-quota-down window (non-Codex items first), then gated on the ~1:08 PM reset for the live/cross-model passes.
 
 **The four items (all verified):**
 - **Item 1 — `--complex` (multi_agent).** Opt-in that swaps `--disable`→`--enable multi_agent` for ask/implement, gated on `~/.codex/agents/explorer.toml` pinning `model = "gpt-5.5"` (regex accepts single- or double-quoted TOML; rejects `gpt-5.5-codex`/commented pins). **Live probe (decisive):** `--enable multi_agent --ignore-user-config` spawned an explorer that ran on **gpt-5**, ZERO gpt-4.1 400s — so `explorer.toml` (in `~/.codex/agents/`, not `config.toml`) IS honored even under `--ignore-user-config`. Mode-scoped to ask/implement (resume never re-fans-out); telemetry `multi_agent` reflects the actual flag (`MULTI_AGENT_ON`), not the raw request.
