@@ -1,0 +1,494 @@
+# `/codex` — General-Purpose Write-Capable Codex Delegation for CCv3
+
+Design-research document. Compiled 2026-07-06 by synthesizing 2 internal audits, 3 external research passes, and 1 empirical verification gate. Goal: a `/codex <request>` command in Claude Code that hands an arbitrary task to the OpenAI Codex harness (`gpt-5.5`, on Dave's ChatGPT **subscription** — hard requirement, no API key) to actually **execute** — write files, run commands, implement — not just review.
+
+**Grounding facts treated as ground truth for this doc** (see §7 for full verification table):
+- Machine: Windows 11, PowerShell primary + Git Bash available. Project: `C:/Users/david.hayes/continuous-claude`.
+- `codex-cli 0.131.0` installed; upstream stable is `0.142.5` — **meaningful version drift**, called out throughout.
+- `codex login status` → `Logged in using ChatGPT`. `OPENAI_API_KEY` and `CODEX_API_KEY` both unset and confirmed unnecessary.
+- `~/.codex/config.toml`: `model = "gpt-5.5"`, `model_reasoning_effort = "xhigh"`, `personality = "pragmatic"`, `[features] multi_agent = true` (global), `shell_snapshot = true`.
+- Today's only production Codex usage in CCv3 is **read-only adversarial review** via `.claude/agents/codex-adversary.md`, wired into `/review` and `/premortem`.
+
+---
+
+## 1. Executive Summary
+
+**What exists today:** CCv3's entire Codex integration is a single read-only reviewer. `.claude/agents/codex-adversary.md` shells out to `codex exec --sandbox read-only --ephemeral --disable multi_agent -o <file>` and is invoked only from `/review` (Phase 1) and `/premortem` (Step 2.5), plus a nudge hook (`plan-exit-premortem-prompt.ts`) that never itself calls Codex. There is **no mechanical enforcement** of any of this — no hook, no `settings.json` permission entry, nothing in `skill-rules.json` — the safety model is convention-only, living entirely inside one hardcoded agent file. The official `openai/codex-plugin-cc` plugin (which ships a write-capable `/codex:rescue` job-lifecycle command — background/wait, resume/fresh, status/result/cancel) is **not installed**; only a vendored prompt fragment (`vendor/codex-plugin-cc/prompts/adversarial-review.md`) exists on this machine.
+
+**What's proposed:** a net-new `.claude/skills/codex/SKILL.md` (`/codex <request>` with `ask` / `implement` / `resume` modes) backed by a net-new `.claude/agents/codex-worker.md` (distinct from `codex-adversary` — write and read-only have too-different safety defaults to share one file), governed by a net-new `.claude/rules/codex-worker-safety.md`, logging to a net-new `.claude/logs/codex-worker.jsonl`. Sandbox — not approval policy — is the entire safety boundary for headless Codex, because `codex exec` has no interactive approval concept at all (confirmed empirically, §3). Default `implement` scope is an **isolated git worktree**, not the live working tree, to avoid collision with the concurrent Claude Code session's own edits and the `file_claims` coordination DB.
+
+**The 5 decisions that most shape the build** (full tradeoffs in §8):
+1. **Default `implement` scope = isolated git worktree**, not in-place writes to the shared working copy.
+2. **Never offer a `-codex`-suffixed model.** Empirically confirmed: `gpt-5.2-codex` and a fabricated `gpt-5.5-codex` both return byte-identical HTTP 400s under ChatGPT-subscription auth. Only `gpt-5.5` / `gpt-5.4` / `gpt-5.4-mini` are real, subscription-eligible options.
+3. **`--disable multi_agent` stays the default** for every mode; multi_agent is opt-in only, gated behind an explicit flag and a re-verification banner (the `gpt-4.1`-fallback bug is a documented bug *class*, not a one-off).
+4. **`codex-worker` is a new agent, not a mode flag on `codex-adversary`.** Read-only critique and write-capable execution have incompatible blast radii to share a single hardcoded-flags file safely.
+5. **Confirm-first governs `workspace-write`/`danger-full-access` exactly like the existing destructive-command convention** — and critically, **no Claude-Code-side hook can see or block anything Codex does inside its own sandboxed process**. The `codex exec` invocation line itself passes through `destructive-command-guard` like any other Bash call (it isn't `rm`/`git reset`), but Codex's internal shell-tool calls are invisible to Claude Code's hook layer entirely. Enforcement is `--sandbox` + skill-level preflight, full stop.
+
+---
+
+## 2. Current State — Component Inventory (from internal-A)
+
+| File | Role | Reuse or Replace |
+|---|---|---|
+| `.claude/agents/codex-adversary.md` | The actual worker today — envelope agent: parse Mode/Scope/Focus/Codebase → assemble context → lookup-order system prompt → build prompt → invoke → `-o` clean-capture → `latest-output.md` | **Reuse the pattern**, do not extend the file itself |
+| `.claude/skills/review/SKILL.md:122-190` | Spawns codex-adversary as 4th parallel reviewer; `--no-codex` skip flag; telemetry append | Reuse as-is (unaffected) |
+| `.claude/skills/premortem/SKILL.md:218-356` | Step 2.5 cross-model pass, `sources:[claude,codex]` merge convention | Reuse as-is (unaffected) |
+| `.claude/hooks/src/plan-exit-premortem-prompt.ts` | PostToolUse:ExitPlanMode nudge toward `/premortem`; never calls Codex; fails open | Reuse — unrelated to write-capable path |
+| `.claude/hooks/src/plan-exit-tracker.ts` | Sibling hook; writes plan-approved state for plan-to-ralph-enforcer | Reuse — see §5 governance note |
+| `.claude/logs/codex-lift.README.md` + `.jsonl` | Schema doc + 5 real rows (2026-07-04→07-06): `claude_only`/`codex_only`/`both` lift counts | **Replace** — wrong schema for a task worker; build a new log (§5.6) |
+| `vendor/codex-plugin-cc/prompts/adversarial-review.md` | Only the vendored review-prompt fragment; **the full plugin is NOT installed** (`~/.claude/plugins/cache/` has 4 unrelated entries, recursive `*codex*` search returned nothing) | Reference architecture only (§4, §8) |
+| `.claude/rules/codex-adversarial.md` | Home doc for today's review-only usage; documents the gpt-4.1/multi_agent bug and the `--disable multi_agent` fix | **Extend minimally** (cross-reference) + add a **new sibling rule** (`codex-worker-safety.md`) rather than overloading it |
+| `~/.codex/AGENTS.md` | Confirmed to be a mis-templated clone of `CLAUDE.md` (broken find/replace casing) — not a purpose-built Codex doc | Replace with a small, purpose-built worker system prompt, not this file |
+| `~/.codex/hooks.json` | Full parallel mirror of the CCv3 hook ecosystem (~40 entries: git-auto-commit, sync-to-repo, file-claims, ralph enforcers) pointing at `~/.codex/hooks/dist/*.mjs` | **Unresolved — spike required** (see below) |
+
+**Registration surface — verified negative results:** `skill-rules.json` has zero `"codex"` matches anywhere in the repo. `settings.json`/`settings.local.json` have zero `"codex"` matches — no hook, no permission entry, `allowedTools: []`. 19 hook source files match `"codex"` as text but every one is a **provenance comment** ("Codex T1", "Codex #1") citing a past finding, not runtime logic. **Conclusion: today's entire safety model is convention-only.** A write-capable `/codex` cannot rely on any existing mechanical gate — it must bring its own (§5).
+
+**The `~/.codex/hooks.json` collision question, updated with external evidence:** internal-A flagged this as the single highest-leverage unknown — does the ~40-entry hook mirror (git-auto-commit, sync-to-repo, file-claims, ralph enforcers) fire under non-interactive `codex exec`, risking double-commits and `file_claims` collisions with a concurrent Claude Code session? External community research (ext-community §3.5, the `destructive_command_guard` Codex-integration doc) supplies a partial, unverified-on-this-machine mitigation: Codex's `unified_exec` path — the path `codex exec`'s own internal shell-tool calls and the Windows Desktop app use — **does not fire `PreToolUse` hooks at all**. If that holds for `~/.codex/hooks.json`'s git-auto-commit/sync-to-repo/file-claims entries too, collision risk is reduced but not eliminated (SessionStart/Stop-class hooks could still fire). **This remains a required spike before v1** (§6), not a closed question — run it in a throwaway git fixture, never in this repo.
+
+---
+
+## 3. Verified CLI Capability Surface
+
+Everything below is either the verify-memo's live smoke tests (`✓ EMPIRICAL`) or internal-B's direct `--help` text inspection (`✓ HELP-TEXT`) against the **installed** `codex-cli 0.131.0`. Where later CLI versions (per official docs, §4) diverge, it's called out explicitly as **version drift**, not a contradiction.
+
+### 3.1 The load-bearing finding: approval is not a lever, sandbox is
+
+```
+$ codex exec -m gpt-5.5 -c model_reasoning_effort=low --sandbox read-only \
+    --skip-git-repo-check --disable multi_agent -C "<project>" \
+    -o c1-last.txt "Reply with exactly this text and nothing else: OK-C1"
+```
+Session banner (✓ EMPIRICAL): `provider: openai`, `approval: never`, `sandbox: read-only`. This banner appeared **with no `-a`/`--ask-for-approval` flag passed at all** — because that flag **does not exist on `codex exec`** in 0.131.0 (✓ HELP-TEXT, confirmed absent by direct grep of captured `--help` output). It exists only on the top-level `codex` (interactive) command, with values `untrusted|on-failure|on-request|never`. **For headless work, sandbox mode is the entire safety boundary — there is no approval dial to fall back on.**
+
+| Sandbox | What it allows | Recommended for |
+|---|---|---|
+| `read-only` | No writes, no arbitrary exec beyond inspection | `ask` mode — research/Q&A/explain |
+| `workspace-write` | Writes confined to `-C` dir + `--add-dir` paths; network stays off by default | `implement` mode default |
+| `danger-full-access` | No sandbox at all | Never bare on this host — confirm-gated exactly like existing `--dangerously-bypass-approvals-and-sandbox` convention |
+
+### 3.2 (a) Read-only research / Q&A shape
+
+```bash
+printf '%s' "$PROMPT" | codex exec \
+  --model gpt-5.5 \
+  -c model_reasoning_effort=high \
+  --sandbox read-only \
+  --skip-git-repo-check \
+  --disable multi_agent \
+  --ephemeral \
+  -C "C:/Users/david.hayes/continuous-claude" \
+  -o "C:/path/to/out/final.txt" \
+  - < "$PROMPT_FILE"
+```
+`--ephemeral` is fine here — a one-shot research answer rarely needs to be resumed. Drop it if you want the option to `codex exec resume --last` afterward.
+
+### 3.3 (b) Workspace-write AUTONOMOUS implementation shape
+
+```bash
+printf '%s' "$TASK_PROMPT" | codex exec \
+  --model gpt-5.5 \
+  -c model_reasoning_effort=high \
+  --sandbox workspace-write \
+  --skip-git-repo-check \
+  --disable multi_agent \
+  -C "C:/path/to/worktree" \
+  --json \
+  -o "C:/path/to/out/final.txt" \
+  - < "$PROMPT_FILE"
+```
+Note `-C` points at an **isolated worktree path**, not the shared repo root — see §5.3/§8. No approval flag needed or possible; `exec` is autonomous-by-construction. `--json` is optional — add it only when the caller wants per-turn token/progress data (§3.5), not for the final answer (use `-o` for that, always).
+
+### 3.4 (c) Multi-turn / resume shape
+
+```bash
+# First turn — do NOT pass --ephemeral if you intend to resume
+printf '%s' "$TASK_PROMPT" | codex exec \
+  --model gpt-5.5 -c model_reasoning_effort=high \
+  --sandbox workspace-write --skip-git-repo-check --disable multi_agent \
+  -C "C:/path/to/worktree" \
+  -o "C:/path/to/out/turn1.txt" \
+  - < "$PROMPT_FILE"
+
+# Follow-up turn
+printf '%s' "$FOLLOWUP_PROMPT" | codex exec resume --last \
+  --sandbox workspace-write --disable multi_agent \
+  -o "C:/path/to/out/turn2.txt" \
+  - < "$FOLLOWUP_FILE"
+```
+`codex exec resume [SESSION_ID|--last] [PROMPT]` is the only continuation verb — no separate `continue` (✓ HELP-TEXT). `--ephemeral` sessions cannot be resumed (nothing was persisted) — mutually exclusive with this workflow.
+
+### 3.5 Clean-output method: `-o` vs `--json` vs `--output-schema`
+
+| Mechanism | Shape | Use for |
+|---|---|---|
+| `-o, --output-last-message <FILE>` | Plain-text final message only | **Primary contract, always use this.** Matches `codex-adversary`'s existing pattern, zero parsing risk. ✓ EMPIRICAL: diffing `-o` output (1 line) against full stdout+stderr (180 lines: stdin notice, ~106 skill-YAML load errors, ~6 MCP auth errors, hook lines, banner, transcript) proves `-o` fully strips the noise. |
+| `--json` | JSONL to stdout, one event per line (`thread.started`, `turn.started`, `item.completed`, `turn.completed` with token usage) | Only when the orchestrator needs streaming progress or per-turn token accounting. Combine with `-o` for a belt-and-suspenders final answer — confirmed these give **JSONL on stdout but plain text in the `-o` file**, not the same shape. |
+| `--output-schema <FILE>` | JSON Schema constrains the final message shape | When downstream needs a typed result object (e.g. `{"status":"ok","files_changed":[...]}`). Community-reported gotcha (unverified on this machine): the schema **must** set `additionalProperties: false` and list every property in `required`, or validation errors at runtime. |
+
+**Recommendation:** `-o` is the mandatory baseline for every invocation. `--json` is additive for v1+ telemetry richness. `--output-schema` is a v2 nice-to-have once a stable result contract is designed.
+
+### 3.6 Model reality — hard constraint, empirically proven
+
+```
+$ codex exec -m gpt-5.2-codex ...   → exit 1, 400 "The 'gpt-5.2-codex' model is not supported when using Codex with a ChatGPT account."
+$ codex exec -m gpt-5.5-codex ...   → exit 1, IDENTICAL 400 shape with substituted name (gpt-5.5-codex isn't even a real model id)
+```
+`~/.codex/models_cache.json` lists exactly 4 models: `gpt-5.5` (default), `gpt-5.4`, `gpt-5.4-mini`, and a hidden `codex-auto-review` (internal auto-approval reviewer — never surface it in a picker). **Never offer a `-codex`-suffixed model in `/codex`.** This is strong evidence of a blanket "any `-codex` id + ChatGPT auth = 400" rule on this account, not a one-off typo — treat any future `-codex`-suffixed id (including ones documented as available, §4) as unverified-until-tested against this exact account.
+
+### 3.7 `multi_agent` — verified accepted, real cost even when unused
+
+`config.toml` has `[features] multi_agent = true` globally; `codex features list` confirms `multi_agent stable true`. Every exec call in this session's verification used `--disable multi_agent` with zero flag-parse errors (✓ EMPIRICAL). Community measurement (ext-community): enabling `multi_agent` adds **~1,940 tokens to every call even when no sub-agent spawns** — a pure tax with no benefit in single-shot use, independently corroborating why disabling it by default is correct for token economy, not only crash-avoidance.
+
+### 3.8 Windows note carried forward
+
+`--skip-git-repo-check` bypasses only the repo-existence guard — it does not widen the sandbox or mark a directory "trusted." Every verify-memo run showed "Reading additional input from stdin..." regardless of redirect, but never hung on this machine — still, **always redirect stdin from a file, never rely on an inherited TTY**, because a real Windows hang bug is documented upstream (`openai/codex#20919`) for non-TTY inherited stdin with nothing written to it. This matches the CCv3 `ntn` CLI lesson exactly (`.claude/rules/notion-cli-safety.md`) — treat "always redirect stdin explicitly on Windows" as a universal CLI-scripting rule, not a Codex-specific quirk.
+
+---
+
+## 4. External Best-Practices Distillation
+
+### 4.1 Theo (t3.gg) — VERIFIED, cited quotes
+
+- **Delegation pattern, most current (July 2026):** Claude Code (running "Fable"/Claude's flagship) is taught via a CLAUDE.md section to route work: *"I taught Claude Code how to use Codex as a fallback for lots of implementation tasks. GPT-5.5 is incredibly steerable... Things that are unnecessarily token hungry (computer use, codebase analysis, etc), I do with other models and report results back."* Follow-up: *"I still find Codex to be WAY better at computer use, verification of UI/UX work, and generally more efficient at execution on well spec'd work... I was throwing away ~50% of my end-to-end agent-driven PRs before building this workflow. I haven't had to close a single one today."* — [YouTube: A realistic comparison of Opus and Codex](https://www.youtube.com/watch?v=1SJGGUeEbQs), [x.com/theo/status/2072481845363822914](https://x.com/theo/status/2072481845363822914), [x.com/theo/status/2072482460122964067](https://x.com/theo/status/2072482460122964067)
+- **Reasoning effort — his most repeated, and most contested-vs-CCv3 opinion:** *"I am running codeex on high. I almost never ever reach for extra high. I find high to be more than enough. Often medium feels better."* / *"extra high can perform worse because if it thinks too long it'll gaslight itself and then do something dumb."* — [YouTube: A realistic comparison of Opus and Codex](https://www.youtube.com/watch?v=1SJGGUeEbQs), [Never mind (OpenAI won again)](https://www.youtube.com/watch?v=RYWrK2hsIB8)
+- **Subscription-only, unambiguous:** *"Codeex 5.3 is not available over the API yet unless you're one of the big companies they partnered with"* — [A realistic comparison of Opus and Codex](https://www.youtube.com/watch?v=1SJGGUeEbQs)
+- **Bidirectional unblock pattern:** *"I'll often have Opus unblock Codex because if Codex is trying too hard to work around the blockers... it might get trapped."* — same source
+- **T3 Code productizing exactly this:** *"Turns out Julius already had a branch on T3 Code that lets you spin up Codex subagents via Claude (and vice versa). Should we ship this?"* — [x.com/theo/status/2072869036615155735](https://x.com/theo/status/2072869036615155735)
+- **Pitfall:** a 20+ hour, 85,000-line "fix everything" doom-loop vs. Opus solving the same task in 8 minutes — [A realistic comparison of Opus and Codex](https://www.youtube.com/watch?v=1SJGGUeEbQs)
+
+### 4.2 ChaseAI — VERIFIED
+
+- **Official plugin as the reference architecture:** `/plugin marketplace add openai/codex-plugin-cc` → `/plugin install codex@openai-codex` → `/reload-plugins` → `/codex:setup`, then `/codex:rescue [--background|--wait] [--resume|--fresh] [--model <model|spark>] [--effort <none|minimal|low|medium|high|xhigh>]` — this IS OpenAI's own answer to "delegate a real task from Claude Code to Codex."
+- **Model:** start with plain GPT-5.5, not Pro tier, unless already deep in the ecosystem.
+- **Sandbox:** his own tooling (`grill-me-codex`) pins `-s read-only` for review; `/codex:rescue` is write-capable by default.
+- **Full autonomy earns trust via testable completion criteria written in plan mode first** — his headline autonomy feature is Codex's *native* `/goal` (enabled via `[features] goals = true`), architecturally a different, Codex-side-only autonomy loop that Claude Code cannot drive or monitor — **not** the same thing as `/codex:rescue` or our proposed `/codex --implement`.
+- **Gap:** his content never surfaces the gpt-4.1/multi_agent bug CCv3 had to independently root-cause.
+- **Scope limiter:** his real automated Codex-as-subagent pattern is `grill-me-codex` (review-only, read-only) — everything else is manual copy-paste between two chat UIs; "I haven't messed with [automated wiring] too much."
+
+### 4.3 Official docs (`developers.openai.com/codex/*`) — VERIFIED, with named version caveat
+
+- **OpenAI's own recommendation for CI/automation is the opposite of our hard requirement:** *"We recommend API key authentication for programmatic Codex CLI workflows... The right way to authenticate automation is with an API key. Use this guide only if you specifically need to run the workflow as your Codex account."* — [CI/CD auth](https://developers.openai.com/codex/auth/ci-cd-auth). We are deliberately going against the blessed path to stay on Dave's subscription — supported, not recommended. Treat `~/.codex/auth.json` with API-key-level secrecy.
+- **Docs describe a newer CLI (`0.142.5`) than what's installed (`0.131.0`).** This explains two real conflicts with the empirical findings in §3: docs list `--ask-for-approval`/`-a` and `--full-auto` as flags on `exec`, and describe `-a` being silently coerced to `never` in non-interactive mode. **On the installed 0.131.0, neither flag exists on `codex exec` at all** (confirmed by direct `--help` grep). This is version drift, not a contradiction — but it means **the design must code against the empirically-verified 0.131.0 surface, not the docs' surface**, until an upgrade is deliberately performed and re-verified.
+- **Codex SDK is OpenAI's recommended programmatic surface**, not raw `codex exec` shell-out. Python SDK (`openai-codex`, beta) explicitly documents **"Automatic Authentication: the SDK automatically leverages existing Codex authentication when one is already available"** — the cleanest documented subscription-auth story for a programmatic worker. The TS SDK's README describes injecting `CODEX_API_KEY` into the child env — ambiguous whether this is a hard requirement or a no-op under an active ChatGPT session; **flagged as an open question, not verified this session** (§6, open question #1).
+- **`codex app-server` (JSON-RPC) is explicitly NOT recommended for this use case:** *"If you are automating jobs or running Codex in CI, use the Codex SDK instead."* Rule it out for v0-v2.
+- **Codex ships its own hooks system**, near 1:1 structural mirror of Claude Code's (`PreToolUse`, `PostToolUse`, `SessionStart`, `Stop`, same JSON contract) — directly reusable for Codex-side guardrails independent of whether Claude Code is in the loop. Source: [Hooks](https://developers.openai.com/codex/hooks).
+- **Network access is off by default** even under `workspace-write`; opt-in via `network_access = true` plus a `network_proxy` domain-allowlist feature. — [Agent approvals & security](https://developers.openai.com/codex/agent-approvals-security)
+- **Version-note worth acting on:** `0.142.0` added *"app-server clients can set multi-agent delegation to `disabled | explicit-request-only | proactive`"* — a potentially cleaner replacement for the blunt `--disable multi_agent` toggle, worth testing after an upgrade (§6, v2).
+
+### 4.4 Community (GitHub issues, blog writeups, gists) — VERIFIED unless marked otherwise
+
+- **Job-lifecycle prior art**: `/codex:rescue`'s background/wait + status/result/cancel shape is the closest existing answer to "delegate an actual task" — treat as reference architecture (§8, decision on plugin-vs-bespoke).
+- **`multi_agent`/gpt-4.1 is a bug *class*, not one issue**: `openai/codex#16893` (empty `explorer.toml` → model-ignore), `#14866` (sub-agents stuck, don't follow default model), `#14961` (worker launch fails outright on unavailable model), `#15250` (`.codex/agents/` custom agents unreachable from MCP-tool-backed sessions despite docs). Simon Willison's independent writeup corroborates ambiguity even in documented behavior — [Use subagents and custom agents in Codex](https://simonwillison.net/2026/Mar/16/codex-subagents/).
+- **Windows-specific hang bugs, directly relevant on this host:** `codex exec "<prompt>"` can hang indefinitely on non-TTY inherited stdin (`openai/codex#20919`, workaround `< NUL`/`</dev/null`); large shell-tool output can stall (`#18983`); slow/large git repos can stall trivial tool calls for minutes (`#20200`).
+- **No auto-compact historically** — big diffs pre-stuffed into a prompt can overflow context outright (`#3967`, `#19842`); mitigation consensus: let Codex read files itself, don't pre-paste diffs, chunk large tasks across multiple bounded `exec` + `resume` calls.
+- **Quota reality, with a real regression:** two independent clocks (5-hour rolling window + separate weekly cap); the 5h meter can look healthy while the weekly cap is exhausted. An **open, unresolved** GitHub issue reports a 10-20x per-token rate-limit cost regression since mid-June 2026 draining the 5h budget in 2-3 prompts — `openai/codex#28879`.
+- **Review-gate consensus, strongest cross-source finding:** never let a headless run auto-commit/auto-merge; patch-as-artifact + human/second-job review before applying, specifically to defend against prompt-injection via commit messages/PR titles/issue bodies.
+- **Codex's own hooks don't cover the `unified_exec` path** — the `destructive_command_guard` Codex-integration doc states Codex-side `PreToolUse` hooks do **not** fire for `unified_exec` (the path `codex exec` and its shell-tool calls use), meaning a hook-based guard on the Codex side covers only the simple-shell path, not a complete boundary. Directly informs the `~/.codex/hooks.json` collision spike (§2, §6).
+- **Worktree isolation, from oh-my-codex (OMX):** each parallel worker in its own git worktree, reconciled afterward by a "leader" — the safest pattern found for avoiding write collisions with a concurrently-edited working tree.
+
+### Consensus vs. Contested Table
+
+| Topic | Consensus | Contested / Version-Drift |
+|---|---|---|
+| Subscription-only auth (no API key) | **Consensus** — Theo, ChaseAI, official docs (supported-but-not-recommended), community, verify memo all agree it works | — |
+| Model choice | **Consensus on `gpt-5.5`** as current flagship (Theo bundles harness+model as "Codex", ChaseAI explicit) | **Contested on `-codex`-suffixed variants**: official docs list `gpt-5.2-codex`/`gpt-5.3-codex` as sunset-but-selectable via API key + a Pro-only `gpt-5.3-codex-spark`; **our own account/version 400s on any `-codex` id under ChatGPT auth** — ground truth wins, never offer these |
+| Reasoning effort for autonomous/long tasks | — | **Contested**: Theo/ChaseAI explicitly recommend `high`/`medium`, warn `xhigh` "gaslights itself" on long tasks; existing CCv3 `codex-adversary` always uses `xhigh` (works fine for bounded review). Resolve per-mode, not globally (§8) |
+| `multi_agent` default posture | **Consensus: disable by default** — CCv3's own root-caused bug + 4 independent GH issues + token-tax measurement all agree | ChaseAI's `/goal` is a *different* feature (Codex-native autonomy loop), not multi_agent — don't conflate |
+| Sandbox default for autonomous work | **Consensus: sandbox is the only real boundary**, `workspace-write` for implementation | **Contested on isolation**: official CI guidance is `workspace-write`+`never` in-place; community strongly recommends worktree/patch-as-artifact isolation instead. This doc resolves toward isolation (§8) |
+| `--full-auto` / `-a` on `exec` | — | **Version drift, not true disagreement**: newer docs (0.142.5) describe these; installed 0.131.0's `--help` confirms neither exists on `exec`. Design against the installed version |
+| Review-gate before merge | **Consensus, strongest finding in the entire research pass** — every automation-focused source agrees | — |
+| Plugin (`codex-plugin-cc`) vs. bespoke | ChaseAI treats the plugin as reference | **Open decision** — plugin isn't installed on this machine; internal-A found only a vendor prompt fragment (§8) |
+
+---
+
+## 5. Proposed `/codex` Architecture
+
+### 5.1 Skill: `.claude/skills/codex/SKILL.md`
+
+**Trigger:** explicit slash command only — `/codex <request>` — mirroring `/review`/`/premortem`'s pattern of NOT being keyword-auto-triggered (verified today's `skill-rules.json` has zero Codex entries and both existing Codex-touching skills are slash-only by design; keep that convention).
+
+**Modes** (flag-selected, `ask` is the safe default if omitted):
+
+| Mode | Flag | Sandbox | Ephemeral | multi_agent | Confirm-gate |
+|---|---|---|---|---|---|
+| `ask` | (default) / `--ask` | `read-only` | yes | disabled | none — matches today's reviewer posture |
+| `implement` | `--implement` | `workspace-write` | no (resumable) | disabled unless `--complex` | **required** before first invocation |
+| `resume` | `--resume [id\|last]` | inherits prior turn's sandbox | n/a | inherits | required only if resuming an `implement` thread |
+| complex opt-in | `--complex` (modifier on `implement`) | unchanged | unchanged | **enabled**, requires `explorer.toml` pin verified | additional confirm + warning banner (§5.3) |
+
+**How each mode picks sandbox+approval+model:** approval is never a variable (§3.1 — no dial exists on `exec`); sandbox is fixed per the table above; model defaults to `gpt-5.5` with `--model gpt-5.4|gpt-5.4-mini` as the only other accepted values (hard-validated against the 3-id allowlist, §3.6, rejecting any `-codex` suffix before ever shelling out); effort defaults to `high` for `implement` (per Theo/ChaseAI's contested-vs-`xhigh` finding, §4 table) and `xhigh` only for `ask` (matches the existing, working reviewer precedent for bounded single-shot tasks).
+
+**How output is captured and returned:** every invocation uses `-o <final.txt>` as the mandatory contract (§3.5). `implement` mode additionally passes `--json` and tees stdout to a per-run log for later parsing of `item.completed` (`file_change`, `command_execution`) events into the telemetry record (§5.6). The skill reads `-o`'s file, and for `implement` mode **independently runs `git status`/`git diff` inside the worktree** — Codex's self-reported summary is never trusted as the sole evidence of what changed (matches RULES.md's "External Verification" requirement). The diff is shown to the user before any merge step.
+
+**Interaction with `plan-to-ralph-enforcer`:** this is a real governance gray area, flagged rather than silently resolved. `plan-to-ralph-enforcer` blocks direct `Edit`/`Write` on code files after `ExitPlanMode` unless Ralph is active — but `/codex --implement` never calls `Edit`/`Write`; it shells out via `Bash` to a separate agent (`codex-worker`) that does its own writes inside its own sandboxed process. Mechanically this bypasses the enforcer entirely (Bash isn't gated by it), but *conceptually* it satisfies the enforcer's actual intent — "Ralph orchestrates → agents implement, Claude itself doesn't touch code directly" — since `codex-worker` **is** an agent-shaped delegation, just not one routed through the `Task` tool. Recommendation (also listed as an open decision, §8): treat `/codex --implement` as agent-equivalent and **allow it post-plan-approval without requiring Ralph**, on the basis that a human still explicitly confirms the `workspace-write` invocation each time (§5.1 confirm-gate) — but surface this reasoning to Dave rather than assuming it, since it's a genuine gap in the existing hook logic, not something those hooks were designed to reason about.
+
+**Interaction with `destructive-command-guard`:** the `codex exec ...` command line itself passes through the guard like any other Bash call and is not itself a destructive pattern (not `rm -rf`, not `git reset --hard`, etc.), so it is never denied by that hook. **Critically, the guard cannot see or gate anything Codex does *inside* its own sandboxed shell tool** — that boundary is enforced solely by `--sandbox`/`--add-dir`/`writable_roots`, not by any Claude-Code-side mechanism. This must be stated plainly in the safety rule (§5.4) so nobody assumes double coverage that doesn't exist.
+
+### 5.2 Agent: new `codex-worker`, not a mode on `codex-adversary`
+
+Per internal-A's reuse-vs-replace call: reuse the **envelope pattern** (parse request → assemble context → build prompt file → invoke with justified flags → `-o` clean-capture → structured return), but as a **separate agent file**, `.claude/agents/codex-worker.md`, because read-only-critique and write-capable-execution have too-different safety defaults to share one hardcoded-flags file. `codex-adversary.md` stays exactly as-is.
+
+**Flag matrix** (codex-worker's internal decision table, mirrors §5.1):
+
+| Input mode | `--sandbox` | `--model` (validated) | `-c model_reasoning_effort=` | `--disable multi_agent` | `--ephemeral` | `-C` target |
+|---|---|---|---|---|---|---|
+| ask | `read-only` | `gpt-5.5` default | `high` (or `xhigh` on request) | always | yes | project root |
+| implement | `workspace-write` | `gpt-5.5` default | `high` | yes (unless `--complex` + verified pin) | no | isolated worktree path (§5.3) |
+| resume | inherited (resume takes NO `--sandbox`) | inherited | inherited | inherited | n/a | **cd into worktree** (resume takes NO `-C`) — verified 2026-07-07 dogfood |
+
+Every invocation additionally carries `--skip-git-repo-check` (worktrees are real git dirs so this is usually a no-op safety net, not load-bearing) and stdin is always fed from a prompt **file** (`- < "$PROMPT_FILE"`), never an inherited TTY, per the Windows hang-bug mitigation (§3.8).
+
+### 5.3 Config/plumbing
+
+- **Guaranteeing subscription auth at call time:** the agent's spawn step explicitly unsets `OPENAI_API_KEY` and `CODEX_API_KEY` from the child process environment before invoking `codex exec` (defensive — docs themselves warn *"Do not set `OPENAI_API_KEY` or `CODEX_API_KEY` as a job-level environment variable in workflows that check out or run repository-controlled code"*), and asserts `codex login status` reports `Logged in using ChatGPT` as a preflight check, failing loudly (not silently falling back to an API key path) if it doesn't.
+- **Isolated worktree scope (default for `implement`):**
+  ```bash
+  WORKTREE_DIR="C:/Users/david.hayes/continuous-claude/.codex-worktrees/$(date +%Y%m%d-%H%M%S)"
+  git worktree add "$WORKTREE_DIR" -b "codex/$(date +%Y%m%d-%H%M%S)"
+  # invoke codex exec with -C "$WORKTREE_DIR"
+  # after: git -C "$WORKTREE_DIR" status --porcelain / git -C "$WORKTREE_DIR" diff
+  # present diff to user; on approval, cherry-pick/merge; then:
+  git worktree remove "$WORKTREE_DIR"
+  ```
+  `.codex-worktrees/` added to `.gitignore`. This sidesteps the `file_claims` DB entirely for v0/v1 (no concurrent-edit collision possible against an isolated worktree) — see §8 for the `--in-place` alternative and its tradeoffs.
+- **`multi_agent` handling:** default `--disable multi_agent`. The `--complex` opt-in requires `~/.codex/agents/explorer.toml` to already have `model = "gpt-5.5"` pinned (the documented 2026-06-01 mitigation) — the skill checks this file exists and contains the pin before honoring `--complex`, and prints a standing caveat every time it's used: *"Windows subagent TOML pinning is unverified on this host per `openai/codex#19399` — re-verify with a probe before trusting `--complex` unattended."*
+- **Profile overlay (v1+):** `--profile-v2 worker` layering `$CODEX_HOME/worker.config.toml` to disable the 16 noisy MCP-server connection attempts specifically for worker invocations, without touching Dave's interactive config. Highest-leverage noise/latency fix identified in internal-B, deferred to v1 since it's an optimization, not a correctness requirement.
+
+### 5.4 Safety rule: new `.claude/rules/codex-worker-safety.md`
+
+A **sibling** to `codex-adversarial.md`, not an extension of it (materially different safety posture: write vs. read-only). Cross-referenced from `codex-adversarial.md` with a one-line pointer. Contents:
+
+- **Confirm-first matrix:** `ask` mode = no confirmation needed (read-only, matches today's reviewer). `implement` mode = confirm-first on every invocation showing the exact `codex exec` command line, target worktree, and model/effort. `--complex` = additional confirm + the pinning caveat above. `danger-full-access` / `--dangerously-bypass-approvals-and-sandbox` = confirm-first, never default-on, identical posture to the existing rule.
+- **Git-clean gate:** before creating a worktree, verify the base branch has no uncommitted changes that would be silently excluded from the worktree's view (a worktree shares the same object store but starts from a commit, not the working tree's uncommitted state) — warn the user if HEAD has pending changes they might expect Codex to see.
+- **Writable-root scoping:** `implement` mode's `-C` is *always* the worktree path; `--add-dir` is only added for genuinely shared scratch space (e.g. a scratchpad dir), never the live repo root, for v0/v1.
+- **Network policy:** `network_access` stays at its default `false`; enabling it requires an explicit flag and a confirm, since prompt-injection via fetched content is a named risk in official docs.
+- **Model allowlist enforcement:** hard-reject any `--model` value not in `{gpt-5.5, gpt-5.4, gpt-5.4-mini}` before ever shelling out, citing the verified 400 evidence (§3.6) in the rejection message.
+- **Stdin discipline:** always `- < "$PROMPT_FILE"`, never bare positional prompt text long enough to matter, never an inherited TTY (§3.8).
+- **Quota awareness (v2):** parse `codex doctor --json` or the last `--json` turn's `.usage` before a long `implement` run and warn if usage looks close to a rolling-window or weekly cap, per the two-clock quota model and the known unresolved regression (`openai/codex#28879`).
+- **`~/.codex/hooks.json` collision:** explicitly documents the open question and the partial `unified_exec`-bypasses-`PreToolUse` mitigation, states the required spike (§6) as a hard prerequisite before v1 ships `implement` mode for anything beyond a throwaway fixture.
+- **Review-gate discipline:** codifies the strongest cross-source consensus finding — `implement` mode never auto-commits/auto-merges into the main working tree; it produces a worktree diff that a human (or a second, independent verification step) reviews before it's applied.
+
+### 5.5 Telemetry: new `.claude/logs/codex-worker.jsonl`
+
+Distinct from `codex-lift.jsonl` (that schema is specifically claude/codex/both *comparison* counts for review lift — wrong shape for a task-execution log). New schema, one row per invocation:
+
+```json
+{
+  "ts": "2026-07-06T14:32:00Z",
+  "mode": "implement",
+  "model": "gpt-5.5",
+  "effort": "high",
+  "sandbox": "workspace-write",
+  "multi_agent": false,
+  "scope": "worktree",
+  "worktree_path": "C:/.../.codex-worktrees/20260706-143200",
+  "task_summary": "add pagination to the report registry query",
+  "exit_code": 0,
+  "wall_clock_s": 187.4,
+  "tokens": { "input": 41200, "cached_input": 6100, "output": 3400, "reasoning_output": 900 },
+  "files_changed": ["scripts/report-registry/query.mjs"],
+  "git_diff_stat": "1 file changed, 22 insertions(+), 3 deletions(-)",
+  "verification": "diff_reviewed_and_merged",
+  "session_id": "019f3987-...",
+  "via": "claude-code"
+}
+```
+Companion `.claude/logs/codex-worker.README.md` documents the schema (mirrors the existing `codex-lift.README.md` convention).
+
+### 5.6 Registration
+
+- **`skill-rules.json`:** add `/codex` as an explicit slash-command entry with **no auto-trigger keywords** — matches the deliberate manual-invoke-only convention already used for `/review`/`/premortem`.
+- **`settings.json`:** no new `PreToolUse` hook is added to *gate* Codex's internal behavior — per §2/§4, no hook can see inside Codex's own sandboxed process. An **optional, non-blocking audit hook** (v1+) can log (never deny) any Bash call matching `codex exec.*workspace-write` to `.claude/audit/YYYY-MM-DD.log` for visibility, consistent with RULES.md's "destructive operations → log" convention — this is visibility, not enforcement, and must be documented as such so nobody mistakes it for a safety gate.
+- **Windows specifics:** invoke via the Bash tool exactly as `codex-adversary` already does (stdin-file redirect, proven to work cleanly in this session's verification runs) — do **not** reach for Node's `child_process.spawnSync` for v0/v1; if a future version needs Node-native invocation, re-apply the `windows-platform.md` codegraph lesson (invoke the real JS entrypoint directly via `process.execPath`, array args, no `shell:true`) rather than assuming Bash-tool parity.
+
+---
+
+## 6. Safety & Cost Model on the Subscription
+
+**Default sandbox:** `read-only` for `ask`, `workspace-write` (worktree-scoped) for `implement`. `danger-full-access` never defaulted, always confirm-gated.
+
+**Default approval:** moot — `codex exec` has no approval concept (§3.1). The *design's* approval gate lives entirely in the skill's confirm-first preflight, not in any Codex flag.
+
+**Quota/rate-limit reality (community-sourced, [§4.4](#44-community-github-issues-blog-writeups-gists--verified-unless-marked-otherwise)):** two independent clocks — a rolling 5-hour message window and a separate weekly cap resetting 7 days from the week's first message. The 5h meter can show healthy remaining capacity while the weekly budget is already exhausted; a single multi-file `gpt-5.5` implement run (~250k in / ~25k out tokens, order-of-magnitude community estimate) can be a meaningful fraction of a Plus-tier weekly allowance. An **unresolved** upstream regression (`openai/codex#28879`) reports 10-20x per-token rate-limit cost inflation since mid-June 2026 for some accounts. **Design response:** the safety rule requires a quota check (`codex doctor --json` or last `.usage`) before any `implement` run beyond v0's smallest scope, and the telemetry log records token usage per run so a running weekly total can be reconstructed if needed.
+
+**Kill/timeout:** rely on the calling process's own timeout (Claude Code's Bash tool timeout, or an external `timeout` wrapper) rather than trusting Codex's internal handling — this is explicit community guidance given the documented Windows stall bugs (`#18983`, `#20200`) where Codex itself doesn't reliably self-terminate a stuck run.
+
+**Cost is NOT dollars** — there is no per-call price to log; the only "cost" that matters is subscription-quota consumption (tokens + session-hours-equivalent against the 5h/weekly caps), tracked via the telemetry log's `tokens` field, not a dollar ledger like the CMA safety rule's `.claude/logs/cma-spend.jsonl`.
+
+---
+
+## 7. Phased Build Plan
+
+### v0 — Minimal working `/codex`
+
+**Artifacts to create:**
+- `.claude/agents/codex-worker.md` (ask + implement modes only; no resume, no `--complex`)
+- `.claude/skills/codex/SKILL.md` (`/codex <request>`, `--implement` flag switches mode; defaults to `ask`)
+- `.claude/rules/codex-worker-safety.md`
+- `.claude/logs/codex-worker.jsonl` + `.claude/logs/codex-worker.README.md`
+- `.codex-worktrees/` added to `.gitignore`
+- Registration in the relevant `skill-rules.json` (slash-command only, no keywords)
+
+**Acceptance criteria:**
+1. `/codex "explain how the report-registry upsert works"` returns a clean answer sourced from `-o`'s file, `read-only` sandbox, no confirm prompt.
+2. `/codex --implement "create a file scratch/hello.txt containing HELLO"` — skill shows the exact command line + target worktree, waits for explicit confirmation, creates the worktree, invokes Codex with `workspace-write`, independently runs `git diff` inside the worktree, and shows the diff to the user before offering to merge or discard.
+3. Any `--model` value other than `gpt-5.5`/`gpt-5.4`/`gpt-5.4-mini` is rejected before any `codex exec` call is made, with a message citing the verified 400 evidence.
+4. A telemetry row is written for both runs above with the correct schema.
+
+### v1
+
+**Artifacts to create/edit:**
+- Add `resume` mode to `codex-worker.md` and the skill (`/codex --resume <followup>`)
+- Extend telemetry to parse `--json` events into `files_changed`/token usage (richer than v0's diff-stat-only)
+- Add the `--profile-v2 worker` config overlay (`$CODEX_HOME/worker.config.toml`) disabling noisy MCP servers for worker calls only
+- **Run the required `~/.codex/hooks.json` collision spike** in a dedicated throwaway git fixture (not this repo) — confirm or deny whether git-auto-commit/sync-to-repo/file-claims entries fire under `codex exec`'s `unified_exec` path; document the result in `.claude/rules/windows-platform.md`-style evidence format
+- Optional non-blocking audit hook (`.claude/audit/YYYY-MM-DD.log`) logging `workspace-write` invocations for visibility
+
+**Acceptance criteria:**
+1. `/codex --implement "..."` followed by `/codex --resume "also add a test for that"` correctly continues the same Codex thread and the same worktree.
+2. The hooks-collision spike produces a written, evidenced verdict (not a guess) that either clears `implement` mode for direct repo use or confirms worktree isolation must stay mandatory.
+3. Worker-profile MCP noise reduction is measured (wall-clock before/after) and documented.
+
+### v2
+
+**Artifacts to create/edit:**
+- `--complex` opt-in enabling `multi_agent` for genuinely broad tasks, gated behind the `explorer.toml` pin check + a fresh Windows-specific re-verification probe of `openai/codex#19399`
+- Quota-awareness preflight (`codex doctor --json` parse + weekly-cap warning)
+- `--in-place` mode for trusted, git-clean repos (still confirm-gated) as an alternative to worktree isolation, per the open decision in §8
+- Formal evaluation of installing the real `openai/codex-plugin-cc` plugin vs. keeping the bespoke skill/agent, written up as a short comparison doc
+- (Stretch) spike the Python `openai-codex` SDK's "automatic authentication" path as an alternative to shell-out, once open question #1 (`CODEX_API_KEY` injection ambiguity in the TS SDK) is resolved — only worth doing if shell-out proves to have a real limitation the SDK solves
+
+**Acceptance criteria:**
+1. A `--complex` run against a genuinely multi-file exploratory task completes without a `gpt-4.1` rejection, with the explorer-pin verification banner shown.
+2. Quota preflight correctly warns before a run that would meaningfully deplete a weekly allowance (tested against a synthetic high-token-count task).
+3. A written recommendation exists on plugin-vs-bespoke, with a clear decision recorded (not left open indefinitely).
+
+---
+
+## 8. Open Decisions for Dave
+
+**1. Default `implement` scope: isolated git worktree vs. write-in-place to the live repo.**
+- *Options:* (a) worktree-isolated by default (this doc's recommendation), requiring an explicit merge step; (b) write directly into the shared working tree with only a git-clean-gate + confirm.
+- *Recommendation:* (a). Rationale: strongest cross-source consensus in this entire research pass is "review-gate before merge, never let headless writes land directly" (§4.4); worktree isolation is the only pattern found that structurally prevents collision with the concurrent Claude Code session's own edits and the `file_claims` coordination DB, without needing new DB-awareness code in `codex-worker`. Tradeoff: extra ceremony (worktree create/remove, merge step) for every `implement` call, even trivial ones — v2's `--in-place` opt-in exists specifically to relieve this for trusted, small, git-clean-repo cases.
+
+**2. Autonomy: confirm-gate every `implement` call vs. allow a Ralph-style `--yes` full-auto path.**
+- *Options:* (a) always confirm-first, no exceptions; (b) allow an explicit `--yes` flag for orchestrator-driven calls (e.g. from a Ralph loop) that skips the interactive confirm but still logs and still worktree-isolates.
+- *Recommendation:* (b), narrowly scoped. A hard "always confirm" rule would make `/codex --implement` unusable from any autonomous orchestration context (Ralph, scheduled jobs), which contradicts the stated goal of a general-purpose delegated worker. The worktree isolation (decision 1) plus mandatory telemetry plus the merge-step-stays-separate design keep `--yes` from being equivalent to unrestricted access — it only skips the interactive pause, not the sandbox boundary or the review step.
+
+**3. Model: `gpt-5.5` vs. any codex-tuned variant.**
+- *Options:* (a) `gpt-5.5` only, hard-block anything `-codex`-suffixed; (b) attempt to surface `gpt-5.3-codex-spark`/similar per official docs' model table.
+- *Recommendation:* (a), non-negotiable given the empirical evidence (§3.6) — two different `-codex` ids both produced byte-identical 400s under this exact account's ChatGPT auth. If Dave's account or a future CLI version genuinely supports a codex-tuned variant, that must be re-verified live before it's ever added to the allowlist — never trust the docs' model table over an account-specific 400.
+
+**4. Write-to-repo-directly vs. propose-a-patch.**
+- *Options:* (a) `implement` mode always produces a mergeable worktree diff for human review (this doc's default, folded into decision 1); (b) `implement` mode auto-applies changes and auto-commits, trusting Codex's own judgment.
+- *Recommendation:* (a) — this is really the same consensus finding as decision 1, restated: patch-as-artifact, not auto-merge, defends against prompt-injection via any content Codex might read (commit messages, issue text, fetched web content if network is ever enabled) that could otherwise steer it into a malicious auto-committed change.
+
+**5. Headless-only vs. interactive-capable.**
+- *Options:* (a) `/codex` is purely headless (`codex exec`/`codex exec resume`), no TUI attach; (b) also support a live-attach mode where Dave can watch/steer a Codex session interactively from within a Claude Code session.
+- *Recommendation:* (a) for all of v0-v2. `codex exec`'s autonomous-by-construction nature (§3.1) is exactly what makes it safe to reason about from inside a skill/agent; attaching to an interactive TUI session from an agent context is a different (and significantly more complex, e.g. `app-server`-based) architecture that official docs explicitly steer *away from* for automation use cases. Revisit only if a concrete need for live human steering mid-task emerges.
+
+**6. How `/codex` relates to the existing `codex-adversary` reviewer.**
+- *Options:* (a) two fully separate agents/skills (`codex-adversary` for `/review`/`/premortem`, `codex-worker`+`/codex` for everything else), sharing only the envelope *pattern*, not files; (b) unify into one agent with a mode flag; (c) have `/codex --review` delegate internally to the existing `codex-adversary` agent rather than reimplementing review logic.
+- *Recommendation:* (a) for the core split (matches internal-A's explicit reuse-vs-replace call and this doc's decision #4 in §1), with **(c) as an implementation detail** — `/codex`'s skill can offer a `--review` alias that simply invokes the existing `codex-adversary` agent unchanged, giving users one mental entry point (`/codex`) without duplicating the reviewer's carefully-tuned read-only flag set.
+
+**7. (Bonus, surfaced by research, not in the required list) Adopt the official `openai/codex-plugin-cc` plugin vs. keep the bespoke skill/agent.**
+- *Options:* (a) install the plugin fully and build guardrails around `/codex:rescue`; (b) build bespoke as designed in §5, treating the plugin as reference architecture only.
+- *Recommendation:* (b) for v0-v1, with (a) as a formal v2 evaluation item. Rationale: the plugin is not installed today (only a vendor prompt fragment exists), its job-lifecycle shape is confirmed valuable as a *reference*, but installing it wholesale introduces an unaudited surface (its own hooks, its own skill-loading behavior, unverified Windows behavior) without the benefit of this doc's already-completed verification work against the exact installed CLI version. Building bespoke first, informed by the plugin's shape, is lower-risk; formally comparing the two once the bespoke version is proven (v2) avoids a premature commitment either way.
+
+---
+
+## 10. v0 Dogfood Findings & Hardening (2026-07-07)
+
+v0 was dogfooded through the real `codex-worker` agent (ask + implement+resume + adversarial judge, workflow `wf_d9dd538b-673`). **Scores: ask 5/5, implement 5/5, resume 5/5, safety-contract 4/5, performance 3/5** — all three modes functional, worktree isolation airtight, live tree provably untouched, subscription-only (no API key) confirmed. Findings, all independently verified on disk:
+
+**Fixed in v0:**
+- **[HIGH] `codex exec resume` has no `--sandbox`/`-C`.** It inherits the resumed session's cwd+sandbox; `--last` is cwd-scoped → must `cd` into the worktree, not pass `-C`. Passing `--sandbox` errors RC=2. `codex-worker.md` Step 3c corrected.
+- **[HIGH] Windows `workspace-write` sandbox blocks ALL subprocess launches** (`CreateProcessAsUserW failed: 5`). Codex can create/edit files but cannot run git/node/tests inside its sandbox — it writes code BLIND and self-reports "done" without executing it (the generated `preflight.mjs` had a real `spawnSync` ENOENT bug Codex never caught). Verification must RUN changed code, not just `node --check`. Documented in agent + safety rule; the verification step was upgraded.
+- **[HIGH] In-repo worktrees pollute the skill list** — a worktree under `$PROJECT` makes Claude Code re-scan `.claude/skills` as ~150 duplicate path-scoped skills, plus a ~190MB / 3,079-file full checkout. Worktrees relocated OUTSIDE the repo (sibling `../.codex-worktrees/<repo>-<ts>-<pid>`); verified git accepts the out-of-repo path.
+- **[MED] Worktree name second-resolution collision** → `-<pid>` suffix added.
+
+**Deferred to v1/v2 (tracked):**
+- **[MED] Telemetry schema drift** — the dogfood's combined `implement+resume` run emitted non-enum `mode`/`scope`/`verification`. Real single-mode runs conform; tighten emit to always use enums + log one row per turn (v1).
+- **[MED] Worktree excludes uncommitted files** (branches from HEAD) — git-clean note should surface *which* files are excluded (v1).
+- **[MED] No explicit Codex session-id capture** — `resume --last` is cwd-scoped global state, fragile under concurrency; capture the session id from the implement turn's `--json` `thread.started` event and thread it into `resume` + telemetry (v1).
+- **[LOW] Worktree GC** (~190MB each; prune policy documented, automate in v1). **[LOW] `wall_clock_s` decomposition** — checkout vs model vs startup-noise (v1).
+
+**Net:** v0 is functional and hardened for all 3 HIGH issues. The single most valuable dogfood lesson — *Codex on Windows writes code it literally cannot run* — makes the orchestrator's out-of-sandbox "actually run it" verification non-optional, not a backstop.
+
+**v1 hooks-collision spike — RESOLVED (2026-07-07):** the `~/.codex/hooks.json` mirror does NOT cause commit/`file_claims` collisions under `codex exec --sandbox workspace-write`. Throwaway-fixture evidence: the file was created but NOT auto-committed (commits `1→1`, stayed untracked), and `file_claims` was unchanged (`7481→7481`, no fixture rows); only Codex's own `SessionStart`/`UserPromptSubmit` hooks fired (mostly failed), with no PostToolUse git/DB side effects. Tested in-place (worst case) → worktree-isolated `implement` is doubly safe. This clears the one open safety prerequisite; details in `codex-worker-safety.md` → "Hooks-collision question — RESOLVED".
+
+## 9. Sources Appendix
+
+### Internal-A (current-state audit)
+- `C:/Users/david.hayes/continuous-claude/.claude/skills/review/SKILL.md`
+- `C:/Users/david.hayes/continuous-claude/.claude/skills/premortem/SKILL.md`
+- `C:/Users/david.hayes/continuous-claude/.claude/hooks/src/plan-exit-premortem-prompt.ts`
+- `C:/Users/david.hayes/continuous-claude/.claude/hooks/src/plan-exit-tracker.ts`
+- `C:/Users/david.hayes/continuous-claude/.claude/agents/codex-adversary.md`
+- `C:/Users/david.hayes/continuous-claude/.claude/logs/codex-lift.README.md` + `.jsonl`
+- `C:/Users/david.hayes/continuous-claude/vendor/codex-plugin-cc/prompts/adversarial-review.md`
+- `C:/Users/david.hayes/.codex/AGENTS.md`
+- `C:/Users/david.hayes/.codex/hooks.json`
+- `C:/Users/david.hayes/.claude/settings.json`, `settings.local.json`, `.claude/skill-rules.json`, `.claude/plugins/installed_plugins.json`, `known_marketplaces.json`
+- Report: `scratchpad/codex-research/internal-a-current-state.md`
+
+### Internal-B (CLI surface characterization)
+- Live probes: `codex --help`, `codex exec --help`, `codex exec resume --help`, `codex exec review --help`, `codex resume --help`, `codex mcp --help`, `codex features --help`/`list`, `codex doctor --help`/`--json`
+- `~/.codex/models_cache.json`, `~/.codex/config.toml`
+- Report + evidence files: `scratchpad/codex-research/internal-b-cli-surface.md`
+
+### External — Theo (t3.gg)
+- [A realistic comparison of Opus and Codex](https://www.youtube.com/watch?v=1SJGGUeEbQs) (2026-02-17)
+- [Never mind (OpenAI won again)](https://www.youtube.com/watch?v=RYWrK2hsIB8) (2026-02-06)
+- [Claude Code vs Codex vs Cursor (an honest comparison)](https://www.youtube.com/watch?v=JMYspR42HFM) (2026-05-26)
+- [x.com/theo/status/2072481845363822914](https://x.com/theo/status/2072481845363822914) — Fable/Codex delegation thread
+- [x.com/theo/status/2072482460122964067](https://x.com/theo/status/2072482460122964067) — CLAUDE.md follow-up
+- [x.com/theo/status/2072869036615155735](https://x.com/theo/status/2072869036615155735) — T3 Code subagent bridge
+- [x.com/theo/status/2030071716530245800](https://x.com/theo/status/2030071716530245800) — T3 Code launch
+- [x.com/theo/status/2054737293186126056](https://x.com/theo/status/2054737293186126056) — BYO-inference
+- [x.com/theo/status/2073169842379891195](https://x.com/theo/status/2073169842379891195) — install 403
+- [github.com/pingdotgg/t3code](https://github.com/pingdotgg/t3code)
+- Secondary (unverified): [digg.com/tech/wmowks0x](https://digg.com/tech/wmowks0x), [digg.com/tech/2spgn23x](https://digg.com/tech/2spgn23x), [steipete/agent-scripts](https://github.com/steipete/agent-scripts)
+
+### External — ChaseAI
+- 4 YouTube transcripts (Chase AI channel, `@Chase-H-AI`)
+- [chaseai-yt/grill-me-codex](https://github.com/chaseai-yt/grill-me-codex) GitHub repo
+- [openai/codex-plugin-cc](https://github.com/openai/codex-plugin-cc) README (official plugin docs)
+
+### External — Official docs
+- [Authentication](https://developers.openai.com/codex/auth) · [CI/CD auth](https://developers.openai.com/codex/auth/ci-cd-auth) · [Quickstart](https://developers.openai.com/codex/quickstart)
+- [Command line options](https://developers.openai.com/codex/cli/reference) · [Non-interactive mode](https://developers.openai.com/codex/noninteractive) · [llms-full.txt](https://developers.openai.com/codex/llms-full.txt)
+- [Configuration Reference](https://developers.openai.com/codex/config-reference) · [Advanced Configuration](https://developers.openai.com/codex/config-advanced) · [Sample Configuration](https://developers.openai.com/codex/config-sample)
+- [Features – CLI](https://developers.openai.com/codex/cli/features) · [CLI index](https://developers.openai.com/codex/cli) · [Rules](https://developers.openai.com/codex/rules) · [AGENTS.md guide](https://developers.openai.com/codex/guides/agents-md) · [Hooks](https://developers.openai.com/codex/hooks)
+- [Sandbox](https://developers.openai.com/codex/concepts/sandboxing) · [Agent approvals & security](https://developers.openai.com/codex/agent-approvals-security) · [Windows](https://developers.openai.com/codex/windows)
+- [Model Context Protocol](https://developers.openai.com/codex/mcp) · [App Server](https://developers.openai.com/codex/app-server) · [SDK](https://developers.openai.com/codex/sdk)
+- [Models](https://developers.openai.com/codex/models) · [Changelog](https://developers.openai.com/codex/changelog)
+- [openai/codex GitHub repo](https://github.com/openai/codex) · [TS SDK README](https://github.com/openai/codex/blob/main/sdk/typescript/README.md) · [Python SDK README](https://raw.githubusercontent.com/openai/codex/main/sdk/python/README.md) · [Releases](https://github.com/openai/codex/releases) · [app-server-daemon README](https://github.com/openai/codex/blob/main/codex-rs/app-server-daemon/README.md)
+- [DeepWiki: MCP Server Implementation](https://deepwiki.com/openai/codex/6.4-mcp-server-implementation-(codex-mcp-server)) (community, not first-party)
+- [Introducing GPT-5.5 – OpenAI](https://openai.com/index/introducing-gpt-5-5/)
+
+### External — Community
+- [Non-interactive mode – Codex | OpenAI Developers](https://developers.openai.com/codex/noninteractive)
+- [Codex CLI exec mode experiments: 81 flag/feature tests (gist)](https://gist.github.com/alexfazio/359c17d84cb6a5af12bac88fa1db9770)
+- [Agent approvals & security – Codex](https://developers.openai.com/codex/agent-approvals-security)
+- [Codex Exec in CI: The Practical Guide to Headless OpenAI Agents](https://www.developersdigest.tech/blog/codex-exec-ci-headless-guide)
+- [Running headless Codex CLI inside Claude Code](https://amanhimself.dev/blog/running-headless-codex-cli-inside-claude-code/)
+- [How to skip Codex git repository checks](https://www.simplified.guide/codex/git-repo-check-skip)
+- [openai/codex-plugin-cc README](https://github.com/openai/codex-plugin-cc)
+- [destructive_command_guard/docs/codex-integration.md](https://github.com/Dicklesworthstone/destructive_command_guard/blob/main/docs/codex-integration.md)
+- [Using Codex with your ChatGPT plan](https://help.openai.com/en/articles/11369540-using-codex-with-your-chatgpt-plan)
+- [Understanding the New Codex Limit System](https://community.openai.com/t/understanding-the-new-codex-limit-system-after-the-april-9-update/1378768)
+- [Codex Weekly Limit Drained?](https://ofox.ai/blog/codex-weekly-limit-drained-2026/)
+- GitHub issues: [#28879](https://github.com/openai/codex/issues/28879) (rate-limit regression) · [#16893](https://github.com/openai/codex/issues/16893), [#14866](https://github.com/openai/codex/issues/14866), [#14961](https://github.com/openai/codex/issues/14961), [#15250](https://github.com/openai/codex/issues/15250) (multi_agent/gpt-4.1 class) · [#20919](https://github.com/openai/codex/issues/20919) (Windows stdin hang) · [#18983](https://github.com/openai/codex/issues/18983), [#20200](https://github.com/openai/codex/issues/20200) (Windows stalls) · [#8609](https://github.com/openai/codex/issues/8609), [#20704](https://github.com/openai/codex/issues/20704), [#13918](https://github.com/openai/codex/issues/13918) (skill-YAML noise) · [#5913](https://github.com/openai/codex/issues/5913), [#6426](https://github.com/openai/codex/issues/6426), [#16664](https://github.com/openai/codex/issues/16664) (truncation/token drain) · [#3967](https://github.com/openai/codex/issues/3967), [#19842](https://github.com/openai/codex/issues/19842) (no auto-compact)
+- [Simon Willison: Use subagents and custom agents in Codex](https://simonwillison.net/2026/Mar/16/codex-subagents/)
+- [Why Does a Codex Skill Exist in the Directory but Still Not Show Up? (UTF-8 BOM)](https://knightli.com/en/2026/04/29/codex-skill-not-loaded-because-of-utf-8-bom/)
+- [Structured CLI Output as Pipeline Glue](https://stevekinney.com/courses/self-testing-ai-agents/structured-cli-output-as-pipeline-glue)
+- Context/compaction: [Codex CLI Context Compaction Architecture](https://codex.danielvaughan.com/2026/03/31/codex-cli-context-compaction-architecture/), [Context Management Strategies for OpenAI Codex](https://iceberglakehouse.com/posts/2026-03-context-openai-codex/), [Context Compaction Deep Dive](https://justin3go.com/en/posts/2026/04/14/context-compaction-deep-dive-codex-cli-claude-code-opencode)
+- [One Queue, Three Agents: Cross-Vendor Wiring](https://agentconn.com/blog/cross-vendor-agent-queue-claude-codex-chatgpt/) (single-source, unverified pattern-level)
+- [Evomap: oh-my-codex agent orchestration](https://evomap.ai/blog/oh-my-codex-agent-orchestration-claude-codex) (described-architecture, worktree-isolation idea)
+- [Claude Code Docs: Orchestrate subagents at scale](https://code.claude.com/docs/en/workflows)
+
+### Verify memo (ground truth)
+- Report: `scratchpad/codex-research/verify.md`
+- Live commands: `codex login status`, `codex exec` smoke tests (C1), `codex exec --help`/`codex --help`/`codex exec resume --help`/`codex exec review --help` (C2), model-id 400 tests (C3), `config.toml`/`codex features list` (C4), `-o`-vs-full-output diff (C5)
+- Local grounding cross-referenced: `.claude/rules/codex-adversarial.md`, `.claude/agents/codex-adversary.md`
