@@ -1,11 +1,13 @@
 #!/usr/bin/env node
 /**
- * No Haiku Enforcer Hook - PreToolUse (Task)
+ * Model-Policy Enforcer Hook - PreToolUse (Agent|Task)
  *
- * Blocks Task tool calls with model="haiku".
- * Per ~/.claude/rules/no-haiku.md - Haiku is unreliable for agent tasks.
+ * (1) Blocks Task/Agent calls with model="haiku" (~/.claude/rules/no-haiku.md).
+ * (2) Standing guard: denies all spawns if CLAUDE_CODE_SUBAGENT_MODEL is set — it
+ *     overrides every agent's frontmatter and flattens the two-tier map to one model
+ *     (~/.claude/rules/agent-model-selection.md).
  *
- * Fix: Remove model parameter (inherits Opus) or use model="sonnet"
+ * Fix (haiku): use model="sonnet", or omit it for an ad-hoc chat-level call.
  */
 
 interface HookInput {
@@ -45,9 +47,27 @@ async function main(): Promise<void> {
 
   const tool = input.tool || input.tool_name;
   const model = input.tool_input?.model;
+  const isSpawn = tool === 'Agent' || tool === 'Task';
+
+  // Standing guard (E4): CLAUDE_CODE_SUBAGENT_MODEL overrides every agent's frontmatter
+  // and flattens the two-tier map to one model. It must never be set.
+  const flatten = process.env.CLAUDE_CODE_SUBAGENT_MODEL;
+  if (isSpawn && flatten) {
+    console.log(JSON.stringify({
+      hookSpecificOutput: {
+        hookEventName: 'PreToolUse',
+        permissionDecision: 'deny',
+        permissionDecisionReason: `BLOCKED: CLAUDE_CODE_SUBAGENT_MODEL is set (="${flatten}").
+
+It overrides every agent's frontmatter and FLATTENS the two-tier model map to one model.
+Unset it (it must never be set) — see ~/.claude/rules/agent-model-selection.md.`,
+      },
+    }));
+    return;
+  }
 
   // Only block Agent/Task with model="haiku"
-  if ((tool !== 'Agent' && tool !== 'Task') || model?.toLowerCase() !== 'haiku') {
+  if (!isSpawn || model?.toLowerCase() !== 'haiku') {
     console.log('{}');
     return;
   }
@@ -60,8 +80,8 @@ async function main(): Promise<void> {
 
 Per ~/.claude/rules/no-haiku.md:
 - Haiku is unreliable for agent tasks
-- REMOVE the model parameter (inherits Opus from parent)
-- Or use model='sonnet' if you need a specific model`,
+- Use model='sonnet' (or model='opus' for judgment-dense work)
+- Or omit the model parameter for a genuinely ad-hoc chat-level call`,
     },
   };
 
