@@ -116,3 +116,19 @@ When running multiple Bash commands in parallel that depend on a directory exist
 2. Then parallel calls that use that directory
 
 **Anti-pattern:** Launching 3 parallel `cd /Users/david.hayes/project && ...` commands — if the path is wrong, all 3 fail with cascade errors, tripling the noise.
+
+## Bash tool hangs on git/network ops → use PowerShell [H:8]
+
+Observed repeatedly 2026-07-06: while GitHub was slow, **every** Bash-tool command timed out (2 min) — including *local* ops like `git branch`/`git log`. Root cause: the Bash tool's shell-profile initialization runs a network-dependent step, so a slow remote hangs the whole shell before your command runs (it's not a git lock — verified: no `.git/*.lock`, no stuck `git`/`gh` processes).
+
+**Rule:** when Bash-tool git/network ops hang, **switch to the PowerShell tool** — it doesn't source that profile and runs instantly. Use `git -C <repo> <cmd>` (no `cd`). This applies to any git/`gh`/network op, not just merges.
+
+Caveat: the `destructive-command-guard` is a **Bash-tool** PreToolUse hook, so destructive git ops run via PowerShell are **not** gated — apply the same confirm-first judgment yourself.
+
+## `gh` CLI: interactive by default + `read:org` scope gaps → use the REST API [H:8]
+
+- `gh pr merge` / `gh pr create` are **interactive by default** → they HANG in the non-interactive tool shells. For scripted use, prefer `gh api` (REST): `gh api repos/<O>/<R>/pulls/<N>/merge -X PUT -f merge_method=merge`.
+- `gh pr edit` / `gh pr view` (and other porcelain) issue GraphQL that needs `read:org`; the current token lacks it → they error. The **REST API needs no org scope**: `gh api repos/<O>/<R>/pulls/<N> -X PATCH -f title=… -f body="$B"`.
+- **A timed-out `gh`/`git` command (exit 143) is NOT proof of failure** — the op often already succeeded server-side. VERIFY (`gh api …/pulls/<N>` → `merged`) before retrying.
+
+Full merge/branch-cleanup workflow using these: `.claude/rules/git-merge-workflow.md`.

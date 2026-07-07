@@ -94,3 +94,17 @@ Every scheduled report (VP Weekly, FourthOS Sponsor, Team Dashboard, System Heal
 - **DB** `4e4c9460-8818-4352-a056-88badbaa94ce` · **data source** `c7d2d9e3-d388-4640-a66e-88f7dd50f854` (child of the Reports hub). All IDs (DB + DS + 6 child pages + 7 views) pinned in `scripts/report-registry/report-runs.ids.json`.
 - **AI history read (deterministic, no LLM):** `"$NTN" datasources query c7d2d9e3-d388-4640-a66e-88f7dd50f854 --json` then filter by the `Report Type` select and sort `Run Date` desc. Row shape: `{Report Run, Run ID, Report Type, Run Date, Period, Status, Artifact URL, Docx/Deck, Summary, Source}`. Run ID = `<type>|<period>|<ISO-ts>` (unique per run).
 - **Writes are job-owned** (see `notion-cli-safety.md`): pipelines upsert via `scripts/report-registry/upsert.mjs` keyed by unique Run ID; humans read the views, don't hand-edit rows. `check-drift.mjs` flags any report type with no fresh row.
+
+## `ntn api` — Notion 2025-09-03 specifics (learned in practice, 2026-07-06)
+
+`ntn` has no `create-database`/`create-view` verb, but raw `ntn api` reaches the REST API. Pin `NOTION_API_VERSION=2025-09-03` (already done in `scripts/project-cards/lib/notion.mjs`). Introspect any endpoint with `ntn api <path> --spec`.
+
+- **Create a database (data-source model):** `ntn api v1/databases -X POST -d @body.json`. Body = `{parent:{type:"page_id",page_id}, title:[…], initial_data_source:{properties:{…}}}` — the column schema lives under **`initial_data_source.properties`** (NOT flat top-level `properties` like the old API). Response returns the `database.id` AND `data_sources:[{id}]` — persist **both** (the DS id for row upserts, the DB id for view repair). `ntn datasources resolve <db-id>` also yields the DS id.
+- **Create a row:** `ntn api v1/pages -X POST` with `parent:{type:"data_source_id", data_source_id}`.
+- **Trash a row/page:** PATCH `v1/pages/<id>` with `{"in_trash":true}` — the field is **`in_trash`, NOT `archived`** (2025-09-03 rejects `archived` with a 400).
+- **Views are MCP-only** (`notion-create-view`) — a raw `ntn api` can create the DB but not its linked views; do views in a connector-live `claude -p` (`ANTHROPIC_API_KEY` unset). Filtering a linked view by a **select** property works; relation-property filters may not be settable via MCP.
+- **`url`-typed properties reject non-URLs** (a Windows path → 400 that drops the whole write). Guard: only set a `url` property when the value matches `^https?://`, else omit it.
+
+## HTML embeds are sandboxed → non-self-contained pages render degraded
+
+`create-attachment` + `<embed>` renders in a **sandboxed iframe with no base URL**. HTML that pulls **external CDN assets** (Google Fonts, Alpine.js, chart libs) may render **degraded or broken** (functional JS like Alpine especially). Before embedding a deck, check for external `<link>`/`<script src>`; if it's not self-contained, **prefer link-only** to the live hosted page over a broken inline preview. Fonts-only degrade gracefully (fallback); functional CDN JS does not. This is the `notion-dashboard` size-gate's link-only fallback, correctly triggered by *self-containment*, not just size.
