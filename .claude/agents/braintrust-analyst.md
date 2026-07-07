@@ -1,7 +1,7 @@
 ---
 name: braintrust-analyst
 description: Analyze Claude Code sessions using Braintrust logs
-model: opus
+model: sonnet
 tools: [Read, Write, Bash, Grep, Glob]
 ---
 

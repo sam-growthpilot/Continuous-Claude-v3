@@ -1,7 +1,7 @@
 ---
 name: oracle
 description: External research - web, docs, APIs via 7-tool research stack
-model: opus
+model: sonnet
 tools: [Read, Bash, WebSearch]
 ---
 

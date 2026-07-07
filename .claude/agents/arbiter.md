@@ -1,7 +1,7 @@
 ---
 name: arbiter
 description: Unit and integration test execution and validation
-model: opus
+model: sonnet
 tools: [Bash, Read, Write, Glob, Grep]
 ---
 

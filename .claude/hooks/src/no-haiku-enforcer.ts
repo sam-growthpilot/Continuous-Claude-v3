@@ -1,14 +1,16 @@
 #!/usr/bin/env node
 /**
- * No Haiku Enforcer Hook - PreToolUse (Task)
+ * Model-Policy Enforcer Hook - PreToolUse (Agent|Task)
  *
- * Blocks Task tool calls with model="haiku".
- * Per ~/.claude/rules/no-haiku.md - Haiku is unreliable for agent tasks.
+ * (1) Blocks Task/Agent calls with model="haiku" (~/.claude/rules/no-haiku.md).
+ * (2) Standing guard: denies all spawns if CLAUDE_CODE_SUBAGENT_MODEL is set — it
+ *     overrides every agent's frontmatter and flattens the two-tier map to one model
+ *     (~/.claude/rules/agent-model-selection.md).
  *
- * Fix: Remove model parameter (inherits Opus) or use model="sonnet"
+ * Fix (haiku): use model="sonnet", or omit it for an ad-hoc chat-level call.
  */
 
-interface HookInput {
+export interface HookInput {
   tool?: string;
   tool_name?: string;
   tool_input?: {
@@ -17,55 +19,74 @@ interface HookInput {
   };
 }
 
-interface HookOutput {
-  hookSpecificOutput?: {
-    hookEventName: string;
-    permissionDecision?: string;
-    permissionDecisionReason?: string;
+export interface HookOutput {
+  hookSpecificOutput: {
+    hookEventName: 'PreToolUse';
+    permissionDecision: 'deny';
+    permissionDecisionReason: string;
   };
 }
 
-async function main(): Promise<void> {
-  let input: HookInput = {};
+function deny(reason: string): HookOutput {
+  return {
+    hookSpecificOutput: {
+      hookEventName: 'PreToolUse',
+      permissionDecision: 'deny',
+      permissionDecisionReason: reason,
+    },
+  };
+}
 
+/**
+ * Pure decision for the model policy: returns a deny output, else null (passthrough).
+ * `subagentModelEnv` is injected for testability (defaults to the live env var).
+ */
+export function decide(
+  input: HookInput,
+  subagentModelEnv: string | undefined = process.env.CLAUDE_CODE_SUBAGENT_MODEL,
+): HookOutput | null {
+  const tool = input.tool || input.tool_name;
+  const model = input.tool_input?.model;
+  const isSpawn = tool === 'Agent' || tool === 'Task';
+
+  // (2) Standing guard (E4): CLAUDE_CODE_SUBAGENT_MODEL flattens the two-tier map.
+  if (isSpawn && subagentModelEnv) {
+    return deny(`BLOCKED: CLAUDE_CODE_SUBAGENT_MODEL is set (="${subagentModelEnv}").
+
+It overrides every agent's frontmatter and FLATTENS the two-tier model map to one model.
+Unset it (it must never be set) — see ~/.claude/rules/agent-model-selection.md.`);
+  }
+
+  // (1) Block model="haiku"
+  if (!isSpawn || model?.toLowerCase() !== 'haiku') {
+    return null;
+  }
+
+  return deny(`BLOCKED: model='haiku' not allowed.
+
+Per ~/.claude/rules/no-haiku.md:
+- Haiku is unreliable for agent tasks
+- Use model='sonnet' (or model='opus' for judgment-dense work)
+- Or omit the model parameter for a genuinely ad-hoc chat-level call`);
+}
+
+async function main(): Promise<void> {
   const chunks: Buffer[] = [];
   for await (const chunk of process.stdin) {
     chunks.push(chunk);
   }
 
+  let input: HookInput = {};
   try {
     const rawInput = Buffer.concat(chunks).toString('utf-8').trim();
-    if (rawInput) {
-      input = JSON.parse(rawInput);
-    }
+    if (rawInput) input = JSON.parse(rawInput);
   } catch {
     console.log('{}');
     return;
   }
 
-  const tool = input.tool || input.tool_name;
-  const model = input.tool_input?.model;
-
-  // Only block Agent/Task with model="haiku"
-  if ((tool !== 'Agent' && tool !== 'Task') || model?.toLowerCase() !== 'haiku') {
-    console.log('{}');
-    return;
-  }
-
-  const output: HookOutput = {
-    hookSpecificOutput: {
-      hookEventName: 'PreToolUse',
-      permissionDecision: 'deny',
-      permissionDecisionReason: `BLOCKED: model='haiku' not allowed.
-
-Per ~/.claude/rules/no-haiku.md:
-- Haiku is unreliable for agent tasks
-- REMOVE the model parameter (inherits Opus from parent)
-- Or use model='sonnet' if you need a specific model`,
-    },
-  };
-
-  console.log(JSON.stringify(output));
+  const output = decide(input);
+  console.log(output ? JSON.stringify(output) : '{}');
 }
 
 main().catch(() => {

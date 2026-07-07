@@ -579,7 +579,7 @@ After indexing, natural language queries like "${pattern}" will find relevant co
 
 **For now, use:**
 - \`/tldr-search ${target || pattern}\` - structured search
-- \`Task(subagent_type="Explore", prompt="${pattern}")\` - agent exploration`;
+- \`Task(subagent_type="scout", prompt="${pattern}")\` - agent exploration (scout = Sonnet; Explore/Haiku is banned)`;
   } else if (semanticSearch.status === 'daemon_unavailable') {
     // Daemon not running
     reason = `🧠 **TLDR Daemon Not Running**
@@ -610,7 +610,7 @@ No code semantically similar to "${pattern}" found in the index.
 **Try:**
 1. Rephrase the query with different keywords
 2. Use structured search: \`/tldr-search ${target || pattern}\`
-3. Explore with agent: \`Task(subagent_type="Explore", prompt="${pattern}")\``;
+3. Delegate to an agent: \`Task(subagent_type="scout", prompt="${pattern}")\` (scout = Sonnet; Explore is banned)`;
   }
 
   const output: HookOutput = {
