@@ -351,7 +351,9 @@ Companion `.claude/logs/codex-worker.README.md` documents the schema (mirrors th
 
 ### v2
 
-**Artifacts to create/edit:**
+> **RECON DONE 2026-07-07 — scope narrowed. See `V2-HANDOFF.md` (the authoritative build brief) + `V2-KICKOFF-PROMPT.md`.** The original list below is superseded by the approved **lean scope**: (1) `--complex` — **probe-verified viable** (explorer.toml `gpt-5.5` pin honored on Windows, no gpt-4.1 trap; #19399 does not reproduce); (2) reactive usage-limit handling — **quota preflight REFUTED** (`codex doctor --json` has no quota/usage surface); (3) worktree GC automation; (4) doc sweep (this §7 + §5.3 in-repo-gitignore staleness IS that sweep). **OUT (Dave-approved):** `--in-place` (worktree isolation kept) + the `codex-plugin-cc` writeup (bespoke decided; plugin used for review). Open interaction for the build session: does `--enable multi_agent` honor `explorer.toml` under the worker's default `--ignore-user-config`? (verify after quota reset).
+
+**Artifacts to create/edit (original scope — see the recon banner above for what actually ships):**
 - `--complex` opt-in enabling `multi_agent` for genuinely broad tasks, gated behind the `explorer.toml` pin check + a fresh Windows-specific re-verification probe of `openai/codex#19399`
 - Quota-awareness preflight (`codex doctor --json` parse + weekly-cap warning)
 - `--in-place` mode for trusted, git-clean repos (still confirm-gated) as an alternative to worktree isolation, per the open decision in §8
@@ -360,8 +362,8 @@ Companion `.claude/logs/codex-worker.README.md` documents the schema (mirrors th
 
 **Acceptance criteria:**
 1. A `--complex` run against a genuinely multi-file exploratory task completes without a `gpt-4.1` rejection, with the explorer-pin verification banner shown.
-2. Quota preflight correctly warns before a run that would meaningfully deplete a weekly allowance (tested against a synthetic high-token-count task).
-3. A written recommendation exists on plugin-vs-bespoke, with a clear decision recorded (not left open indefinitely).
+2. ~~Quota preflight correctly warns...~~ **REFUTED** — reframed to reactive usage-limit-error handling (detect + surface reset time + telemetry flag); preflight is impossible (no quota surface).
+3. A written recommendation exists on plugin-vs-bespoke, with a clear decision recorded — **DONE** (bespoke for writes; plugin complements review, already used).
 
 ---
 
