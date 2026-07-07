@@ -44,7 +44,7 @@ for (const md of files) {
   if (!ALLOWED.has(model)) { errors.push(`${name}.md: model="${model}" not in {opus, sonnet}`); continue; }
   if (model === 'opus') opus++; else sonnet++;
 
-  // .json sidecar parity (only the 16 legacy CMA mirrors have one)
+  // .json sidecar parity (only the legacy CMA-mirror agents have one — check whichever exist)
   const jsonPath = join(agentsDir, `${name}.json`);
   let jsonText;
   try { jsonText = readFileSync(jsonPath, 'utf8'); } catch { continue; } // no sidecar → nothing to check
