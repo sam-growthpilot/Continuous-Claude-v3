@@ -40,6 +40,14 @@ Hard-reject any `--model` not in `{gpt-5.5, gpt-5.4, gpt-5.4-mini}`, citing the 
 
 `--disable multi_agent` on every call by default. Global config has `[features] multi_agent = true`; leaving it on makes a complex task spawn built-in explorer/worker sub-agents that fall back to `gpt-4.1` (400 on subscription) and adds ~1,940 tokens/call even unused. The `--complex` opt-in (v2) will require `~/.codex/agents/explorer.toml` to pin `model = "gpt-5.5"` first, plus a fresh Windows re-verification probe (openai/codex#19399), plus its own confirm.
 
+## Startup profile — `--ignore-user-config` (latency, v1)
+
+Every worker `codex exec`/`resume` passes **`--ignore-user-config`**. It skips loading Dave's interactive `~/.codex/config.toml` (which defines ~16 MCP servers whose network handshakes dominate cold-start), cutting a read-only smoke **~47s → ~18s** and removing the config-defined MCP connection-failure noise (verified 2026-07-07 v1 benchmark; 2 residual failures remain, sourced from plugins/runtime, not `config.toml`).
+
+- **Auth is NOT affected.** `--ignore-user-config` still reads `CODEX_HOME`/`auth.json` (the flag's own doc guarantee; the benchmark ran rc=0 on the subscription). The model / `model_reasoning_effort` / `multi_agent=false` the worker needs are passed as explicit CLI flags regardless, so nothing worker-relevant is dropped.
+- **Tradeoff to know:** Codex's shell also loses the base config's `shell_environment_policy.set` extras (e.g. `DATABASE_URL`, `CLAUDE_OPC_DIR`). Moot on Windows where `workspace-write` cannot spawn subprocesses anyway; if a specific task needs one, add `-c shell_environment_policy.set.KEY=VALUE` for that call.
+- **Refuted alternative (do NOT use):** the design-doc §5.3 `--profile-v2 worker` + `~/.codex/worker.config.toml` overlay was **empirically refuted 2026-07-07** — overlay layering deep-merges, so an empty `[mcp_servers]` (or `-c mcp_servers={}`) does NOT remove the base MCP servers (MCP-fail count unchanged from baseline). No machine-local `worker.config.toml` is created; `--ignore-user-config` is self-contained and portable across machines.
+
 ## Windows / CLI hygiene
 
 - **Always feed the prompt from a file** via `- < "$PROMPT_FILE"`, never an inherited TTY (hang bug openai/codex#20919). Same universal rule as `ntn` (`.claude/rules/notion-cli-safety.md`).

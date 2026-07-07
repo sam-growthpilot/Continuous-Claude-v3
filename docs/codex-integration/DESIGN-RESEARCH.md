@@ -252,7 +252,7 @@ Every invocation additionally carries `--skip-git-repo-check` (worktrees are rea
   ```
   `.codex-worktrees/` added to `.gitignore`. This sidesteps the `file_claims` DB entirely for v0/v1 (no concurrent-edit collision possible against an isolated worktree) — see §8 for the `--in-place` alternative and its tradeoffs.
 - **`multi_agent` handling:** default `--disable multi_agent`. The `--complex` opt-in requires `~/.codex/agents/explorer.toml` to already have `model = "gpt-5.5"` pinned (the documented 2026-06-01 mitigation) — the skill checks this file exists and contains the pin before honoring `--complex`, and prints a standing caveat every time it's used: *"Windows subagent TOML pinning is unverified on this host per `openai/codex#19399` — re-verify with a probe before trusting `--complex` unattended."*
-- **Profile overlay (v1+):** `--profile-v2 worker` layering `$CODEX_HOME/worker.config.toml` to disable the 16 noisy MCP-server connection attempts specifically for worker invocations, without touching Dave's interactive config. Highest-leverage noise/latency fix identified in internal-B, deferred to v1 since it's an optimization, not a correctness requirement.
+- **Profile overlay (v1+):** ~~`--profile-v2 worker` layering `$CODEX_HOME/worker.config.toml` to disable the 16 noisy MCP-server connection attempts specifically for worker invocations, without touching Dave's interactive config.~~ **REFUTED in v1 (2026-07-07) — see §11.** `--profile-v2` layering deep-merges, so an empty `[mcp_servers]` overlay (and `-c mcp_servers={}`) does NOT remove the base MCP servers. The confirmed replacement is **`--ignore-user-config`** (skips the whole base config where the MCP servers live; ~47s→18s; no machine-local file).
 
 ### 5.4 Safety rule: new `.claude/rules/codex-worker-safety.md`
 
@@ -416,6 +416,39 @@ v0 was dogfooded through the real `codex-worker` agent (ask + implement+resume +
 **Net:** v0 is functional and hardened for all 3 HIGH issues. The single most valuable dogfood lesson — *Codex on Windows writes code it literally cannot run* — makes the orchestrator's out-of-sandbox "actually run it" verification non-optional, not a backstop.
 
 **v1 hooks-collision spike — RESOLVED (2026-07-07):** the `~/.codex/hooks.json` mirror does NOT cause commit/`file_claims` collisions under `codex exec --sandbox workspace-write`. Throwaway-fixture evidence: the file was created but NOT auto-committed (commits `1→1`, stayed untracked), and `file_claims` was unchanged (`7481→7481`, no fixture rows); only Codex's own `SessionStart`/`UserPromptSubmit` hooks fired (mostly failed), with no PostToolUse git/DB side effects. Tested in-place (worst case) → worktree-isolated `implement` is doubly safe. This clears the one open safety prerequisite; details in `codex-worker-safety.md` → "Hooks-collision question — RESOLVED".
+
+## 11. v1 Build Findings (2026-07-07)
+
+v1 (session-id capture + startup-latency + cleanups) built on `feature/codex-worker`. Two load-bearing CLI verifications on the installed `codex-cli 0.131.0`, then wired the confirmed mechanisms.
+
+**Item A — session id: CONFIRMED (with a field correction).** The `--json` stream's FIRST event is `{"type":"thread.started","thread_id":"<uuid>"}` — the id field is **`thread_id`**, not `session_id` (internal-B named the event right, the field wrong). `codex exec resume <UUID>` accepts it positionally ("Conversation/session id (UUID) or thread name"). Wired: implement/resume capture `thread_id` from the `--json` log via `grep -m1 thread.started | sed`, thread it into `resume <id>` and telemetry (`scope:"resume:<id>"` + `session_id`). **Live acceptance (read-only sessions, shared cwd; sandbox is orthogonal to the property):**
+
+| run | sequence | result |
+|-----|----------|--------|
+| resume **by-id(A)** | A="ALPHA-42" → B="BETA-99" (newer) → resume `<A-id>` | **ALPHA-42** — exact thread despite B newer ✓ |
+| resume **--last** (clean control) | C="GAMMA-1" → E="DELTA-2" (newer) → resume `--last` | **DELTA-2** — targets most-recent (the wrong thread) ✓ |
+| resume **by-id(C)** (same control) | …then resume `<C-id>` | **GAMMA-1** — exact thread despite E newer ✓ |
+
+Conclusion: resume-by-captured-id is concurrency-safe; `--last` is cwd-global "most recent" and picks the wrong thread when any `codex` run intervenes (Ralph / parallel use). (First-pass control was contaminated by running by-id before `--last`; re-run with `--last` first is the clean proof above.)
+
+**Item B — latency: the design-doc §5.3 approach was REFUTED; `--ignore-user-config` replaced it.** A/B benchmark (identical low-effort read-only ask; delta = mute mechanism):
+
+| mechanism | wall | MCP-fail | skill lines | stderr |
+|---|---|---|---|---|
+| baseline | 47s | 6 | 106 | 112 |
+| `--profile-v2 worker` + empty `[mcp_servers]` | 79s | **6** | 106 | 112 |
+| `-c mcp_servers={}` | 62s | **6** | 106 | 112 |
+| **`--ignore-user-config`** | **18s** | **2** | 106 | **108** |
+
+`--profile-v2` (and `-c mcp_servers={}`) deep-merge the overlay, so they do NOT remove the base's 16 `[mcp_servers.*]` — MCP-fail count unchanged from baseline. **`--ignore-user-config`** skips the whole base config (where the MCP servers live), cutting cold-start ~47s→18s and MCP-fails 6→2 (2 residual sourced from plugins/runtime, not `config.toml`); auth still uses `CODEX_HOME` (rc=0, correct answer). Single flag, no machine-local file — more portable than the planned overlay. The **skill-YAML scan (106 lines) is untouched by every mechanism but is cheap (~6ms)** — it is log noise, not the latency bottleneck; the bottleneck was config-driven MCP network handshakes. Wired: `--ignore-user-config` on every worker `codex exec`/`resume`; no `worker.config.toml` created. Tradeoff (documented in `codex-worker-safety.md`): Codex's shell loses `shell_environment_policy.set` extras — moot on Windows (`workspace-write` can't spawn subprocesses); re-supply via `-c` if ever needed.
+
+**Cleanups:** telemetry now emits **one row per turn** with enum-only `mode`/`scope`/`verification` + a `session_id` field (v0 drift being fixed: a combined `implement+resume` row, non-enum `ephemeral`/`human-verified-citations`/freeform values); git-clean now surfaces the exact "excluded from worktree" file list in the returned summary.
+
+**v1 dogfood hardening (2026-07-07, workflow `wf_38e68933-765`):** the v1 commit was dogfooded through the live `codex-worker` agent (ask → exit 0, `--ignore-user-config` + enum-conformant telemetry confirmed) + a Claude wiring audit (11/11 hard constraints intact, live telemetry row conformant) + a cross-model `codex-adversary` pass. The adversarial pass earned real cross-model lift — it **empirically proved two bugs in the just-written v1 code**, both fixed before finalizing:
+1. The "excluded from worktree" list used `awk '{print $2}' | paste -sd', '`, which **truncates spaced paths** (`?? src/has space/x.ts` → `src/has`) and **cycles the delimiter's characters** (`paste -sd', '` → `a,b c,d`, not `a, b, c, d`). Replaced with a whitespace-safe `sed` (strip XY + rename-arrow) + `awk`-printf join.
+2. The resume contract invited the literal `SESSION_ID="last"`, but `codex exec resume last` **silently starts a NEW disconnected session** (exit 0, wrong thread — Codex verified vs a nonexistent UUID which errors loudly). Added a UUID guard (non-UUID → `--last`) and reworded the Step 1 / skill contract to "leave EMPTY for fallback."
+
+Also hardened: resume now captures its own `RC` (the resume telemetry row's `exit_code` was stale), re-passes `--model` (constraint-6 precision), and the `thread_id` capture uses `grep + jq` (whitespace/field-order robust) instead of `grep + sed`; the telemetry variable seam (`SID`/`REQUEST_SUMMARY`/`DIFFSTAT` vs `SESSION_ID`/`REQUEST`) was reconciled so implement/resume rows actually populate `session_id`. Each shell fix was re-verified on synthetic inputs before wiring.
 
 ## 9. Sources Appendix
 

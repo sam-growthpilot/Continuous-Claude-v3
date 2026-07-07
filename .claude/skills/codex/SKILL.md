@@ -50,8 +50,11 @@ Task(
   ## Autonomy
   confirm            # or "yes" if the user passed --yes
 
-  ## Scope           # resume only
-  last | <SESSION_ID>
+  ## Scope           # resume only — the Codex session id (UUID) from the implement run's summary
+  <SESSION_ID>       # leave EMPTY to fall back to --last (do NOT pass the literal "last")
+
+  ## Worktree        # resume only — the worktree path from the implement run's summary
+  <path>
 
   ## Codebase
   $CLAUDE_PROJECT_DIR
@@ -59,7 +62,7 @@ Task(
 )
 ```
 
-For **implement**, the worker will surface the exact command + target worktree and (unless `--yes`) wait for your explicit go-ahead, run Codex with `workspace-write` inside a throwaway worktree, independently `git diff` the result, and show you the patch before anything touches your live working tree. Present that diff to the user; on approval the worker applies it, otherwise it discards and removes the worktree.
+For **implement**, the worker will surface the exact command + target worktree and (unless `--yes`) wait for your explicit go-ahead, run Codex with `workspace-write` inside a throwaway worktree, independently `git diff` the result, and show you the patch before anything touches your live working tree. Present that diff to the user; on approval the worker applies it, otherwise it discards and removes the worktree. The worker also returns the Codex **session id** and **worktree path** — pass both back on a later `--resume` so it continues the exact thread (robust under concurrency, unlike `--last`).
 
 ### `--review` → delegate to the existing reviewer
 
@@ -82,7 +85,7 @@ Task(
 
 - **Subscription only.** The worker asserts `codex login status` = "Logged in using ChatGPT" and strips `OPENAI_API_KEY`/`CODEX_API_KEY` from Codex's env. Fails loud, never silently uses an API key.
 - **Confirm-first for `implement`/`resume`** (the only approval gate — `codex exec` has none). `--yes` skips only the interactive pause.
-- **Worktree isolation by default** — write runs happen in `.codex-worktrees/<ts>` (gitignored), never in-place, so they can't collide with your live session or the `file_claims` DB. (`--in-place` is a v2 opt-in.)
+- **Worktree isolation by default** — write runs happen in a throwaway git worktree **outside** the repo (sibling `../.codex-worktrees/<repo>-<ts>`), never in-place, so they can't collide with your live session or the `file_claims` DB. (`--in-place` is a v2 opt-in.)
 - **Review-gate** — never auto-commits/auto-merges; produces a patch you approve first.
 - **Model allowlist** — `gpt-5.5/gpt-5.4/gpt-5.4-mini` only.
 - **No hook can see inside Codex's sandbox** — enforcement is `--sandbox` + this preflight, not any Claude Code hook.

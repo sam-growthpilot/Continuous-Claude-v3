@@ -2,7 +2,17 @@
 
 **For:** a fresh session picking up v1 of the CCv3 Codex worker.
 **Created:** 2026-07-07. **Author:** the v0 build+dogfood session.
-**Companion docs:** `DESIGN-RESEARCH.md` (§3 verified CLI surface, §7 phased plan, §8 open decisions, §10 dogfood findings) · `.claude/rules/codex-worker-safety.md` · memory `codex-worker-v0`.
+**Companion docs:** `DESIGN-RESEARCH.md` (§3 verified CLI surface, §7 phased plan, §8 open decisions, §10 dogfood findings, **§11 v1 build findings**) · `.claude/rules/codex-worker-safety.md` · memory `codex-worker-v0`.
+
+---
+
+## ✅ v1 SHIPPED (2026-07-07) — evidence in DESIGN-RESEARCH §11
+
+- **Item A (session-id capture):** DONE + live-verified. `--json` first event is `{"type":"thread.started","thread_id":"<uuid>"}` (field is `thread_id`, not `session_id`). Captured in implement/resume, threaded into `resume <id>` + telemetry (`scope:"resume:<id>"`, `session_id`). Acceptance proven: resume-by-id hits the exact thread even with a newer intervening session; `--last` hits the wrong (most-recent) one.
+- **Item B (startup latency):** DONE + benchmarked — but **the planned `--profile-v2 worker` was empirically REFUTED** (overlay deep-merges, can't mute MCP). Replaced with **`--ignore-user-config`**: ~47s→18s, MCP-fails 6→2, no machine-local file. On every worker `codex exec`/`resume`.
+- **Cleanups:** DONE — telemetry one-row-per-turn + enum-only `mode`/`scope`/`verification` + `session_id`; git-clean "excluded from worktree" list in the summary.
+
+The scope detail below is the original brief (retained for context).
 
 ---
 

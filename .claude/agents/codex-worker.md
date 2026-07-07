@@ -22,6 +22,7 @@ You are a thin orchestrator that delegates a real task to OpenAI Codex (default 
 3. **Model allowlist = `{gpt-5.5, gpt-5.4, gpt-5.4-mini}`.** Any `-codex`-suffixed id returns HTTP 400 under ChatGPT auth (empirically proven). **Reject a bad `--model` before ever shelling out.**
 4. **`--disable multi_agent` on every call by default.** Global config has `multi_agent = true`; leaving it on makes Codex spawn built-in sub-agents that fall back to `gpt-4.1` (400 on subscription) AND taxes ~1,940 tokens/call even when unused. Multi-agent is opt-in only (`--complex`, v2 — not in this agent yet).
 5. **Windows stdin discipline.** Always feed the prompt from a FILE via `- < "$PROMPT_FILE"`, never an inherited TTY (documented hang, openai/codex#20919).
+6. **Startup profile (latency, v1).** Every worker `codex exec`/`resume` passes **`--ignore-user-config`** to skip loading Dave's interactive `~/.codex/config.toml`. That config defines ~16 MCP servers whose network handshakes dominate cold-start; skipping it cut a read-only smoke **47s → 18s** and dropped the config-defined MCP connection failures (verified 2026-07-07 v1 benchmark; 2 residual come from plugins/runtime, not config). **Auth is unaffected** — `--ignore-user-config` still reads `CODEX_HOME`/`auth.json` (subscription); the model / `model_reasoning_effort` / `multi_agent=false` this agent needs are passed as explicit CLI flags regardless (resume re-passes `--model` and inherits effort from the resumed session's stored config), so nothing worker-relevant is lost. Tradeoff: Codex's shell also loses the base `shell_environment_policy.set` extras (e.g. `DATABASE_URL`) — moot on Windows where `workspace-write` can't spawn subprocesses; if a task genuinely needs one, add `-c shell_environment_policy.set.KEY=VALUE`. **Do NOT use `--profile-v2 worker` / a `worker.config.toml`** — verified 2026-07-07 that overlay layering deep-merges and does NOT remove the base MCP servers (the design-doc §5.3 approach was empirically refuted; `--ignore-user-config` replaced it).
 
 ## Step 1: Parse Your Inputs
 
@@ -44,7 +45,10 @@ low | medium | high | xhigh     (default: xhigh for ask, high for implement — 
 confirm (default) | yes         — "yes" skips the interactive pause (orchestrator/Ralph use) but NEVER skips the sandbox boundary, telemetry, or the separate review step
 
 ## Scope        (resume only)
-last | <SESSION_ID>
+<SESSION_ID>    (the Codex thread id (UUID) from the prior implement run's summary; LEAVE EMPTY to fall back to --last — do NOT pass the literal "last")
+
+## Worktree     (resume only)
+<path>          (the worktree path from the prior implement run's summary)
 
 ## Codebase
 $CLAUDE_PROJECT_DIR = /path/to/project
@@ -86,6 +90,7 @@ env -u OPENAI_API_KEY -u CODEX_API_KEY codex exec \
   --sandbox read-only \
   --skip-git-repo-check \
   --disable multi_agent \
+  --ignore-user-config \
   --ephemeral \
   -C "$PROJECT" \
   -o "$FINAL" \
@@ -102,7 +107,16 @@ Parse the answer from `$FINAL` (clean final message; `-o` strips the ~100+ lines
 
 ```bash
 # 1) git-clean note (worktree branches from HEAD, NOT the working tree's uncommitted changes)
-git -C "$PROJECT" status --porcelain                # if non-empty, warn the user AND list which files Codex won't see
+# List uncommitted paths, robust to spaces + renames. (`awk '{print $2}' | paste -sd', '`
+# is WRONG: awk splits spaced paths, and `paste -sd', '` cycles the delimiter's CHARACTERS
+# -> "a,b c,d". Both proven 2026-07-07.) Strip the 3-char XY status, keep the post-'->' side
+# of a rename, join with ", " via awk printf (printf "%s",$0 does NOT split on whitespace).
+EXCLUDED="$(git -C "$PROJECT" status --porcelain \
+  | sed -E 's/^...//; s/.* -> //' \
+  | awk 'NR>1{printf ", "}{printf "%s",$0}END{if(NR)print ""}')"
+# If EXCLUDED is non-empty, WARN the user up front: these uncommitted files are NOT
+# visible to Codex in the worktree (it branches from HEAD). Surface the exact list in Step 5.
+echo "Excluded from worktree (uncommitted at HEAD): ${EXCLUDED:-none}"
 
 # 2) isolated worktree from HEAD — OUTSIDE the repo tree.
 #    CRITICAL (verified 2026-07-07 dogfood): an in-repo worktree is scanned by
@@ -131,12 +145,21 @@ env -u OPENAI_API_KEY -u CODEX_API_KEY codex exec \
   --sandbox workspace-write \
   --skip-git-repo-check \
   --disable multi_agent \
+  --ignore-user-config \
   -C "$WORKTREE" \
   --json \
   -o "$FINAL" \
   - < "$PROMPT_FILE" > "$LOG" 2>&1
 RC=$?
 rm -f "$PROMPT_FILE"
+
+# Capture the Codex session (thread) id for robust resume. The FIRST --json event is
+# {"type":"thread.started","thread_id":"<uuid>"} (verified 0.131.0). `resume` takes this
+# UUID positionally and is concurrency-safe where --last (cwd-global "most recent") is not.
+# grep the (loosely-matched) event line, then jq the field — robust to future JSON whitespace/
+# field-order changes where a fixed sed capture-group would silently yield empty.
+SESSION_ID="$(grep -a -m1 'thread\.started' "$LOG" | tr -d '\r' | jq -r '.thread_id // empty' 2>/dev/null)"
+echo "Codex session id: ${SESSION_ID:-<not captured>}"   # surface in Step 5 + telemetry + for --resume
 
 # 4) INDEPENDENT verification — never trust Codex's self-report as sole evidence.
 #    On Windows, Codex CANNOT launch subprocesses inside its workspace-write sandbox
@@ -167,29 +190,54 @@ Requires the prior turn to have been NON-ephemeral (do not pass `--ephemeral` on
 # passing --sandbox errors "unexpected argument", RC=2). It INHERITS the resumed
 # session's cwd + sandbox, and --last is scoped to the CURRENT cwd — so you must
 # `cd` INTO the worktree, not pass -C.
+# Guard: only treat SESSION_ID as an explicit id if it looks like a UUID; otherwise fall
+# back to --last. Passing a non-UUID (e.g. the literal "last") to `resume` silently starts
+# a NEW disconnected session (exit 0, WRONG thread — no error) — verified 2026-07-07.
+case "$SESSION_ID" in
+  [0-9a-fA-F]*-*-*-*-*) RESUME_TARGET="$SESSION_ID" ;;
+  *)                    RESUME_TARGET="--last" ;;
+esac
+FOLLOWUP_FILE="$(mktemp -t codex-resume-XXXXXX.txt)"
 printf '%s' "$REQUEST" > "$FOLLOWUP_FILE"
-( cd "$WORKTREE" && env -u OPENAI_API_KEY -u CODEX_API_KEY codex exec resume "${SESSION_ID:---last}" \
+( cd "$WORKTREE" && env -u OPENAI_API_KEY -u CODEX_API_KEY codex exec resume "$RESUME_TARGET" \
+    --model "$MODEL" \
     --disable multi_agent \
+    --ignore-user-config \
     -o "$CACHE/codex-final.txt" \
     - < "$FOLLOWUP_FILE" ) > "$CACHE/latest-output.md" 2>&1
+RC=$?    # capture the resume turn's exit code for its own telemetry row (Step 4)
+rm -f "$FOLLOWUP_FILE"
 ```
-Then repeat the Step 3b verification (add -A → diff → **RUN the changed artifact** → show → apply/discard). Prefer an explicit `SESSION_ID` over `--last` (v1: capture it from the implement turn's `--json` `thread.started` event; `--last` is cwd-scoped global state, fragile under concurrency).
+Then repeat the Step 3b verification (add -A → diff → **RUN the changed artifact** → show → apply/discard). `SESSION_ID` and `WORKTREE` come from the prior implement run's summary (Step 1 parse). Prefer the explicit `SESSION_ID` over `--last`: it is the `thread_id` captured from the implement turn's `--json` `thread.started` event (Step 3b), so resume targets the exact thread even if another `codex` run happened in between — `--last` is cwd-scoped "most recent" global state and is fragile under concurrency (Ralph / parallel use).
 
 ## Step 4: Telemetry
 
-Append ONE row per invocation to `$PROJECT/.claude/logs/codex-worker.jsonl` (schema in `.claude/logs/codex-worker.README.md`):
+Append **ONE row per TURN** (an implement→resume interaction is TWO rows — emit the implement row after Step 3b and a SEPARATE resume row after Step 3c; **never** a combined `mode:"implement+resume"`). **Use the documented enums** (schema: `.claude/logs/codex-worker.README.md`) — a freeform `scope`/`verification` string is drift, not schema. Per-mode values:
+
+| mode | sandbox | scope | verification | session_id |
+|------|---------|-------|--------------|------------|
+| `ask` | `read-only` | `ephemeral` | `answered` | `""` |
+| `implement` | `workspace-write` | `worktree` | `diff_reviewed_and_applied` \| `diff_reviewed_and_discarded` \| `apply_conflict` | `$SESSION_ID` |
+| `resume` | `workspace-write` | `resume:$SESSION_ID` | (same trio as implement) | `$SESSION_ID` |
+
+(`in-place` is a reserved v2 `--in-place` scope value the README documents but this agent never emits.)
 
 ```bash
 mkdir -p "$PROJECT/.claude/logs"
+# Set MODE/SANDBOX/SCOPE/VERIFICATION per the table above for the turn you just ran, then:
+SID="${SESSION_ID:-}"                                    # captured in Step 3b; "" for ask
+REQUEST_SUMMARY="<one-line summary of the request>"
+DIFFSTAT="$(git -C "${WORKTREE:-$PROJECT}" diff --cached --stat HEAD 2>/dev/null | tail -1)"  # "" for ask
 jq -nc \
   --arg ts "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
-  --arg mode "$MODE" --arg model "$MODEL" --arg effort "${EFFORT}" \
-  --arg sandbox "$SANDBOX" --arg scope "${SCOPE:-worktree}" \
+  --arg mode "$MODE" --arg model "$MODEL" --arg effort "$EFFORT" \
+  --arg sandbox "$SANDBOX" --arg scope "$SCOPE" \
   --arg task "$REQUEST_SUMMARY" --argjson rc "$RC" \
-  --arg diffstat "$DIFFSTAT" --arg verification "$VERIFICATION" \
+  --arg diffstat "${DIFFSTAT:-}" --arg verification "$VERIFICATION" \
+  --arg sid "${SID:-}" \
   '{ts:$ts, mode:$mode, model:$model, effort:$effort, sandbox:$sandbox,
     multi_agent:false, scope:$scope, task_summary:$task, exit_code:$rc,
-    git_diff_stat:$diffstat, verification:$verification, via:"claude-code"}' \
+    git_diff_stat:$diffstat, verification:$verification, session_id:$sid, via:"claude-code"}' \
   >> "$PROJECT/.claude/logs/codex-worker.jsonl"
 ```
 
@@ -208,6 +256,11 @@ jq -nc \
 <git diff --stat>
 Patch: .claude/cache/agents/codex-worker/patch.diff  (worktree: <path>)
 Applied to working tree: yes | no (awaiting your call) | conflict (left for manual reconcile)
+Excluded from worktree (uncommitted at HEAD — Codex did NOT see these): <$EXCLUDED or "none">
+
+## Resume handle (implement only — needed for `/codex --resume`)
+Session id: <$SESSION_ID>   Worktree: <path>
+(Pass BOTH back on `--resume` so it continues the exact thread, not `--last`.)
 
 ## Notes
 - Full log: .claude/cache/agents/codex-worker/latest-output.md
