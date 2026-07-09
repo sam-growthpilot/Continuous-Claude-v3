@@ -56,7 +56,8 @@ week-switcher) and footer. Brand = `.claude/skills/fourth-brand-guidelines/` (Fo
 **All deck-internal links MUST be root-absolute** `/ai-enablement-decks/fourthos/<date>/…` (NEVER bare
 `briefing.html` — trailing-slash-fragile → 404). Add deep-link anchor ids: briefing `#sponsor-actions`,
 `#portfolio`, `#outcomes`, `#risk-radar`, `#action-0N`; deep-dive `#thesis`, `#outputs`, `#concept`,
-`#reporting`, `#feedback`, `#payoff`; hub `#glance`, `#next`, `#seeds` (each `scroll-margin-top:80px`).
+`#reporting`, `#feedback`, `#payoff`; hub `#glance`, `#next`, `#seeds`, `#pillars` (each
+`scroll-margin-top:80px`).
 
 **Layout rules (Dave, 2026-07-02):**
 - Briefing "Portfolio Pulse": NO tall-narrow stat cards. The 4 short facts render as WIDE horizontal
@@ -97,6 +98,19 @@ for these rules. Reusable patterns proven in `fourthos/2026-06-24/`: badge compo
    `shipped[]` (each chip deep-links to its `anchor`). NO RAG/health pill on the hub. Then the two
    nav cards and the **sponsor-lens glance**: **Needs you** (sponsorActions → `briefing.html#sponsor-actions`)
    / **What moved** (`shipped[]` → anchors) / **Watch** (risks → `briefing.html#risk-radar`).
+5a. **Render the Mandate Pillars section — `id="pillars"`, after `#seeds` on the hub (MANDATORY,
+   see the skill's "Mandate Pillars section" for the full spec).** Reuse the CSS + markup pattern
+   from `fourthos/2026-07-09/index.html` (`.pillars-sec`/`.balance`/`.pillar-grid`/`.pillar-card`/
+   `.rag-pip`). For each of the 3 official mandate pillars (Research & Strategic Intelligence /
+   Prototyping & POC Development / External Developer Experience Portal): pull the mandate's own
+   one-line pillar definition from the cockpit page (`34076fd7…`), pick 2–4 active projects whose
+   clearest-home pillar this is (judgment call from each project's `Pillars` tags — do not duplicate
+   a project across two cards), and write one sentence of *why* per project. Compute the balance-strip
+   counts (active initiatives per pillar this week) and write one honest sentence about any imbalance
+   — a `0` in Portal-direct is sequencing, not failure, IF the connector-ecosystem/governance work is
+   active; use the empty-state + "directly transferable" pattern (`.pc-empty`/`.pc-indirect`) on
+   Pillar 3 in that case rather than a bare "nothing here." Add the `#pillars` anchor to the hub's
+   tab-menu ("How this connects").
 5b. **Write `fourthos/preview/card.json`** — hub-card metadata `promote.mjs` consumes:
    `{ "tag": "Sponsor Update", "title": "FourthOS — <human date>", "description": "<= the headline + biggest move>", "meta": "<human date>", "date": "YYYY-MM-DD" }`.
 6. **Stage + push.** From the decks repo: `git add fourthos/preview/`, commit

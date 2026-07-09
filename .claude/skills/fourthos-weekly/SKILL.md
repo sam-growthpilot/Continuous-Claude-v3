@@ -45,7 +45,7 @@ This is the human-in-the-loop path; the `.bat` is the same flow on a timer.
 
 | Source | ID / URL |
 |---|---|
-| FourthOS Daily Cockpit (control plane) | `34076fd7-ac82-805d-ac89-dd26476e2c47` |
+| FourthOS Daily Cockpit (control plane; also titled "FourthOS - Principal AI Mandate" — the 3-pillar mandate text lives on this same page, used by the Mandate Pillars section below) | `34076fd7-ac82-805d-ac89-dd26476e2c47` |
 | Leadership Portfolio Dashboard (5 live DBs) | `e29dd1c4-e6a6-4e39-a454-73525a765e5e` |
 | Update Package Generator — Saved Prompt (the Tier-3 spec) | `82c202b8-2b66-4953-a87d-0177eee58172` |
 | Connector Ecosystem — Master Plan (flagship for Tier 2) | `38776fd7-ac82-81c7-a286-ce6ae478b6be` |
@@ -120,7 +120,46 @@ Hub·Briefing·Deep-Dive + a data-driven **week-switcher** that reads `decks.jso
 - **Links are root-absolute** (`/ai-enablement-decks/fourthos/<date>/…`) — bare relative links 404 on
   Pages without a trailing slash. Deep-link anchors: briefing `#sponsor-actions`/`#portfolio`/
   `#outcomes`/`#risk-radar`/`#action-0N`, deep-dive `#thesis`/`#outputs`/`#concept`/`#architecture`/
-  `#reporting`/`#feedback`/`#payoff`, hub `#glance`/`#next`/`#seeds`.
+  `#reporting`/`#feedback`/`#payoff`, hub `#glance`/`#next`/`#seeds`/`#pillars`.
+
+## Mandate Pillars section (hub — MANDATORY, added 2026-07-09)
+
+The hub gets a fourth section, **"How This Connects"** (`id="pillars"`, `.pillars-sec`), placed
+**after `#seeds` ("What this seeds")** — reflective/strategic content, so it never competes with the
+decision-first flow above it. It maps the week's active portfolio to the 3 *official* FourthOS
+mandate pillars — **AI Research & Strategic Intelligence**, **Prototyping & POC Development**,
+**External Developer Experience Portal** — sourced from the mandate text on the cockpit page
+(`34076fd7…`, see Data sources above). Reference implementation: `fourthos/2026-07-09/index.html`
+(`.pillars-sec`/`.balance`/`.pillar-grid`/`.pillar-card`/`.rag-pip` CSS — copy these classes into
+each new week's hub `<style>` block; they're additive to the existing token set, no new `:root`
+variables needed).
+
+Structure, every week:
+- **Sec-dek + source line**: one sentence framing ("The role is built on three pillars of equal
+  strategic weight..."), then `Source: <a href="https://app.notion.com/p/34076fd7ac82805dac89dd26476e2c47">FourthOS — Principal AI Mandate</a>, Carly's formal role proposal.`
+- **Balance strip** (`.balance`) — the section's actual finding, not decoration: a count of active
+  initiatives per pillar this week (Research / Prototyping / Portal-direct) + a segmented bar + one
+  honest sentence explaining any imbalance. A `0` in Portal-direct is common and NOT itself bad news —
+  frame it per the sequencing logic below, never as a bare deficiency stat.
+- **Three pillar cards** (`.pillar-grid` → `.pillar-card` ×3), each: the mandate's own one-line
+  definition of that pillar (`.pc-mandate`, italic, quoted) + 2–4 active projects mapped to it
+  (`.pc-proj`: name, RAG-style health pip `.rag-pip.green`/`.yellow`, one sentence of *why* it counts
+  toward this pillar specifically — not a status recap).
+- **Pillar 3 empty-state pattern** (`.pillar-card.thin`, dashed top border) — when no project is being
+  built *as* the Portal (the common case pre-launch): don't just say "nothing here." Use `.pc-empty`
+  for the honest one-liner, then `.pc-indirect` to list what's **directly transferable once it
+  externalizes** (governance/auth patterns, reporting/feedback loops, architecture-alignment work,
+  content/playbook workstreams already in flight elsewhere in the portfolio). This is the load-bearing
+  honesty move: the Portal's "0 direct initiatives" reads as sequencing, not neglect, because its
+  internal analog is visibly being built first.
+
+**Primary-pillar assignment is Code's editorial judgment each week, not a dedicated Notion field.**
+Draw candidates from each project's existing `Pillars` chip tags in the Projects DB (the broader
+6-tag taxonomy already rendered on Briefing project cards — Governance & Standards, Enablement &
+Education, Performance Intelligence Platform, etc. — is NOT the same set as the 3 official mandate
+pillars), then pick ONE clearest-home pillar per project for this section even if a project spans two
+(note it once, in its clearest home, rather than duplicating a card across pillars). Same honesty/
+3-state badge and language rules below apply to this section's copy.
 
 ## Honesty / 3-state badge system (v3 — MANDATORY)
 
