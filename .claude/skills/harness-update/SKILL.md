@@ -82,6 +82,7 @@ Update every registered location with the verified allowlist + new version stamp
 | `.claude/agents/codex-adversary.md` | `CODEX_ADVERSARY_MODEL` validation `case` + comment |
 | `.claude/rules/codex-adversarial.md` | header version stamp + "Supported ChatGPT-subscription models" line |
 | `.claude/rules/cli-integration-strategy.md` | Codex inventory row |
+| `.claude/rules/harness-update.md` | Evidence-trail table version pin (Codex row) |
 
 **Grok edit points:**
 | File | What lives there |
@@ -91,6 +92,7 @@ Update every registered location with the verified allowlist + new version stamp
 | `.claude/skills/grok/SKILL.md` | `--model` flags line |
 | `.claude/agents/grok-adversary.md` | `GROK_ADVERSARY_MODEL` validation |
 | `.claude/rules/cli-integration-strategy.md` | Grok inventory row |
+| `.claude/rules/harness-update.md` | Evidence-trail table version pin (Grok row) |
 
 `--dry-run`: grep each edit point for the current allowlist + version strings and report consistent/drifted without editing.
 

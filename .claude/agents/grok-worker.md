@@ -320,7 +320,7 @@ Session id: <$SESSION_ID>   Worktree: <path>
 | Wrong account | `~/.grok/auth.json` `.email` != `dkhayes44@gmail.com` | STOP immediately; do not proceed on an unexpected account |
 | Bad model | not in `{grok-4.5, grok-composer-2.5-fast}` | Reject before shelling out |
 | Secret-like content in prompt | grep hit on api key/token/secret/PRIVATE KEY patterns | STOP; do not send; report the match to the user |
-| `grok` hangs | external timeout wrapper (rely on Bash-tool timeout, not Grok's own) | Kill; return partial `$LOG`; flag in summary |
+| `grok` hangs | external timeout wrapper (rely on Bash-tool timeout, not Grok's own) — **always set the Bash-tool timeout to >=300000ms**: cold-start on this account exceeded the 120s default and killed an otherwise-healthy run (verified 2026-07-11) | Kill; return partial `$LOG`; flag in summary |
 | Usage/rate limit hit | non-zero exit + `rate.?limit\|usage limit\|quota` in log | Short-circuit: no result, telemetry `usage_limited:true`; retry later |
 | Patch apply conflict | `git apply` nonzero | Leave worktree intact; report; let user reconcile |
 | Worktree add fails | nonzero on `worktree add` | Report exact error; do not proceed to invoke |
