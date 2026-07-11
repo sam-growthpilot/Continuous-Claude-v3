@@ -13,6 +13,25 @@ Cross-model collaboration for **Claude Code + Codex + Grok** inside Continuous C
 | [../codex-integration/DESIGN-RESEARCH.md](../codex-integration/DESIGN-RESEARCH.md) | Live-probed Codex CLI surface (§13 = 0.144.1 + gpt-5.6) |
 | [Handoff 2026-07-11](../../thoughts/shared/handoffs/feature-tri-model-workers/2026-07-11-tri-model-handoff.md) | Session handoff: done/verified list, load-bearing facts, resumption steps |
 
+## Operational surfaces
+
+| Surface | Path |
+|---------|------|
+| Workroom protocol (doctrine, phases, message schema) | `.workroom/PROTOCOL.md` |
+| Room templates (ROOM.yaml, CONTRACT, status, message, milestone, finding) | `.workroom/templates/` |
+| Workroom skill | `.claude/skills/workroom/SKILL.md` |
+| Grok skill / safety rule | `.claude/skills/grok/SKILL.md` · `.claude/rules/grok-worker-safety.md` |
+| Codex skill / safety rule | `.claude/skills/codex/SKILL.md` · `.claude/rules/codex-worker-safety.md` |
+| Harness update playbook | `.claude/skills/harness-update/SKILL.md` · `.claude/rules/harness-update.md` |
+| Test suite (static tier, 53 checks) | `scripts/tri-model/tri-model-suite.sh` |
+
+## Roster defaults (Game Plan)
+
+**Grok builds. Codex reviews and fixes.** Codex builds only as failover or via explicit
+`--builder codex` override — and a failover builder never grades its own milestone.
+Claude is hub: phase authority, smoke evidence, synthesis. Human holds Gate 1 (plan) and
+Gate 2 (ship). Full doctrine: `.workroom/PROTOCOL.md`.
+
 External mirrors (human-facing, one revision behind until Track E/F):
 - Notion: "Cross-Model Workers in CCv3" (page `39676fd7ac8281068c7ee4b6f793f5af`)
 - Visual map artifact: `claude.ai/code/artifact/edadfc5f-fa44-4952-a299-23f586d1c435`

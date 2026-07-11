@@ -1,0 +1,21 @@
+{
+  "room_id": "YYYY-MM-DD-slug",
+  "phase": "preflight",
+  "next_actor": "claude",
+  "updated": "YYYY-MM-DDTHH:MM:SSZ",
+  "updated_by": "claude",
+  "gate1_approved_at": null,
+  "gate2_approved_at": null,
+  "current_milestone": null,
+  "milestones": {},
+  "fix_round": 0,
+  "blockers": [],
+  "worktrees": {},
+  "failovers": [],
+  "preflight": {
+    "codex_version": null,
+    "grok_version": null,
+    "verified_pins_match": null,
+    "auth_ok": null
+  }
+}

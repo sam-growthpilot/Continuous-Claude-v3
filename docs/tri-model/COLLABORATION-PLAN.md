@@ -57,6 +57,8 @@ This plan unifies:
 
 **Outline optimization note (adopt):** prefer **standard high-thinking GPT-5.6** (our `gpt-5.6-sol` + high/`xhigh` effort) over “Ultra / multi-agent” modes that spawn internal sub-agents and balloon 15–25 min. This matches our existing Codex rule: **`--disable multi_agent` by default** on adversary/worker; `--complex` opt-in only.
 
+**Verified-fact footnote (landed from SESSION-REVIEW 2026-07-11):** “Grok 4.5 → live web/X research” is TRUE and probe-backed (`web_search`/`x_*` in Grok’s tool list) — but the worker’s **ask-mode `--tools` allowlist excludes web/x tools**. Research-role runs need a widened (still write-free) allowlist, e.g. `read_file,list_dir,grep,web_search,web_fetch,open_page` — a **deliberate egress expansion** documented in `grok-worker-safety.md` alongside the Track C `research` role. Never silently reuse the ask guard for research.
+
 ### 2.3 Pipeline phases in the outline (map)
 
 **Phase 1 — Lock the Plan**
@@ -292,6 +294,21 @@ Evolve Notion “Codex in CCv3” → “Cross-Model Workers + Game Plan” link
 ### Track G — Preflight helper (optional, 0.5 day)
 
 `scripts/tri-model/preflight.mjs` or skill step: assert codex+grok auth, allowlist models, git status, print ready/not.
+
+**Corrections landed (SESSION-REVIEW 2026-07-11):**
+
+- **Seed, don't rewrite:** verified building blocks already exist in the committed static
+  suite `scripts/tri-model/tri-model-suite.sh` (auth asserts, identity pin, `--version`
+  stamps, allowlist greps, guard probe). Promote that script rather than writing fresh.
+- **Close the advisory version-gate gap here:** harness-update rule 7 (version drift not
+  mechanically enforced) is exactly what workroom preflight closes — preflight compares
+  live `--version` to the verified pin and **blocks the `building` phase on mismatch**.
+  One mechanism, not two.
+- **Timeouts:** any workroom dispatch to Grok uses ≥300s external timeouts (cold start
+  killed a healthy run at the 120s default; encoded in grok-worker's failure table).
+- **Telemetry discipline:** the per-run jsonl row is part of milestone completion
+  evidence, not optional — workroom bookkeeping checks it (a worker self-exempting on a
+  "trivial" run is the failure mode this guards).
 
 ---
 
