@@ -7,14 +7,16 @@ description: Hand a task to the OpenAI Codex harness (gpt-5.5, on the ChatGPT su
 
 Hands an arbitrary request to OpenAI Codex on Dave's **ChatGPT subscription** (never an API key) to work through it. A different training family (GPT-5.5) executing the task gives cross-model leverage — Theo's "let Codex do the well-spec'd execution, keep Claude for orchestration" pattern, realized in CCv3. The read-only `codex-adversary` reviewer is untouched; this is its write-capable sibling.
 
+**Roster position (Game Plan):** Codex's primary roles are **reviewer and fixer** — deep review via `codex-adversary`, fix patches via `--implement` scoped to booth findings. For milestone *building*, **Grok is the default builder** (`/grok --implement`); Codex builds only as **failover** (Grok dead/quota-capped/hung) or when the human explicitly overrides with `--builder codex` for a specialized milestone. A failover-built milestone is then graded by Claude critics, never by Codex itself. Doctrine: `.workroom/PROTOCOL.md`.
+
 **Safety contract:** `.claude/rules/codex-worker-safety.md` (confirm-first, sandbox-is-the-boundary, worktree isolation, review-gate). **Engine:** the `codex-worker` agent. **Cross-model review convention:** `.claude/rules/codex-adversarial.md`.
 
 ## When to Use
 
 - `/codex <request>` — explicit invocation (primary path)
 - "hand this to Codex", "have Codex implement …", "delegate this to Codex", "codex, work through …"
-- You want GPT-5.5 to actually DO a well-specified task (implement, refactor, script, analyze), not critique one
-- NOT for code/plan review → use `/review` / `/premortem` (they already run Codex read-only)
+- You want GPT-5.5 to actually DO a well-specified task — **fix patches, focused refactors, scripts, analysis**. For workroom milestone builds, default to `/grok --implement` (Grok is the rostered builder); reach for `/codex --implement` as failover or explicit `--builder codex` override
+- NOT for code/plan review as a workflow → use `/review` / `/premortem` (they already run Codex read-only); `--review` below is the one-off alias
 
 ## Modes
 
@@ -91,7 +93,7 @@ Task(
 - **Worktree isolation by default** — write runs happen in a throwaway git worktree **outside** the repo (sibling `../.codex-worktrees/<repo>-<ts>-<pid>`), never in-place, so they can't collide with your live session or the `file_claims` DB. (An `--in-place` mode was considered and **dropped** in v2 — worktree isolation is the retained safety win.)
 - **Auto worktree GC** — before each implement run, stale *clean* worktree dirs (~190MB each) older than `$CODEX_WT_GC_DAYS` (default 7d) are reclaimed; a worktree with unreviewed (dirty) changes is never touched, so a dormant awaiting-`resume` one is safe. Manual sweep: `scripts/codex/gc-worktrees.sh`.
 - **Review-gate** — never auto-commits/auto-merges; produces a patch you approve first.
-- **Model allowlist** — `gpt-5.5/gpt-5.4/gpt-5.4-mini` only.
+- **Model allowlist** — `gpt-5.6-sol/gpt-5.6-terra/gpt-5.6-luna/gpt-5.5/gpt-5.4/gpt-5.4-mini` only (live-probed 2026-07-11).
 - **No hook can see inside Codex's sandbox** — enforcement is `--sandbox` + this preflight, not any Claude Code hook.
 - **Usage-limit aware** — if the ChatGPT subscription quota is exhausted, `/codex` returns a clean "usage limit hit; resets ~<time>" message (never a fabricated result) and logs `usage_limited:true`. Detection is reactive — the subscription exposes no queryable quota surface to preflight.
 - **`--complex` is gated** — multi_agent fan-out (ask/implement) runs only after asserting `~/.codex/agents/explorer.toml` pins gpt-5.5 (prevents the gpt-4.1 role-fallback 400); opt-in, never default, with a standing Windows re-probe caveat (openai/codex#19399).
