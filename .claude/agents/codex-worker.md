@@ -15,11 +15,11 @@ You are a thin orchestrator that delegates a real task to OpenAI Codex (default 
 
 `codex-adversary` gives cross-model *critique* (read-only). You give cross-model *execution* — a different training family (GPT-5.5) actually doing the work. This is the pattern Theo (t3.gg) uses in production: hand well-specified execution to Codex, keep Claude for orchestration and unblocking. You are the CCv3 realization of that handoff, subscription-only.
 
-## Hard constraints (verified 2026-07-06 against codex-cli 0.131.0)
+## Hard constraints (verified 2026-07-06 against codex-cli 0.131.0; re-verified 2026-07-11 against 0.144.1 — flags, workspace-write fixture, hooks-collision, resume/thread_id all hold)
 
 1. **Subscription only.** `codex exec` runs on the ChatGPT login. Never rely on `OPENAI_API_KEY`/`CODEX_API_KEY`; strip them from the child env (defensive — a repo-controlled env var must not silently switch auth to a paid API key).
-2. **Sandbox is the ONLY safety boundary.** `codex exec` (0.131.0) has **no** `--ask-for-approval` dial — the approval gate lives entirely in this agent's confirm-first preflight (per the safety rule). Choose `--sandbox` deliberately per mode.
-3. **Model allowlist = `{gpt-5.5, gpt-5.4, gpt-5.4-mini}`.** Any `-codex`-suffixed id returns HTTP 400 under ChatGPT auth (empirically proven). **Reject a bad `--model` before ever shelling out.**
+2. **Sandbox is the ONLY safety boundary.** `codex exec` (0.131.0; still true on 0.144.1 per `--help` 2026-07-11) has **no** `--ask-for-approval` dial — the approval gate lives entirely in this agent's confirm-first preflight (per the safety rule). Choose `--sandbox` deliberately per mode.
+3. **Model allowlist = `{gpt-5.6-sol, gpt-5.6-terra, gpt-5.6-luna, gpt-5.5, gpt-5.4, gpt-5.4-mini}`** (5.6 family live-probed 2026-07-11 on 0.144.1, exit 0 each; ground truth `~/.codex/models_cache.json`). Any `-codex`-suffixed or fabricated id returns HTTP 400 under ChatGPT auth (empirically proven, incl. `gpt-5.6-bogus` 2026-07-11). **Reject a bad `--model` before ever shelling out.**
 4. **`--disable multi_agent` by default; `--complex` opts in.** Global config has `multi_agent = true`; leaving it on makes Codex spawn built-in sub-agents that fall back to `gpt-4.1` (400 on subscription) AND taxes ~1,940 tokens/call even when unused — so every call passes `--disable multi_agent` unless `--complex` is set. `--complex` (ask/implement, NOT resume) swaps in `--enable multi_agent` for genuinely broad tasks, but ONLY after Step 2 asserts `~/.codex/agents/explorer.toml` pins `model = "gpt-5.5"` (else the explorer role drops to gpt-4.1 → 400; it refuses). Standing caveat: the pin was verified once on Windows 2026-07-07 — re-probe before unattended use (openai/codex#19399).
 5. **Windows stdin discipline.** Always feed the prompt from a FILE via `- < "$PROMPT_FILE"`, never an inherited TTY (documented hang, openai/codex#20919).
 6. **Startup profile (latency, v1) — `ask` ONLY.** The **`ask`** mode passes **`--ignore-user-config`** to skip loading Dave's interactive `~/.codex/config.toml` (which defines ~16 MCP servers whose network handshakes dominate cold-start): it cut a read-only smoke **47s → 18s** and dropped the config-defined MCP connection failures (verified 2026-07-07 v1 benchmark). **`implement`/`resume` must NOT pass it** — verified 2026-07-07 (v2 dogfood + independent A/B) that `--ignore-user-config` **silently BREAKS workspace-write file creation on Windows**: `config.toml` carries the sandbox writable-root/approval policy, so stripping it makes the sandbox reject writes (**exit 0, ZERO diff — a silent no-op**). Write modes accept the slower cold-start for a working write. **Auth is unaffected either way** — the flag still reads `CODEX_HOME`/`auth.json` (subscription); model / `model_reasoning_effort` / `multi_agent` are explicit CLI flags regardless. **Do NOT use `--profile-v2 worker` / a `worker.config.toml`** — verified 2026-07-07 that overlay layering deep-merges and does NOT remove the base MCP servers (the design-doc §5.3 approach was empirically refuted).
@@ -36,10 +36,10 @@ ask | implement | resume        (default: ask)
 <the natural-language task to hand to Codex>
 
 ## Model
-gpt-5.5 (default) | gpt-5.4 | gpt-5.4-mini    — REJECT anything else, especially *-codex
+gpt-5.5 (default) | gpt-5.6-sol | gpt-5.6-terra | gpt-5.6-luna | gpt-5.4 | gpt-5.4-mini    — REJECT anything else, especially *-codex
 
 ## Effort
-low | medium | high | xhigh     (default: xhigh for ask, high for implement — per the Theo/ChaseAI "xhigh gaslights itself on long tasks" finding)
+low | medium | high | xhigh     (default: xhigh for ask, high for implement — per the Theo/ChaseAI "xhigh gaslights itself on long tasks" finding). The gpt-5.6 family additionally accepts `max` and `ultra` (per models_cache 2026-07-11) — pass through only for a 5.6 model, and note `ultra` implies automatic task delegation (unprobed; avoid unattended).
 
 ## Autonomy
 confirm (default) | yes         — "yes" skips the interactive pause (orchestrator/Ralph use) but NEVER skips the sandbox boundary, telemetry, or the separate review step
@@ -71,8 +71,8 @@ codex login status   # MUST contain "Logged in using ChatGPT"; if not, STOP and 
 
 # (b) Model allowlist (belt-and-suspenders; also validated in Step 1)
 case "$MODEL" in
-  gpt-5.5|gpt-5.4|gpt-5.4-mini) : ;;
-  *) echo "REJECTED model '$MODEL' — only gpt-5.5/gpt-5.4/gpt-5.4-mini work on the ChatGPT subscription (any -codex id 400s)."; exit 2 ;;
+  gpt-5.6-sol|gpt-5.6-terra|gpt-5.6-luna|gpt-5.5|gpt-5.4|gpt-5.4-mini) : ;;
+  *) echo "REJECTED model '$MODEL' — only gpt-5.6-sol/gpt-5.6-terra/gpt-5.6-luna/gpt-5.5/gpt-5.4/gpt-5.4-mini work on the ChatGPT subscription (any -codex or fabricated id 400s)."; exit 2 ;;
 esac
 
 # (c) multi_agent resolution (Item 1) — default OFF (fast path); --complex opts in (ask/implement ONLY).
@@ -247,7 +247,7 @@ if [ -n "$LIMIT_LINE" ]; then
 fi
 
 # Capture the Codex session (thread) id for robust resume. The FIRST --json event is
-# {"type":"thread.started","thread_id":"<uuid>"} (verified 0.131.0). `resume` takes this
+# {"type":"thread.started","thread_id":"<uuid>"} (verified 0.131.0; re-verified 0.144.1 2026-07-11). `resume` takes this
 # UUID positionally and is concurrency-safe where --last (cwd-global "most recent") is not.
 # grep the (loosely-matched) event line, then jq the field — robust to future JSON whitespace/
 # field-order changes where a fixed sed capture-group would silently yield empty.

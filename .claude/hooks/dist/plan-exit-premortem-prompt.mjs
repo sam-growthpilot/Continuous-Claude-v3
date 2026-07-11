@@ -160,13 +160,15 @@ function buildDirective(planPath) {
   return [
     `${planClause} Before proceeding to implementation, use the \`AskUserQuestion\` tool to ask the user:`,
     "",
-    '  Question: "Run /premortem (with Codex cross-model adversarial pass) on this plan before implementation?"',
+    '  Question: "Run a cross-model /premortem on this plan before implementation? Pick the adversarial reviewer(s)."',
     '  Header: "Premortem"',
     "  Options:",
-    `    - "Yes -- run /premortem now (Recommended)" (description: "Surfaces failure modes and cross-model adversarial findings before code is written. Catches issues earlier when they're cheap to fix.")`,
+    '    - "Codex (Recommended)" (description: "GPT-family adversarial pass on the plan (ChatGPT subscription). The proven default.")',
+    '    - "Grok" (description: "Grok adversarial pass on the plan (X Premium+ subscription). A third training family, distinct from Codex AND Claude.")',
+    '    - "Both -- Codex + Grok in parallel" (description: "Maximum cross-model coverage; two parallel passes, findings merged with [Codex]/[Grok] source tags. Double quota burn.")',
     '    - "Skip -- proceed to implementation" (description: "Move directly to implementation without an explicit risk pass. Use when the plan is trivial or already heavily vetted.")',
     "",
-    "After the user answers, if they chose Yes, invoke the `/premortem` skill on the plan file. If they chose Skip, continue with whatever next step the workflow calls for."
+    "After the user answers: Codex -> invoke the `/premortem` skill on the plan file (default Codex pass); Grok -> invoke `/premortem --grok`; Both -> invoke `/premortem --reviewers both`; Skip -> continue with whatever next step the workflow calls for."
   ].join("\n");
 }
 function handlePlanExitPrompt(input) {

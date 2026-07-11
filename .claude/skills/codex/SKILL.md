@@ -25,7 +25,7 @@ Hands an arbitrary request to OpenAI Codex on Dave's **ChatGPT subscription** (n
 | **resume** | `/codex --resume <followup>` | inherits | yes | inherits | same worktree/thread |
 | **review** (alias) | `/codex --review [base]` | read-only | no | xhigh | delegates to `codex-adversary` unchanged |
 
-**Flags:** `--model gpt-5.5|gpt-5.4|gpt-5.4-mini` (default `gpt-5.5`; any `-codex` id is rejected — it 400s on the subscription). `--effort low|medium|high|xhigh`. `--yes` (skip the interactive confirm for orchestrator/Ralph use — still sandboxed, still logged, still produces a reviewable patch). `--complex` (multi_agent fan-out for genuinely BROAD ask/implement tasks — opt-in; requires `~/.codex/agents/explorer.toml` pinned to gpt-5.5 or it refuses; ~1,940 tok/call + fan-out latency; NOT re-applied on resume).
+**Flags:** `--model gpt-5.5|gpt-5.6-sol|gpt-5.6-terra|gpt-5.6-luna|gpt-5.4|gpt-5.4-mini` (default `gpt-5.5`; 5.6 family live-verified 2026-07-11 on codex-cli 0.144.1; any `-codex` or fabricated id is rejected — it 400s on the subscription). `--effort low|medium|high|xhigh` (5.6 models additionally accept `max|ultra`; `ultra` auto-delegates — unprobed, avoid unattended). `--yes` (skip the interactive confirm for orchestrator/Ralph use — still sandboxed, still logged, still produces a reviewable patch). `--complex` (multi_agent fan-out for genuinely BROAD ask/implement tasks — opt-in; requires `~/.codex/agents/explorer.toml` pinned to gpt-5.5 or it refuses; ~1,940 tok/call + fan-out latency; NOT re-applied on resume).
 
 ## Execution
 
