@@ -149,9 +149,18 @@ cat > "$PROMPT_FILE" <<'PROMPT_EOF'
 PROMPT_EOF
 
 # Invoke - read-only sandbox, since adversarial review never writes
-# Model selection: env var override, else gpt-5.5 (requires CLI >= 0.131;
-# fall back to gpt-5.4 if you see "requires a newer version of Codex" errors).
+# Model selection: env var override, else gpt-5.5. Valid overrides (live-probed
+# 2026-07-11 on codex-cli 0.144.1): gpt-5.6-sol | gpt-5.6-terra | gpt-5.6-luna |
+# gpt-5.5 | gpt-5.4 | gpt-5.4-mini. Validate the override against that list —
+# on mismatch, WARN and fall back to gpt-5.5 (a stale env var must not silently
+# reintroduce an unsupported id, e.g. the old gpt-5.3-codex claim).
+# "requires a newer version of Codex" errors mean upgrade the CLI, not the model.
 CODEX_ADVERSARY_MODEL="${CODEX_ADVERSARY_MODEL:-gpt-5.5}"
+case "$CODEX_ADVERSARY_MODEL" in
+  gpt-5.6-sol|gpt-5.6-terra|gpt-5.6-luna|gpt-5.5|gpt-5.4|gpt-5.4-mini) : ;;
+  *) echo "WARN: CODEX_ADVERSARY_MODEL='$CODEX_ADVERSARY_MODEL' not in the verified allowlist — falling back to gpt-5.5" >&2
+     CODEX_ADVERSARY_MODEL="gpt-5.5" ;;
+esac
 
 # Clean-capture the final answer via -o. A healthy codex exec streams a large
 # block of environmental startup noise to stdout/stderr BEFORE the real answer

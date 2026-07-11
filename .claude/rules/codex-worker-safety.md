@@ -2,7 +2,7 @@
 
 Companion to `.claude/skills/codex/SKILL.md` and the `codex-worker` agent. This is the **write-capable** sibling of `.claude/rules/codex-adversarial.md` (which stays read-only, review-only). Different safety posture → separate rule. The `/codex` skill hands a task to the OpenAI Codex harness (`gpt-5.5`) on Dave's **ChatGPT subscription** to actually execute — so it can write files and run commands. Treat every write mode with the same care as any destructive operation.
 
-Grounding: verified 2026-07-06 against `codex-cli 0.131.0`, `Logged in using ChatGPT`. See `docs/codex-integration/DESIGN-RESEARCH.md` for the full evidence trail.
+Grounding: verified 2026-07-06 against `codex-cli 0.131.0`, `Logged in using ChatGPT`; **re-verified 2026-07-11 against `codex-cli 0.144.1`** (upgrade + full §3 re-run: flags, workspace-write fixture, hooks-collision, resume/thread_id — all hold; rollback pin `npm i -g @openai/codex@0.131.0`). See `docs/codex-integration/DESIGN-RESEARCH.md` for the full evidence trail.
 
 ## The one thing to internalize
 
@@ -38,7 +38,7 @@ Before each `implement` run the worker opportunistically GCs stale worktree dirs
 
 ## Model allowlist (enforced before shelling out)
 
-Hard-reject any `--model` not in `{gpt-5.5, gpt-5.4, gpt-5.4-mini}`, citing the verified evidence: `gpt-5.2-codex` and `gpt-5.5-codex` both return byte-identical HTTP 400 ("model is not supported when using Codex with a ChatGPT account") on this account. Treat ANY future `-codex`-suffixed id as unverified-until-tested against this exact account, regardless of what the docs' model table says.
+Hard-reject any `--model` not in `{gpt-5.6-sol, gpt-5.6-terra, gpt-5.6-luna, gpt-5.5, gpt-5.4, gpt-5.4-mini}` (5.6 family live-probed 2026-07-11 on 0.144.1, exit 0 each; ground truth `~/.codex/models_cache.json`), citing the verified evidence: `gpt-5.2-codex` and `gpt-5.5-codex` both return byte-identical HTTP 400 ("model is not supported when using Codex with a ChatGPT account") on this account, and `gpt-5.6-bogus` reproduced the same 400 on 0.144.1 (2026-07-11). Treat ANY future id as unverified-until-tested against this exact account via `/harness-update`, regardless of what the docs' model table says. Note: on 0.131.0 the 5.6 family returned a DIFFERENT 400 ("requires a newer version of Codex") — that message shape means upgrade-the-CLI, not model-unavailable.
 
 ## multi_agent
 
@@ -64,7 +64,7 @@ The **`ask`** mode passes **`--ignore-user-config`** to skip loading Dave's inte
 
 ## Version drift
 
-Installed CLI is `0.131.0`; upstream is newer (`0.142.x`). Official docs describe `--full-auto`/`--ask-for-approval` on `exec` that **do not exist in 0.131.0**. Code against the installed surface. Any CLI upgrade must re-run the verification in `docs/codex-integration/DESIGN-RESEARCH.md` §3 before trusting new flags.
+Installed CLI is `0.144.1` (upgraded from `0.131.0` on 2026-07-11 with full re-verification; rollback pin `npm i -g @openai/codex@0.131.0`). `exec --help` on 0.144.1 still shows NO `--full-auto`/`--ask-for-approval` — sandbox remains the only boundary. Code against the installed surface. Any CLI upgrade must go through `/harness-update` (re-runs the `docs/codex-integration/DESIGN-RESEARCH.md` §3 verification) before trusting new flags.
 
 ## Cost / quota (subscription, not dollars)
 

@@ -549,3 +549,35 @@ v2 shipped the approved **lean scope** (4 items) AND — via mandated dogfooding
 - Report: `scratchpad/codex-research/verify.md`
 - Live commands: `codex login status`, `codex exec` smoke tests (C1), `codex exec --help`/`codex --help`/`codex exec resume --help`/`codex exec review --help` (C2), model-id 400 tests (C3), `config.toml`/`codex features list` (C4), `-o`-vs-full-output diff (C5)
 - Local grounding cross-referenced: `.claude/rules/codex-adversarial.md`, `.claude/agents/codex-adversary.md`
+
+## 13. v3 — CLI 0.144.1 Upgrade + gpt-5.6 Family Enablement (2026-07-11)
+
+Executed via the tri-model plan (`plans/we-have-worked-in-snuggly-pony.md`); this is the §3-style evidence record.
+
+### Upgrade
+- **0.131.0 → 0.144.1** (`npm i -g @openai/codex@latest`). Rollback pin: `npm i -g @openai/codex@0.131.0`. Pre-upgrade `models_cache.json` snapshotted at `docs/codex-integration/snapshots/models_cache.0.131.0.json` (note: that cache had already been server-refreshed 2026-07-11T15:06Z and listed the 5.6 family with `client_version: 0.144.0`).
+- Auth: `codex login status` → "Logged in using ChatGPT" before AND after upgrade. No API-key fallback at any point.
+
+### Model probes (two-probe method, all at `model_reasoning_effort=low`, `--sandbox read-only --ephemeral --disable multi_agent`)
+| Model | 0.131.0 result | 0.144.1 result |
+|---|---|---|
+| gpt-5.6-sol | 400 "requires a newer version of Codex. Please upgrade" | **exit 0, clean answer** |
+| gpt-5.6-terra | (not probed) | **exit 0** |
+| gpt-5.6-luna | (not probed) | **exit 0** |
+| gpt-5.5 (regression) | n/a | **exit 0** |
+| gpt-5.6-bogus (fabricated) | n/a | 400 "not supported when using Codex with a ChatGPT account" |
+
+**New 400 taxonomy:** "requires a newer version of Codex" = CLI-too-old (upgrade), distinct from "not supported with a ChatGPT account" = bad/unavailable model id.
+
+### Flag/behavior re-verification on 0.144.1
+- `exec --help`: still NO `--full-auto` / `--ask-for-approval` — sandbox remains the only boundary. `-o/--output-last-message`, `--ephemeral`, `--ignore-user-config`, `--json`, `-s/--sandbox` all present.
+- `--ignore-user-config` ask path: exit 0, clean `-o` capture (70-line log, consistent with v1 latency profile).
+- **Workspace-write fixture (Windows):** throwaway git repo — file created (content verified), commits 1→1 (git-auto-commit did NOT fire), `file_claims` 7597→7597 (no collision). Hooks-collision verdict from the 2026-07-07 spike HOLDS on 0.144.1. New behavior: 0.144 creates a `.claude/` directory inside the workdir.
+- **Resume:** `--json` stream still emits `thread_id` (`thread.started`); `codex exec resume` continued a session and recalled state correctly. (Note: an empty resume target degraded to last-session behavior — keep passing the explicit thread_id.)
+- Subprocess-block inside workspace-write sandbox: NOT re-tested this pass; treat the 2026-07-07 finding (blocked, `CreateProcessAsUserW failed: 5`) as standing until re-probed.
+
+### models_cache ground truth (0.144.1, fetched 2026-07-11)
+`gpt-5.6-sol` (priority 1, "Latest frontier agentic coding model") · `gpt-5.6-terra` · `gpt-5.6-luna` · `gpt-5.5` · `gpt-5.4` · `gpt-5.4-mini` · `codex-auto-review` (hidden). The 5.6 family exposes new effort levels **`max`** and **`ultra`** ("maximum reasoning with automatic task delegation" — unprobed) plus a `priority`/"Fast" service tier.
+
+### Allowlist edits landed (edit-point registry)
+`codex-worker.md` (case gate + constraint #3 + input contract + effort note + version stamps), `codex-worker-safety.md` (allowlist + grounding + version drift), `skills/codex/SKILL.md` (flags line), `codex-adversary.md` (env-override validation `case` + comment), `codex-adversarial.md` (fixed the WRONG "gpt-5.3-codex supported" claim; version stamp), `cli-integration-strategy.md` (inventory row). Default model stays **gpt-5.5**; 5.6 family is opt-in via `--model` until it has mileage.

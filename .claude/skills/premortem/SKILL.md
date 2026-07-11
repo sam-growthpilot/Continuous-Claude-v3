@@ -1,6 +1,6 @@
 ---
 name: premortem
-description: Identify failure modes before they occur using structured risk analysis, with cross-model Codex adversarial pass
+description: Identify failure modes before they occur using structured risk analysis, with a cross-model adversarial pass (Codex, Grok, or both)
 allowed-tools: [Read, Grep, Glob, Task, AskUserQuestion, TodoWrite, Bash]
 ---
 
@@ -11,11 +11,13 @@ Identify failure modes before they occur by systematically questioning plans, de
 ## Usage
 
 ```
-/premortem              # Auto-detect context, choose depth (includes Codex pass)
-/premortem quick        # Force quick analysis (plans, PRs)
-/premortem deep         # Force deep analysis (before implementation)
-/premortem <file>       # Analyze specific plan or code
-/premortem --no-codex   # Skip Codex adversarial pass (Claude-only)
+/premortem                  # Auto-detect context, choose depth (includes Codex pass)
+/premortem quick            # Force quick analysis (plans, PRs)
+/premortem deep             # Force deep analysis (before implementation)
+/premortem <file>           # Analyze specific plan or code
+/premortem --no-codex       # Skip the cross-model pass entirely (Claude-only)
+/premortem --grok           # Use Grok as the cross-model reviewer instead of Codex
+/premortem --reviewers both # Run Codex AND Grok passes in parallel
 ```
 
 ## Core Concept
@@ -215,16 +217,19 @@ premortem:
       items_failed: ["<item1>", "<item2>"]
 ```
 
-### Step 2.5: Cross-Model Adversarial Pass (Codex)
+### Step 2.5: Cross-Model Adversarial Pass (Codex / Grok / Both)
 
-Same training family = same blind spots. After Claude's verified tigers/elephants/paper_tigers list is built, run an adversarial pass through OpenAI Codex (different training family) to find risks Claude missed.
+Same training family = same blind spots. After Claude's verified tigers/elephants/paper_tigers list is built, run an adversarial pass through one or more different-family reviewers to find risks Claude missed.
 
-**Skip if** `--no-codex` flag was passed OR the target is a trivial doc-only change OR the user has exhausted ChatGPT subscription quota this session. See `.claude/rules/codex-adversarial.md`.
+**Reviewer selection.** The post-ExitPlanMode hook (or the user directly) picks: **Codex** (default), **Grok**, **Both**, or **Skip**. `--no-codex` skips the Codex pass (back-compat); `--grok` uses Grok instead; `--reviewers both` runs both. When Both is selected, spawn the two adversary Tasks **in parallel** (single message, two tool calls).
+
+**Skip if** the user chose Skip OR the target is a trivial doc-only change OR the relevant subscription quota is exhausted this session. See `.claude/rules/codex-adversarial.md` and `.claude/rules/grok-worker-safety.md`.
 
 ```
-# Spawn codex-adversary in plan mode pointed at the plan file
+# Spawn the selected adversary agent(s) in plan mode pointed at the plan file.
+# subagent_type: "codex-adversary" and/or "grok-adversary" — same prompt contract for both.
 Task(
-  subagent_type="codex-adversary",
+  subagent_type="codex-adversary",   # and/or "grok-adversary" (parallel when Both)
   prompt="""
   ## Mode
   plan
@@ -246,15 +251,15 @@ Task(
 )
 ```
 
-**Merge convention:** Codex findings get prefixed `[Codex]` and merged into the same tigers/elephants/paper_tigers lists. Findings that BOTH Claude and Codex flag get marked `confidence: cross-model-agreed` — these are the high-confidence ones to act on first. Findings only Codex flags are the **cross-model lift** — track these as the actual value signal of this step.
+**Merge convention:** findings get prefixed by source — `[Codex]` / `[Grok]` — and merged into the same tigers/elephants/paper_tigers lists. Findings flagged by TWO OR MORE models get `confidence: cross-model-agreed` — the high-confidence ones to act on first. Findings only one non-Claude model flags are that model's **cross-model lift** — track per model as the value signal of its pass.
 
 ```yaml
-# Merged output (Claude tigers + Codex tigers, deduplicated by file:line + risk)
+# Merged output (Claude + Codex + Grok tigers, deduplicated by file:line + risk)
 tigers:
   - risk: "<description>"
     location: "file.py:42"
     severity: high|medium
-    sources: [claude, codex]   # NEW: which model(s) found it
+    sources: [claude, codex, grok]   # which model(s) found it
     mitigation_checked: "<what was NOT found>"
 ```
 
@@ -331,13 +336,13 @@ Append to the plan file:
 ### Pre-Mortem Run:
 - Date: {timestamp}
 - Mode: {quick|deep}
-- Codex pass: {yes|skipped (--no-codex)}
-- Tigers: {total} (claude-only: {N}, codex-only: {N}, both: {N}) | Elephants: {count}
+- Cross-model pass: {codex|grok|both|skipped}
+- Tigers: {total} (claude-only: {N}, codex-only: {N}, grok-only: {N}, agreed: {N}) | Elephants: {count}
 ```
 
 ### Step 6: Telemetry
 
-After the user response is handled, append one row to `.claude/logs/codex-lift.jsonl`:
+After the user response is handled, append one row **per cross-model reviewer that ran** — Codex rows to `.claude/logs/codex-lift.jsonl`, Grok rows to `.claude/logs/grok-lift.jsonl` (same schema, `model` field distinguishes):
 
 ```bash
 mkdir -p "$CLAUDE_PROJECT_DIR/.claude/logs"
@@ -345,15 +350,18 @@ jq -nc \
   --arg ts "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
   --arg skill "premortem" \
   --arg scope "[plan path or scope]" \
+  --arg model "codex" \
   --argjson claude_only <N> \
   --argjson codex_only <N> \
   --argjson both <N> \
   --arg via "direct" \
-  '{ts:$ts, skill:$skill, scope:$scope, claude_only:$claude_only, codex_only:$codex_only, both:$both, via:$via}' \
+  '{ts:$ts, skill:$skill, scope:$scope, model:$model, claude_only:$claude_only, codex_only:$codex_only, both:$both, via:$via}' \
   >> "$CLAUDE_PROJECT_DIR/.claude/logs/codex-lift.jsonl"
+# Grok pass ran too? Same shape with --arg model "grok", counts = grok_only in the codex_only
+# position (field name kept for schema back-compat; `model` disambiguates), appended to grok-lift.jsonl.
 ```
 
-The `codex_only` count is the cross-model lift — the value Codex actually added beyond what Claude found. Track over time to validate the Codex pass is worth the quota.
+The reviewer-only count is that model's cross-model lift — the value it added beyond what Claude found. Track over time per model to validate each pass is worth its quota.
 
 ## Integration Points
 
