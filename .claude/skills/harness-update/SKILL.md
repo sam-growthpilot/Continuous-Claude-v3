@@ -87,12 +87,14 @@ Update every registered location with the verified allowlist + new version stamp
 **Grok edit points:**
 | File | What lives there |
 |---|---|
-| `.claude/agents/grok-worker.md` | the model `case` gate + input contract |
-| `.claude/rules/grok-worker-safety.md` | allowlist + probe evidence + version drift |
+| `.claude/agents/grok-worker.md` | the model `case` gate + input contract; **research-role `--tools` allowlist** (workroom research runs — widened write-free egress; re-probe the read-only guard AND that this list stays write-free on every version change) |
+| `.claude/rules/grok-worker-safety.md` | allowlist + probe evidence + version drift + §Research role egress list |
 | `.claude/skills/grok/SKILL.md` | `--model` flags line |
 | `.claude/agents/grok-adversary.md` | `GROK_ADVERSARY_MODEL` validation |
 | `.claude/rules/cli-integration-strategy.md` | Grok inventory row |
 | `.claude/rules/harness-update.md` | Evidence-trail table version pin (Grok row) |
+
+**Workroom-coupled surfaces (both harnesses):** the four agents above also carry an optional `## Workroom` block (`.workroom/PROTOCOL.md` is the schema owner). A harness update does not normally touch these, but if worker prompt contracts change shape, keep the workroom blocks + `.claude/skills/workroom/SKILL.md` dispatch snippet consistent in the same pass.
 
 `--dry-run`: grep each edit point for the current allowlist + version strings and report consistent/drifted without editing.
 
