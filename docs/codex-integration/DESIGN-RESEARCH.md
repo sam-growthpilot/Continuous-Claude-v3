@@ -581,3 +581,13 @@ Executed via the tri-model plan (`plans/we-have-worked-in-snuggly-pony.md`); thi
 
 ### Allowlist edits landed (edit-point registry)
 `codex-worker.md` (case gate + constraint #3 + input contract + effort note + version stamps), `codex-worker-safety.md` (allowlist + grounding + version drift), `skills/codex/SKILL.md` (flags line), `codex-adversary.md` (env-override validation `case` + comment), `codex-adversarial.md` (fixed the WRONG "gpt-5.3-codex supported" claim; version stamp), `cli-integration-strategy.md` (inventory row). Default model stays **gpt-5.5**; 5.6 family is opt-in via `--model` until it has mileage.
+
+## 14. Read-only sandbox fork-storm on Windows (2026-07-11, workroom dogfood booth)
+
+**Observed live** during the first Game Plan review booth (codex-adversary grading Grok's M1, `--sandbox read-only`, gpt-5.5 @ xhigh):
+
+- 2 of 3 `codex exec` invocations tried to shell out (e.g. `pwsh.exe` to read a skill file) despite an explicit "do not use tools" instruction, hit the same OS-level denial documented for workspace-write (`CreateProcessAsUserW failed: 5`), and then **retried in an unbounded fork loop** — ~40 and ~35 orphaned `codex.exe` children respectively, 4–5.5 min of zero output until the process trees were killed manually (`taskkill /F /PID <pid> /T`).
+- Prior docs (§ codex-worker-safety "Windows platform notes") knew the subprocess block only for `workspace-write`, where it fails as a clean no-op. **Read-only shows the same denial with a much worse failure shape (fork storm), and it is prompt-shape-dependent**: a rich checklist-style prompt demanding item-by-item reasoning triggered it; a shorter prompt with the same no-tools instruction did not.
+- The invocation that completed returned `{"verdict":"approve","findings":[]}` with no notes — treat a zero-finding read-only pass that follows storms as THIN evidence, not deep engagement.
+
+**Operational guidance until bounded:** keep adversary prompts compact (embed the diff + contract, avoid long per-item checklists); rely on the external Bash-tool timeout AND check for orphaned `codex.exe` children after any adversary timeout (`tasklist | findstr codex`); a supplemental Claude-critic lens is warranted whenever the Codex pass returns empty findings after a storm. Follow-up candidate: a wrapper that watches child-process count and kills the tree on runaway fork (flagged from the 2026-07-11 booth run).

@@ -55,9 +55,28 @@ false (default) | true          — `--complex` enables multi_agent fan-out (exp
 
 ## Codebase
 $CLAUDE_PROJECT_DIR = /path/to/project
+
+## Workroom     (optional — Game Plan disk bus; absent = one-shot behavior, unchanged)
+room: <ABSOLUTE path to .workroom/rooms/<room-id>>
+role: fixer | builder-failover
+milestone: M<N>
 ```
 
 Defaults: mode=`ask`, model=`gpt-5.5`, autonomy=`confirm`, complex=`false`. Validate `Model` against the allowlist immediately; if it fails, STOP and return the rejection (cite the 400 evidence), do not shell out.
+
+**Resolve `$PROJECT` from the `## Codebase` line in your prompt, not from the `$CLAUDE_PROJECT_DIR` env var** — the env var has been observed EMPTY in agent shells (2026-07-11). Same for the workroom path: use the absolute path given in the block verbatim.
+
+## Workroom protocol (only when a `## Workroom` block is present — fail-open otherwise)
+
+You are a rostered participant, not the hub. Per `.workroom/PROTOCOL.md` — Game Plan roster: **Codex is the reviewer/fixer; it builds only as failover or explicit `--builder codex` override** (role `builder-failover`).
+
+1. **Before assembling Codex's prompt:** read `<room>/CONTRACT.md`, `<room>/status.json`, and your inbox `<room>/inbox/codex/`. For a fix run also read the booth findings in `<room>/findings/` for the milestone; for a failover build read `<room>/milestones/M<N>-scope.md`. Include the relevant sections in the prompt fed to Codex.
+2. **Role gates the work:** `fixer` → implement/resume producing fix patches scoped to booth findings; `builder-failover` → implement of the SAME milestone scope file the original builder had. If the requested Mode contradicts the Role, STOP and report the mismatch.
+3. **Write outputs into the room:**
+   - fixer: copy the captured patch to `<room>/patches/codex-fix-R<fix_round>.diff` (read `fix_round` from `status.json` — but never modify it).
+   - builder-failover: patch to `<room>/patches/codex-M<N>.diff`; create/update `<room>/milestones/M<N>-result.md` (builder-summary + diff pointer + telemetry note — leave the "Hub smoke" table EMPTY; hub fills it). Note in the result file that this was a failover build: **the review booth primary for this milestone is then Claude critics, not codex-adversary** (a failover builder never grades its own milestone).
+4. **Append exactly ONE line to `<room>/THREAD.md`:** `<utc> codex [<role>] <one-line outcome>`.
+5. **NEVER write `status.json`, never advance phase, never mark review complete** — hub-only. The telemetry jsonl row (Step 4) is part of milestone completion evidence — never self-exempt, even on a "trivial" run.
 
 ## Step 2: Preflight (every mode)
 

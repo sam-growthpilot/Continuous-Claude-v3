@@ -1,0 +1,23 @@
+# Room manifest — copy into .workroom/rooms/<room-id>/ROOM.yaml and fill in.
+room_id: YYYY-MM-DD-slug
+goal: >
+  One-sentence statement of the feature/outcome this room exists to ship.
+created: YYYY-MM-DDTHH:MM:SSZ
+complexity: moderate            # trivial rooms should not exist (complexity gate)
+
+roster:
+  hub: claude                   # session Claude — phase authority, smoke, synthesis
+  builder: grok                 # grok-4.5 via /grok --implement (default per Game Plan)
+  reviewer_fixer: codex         # gpt-5.6-sol via codex-adversary + /codex --implement
+  research: grok                # widened write-free allowlist (grok-worker-safety.md)
+  # override example: builder: codex   # requires explicit human --builder codex flag
+
+participants: [human, claude, grok, codex]
+
+fix_rounds_max: 2               # human may raise; hub never raises unilaterally
+
+file_scopes:
+  # paths (globs ok) this room's milestones are allowed to touch; hub checks diffs against this
+  - example/path/**
+
+notes: ""

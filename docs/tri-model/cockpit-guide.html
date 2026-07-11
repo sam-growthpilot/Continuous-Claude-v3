@@ -1,0 +1,241 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Tri-Model Cockpit — Operator Guide</title>
+<style>
+  :root {
+    --paper: #F5F6F3; --ink: #22262B; --ink-soft: #4E555D; --line: #D8DBD4; --card: #FFFFFF;
+    --claude: #B4552D; --claude-soft: #F6E7DF;
+    --codex: #1C7A6E; --codex-soft: #E1EFEC;
+    --grok: #4C58B8; --grok-soft: #E6E8F7;
+    --warn: #9A6A00; --warn-soft: #F5ECD8;
+    --good: #2E7D4F; --good-soft: #E2F0E7;
+    --mono: ui-monospace, "Cascadia Code", "Segoe UI Mono", Menlo, Consolas, monospace;
+    --serif: Charter, "Iowan Old Style", "Palatino Linotype", Georgia, serif;
+    --sans: "Segoe UI", Seravek, system-ui, -apple-system, sans-serif;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --paper: #181B1E; --ink: #E8E9E5; --ink-soft: #A6ADB4; --line: #33383D; --card: #21252A;
+      --claude: #E08050; --claude-soft: #38281F;
+      --codex: #46B3A4; --codex-soft: #1C2E2B;
+      --grok: #8A94E8; --grok-soft: #262A42;
+      --warn: #D9A93F; --warn-soft: #322A18;
+      --good: #5CB884; --good-soft: #1E2F25;
+    }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--paper); color: var(--ink); font-family: var(--sans); font-size: 15.5px; line-height: 1.55; }
+  .wrap { max-width: 980px; margin: 0 auto; padding: 34px 22px 70px; }
+  h1, h2 { font-family: var(--serif); font-weight: 600; line-height: 1.15; text-wrap: balance; }
+  h1 { font-size: clamp(28px, 5vw, 42px); margin: 6px 0 10px; }
+  h2 { font-size: 24px; margin: 0 0 4px; }
+  .eyebrow { font-family: var(--mono); font-size: 11.5px; letter-spacing: .14em; text-transform: uppercase; color: var(--ink-soft); }
+  .lede { font-size: 17.5px; color: var(--ink-soft); max-width: 60ch; margin-top: 0; }
+  section { margin-top: 52px; }
+  .sect-sub { color: var(--ink-soft); margin: 4px 0 18px; max-width: 66ch; }
+  code { font-family: var(--mono); font-size: .88em; background: color-mix(in srgb, var(--ink) 8%, transparent); padding: 1.5px 6px; border-radius: 4px; white-space: nowrap; }
+
+  /* crew cards */
+  .crew { display: grid; grid-template-columns: repeat(3, 1fr); gap: 14px; }
+  .ccard { border: 1px solid var(--line); border-radius: 10px; background: var(--card); overflow: hidden; }
+  .ccard header { padding: 13px 16px 10px; }
+  .ccard.c-claude header { background: var(--claude-soft); }
+  .ccard.c-grok header { background: var(--grok-soft); }
+  .ccard.c-codex header { background: var(--codex-soft); }
+  .ccard .who { font-family: var(--mono); font-size: 11px; letter-spacing: .1em; text-transform: uppercase; }
+  .c-claude .who { color: var(--claude); } .c-grok .who { color: var(--grok); } .c-codex .who { color: var(--codex); }
+  .ccard .role { font-family: var(--serif); font-size: 19px; display: block; margin-top: 2px; }
+  .ccard .body { padding: 12px 16px 16px; font-size: 13.8px; color: var(--ink-soft); }
+  .ccard .body strong { color: var(--ink); }
+  .talk { margin-top: 10px; padding-top: 10px; border-top: 1px dashed var(--line); font-size: 12.8px; }
+  .talk b { font-family: var(--mono); font-size: 11px; letter-spacing: .08em; text-transform: uppercase; color: var(--ink-soft); display: block; margin-bottom: 3px; }
+
+  /* control deck */
+  .deck { display: grid; gap: 14px; }
+  .ctrl { border: 1px solid var(--line); border-left-width: 4px; border-radius: 8px; background: var(--card); padding: 14px 18px; display: grid; grid-template-columns: 200px 1fr; gap: 6px 20px; align-items: baseline; }
+  .ctrl.k-ask { border-left-color: var(--grok); }
+  .ctrl.k-build { border-left-color: var(--claude); }
+  .ctrl.k-review { border-left-color: var(--codex); }
+  .ctrl.k-room { border-left-color: var(--warn); }
+  .ctrl.k-maint { border-left-color: var(--ink-soft); }
+  .ctrl .say { font-family: var(--mono); font-size: 13.5px; font-weight: 600; }
+  .ctrl .what { font-size: 14px; color: var(--ink-soft); }
+  .ctrl .what strong { color: var(--ink); }
+  .grouplabel { font-family: var(--mono); font-size: 11.5px; letter-spacing: .12em; text-transform: uppercase; color: var(--ink-soft); margin: 18px 0 2px; }
+  .grouplabel:first-child { margin-top: 0; }
+
+  /* pipeline */
+  .pipe { display: flex; flex-wrap: wrap; gap: 9px; align-items: stretch; font-family: var(--mono); font-size: 12.8px; }
+  .pipe .step { border: 1px solid var(--line); background: var(--card); border-radius: 7px; padding: 9px 12px; }
+  .pipe .gate { border: 1.5px solid var(--warn); color: var(--warn); background: var(--warn-soft); border-radius: 7px; padding: 9px 12px; font-weight: 700; }
+  .pipe .sep { color: var(--ink-soft); align-self: center; }
+  .pipe .actor { display: block; font-size: 10px; letter-spacing: .08em; text-transform: uppercase; margin-top: 3px; }
+  .a-claude { color: var(--claude); } .a-codex { color: var(--codex); } .a-grok { color: var(--grok); } .a-you { color: var(--warn); }
+
+  /* ask moments */
+  .asks { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 14px; }
+  .ask { border: 1px solid var(--line); border-radius: 9px; background: var(--card); padding: 14px 16px; }
+  .ask .when { font-family: var(--mono); font-size: 11px; letter-spacing: .09em; text-transform: uppercase; color: var(--warn); margin-bottom: 5px; }
+  .ask h3 { font-family: var(--sans); font-weight: 600; font-size: 15px; margin: 0 0 5px; }
+  .ask p { font-size: 13.6px; color: var(--ink-soft); margin: 0; }
+
+  /* rails + trouble tables */
+  .tbl-scroll { overflow-x: auto; border: 1px solid var(--line); border-radius: 10px; background: var(--card); }
+  table { border-collapse: collapse; width: 100%; font-size: 14px; }
+  th, td { text-align: left; padding: 10px 15px; border-top: 1px solid var(--line); vertical-align: top; }
+  thead th { border-top: none; font-family: var(--mono); font-size: 11px; letter-spacing: .1em; text-transform: uppercase; color: var(--ink-soft); }
+  td:first-child { white-space: nowrap; font-weight: 600; }
+
+  .rails { display: grid; grid-template-columns: repeat(auto-fit, minmax(230px, 1fr)); gap: 13px; }
+  .rail { border: 1px solid var(--line); border-radius: 9px; background: var(--card); padding: 13px 15px; }
+  .rail .on { font-family: var(--mono); font-size: 10.5px; letter-spacing: .1em; text-transform: uppercase; color: var(--good); background: var(--good-soft); border-radius: 999px; padding: 2px 9px; display: inline-block; margin-bottom: 7px; }
+  .rail h3 { font-family: var(--sans); font-weight: 600; font-size: 14.5px; margin: 0 0 4px; }
+  .rail p { font-size: 13.3px; color: var(--ink-soft); margin: 0; }
+
+  .callout { border-left: 4px solid var(--claude); background: var(--claude-soft); padding: 13px 17px; border-radius: 0 8px 8px 0; margin: 22px 0 0; font-size: 14.5px; max-width: 74ch; }
+
+  footer { margin-top: 64px; border-top: 1px solid var(--line); padding-top: 18px; color: var(--ink-soft); font-size: 12.8px; font-family: var(--mono); }
+
+  @media (max-width: 780px) {
+    .crew { grid-template-columns: 1fr; }
+    .ctrl { grid-template-columns: 1fr; gap: 4px; }
+  }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <header>
+    <div class="eyebrow">CCv3 · Operator Guide · updated 2026-07-11</div>
+    <h1>Your tri-model cockpit</h1>
+    <p class="lede">You have a three-model crew inside every Claude Code session. This is the flight manual: what each one does, what to say to make things happen, and the moments where the system stops and waits for <em>you</em>.</p>
+  </header>
+
+  <section>
+    <div class="eyebrow">Rule zero</div>
+    <h2>You only ever talk to Claude</h2>
+    <p class="sect-sub">You never open Grok or Codex yourself. You type commands in your Claude Code session; Claude dispatches the right model, verifies its work independently, and brings the result back to you. Each model runs on its own subscription (ChatGPT / X Premium+) — no API bills.</p>
+    <div class="crew">
+      <div class="ccard c-claude">
+        <header><span class="who">Anthropic · Claude</span><span class="role">The Hub — your copilot</span></header>
+        <div class="body">Plans with you, writes the contract, dispatches the others, <strong>double-checks everything with its own eyes</strong>, and keeps the state file that says what happens next.
+          <div class="talk"><b>You say</b>Anything — it's your normal session.</div>
+        </div>
+      </div>
+      <div class="ccard c-grok">
+        <header><span class="who">xAI · Grok 4.5</span><span class="role">The Builder</span></header>
+        <div class="body">Default builder for well-specified tasks, plus live web/X research. Builds in a <strong>throwaway copy of the repo</strong>, never your live files, and hands back a diff.
+          <div class="talk"><b>You say</b><code>/grok …</code> — Claude does the dispatching.</div>
+        </div>
+      </div>
+      <div class="ccard c-codex">
+        <header><span class="who">OpenAI · Codex GPT-5.6</span><span class="role">The Reviewer &amp; Fixer</span></header>
+        <div class="body">Grades the builder's work adversarially and writes fix patches. <strong>Never grades its own builds</strong> — if it had to build (failover), Claude's critics take the review.
+          <div class="talk"><b>You say</b><code>/codex …</code> — Claude does the dispatching.</div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section>
+    <div class="eyebrow">The control deck</div>
+    <h2>What you actually type</h2>
+    <p class="sect-sub">Five families of controls, smallest to biggest. Color = who ends up doing the work.</p>
+    <div class="deck">
+      <div class="grouplabel">Quick second opinions — safe, read-only, no confirmation</div>
+      <div class="ctrl k-ask"><span class="say">/grok &lt;question&gt;</span><span class="what">Grok reads your repo and answers. Good for a third-family sanity check or anything needing <strong>live web/X knowledge</strong>.</span></div>
+      <div class="ctrl k-ask"><span class="say">/codex &lt;question&gt;</span><span class="what">Same, from GPT-5.6's point of view. Fastest of the two (~20s vs ~2-3min cold).</span></div>
+
+      <div class="grouplabel">Getting something built</div>
+      <div class="ctrl k-build"><span class="say">/grok --implement &lt;task&gt;</span><span class="what"><strong>The default way to build.</strong> Grok works in an isolated copy, you get shown the diff, and nothing touches your files until you say apply.</span></div>
+      <div class="ctrl k-build"><span class="say">/codex --implement &lt;task&gt;</span><span class="what">The specialist/backup builder — use when Grok is down or you deliberately want GPT on it. Its main job stays <strong>fix patches</strong> after a review.</span></div>
+
+      <div class="grouplabel">Getting things checked</div>
+      <div class="ctrl k-review"><span class="say">/codex --review · /grok --review</span><span class="what">Another model family attacks your current diff. Findings come back tagged <code>[Codex]</code> / <code>[Grok]</code>.</span></div>
+      <div class="ctrl k-review"><span class="say">(automatic) after any approved plan</span><span class="what">A picker pops up: <strong>Codex / Grok / Both / Skip</strong> — pick who stress-tests the plan before you build.</span></div>
+
+      <div class="grouplabel">The full crew — multi-milestone features</div>
+      <div class="ctrl k-room"><span class="say">/workroom new &lt;name&gt;</span><span class="what">Opens a <strong>room</strong>: a folder on disk where the whole pipeline lives — contract, milestones, findings, patches. Use for anything bigger than a one-shot task.</span></div>
+      <div class="ctrl k-room"><span class="say">/workroom status</span><span class="what">Where things stand: phase, who acts next, blockers, milestone progress.</span></div>
+      <div class="ctrl k-room"><span class="say">/workroom resume</span><span class="what"><strong>Your "pick up where we left off" button.</strong> Any fresh session rebuilds full context from two files in the room — no need to re-explain anything.</span></div>
+      <div class="ctrl k-room"><span class="say">/workroom advance · post</span><span class="what">Mostly Claude's controls (move the phase forward, send a message to a model's inbox) — you'll rarely type these yourself.</span></div>
+
+      <div class="grouplabel">Keeping the machine healthy</div>
+      <div class="ctrl k-maint"><span class="say">/harness-update codex|grok</span><span class="what"><strong>The only sanctioned way</strong> to upgrade a CLI or enable a new model. Live-probes everything before trusting it.</span></div>
+      <div class="ctrl k-maint"><span class="say">node scripts/tri-model/preflight.mjs</span><span class="what">Fast "are we ready to fly?" check — auth, right account, CLI versions vs verified pins, git state.</span></div>
+      <div class="ctrl k-maint"><span class="say">bash scripts/tri-model/tri-model-suite.sh</span><span class="what">The deep 53-check consistency suite when something feels off.</span></div>
+    </div>
+  </section>
+
+  <section>
+    <div class="eyebrow">The big-feature flow</div>
+    <h2>Two gates — you hold both keys</h2>
+    <p class="sect-sub">Inside a workroom, work moves through fixed phases. Nothing gets built until you approve the plan (Gate 1), and nothing ships until you approve the result (Gate 2). Everything in between runs on the roster.</p>
+    <div class="pipe">
+      <span class="step">plan &amp; contract<span class="actor a-claude">claude + you</span></span><span class="sep">→</span>
+      <span class="gate">GATE 1<span class="actor a-you">you approve</span></span><span class="sep">→</span>
+      <span class="step">build M1…Mn<span class="actor a-grok">grok</span></span><span class="sep">→</span>
+      <span class="step">smoke check<span class="actor a-claude">claude</span></span><span class="sep">→</span>
+      <span class="step">review booth<span class="actor a-codex">codex</span></span><span class="sep">→</span>
+      <span class="step">fix (max 2 rounds)<span class="actor a-codex">codex</span></span><span class="sep">→</span>
+      <span class="gate">GATE 2<span class="actor a-you">you ship</span></span>
+    </div>
+    <div class="callout"><strong>Why you can trust "done":</strong> a milestone only counts as complete when Claude has run the tests itself and written the exit codes into the room. A builder saying "tests passed" is never accepted as evidence.</div>
+  </section>
+
+  <section>
+    <div class="eyebrow">Your moments</div>
+    <h2>When the system stops and asks you</h2>
+    <p class="sect-sub">These are the only interruptions — each exists for a reason. Everything else runs without you.</p>
+    <div class="asks">
+      <div class="ask"><div class="when">Before any build run</div><h3>"Here's the exact command + isolated folder — go?"</h3><p>Every <code>--implement</code> shows you precisely what will run and where before spending quota. Say yes, or tweak the task.</p></div>
+      <div class="ask"><div class="when">After any build run</div><h3>"Here's the diff — apply or discard?"</h3><p>The single most important control. Nothing reaches your working files until you approve the patch. Discarding costs nothing.</p></div>
+      <div class="ask"><div class="when">First Grok content run of a session</div><h3>"This sends repo content to xAI — ok?"</h3><p>Grok runs ship context to xAI's servers under your account. You confirm once per session for content-bearing runs; prompts are secret-scanned first, and <code>.env</code> files never ship.</p></div>
+      <div class="ask"><div class="when">Gates 1 &amp; 2</div><h3>"Approve the contract / approve the ship?"</h3><p>Plan sign-off before any milestone is built; final sign-off before anything merges. No auto-merge exists anywhere.</p></div>
+      <div class="ask"><div class="when">After 2 failed fix rounds</div><h3>"Fix loop exhausted — your call."</h3><p>The system never thrashes quota in a loop. Two fix rounds, then it blocks and hands you the decision.</p></div>
+      <div class="ask"><div class="when">Version drift detected</div><h3>"CLI changed — run /harness-update first."</h3><p>Grok auto-updates itself. If the live version stops matching the verified pin, building is blocked until the playbook re-verifies the surface.</p></div>
+    </div>
+  </section>
+
+  <section>
+    <div class="eyebrow">Always on</div>
+    <h2>Safety rails you never have to think about</h2>
+    <div class="rails">
+      <div class="rail"><span class="on">on</span><h3>No self-grading</h3><p>The model that wrote the code never owns its grade. Cross-family review, verified by Claude.</p></div>
+      <div class="rail"><span class="on">on</span><h3>Isolated builds</h3><p>All writes happen in throwaway repo copies outside your project. Your live tree is untouched until you apply a diff.</p></div>
+      <div class="rail"><span class="on">on</span><h3>No auto-commit, no auto-merge</h3><p>Every change is a patch you approve. Ship decisions are yours alone.</p></div>
+      <div class="rail"><span class="on">on</span><h3>Subscription-only billing</h3><p>API keys are stripped from every call; Grok additionally verifies it's your account before running.</p></div>
+      <div class="rail"><span class="on">on</span><h3>Everything on disk</h3><p>Contracts, findings, patches, status — real files. A crashed or fresh session loses nothing: <code>/workroom resume</code>.</p></div>
+      <div class="rail"><span class="on">on</span><h3>Every run logged</h3><p>One telemetry row per model call (model, exit code, diff size, quota hits) — the receipts always exist.</p></div>
+    </div>
+  </section>
+
+  <section>
+    <div class="eyebrow">Troubleshooting</div>
+    <h2>If something looks wrong</h2>
+    <div class="tbl-scroll">
+      <table>
+        <thead><tr><th>Symptom</th><th>What it means</th><th>What to do</th></tr></thead>
+        <tbody>
+          <tr><td>"usage limit hit"</td><td>That model's subscription quota is spent (Codex: 5-hour + weekly clocks; Grok: X Premium+ cap). Never a task failure.</td><td>Wait for the stated reset, or hand the milestone to the other builder (failover).</td></tr>
+          <tr><td>Grok feels slow</td><td>Cold starts run 2–3 minutes on this account — normal. Timeouts are set to 300s+ for exactly this.</td><td>Nothing. If it exceeds ~5 min, Claude kills and reports.</td></tr>
+          <tr><td>"version drift" block</td><td>A CLI updated itself past the verified pin.</td><td><code>/harness-update grok</code> (or codex) — takes minutes, re-probes everything.</td></tr>
+          <tr><td>Room feels stuck</td><td>Phase is blocked or waiting on an actor.</td><td><code>/workroom status</code> — it names the blocker and who acts next.</td></tr>
+          <tr><td>New session, lost the thread</td><td>Context lived in the old chat.</td><td><code>/workroom resume</code> — rebuilds from the room's contract + status files.</td></tr>
+          <tr><td>Something deeper is off</td><td>Config drift, auth, allowlists…</td><td><code>bash scripts/tri-model/tri-model-suite.sh</code> — 53 checks, names the failure.</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <footer>
+    Verified 2026-07-11 · codex-cli 0.144.1 (ChatGPT) · grok 0.2.93 (X Premium+) · roster: Grok builds · Codex reviews/fixes · Claude hub · you hold Gates 1 &amp; 2.<br>
+    Deep docs in the repo: docs/tri-model/ · .workroom/PROTOCOL.md · safety rules in .claude/rules/
+  </footer>
+
+</div>
+</body>
+</html>

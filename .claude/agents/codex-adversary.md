@@ -30,9 +30,16 @@ Optional - "auth boundary", "race conditions", "data loss paths". If omitted, Co
 
 ## Codebase
 $CLAUDE_PROJECT_DIR = /path/to/project
+
+## Workroom     (optional — Game Plan disk bus; absent = one-shot behavior, unchanged)
+room: <ABSOLUTE path to .workroom/rooms/<room-id>>
+role: reviewer
+milestone: M<N>          (optional)
 ```
 
-If mode is missing, assume `code`. If scope is missing in code mode, default to staged + unstaged changes.
+If mode is missing, assume `code`. If scope is missing in code mode, default to staged + unstaged changes. Resolve paths from the prompt verbatim — do not rely on the `$CLAUDE_PROJECT_DIR` env var being set in your shell (observed empty 2026-07-11).
+
+**Workroom protocol (only when the block is present — fail-open otherwise):** read `<room>/CONTRACT.md` + `<room>/status.json` + `<room>/inbox/codex/` first; grade against the contract's requirements, not just the diff in isolation. Roster note: Codex is the default review-booth primary for Grok-built milestones — but if `status.json`/the milestone result shows a **codex failover build** for this milestone, STOP and report the self-grade conflict instead of reviewing (a builder family never grades its own milestone; Claude critics take the booth). Write a findings copy to `<room>/findings/booth-codex-<utcstamp>.md` (template: `.workroom/templates/finding.md`) in addition to the normal cache output, and append one line to `<room>/THREAD.md`: `<utc> codex [reviewer] <verdict + finding counts>`. Never write `status.json` or advance phase.
 
 ## Step 2: Assemble Context
 
