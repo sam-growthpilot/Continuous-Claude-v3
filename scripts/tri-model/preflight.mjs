@@ -30,6 +30,10 @@ const DEFAULT_PINS_FILE = path.join(
 );
 const GROK_AUTH_EMAIL_PIN = "dkhayes44@gmail.com";
 const EXEC_TIMEOUT_MS = 20_000;
+const CLEAN_ENV = { ...process.env };
+delete CLEAN_ENV.OPENAI_API_KEY;
+delete CLEAN_ENV.CODEX_API_KEY;
+delete CLEAN_ENV.XAI_API_KEY;
 const WANT_JSON = process.argv.includes("--json");
 
 /** @typedef {{ name: string, ok: boolean, detail: string, informational?: boolean }} Check */
@@ -93,7 +97,7 @@ function runCli(cmd, args) {
       timeout: EXEC_TIMEOUT_MS,
       windowsHide: true,
       maxBuffer: 2 * 1024 * 1024,
-      env: process.env,
+      env: CLEAN_ENV,
       shell: false,
     });
   } else {
@@ -103,7 +107,7 @@ function runCli(cmd, args) {
       timeout: EXEC_TIMEOUT_MS,
       windowsHide: true,
       maxBuffer: 2 * 1024 * 1024,
-      env: process.env,
+      env: CLEAN_ENV,
       shell: false,
     });
   }
@@ -114,6 +118,14 @@ function runCli(cmd, args) {
 
   if (r.error) {
     const e = /** @type {NodeJS.ErrnoException} */ (r.error);
+    if (e.code === "ETIMEDOUT") {
+      return {
+        ok: false,
+        stdout,
+        stderr,
+        error: `timeout after ${EXEC_TIMEOUT_MS}ms: ${cmd}`,
+      };
+    }
     if (e.code === "ENOENT") {
       return {
         ok: false,
@@ -127,14 +139,6 @@ function runCli(cmd, args) {
       stdout,
       stderr,
       error: e.message || String(e),
-    };
-  }
-  if (r.signal === "SIGTERM" || (r.status === null && r.signal)) {
-    return {
-      ok: false,
-      stdout,
-      stderr,
-      error: `timeout after ${EXEC_TIMEOUT_MS}ms: ${cmd}`,
     };
   }
   if (
@@ -178,18 +182,31 @@ function parsePinsTable(filePath) {
 
   // Prefer the "## Evidence trail" section; fall back to whole file.
   const evidenceIdx = text.search(/^##\s+Evidence trail\b/im);
-  const section =
-    evidenceIdx >= 0 ? text.slice(evidenceIdx) : text;
+  let section = text;
+  if (evidenceIdx >= 0) {
+    const headingLineEnd = text.indexOf("\n", evidenceIdx);
+    const searchStart = headingLineEnd >= 0 ? headingLineEnd + 1 : text.length;
+    const nextHeadingMatch = /^##\s+/m.exec(text.slice(searchStart));
+    const sectionEnd =
+      nextHeadingMatch === null
+        ? text.length
+        : searchStart + nextHeadingMatch.index;
+    section = text.slice(evidenceIdx, sectionEnd);
+  }
 
   /** @type {Record<string, string>} */
   const pins = {};
   // | Codex | ... | 0.144.1, 2026-07-11 |
   // | Grok | ... | 0.2.93, 2026-07-11 |
-  const rowRe =
-    /^\|\s*(Codex|Grok)\s*\|\s*[^|]*\|\s*([0-9]+\.[0-9]+\.[0-9]+)(?:\s*,\s*[^|]*)?\s*\|/gim;
-  let m;
-  while ((m = rowRe.exec(section)) !== null) {
-    pins[m[1]] = m[2];
+  for (const line of section.split(/\r?\n/)) {
+    const rowMatch = /^\|\s*(Codex|Grok)\s*\|/i.exec(line);
+    if (rowMatch === null) continue;
+    const harness = rowMatch[1];
+    if (harness in pins) continue;
+    const versionMatch = /\d+\.\d+\.\d+/.exec(line);
+    if (versionMatch !== null) {
+      pins[harness] = versionMatch[0];
+    }
   }
 
   if (!pins.Codex && !pins.Grok) {
@@ -343,11 +360,10 @@ function checkGrokAuthAndIdentity() {
     // D4: only .email — never touch .key / .refresh_token
     email = /** @type {{ email?: string }} */ (entry).email;
   } catch (err) {
-    const e = /** @type {Error} */ (err);
     return {
       name: "grok_identity",
       ok: false,
-      detail: `auth.json JSON.parse failed: ${e.message}`,
+      detail: "auth.json is present but not valid JSON",
     };
   }
 
@@ -606,4 +622,9 @@ function main() {
   process.exit(ready ? 0 : 1);
 }
 
-main();
+try {
+  main();
+} catch (err) {
+  process.stdout.write("[FAIL] preflight crashed: unexpected error\n");
+  process.exit(1);
+}
