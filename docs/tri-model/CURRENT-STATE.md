@@ -1,15 +1,40 @@
 # Tri-Model System — Current State Reference
 
-**Snapshot: 2026-07-11 (late).** Written for any session needing ground truth on the tri-model work in flight. Verified against git, not narration.
+<!-- machine:begin (sync-current-state.mjs — do not hand-edit this block) -->
+
+**Auto-snapshot:** 2026-07-11T21:24:05Z · branch `feature/game-plan-governance` · HEAD `6bc8973 feat(game-plan): Track D — /game-plan roster-pipeline orchestrator`
+
+- Last tri-model change: `6bc8973 2026-07-11 feat(game-plan): Track D — /game-plan roster-pipeline orchestrator`
+- preflight: ready=true | codex=0.144.1 grok=0.2.93 (pins codex=0.144.1 grok=0.2.93)
+- Surfaces present on this checkout:
+  - [x] /workroom skill (`.claude/skills/workroom/SKILL.md`)
+  - [x] /game-plan skill (`.claude/skills/game-plan/SKILL.md`)
+  - [x] /harness-update skill (`.claude/skills/harness-update/SKILL.md`)
+  - [x] workroom protocol (`.workroom/PROTOCOL.md`)
+  - [x] preflight gate (`scripts/tri-model/preflight.mjs`)
+  - [x] static suite (`scripts/tri-model/tri-model-suite.sh`)
+
+**Workrooms (runtime, gitignored):**
+
+| Room | Phase | Milestone | Next actor |
+|---|---|---|---|
+| `2026-07-11-tri-model-preflight` | done | M1 | none |
+
+_Refresh: `node scripts/tri-model/sync-current-state.mjs` (narrative below the marker is hand-maintained)._
+
+<!-- machine:end -->
+
+**Ground truth for any session on the tri-model system.** The auto-snapshot block above is machine-refreshed (`node scripts/tri-model/sync-current-state.mjs` — run it after any tri-model change; `--check` mode reports staleness without writing). Narrative below is hand-maintained at milestones.
 
 ## Layer status
 
 | Layer | Where | Status |
 |---|---|---|
 | **Connection layer** — `/codex` + `/grok` workers, adversaries, reviewer picker, `/harness-update` | `main` (PR #18, merge `089ea55`) | ✅ Shipped, 61/61 suite, live in `~/.claude` |
-| **Governance layer** — workroom disk bus, roster policy, preflight gate | branch `feature/game-plan-governance` (commits `e262814`→`73d2a63`, 8 commits, +2322 lines) | ✅ Built + dogfood-verified · ⏳ **Gate 2 pending: Dave's PR review/merge** |
-| Track D `/game-plan` orchestrator | not started | Deliberately deferred until after dogfood (done) + merge |
-| Track F Notion roster rewrite | not started | Confirm-first; page `39676fd7ac8281068c7ee4b6f793f5af` is one revision behind |
+| **Governance layer** — workroom disk bus, roster policy, preflight gate | `feature/game-plan-governance` → main | ✅ Built + dogfood-verified · ✅ **Gate 2 APPROVED (Dave, in-session 2026-07-11)** — merged same session (see auto-snapshot for live branch/HEAD) |
+| Track D `/game-plan` orchestrator | `.claude/skills/game-plan/SKILL.md` | ✅ Shipped 2026-07-11 (built last, after dogfood, per plan; encodes dogfood learnings) |
+| Track F Notion roster rewrite | page `39676fd7ac8281068c7ee4b6f793f5af` | ✅ Done 2026-07-11 (Game Plan section, roster TL;DR, status refresh, cockpit-guide link) |
+| Operator cockpit guide | Notion page `39a76fd7ac82817abc0bffdfeaec1c54` (Project Board child) + `docs/tri-model/cockpit-guide.html` | ✅ Published + read-back verified 2026-07-11 |
 
 ## What exists on `feature/game-plan-governance`
 
@@ -45,10 +70,16 @@
 4. `.workroom/PROTOCOL.md` (on the governance branch) — the live message/phase schema.
 5. Safety rules: `.claude/rules/{grok,codex}-worker-safety.md`, `harness-update.md`.
 
+## Dogfood room disposition (2026-07-11-tri-model-preflight)
+
+Phase `done`. Gate 1 pre-authorized (pattern explicitly blessed by Dave in-session), Gate 2
+approved by Dave 2026-07-11. Timeline: Grok built → hub smoke 3/3 → Codex booth thin-approve
+(2/3 fork-storms) → Claude critic caught HIGH H1 (secret-byte echo on malformed auth.json)
+→ Codex fixed R1/2 → hub canary-probe verified. Commits `d42eb6f` (baseline) + `73d2a63` (fix).
+Worktrees removed; room retained on disk as the reference example.
+
 ## Open items (in order)
 
-1. **Gate 2:** Dave reviews/merges `feature/game-plan-governance` → main.
-2. Post-merge: fresh-session smoke of `/workroom` + rostered agents; run `node scripts/tri-model/preflight.mjs`.
-3. Track F: Notion "Cross-Model Workers" roster rewrite (confirm-first) + HTML artifact chip flip (`claude.ai/code/artifact/edadfc5f-fa44-4952-a299-23f586d1c435` — "in build" chips → live).
-4. Track D: `/game-plan` orchestrator (only now that dogfood passed).
-5. Watch items: fork-storm recurrence (compact prompts), Grok cold-start outliers, `codex-worker` telemetry-row discipline.
+1. Fresh-session smoke: `/workroom resume`, `/game-plan` routing, rostered agent spawns (new agents register at session start).
+2. Watch items: Codex read-only fork-storm recurrence (keep adversary prompts compact; §14), Grok cold-start outliers (one ~11–12 min case), telemetry-row discipline on "trivial" runs.
+3. Deferred roadmap: `--json-schema` structured output; grok-adversary as standing `/review` third reviewer (go/no-go on quota data); gpt-5.6 `max`/`ultra` effort probes; fork-storm bounding wrapper.
