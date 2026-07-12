@@ -2,9 +2,9 @@
 
 <!-- machine:begin (sync-current-state.mjs — do not hand-edit this block) -->
 
-**Auto-snapshot:** 2026-07-11T21:28:29Z · branch `main` · HEAD `5ac338c Merge pull request #19 from Rev4nchist/feature/game-plan-governance`
+**Auto-snapshot:** 2026-07-12T02:18:56Z · branch `main` · HEAD `39a518d docs(tri-model): CURRENT-STATE snapshot stamp post-merge (main @ 5ac338c)`
 
-- Last tri-model change: `4d50eb2 2026-07-11 docs(tri-model): CURRENT-STATE.md as the quick system-state report + sync-current-state.mjs`
+- Last tri-model change: `39a518d 2026-07-11 docs(tri-model): CURRENT-STATE snapshot stamp post-merge (main @ 5ac338c)`
 - preflight: ready=true | codex=0.144.1 grok=0.2.93 (pins codex=0.144.1 grok=0.2.93)
 - Surfaces present on this checkout:
   - [x] /workroom skill (`.claude/skills/workroom/SKILL.md`)

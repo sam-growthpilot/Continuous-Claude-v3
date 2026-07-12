@@ -1,7 +1,7 @@
 # Tri-Model Collaboration Plan — Game Plan Roster + CCv3 Workroom
 
-**Status:** Design plan (repo-canonical)  
-**Branch context:** `feature/tri-model-workers` (Grok + Codex workers shipped; shared work surface still missing)  
+**Status:** DESIGN — EXECUTED. All tracks (A–G) shipped to `main` 2026-07-11 via PR #19 (merge `5ac338c`), dogfood-verified. This document is the design rationale; **live state = `CURRENT-STATE.md`**, live schema = `.workroom/PROTOCOL.md`.  
+**Branch context (historical):** designed on `feature/tri-model-workers`, built on `feature/game-plan-governance`  
 **Created:** 2026-07-11  
 **Sources:**
 
@@ -132,7 +132,7 @@ Claude Code — HUB
 
 ### 3.3 Stateful disk layout (Workroom + Contract)
 
-> **Status: NOT YET BUILT** — this tree is Track A/B's deliverable; nothing under `.workroom/` exists yet and `.gitignore` has no entry (add the gitignore FIRST, before any room is created — auto-commit hooks would otherwise leak room churn).
+> **Status: BUILT (2026-07-11)** — this tree shipped as designed (`.workroom/PROTOCOL.md` + `templates/`; `rooms/` gitignored before the first room was created). The live protocol file is the schema owner; this section is the design record.
 
 All multi-model feature work uses a **room** under the project:
 

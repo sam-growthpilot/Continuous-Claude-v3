@@ -1,5 +1,10 @@
 # Tri-Model Combined Session Review — 2026-07-11
 
+> **STATUS: EXECUTED (same day).** The combined build order below was completed in full on
+> `feature/game-plan-governance` → merged to `main` via PR #19 (`5ac338c`), including the
+> dogfood and Tracks D/F/G. This is now a historical planning record — for current state
+> read `CURRENT-STATE.md`.
+
 **Purpose:** first-pass reconciliation of the two workstreams that landed on `feature/tri-model-workers` today, so the next session picks up ONE combined plan instead of two parallel reports.
 
 | Workstream | Session | What it produced |
