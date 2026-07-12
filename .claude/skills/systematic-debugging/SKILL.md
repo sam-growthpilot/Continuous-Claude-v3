@@ -27,6 +27,11 @@ Red Flags (return to Phase 1):
   - Multiple unrelated symptoms
   - Fix doesn't match root cause
   - "It works on my machine"
+
+Heuristic (incident-proven, 2026-05-24 hook regression):
+  - RECURRING IDENTICAL failures -> suspect INFRASTRUCTURE (loops, syncs,
+    daemons, stale baselines), not actor behavior. The same defect appearing
+    repeatedly after "fixes" means something is regenerating it.
 ```
 
 ### Phase 2: Pattern Analysis
@@ -55,6 +60,9 @@ Validation:
   - Does the fix match the root cause?
   - Are there regression risks?
   - What edge cases exist?
+  - Rival hypotheses ruled out? Name at least one OTHER cause that produces
+    the same symptoms and state the evidence that eliminates it — stopping at
+    the first fit is how wrong diagnoses ship.
 ```
 
 ### Phase 4: Implementation

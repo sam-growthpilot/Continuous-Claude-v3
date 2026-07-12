@@ -2,9 +2,9 @@
 
 <!-- machine:begin (sync-current-state.mjs — do not hand-edit this block) -->
 
-**Auto-snapshot:** 2026-07-12T02:18:56Z · branch `main` · HEAD `39a518d docs(tri-model): CURRENT-STATE snapshot stamp post-merge (main @ 5ac338c)`
+**Auto-snapshot:** 2026-07-12T03:44:09Z · branch `feature/fable-brain-transfer` · HEAD `6c5d22a feat(skills): premortem — reviewer-unavailable fallback (execute adversary CLI contract inline; incident 2026-07-11)`
 
-- Last tri-model change: `39a518d 2026-07-11 docs(tri-model): CURRENT-STATE snapshot stamp post-merge (main @ 5ac338c)`
+- Last tri-model change: `9b52f4a 2026-07-11 docs: post-ship cleanup — status banners, doc map, quick-report refresh, proposal backlog`
 - preflight: ready=true | codex=0.144.1 grok=0.2.93 (pins codex=0.144.1 grok=0.2.93)
 - Surfaces present on this checkout:
   - [x] /workroom skill (`.claude/skills/workroom/SKILL.md`)
@@ -35,6 +35,8 @@ _Refresh: `node scripts/tri-model/sync-current-state.mjs` (narrative below the m
 | Track D `/game-plan` orchestrator | `.claude/skills/game-plan/SKILL.md` | ✅ Shipped 2026-07-11 (built last, after dogfood, per plan; encodes dogfood learnings) |
 | Track F Notion roster rewrite | page `39676fd7ac8281068c7ee4b6f793f5af` | ✅ Done 2026-07-11 (Game Plan section, roster TL;DR, status refresh, cockpit-guide link) |
 | Operator cockpit guide | Notion page `39a76fd7ac82817abc0bffdfeaec1c54` (Project Board child) + `docs/tri-model/cockpit-guide.html` | ✅ Published + read-back verified 2026-07-11 |
+
+**Hub judgment reference:** `docs/fable-manual/OPERATING-MANUAL.md` §9 — Fable-5-authored orchestration judgment for the hub role (milestone sizing, weasel-proof contracts, per-family failure signatures, thin-evidence asymmetry, fix-loop stop conditions), harvested 2026-07-11. Companion standing harness: `docs/fable-manual/TRAP-TESTS.md` — re-run before shipping any prompt-layer change. Note its gate result: an always-on distillation rule showed **no lift** over the existing rules layer (51/51 both arms) and was deliberately NOT installed.
 
 ## What exists on `feature/game-plan-governance`
 
