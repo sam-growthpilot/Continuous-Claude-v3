@@ -205,8 +205,9 @@ powershell.exe -NoProfile -Command "Get-Process grok* -ErrorAction SilentlyConti
 tool-killed (exit 143 / non-zero `GROK_RC`), OR both `$FINAL_MSG_FILE` and `$OUTPUT_FILE`'s
 `.text` are empty, grok inference did not return. Distinguish the cause for the summary: run
 `env -u XAI_API_KEY grok models` (returns in ~3s) — if it prints "logged in", auth/startup are
-fine and the failure is the **inference endpoint hanging** (transient service/account-side;
-retry later, or fall back to Codex-only). If `grok models` also fails, it's an auth/CLI problem.
+fine and the failure is the **completion path stalling** (known-intermittent as of 2026-07-12 —
+see `thoughts/shared/handoffs/grok-diagnosis/2026-07-12-grok-inference-hang.md`; retry later, or
+fall back to Codex-only). If `grok models` also fails, it's an auth/CLI problem.
 Either way report the failure verbatim per Rule 4 — never fabricate findings, never re-invoke
 in a loop.
 
@@ -258,7 +259,7 @@ Return a concise summary to your caller:
 | Grok auth missing | `grok models` output lacks "logged in" | Tell user to run `grok login` |
 | Wrong account | `~/.grok/auth.json` `.email` != `dkhayes44@gmail.com` | STOP; do not proceed |
 | Diff too large (>400KB) | wc -c on diff file | Split by file, review largest first |
-| `grok` inference hangs (models-list + --version still work) | `timeout -k 15 $GROK_ADV_TIMEOUT` fires (rc 124/137) | Bounded in Step 5; proc-sweep runs; report "grok inference timed out — endpoint hang, auth OK" and fall back to Codex-only. Do NOT re-invoke in a loop (that caused the 2026-07-12 runaway) |
+| `grok` inference hangs (models-list + --version still work) | Bash-tool timeout fires (exit 143) and/or `$FINAL_MSG_FILE` empty | Bounded in Step 5; proc-sweep runs; report "grok inference timed out — intermittent completion stall, auth OK" and fall back to Codex-only. Do NOT re-invoke in a loop (that caused the 2026-07-12 runaway) |
 | JSON parse fails | Grok returned prose, not JSON | Surface raw output, note "Grok returned non-JSON" |
 
 ## Rules
