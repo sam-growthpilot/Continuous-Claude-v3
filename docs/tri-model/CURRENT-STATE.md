@@ -2,9 +2,9 @@
 
 <!-- machine:begin (sync-current-state.mjs — do not hand-edit this block) -->
 
-**Auto-snapshot:** 2026-07-12T03:44:09Z · branch `feature/fable-brain-transfer` · HEAD `6c5d22a feat(skills): premortem — reviewer-unavailable fallback (execute adversary CLI contract inline; incident 2026-07-11)`
+**Auto-snapshot:** 2026-07-12T04:43:40Z · branch `feature/fable-harvest-loop` · HEAD `36f24e8 Merge pull request #20 from Rev4nchist/feature/fable-brain-transfer`
 
-- Last tri-model change: `9b52f4a 2026-07-11 docs: post-ship cleanup — status banners, doc map, quick-report refresh, proposal backlog`
+- Last tri-model change: `93c1de0 2026-07-11 docs(tri-model): hub-judgment reference — fable manual section 9 + standing trap harness pointer`
 - preflight: ready=true | codex=0.144.1 grok=0.2.93 (pins codex=0.144.1 grok=0.2.93)
 - Surfaces present on this checkout:
   - [x] /workroom skill (`.claude/skills/workroom/SKILL.md`)
@@ -54,6 +54,7 @@ _Refresh: `node scripts/tri-model/sync-current-state.mjs` (narrative below the m
 ## Probe-backed facts added during governance dogfood (trust these)
 
 1. **Codex `--sandbox read-only` on Windows can FORK-STORM** on subprocess denial (~40 orphaned `codex.exe`). Prompt-shape-dependent: rich checklists trigger it, compact prompts don't. Keep adversary prompts compact; after a timeout check `tasklist | findstr codex`; treat a 0-findings pass after storms as thin evidence and add a Claude-critic lens. Evidence: `docs/codex-integration/DESIGN-RESEARCH.md` §14.
+   **1b. GROK CAN FORK-STORM TOO (2026-07-12, live observation)** — a `grok-adversary` plan-mode run on this host accumulated ~27 descendant `grok.exe` processes before manual `taskkill /T` cleanup; the retry succeeded cleanly. Fork-storm-on-Windows is NOT Codex-specific. Same hygiene for Grok dispatches: compact prompts, post-timeout `tasklist | findstr grok`, check for leftover processes after any Grok run. Evidence: `docs/fable-manual/eval/LOOP-LOG.md` iteration 3.
 2. **`$CLAUDE_PROJECT_DIR` can be EMPTY in agent shells** — workroom dispatch blocks must pass ABSOLUTE paths.
 3. **Grok cold start hit ~11–12 min once** (far past the documented 120s and even the 300s guidance) — on timeout, poll for the output file; do NOT re-invoke.
 4. **`sync-to-active.sh` deliberately excludes `hooks/src`** (dist-only by design) — active `~/.claude/hooks/src` drifts; never `npm run build` there without first mirroring `src/shared/` from the repo.
