@@ -186,7 +186,21 @@ esac
 # from the different model FAMILY (gpt-5.5 vs Claude), not from Codex's internal
 # fan-out, so disabling it costs nothing and is faster. See codex-adversarial.md.
 FINAL_MSG_FILE="$CLAUDE_PROJECT_DIR/.claude/cache/agents/codex-adversary/codex-final.txt"
-mkdir -p "$(dirname "$FINAL_MSG_FILE")"
+OUTPUT_FILE="$CLAUDE_PROJECT_DIR/.claude/cache/agents/codex-adversary/latest-output.md"
+mkdir -p "$(dirname "$FINAL_MSG_FILE")"; : > "$FINAL_MSG_FILE"; : > "$OUTPUT_FILE"
+
+# HARD BOUND (fix 2026-07-12, mirrors grok-adversary). Codex can hang OR fork-storm on
+# Windows (~40 orphaned codex.exe on subprocess denial — prompt-shape dependent; keep
+# prompts compact). Bound it with the two mechanisms VERIFIED on this host:
+#   1. THE BASH-TOOL TIMEOUT IS THE BOUND. Run codex in the FOREGROUND and set the `timeout`
+#      field of THIS Bash tool call to CODEX_ADV_TIMEOUT_MS (default 300000). The tool kills
+#      the call at that bound even if codex hangs. Do NOT wrap in GNU `timeout` (verified it
+#      cannot terminate a native *.exe child on Windows — it hangs to the tool bound anyway).
+#      Do NOT use run_in_background + a Monitor poll — that detaches from the tool bound and
+#      is exactly the pattern that caused the 2026-07-12 grok-adversary ~64min/~3.8M-tok runaway.
+#      If forgotten, the tool's DEFAULT 120s still caps a FOREGROUND call; background does NOT.
+#   2. Stop-Process -Force reliably kills codex.exe on Windows — the mandatory sweep after.
+CODEX_ADV_TIMEOUT_MS="${CODEX_ADV_TIMEOUT_MS:-300000}"   # set the Bash tool `timeout` to this
 
 codex exec \
   --model "$CODEX_ADVERSARY_MODEL" \
@@ -198,8 +212,15 @@ codex exec \
   -o "$FINAL_MSG_FILE" \
   - < "$PROMPT_FILE" \
   > "$OUTPUT_FILE" 2>&1
-
+CODEX_RC=$?
 rm -f "$PROMPT_FILE"
+```
+
+Then — as a **separate, always-run** step (fires even if the tool killed the call at exit 143) —
+sweep any surviving codex process:
+
+```bash
+powershell.exe -NoProfile -Command "Get-Process codex* -ErrorAction SilentlyContinue | Stop-Process -Force" 2>/dev/null || true
 ```
 
 Notes:
@@ -251,7 +272,7 @@ Return a concise summary to your caller:
 | `codex` not on PATH | command not found | Tell user to run Phase A install (`/codex:setup`) |
 | Codex auth missing | output mentions "not authenticated" | Tell user to check `!codex login status` then `!codex login` if logged out |
 | Diff too large (>400KB) | wc -c on diff file | Split by file, review largest first |
-| Codex hangs >5min | timeout wrapper | Kill, return partial output, flag in summary |
+| Codex hangs / fork-storms | Bash-tool timeout fires (exit 143) or `Get-Process codex*` shows a swarm | Bounded in Step 5 by the tool timeout; proc-sweep runs after; report the failure, don't loop or improvise findings |
 | JSON parse fails | Codex returned prose, not JSON | Surface raw output, note "Codex returned non-JSON" |
 
 ## Rules
@@ -262,3 +283,4 @@ Return a concise summary to your caller:
 4. **Fail loud** - if Codex errors, surface it; don't pretend to have findings
 5. **Cite the source of findings** - prefix Codex's findings with "[Codex]" so synthesis can distinguish them from critic's findings
 6. **Cost-aware** - each invocation counts against Dave's ChatGPT Codex subscription quota; don't run unless the caller asked for adversarial review
+7. **Single blocking call, never a background poll-loop** - invoke codex exactly as Step 5 shows: one foreground call bounded by the Bash-tool `timeout`, followed by the proc-sweep. NEVER run codex with `run_in_background` + a Monitor poll waiting for the output file — an unbounded poll is what turned a hung grok-adversary into a ~64-min / ~3.8M-token runaway (2026-07-12). If a call would exceed the Bash-tool limit, lower `CODEX_ADV_TIMEOUT_MS`, don't background it.

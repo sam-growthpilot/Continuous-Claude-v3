@@ -165,6 +165,22 @@ esac
 FINAL_MSG_FILE="$CLAUDE_PROJECT_DIR/.claude/cache/agents/grok-adversary/grok-final.json"
 OUTPUT_FILE="$CLAUDE_PROJECT_DIR/.claude/cache/agents/grok-adversary/latest-output.md"
 mkdir -p "$(dirname "$FINAL_MSG_FILE")"
+: > "$FINAL_MSG_FILE"; : > "$OUTPUT_FILE"
+
+# HARD BOUND (fix 2026-07-12). A hung grok *inference* endpoint once cost ~64 min /
+# ~3.8M tokens because this call was run in the BACKGROUND with an unbounded Monitor
+# poll-loop. Root cause split: (a) grok inference hangs (`grok --version` + `grok models`
+# still return in <3s, so it's the completion endpoint, not auth/startup), (b) nothing
+# bounded the call. FIX = the two mechanisms VERIFIED to work on this Windows host:
+#   1. THE BASH-TOOL TIMEOUT IS THE BOUND. Run grok in the FOREGROUND and set the `timeout`
+#      field of THIS Bash tool call to GROK_ADV_TIMEOUT ms (default 240000). The tool kills
+#      the call at that bound (exit 143) even when grok hangs — verified firing every probe.
+#      Do NOT wrap in GNU `timeout` — verified 2026-07-12 it CANNOT terminate the native
+#      grok.exe child (SIGTERM/SIGKILL don't cross to it; it just hangs to the tool bound).
+#      Do NOT use run_in_background + Monitor — that detaches from the tool bound (the runaway).
+#      If forgotten, the tool's DEFAULT 120s still caps a foreground call — background does not.
+#   2. Stop-Process -Force reliably kills grok.exe on Windows (verified) — the mandatory sweep.
+GROK_ADV_TIMEOUT_MS="${GROK_ADV_TIMEOUT_MS:-240000}"   # set the Bash tool `timeout` to this
 
 env -u XAI_API_KEY grok \
   --prompt-file "$PROMPT_FILE" \
@@ -174,9 +190,25 @@ env -u XAI_API_KEY grok \
   --output-format json \
   --cwd "$CLAUDE_PROJECT_DIR" \
   > "$FINAL_MSG_FILE" 2> "$OUTPUT_FILE"
-
+GROK_RC=$?
 rm -f "$PROMPT_FILE"
 ```
+
+Then — as a **separate, always-run** step (fires even if the tool killed the call above at
+exit 143) — sweep any surviving grok process:
+
+```bash
+powershell.exe -NoProfile -Command "Get-Process grok* -ErrorAction SilentlyContinue | Stop-Process -Force" 2>/dev/null || true
+```
+
+**Timeout / hang handling (mandatory — do NOT improvise findings):** if the grok call was
+tool-killed (exit 143 / non-zero `GROK_RC`), OR both `$FINAL_MSG_FILE` and `$OUTPUT_FILE`'s
+`.text` are empty, grok inference did not return. Distinguish the cause for the summary: run
+`env -u XAI_API_KEY grok models` (returns in ~3s) — if it prints "logged in", auth/startup are
+fine and the failure is the **inference endpoint hanging** (transient service/account-side;
+retry later, or fall back to Codex-only). If `grok models` also fails, it's an auth/CLI problem.
+Either way report the failure verbatim per Rule 4 — never fabricate findings, never re-invoke
+in a loop.
 
 Notes:
 - `--prompt-file` avoids argv-length issues and inherited-TTY hangs on Windows.
@@ -226,7 +258,7 @@ Return a concise summary to your caller:
 | Grok auth missing | `grok models` output lacks "logged in" | Tell user to run `grok login` |
 | Wrong account | `~/.grok/auth.json` `.email` != `dkhayes44@gmail.com` | STOP; do not proceed |
 | Diff too large (>400KB) | wc -c on diff file | Split by file, review largest first |
-| `grok` hangs | external timeout wrapper | Kill, return partial output, flag in summary |
+| `grok` inference hangs (models-list + --version still work) | `timeout -k 15 $GROK_ADV_TIMEOUT` fires (rc 124/137) | Bounded in Step 5; proc-sweep runs; report "grok inference timed out — endpoint hang, auth OK" and fall back to Codex-only. Do NOT re-invoke in a loop (that caused the 2026-07-12 runaway) |
 | JSON parse fails | Grok returned prose, not JSON | Surface raw output, note "Grok returned non-JSON" |
 
 ## Rules
@@ -238,3 +270,4 @@ Return a concise summary to your caller:
 5. **Cite the source of findings** — prefix Grok's findings with "[Grok]" so synthesis can distinguish them from critic's and codex-adversary's findings.
 6. **Cost-aware** — each invocation counts against Dave's X Premium+ subscription; don't run unless the caller asked for adversarial review.
 7. **Data-egress aware** — every run ships `~/.claude/Claude.md` + installed skills to xAI; this is expected for review runs (they already read repo diffs) but never paste secrets into the prompt.
+8. **Single blocking call, never a background poll-loop** — invoke grok exactly as Step 5 shows: one foreground `timeout`-wrapped call. NEVER run grok with `run_in_background` + a Monitor poll waiting for the output file; an unbounded poll turned a hung inference endpoint into a ~64-min / ~3.8M-token runaway (2026-07-12). The `timeout` wrapper is the ONLY sanctioned bound; if a call would exceed the Bash-tool limit, lower `GROK_ADV_TIMEOUT`, don't background it.
