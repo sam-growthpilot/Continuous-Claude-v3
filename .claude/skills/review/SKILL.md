@@ -161,6 +161,14 @@ Task(
   Findings BOTH critic and codex-adversary flag are high-confidence.
   Findings only codex-adversary flags are the cross-model lift.
 
+  THIN-APPROVE RULE (dogfood-proven 2026-07-11 — this exact check caught the run's
+  only HIGH finding): if codex-adversary returns approve with ZERO findings AND its
+  run showed instability (fork-storms, timeouts, near-instant return, no visible
+  engagement with the diff), do NOT bank the approve — evidence quality inherits
+  from process health. Add a supplemental critic pass over the same scope before
+  the verdict. Asymmetry: distrust thin approvals; respect surviving objections
+  (instability suppresses detection, it doesn't fabricate findings).
+
   Create final review:
   - Overall verdict (APPROVE / REQUEST_CHANGES / NEEDS_DISCUSSION)
   - Prioritized action items (group: both-flagged, claude-only, [Codex]-only)
