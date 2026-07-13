@@ -87,3 +87,36 @@ Subscription-gated (X Premium+); no per-token invoice observed. No quota surface
 - `--best-of-n`, `--check` (headless self-verification loop) — potential quality levers.
 - Quota error shape (reactive capture on first occurrence).
 - `--sandbox` profile validation in future CLI versions (re-probe on upgrade via `/harness-update grok`).
+
+## 5. 2026-07-12/13 — Intermittent completion stall; headless hardening; 0.2.99 UNVERIFIED
+
+**Symptom:** `grok -p` intermittently hangs forever, pre-first-token (streaming probe = 0 bytes),
+hang-not-error, on ALL invocation paths (tool shells 0/11+; user's interactive terminal 1 success
+then the next identical call hung). grok.com browser chat unaffected. `grok models` genuinely
+network-live throughout (`models_cache.json` mtime updates every call); TCP 443 to api.x.ai/grok.com
+fine; no explicit proxy on the box. Persisted 18+ hours across CLI **0.2.93 AND 0.2.99**.
+Full falsification chain + evidence tables: `thoughts/shared/handoffs/grok-diagnosis/2026-07-12-grok-inference-hang.md`.
+Undischarged hypotheses: Premium+ rate/quota silent-hold; xAI backend flakiness around the Grok 4.5
+free-trial rollout (same 48h window); transparent middlebox (hotspot test discriminates).
+
+**Unattended version drift:** the CLI auto-updated **0.2.93 → 0.2.99 mid-diagnosis** with no action
+taken (npm cadence that week: 6 releases in 4 days; v0.2.95 changelog fixed a "queued prompts wait
+for the full timeout" blocking-wait class). **0.2.99 is UNVERIFIED** — none of §2's guard probes
+(`--tools` read-only, worktree behavior, model rejection shape) have been re-run on it. Rollback
+reference: last fully verified version was **0.2.93** (`grok update` can pin). Run `/harness-update grok`
+before trusting write modes on 0.2.99+.
+
+**Hardening adopted (2026-07-13), pending behavioral verification:**
+- `--no-auto-update` + `--always-approve` added to every headless call site (grok-worker 3a/3b/3c,
+  grok-adversary Step 5) — both are docs-recommended headless-stall mitigations. Accepted-by-CLI on
+  0.2.99 (probed; invalid flags error instantly, these did not); behavior unverifiable until
+  inference returns — re-probe both in the next `/harness-update grok`.
+- `auto_update = false` pinned in `~/.grok/config.toml` **under `[cli]`** — placement matters:
+  probed 2026-07-13, an unrecognized TOP-LEVEL config key makes the whole CLI HANG (even
+  `grok models`; revert restored it instantly). Config-file errors on this CLI manifest as hangs,
+  not error messages — sanity-check `grok models` (bounded) after ANY config.toml edit. Whether the
+  key actually suppresses updates is unverified (behavior probe pending); the `--no-auto-update`
+  flag at call sites is the primary mechanism.
+- Bounded-probe helper checked in at `scripts/grok/probe.ps1` (Wait-Job bound + `Stop-Process grok*`
+  sweep — GNU `timeout` verified UNABLE to kill the native grok.exe child on Windows).
+- Runaway amplifier guard (foreground + Bash-tool timeout + sweep) merged via PR #23.

@@ -187,6 +187,8 @@ env -u XAI_API_KEY grok \
   --model "$GROK_ADVERSARY_MODEL" \
   --tools "read_file,list_dir,grep" \
   --no-subagents \
+  --no-auto-update \
+  --always-approve \
   --output-format json \
   --cwd "$CLAUDE_PROJECT_DIR" \
   > "$FINAL_MSG_FILE" 2> "$OUTPUT_FILE"
@@ -216,6 +218,7 @@ Notes:
 - `--tools "read_file,list_dir,grep"` is the load-bearing guard — verified to actually block writes (unlike `--sandbox`, which is decorative on this CLI version).
 - `--no-subagents` keeps the review single-agent (mirrors Codex's `--disable multi_agent` discipline).
 - `--output-format json` returns `{text, sessionId, ...}` — `.text` is the clean findings payload; stderr goes to `$OUTPUT_FILE` for debugging.
+- `--no-auto-update` + `--always-approve` (adopted 2026-07-13, docs-recommended headless hardening): the auto-updater's background calls and an unanswerable approval prompt are both DOCUMENTED headless-stall classes. `--always-approve` is safe HERE only because `--tools` restricts the run to read-only tools. Flags accepted-by-CLI on 0.2.99; full behavior re-verify pending `/harness-update grok`.
 - If `grok` is not on PATH, surface the error clearly.
 
 ## Step 6: Capture and Summarize

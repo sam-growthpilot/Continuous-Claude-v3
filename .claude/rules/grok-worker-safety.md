@@ -78,6 +78,15 @@ Hard-reject any `--model` not in `{grok-4.5, grok-composer-2.5-fast}` (both live
 - **Never reference or read `.env*` files** as part of a Grok prompt/context.
 - `--verbatim`, `--rules`, `--system-prompt-override` exist as shaping levers if a future probe finds a way to suppress the auto-ingestion — unverified as of 2026-07-11, do not assume they change egress behavior without a probe.
 
+## Headless hardening flags (adopted 2026-07-13)
+
+Every headless `grok` invocation (worker ask/implement/resume, adversary review) passes:
+
+- **`--no-auto-update`** — the auto-updater's background calls are a documented headless-stall class, and the CLI demonstrably auto-updated 0.2.93→0.2.99 UNATTENDED mid-diagnosis (2026-07-12), violating the harness-update rule's version-pin intent. Belt-and-suspenders: `auto_update = false` is also pinned in `~/.grok/config.toml` — **under `[cli]`, NOT top-level** (probed 2026-07-13: an unrecognized TOP-LEVEL key makes the entire CLI HANG, even `grok models`; `[cli]` placement is accepted). Version changes then only happen deliberately via `/harness-update grok` (`grok update` is the mechanism).
+- **`--always-approve`** — an unanswerable tool-approval prompt silently stalls headless output (documented). This is safe ONLY because of the existing boundaries: ask/review are bounded by the `--tools` read-only allowlist, implement/resume by worktree isolation. Never treat `--always-approve` as license to drop those boundaries.
+
+Both flags are accepted-by-CLI on 0.2.99 (probed) but their behavior is unverifiable until inference returns — re-probe both as part of the next `/harness-update grok`. **0.2.99 is currently an UNVERIFIED version** (guards not re-probed since the unattended update); implement/resume should not run on it until `/harness-update grok` goes green. Bounded-probe helper: `scripts/grok/probe.ps1`. Stall history + evidence: `thoughts/shared/handoffs/grok-diagnosis/2026-07-12-grok-inference-hang.md`.
+
 ## Windows / CLI hygiene
 
 - **Always feed the prompt from a file** via `--prompt-file <PATH>` — Grok's native prompt-from-file flag, no stdin-redirection tricks needed (unlike Codex's `- < file`).
