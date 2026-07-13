@@ -120,3 +120,13 @@ before trusting write modes on 0.2.99+.
 - Bounded-probe helper checked in at `scripts/grok/probe.ps1` (Wait-Job bound + `Stop-Process grok*`
   sweep — GNU `timeout` verified UNABLE to kill the native grok.exe child on Windows).
 - Runaway amplifier guard (foreground + Bash-tool timeout + sweep) merged via PR #23.
+
+**2026-07-13 discrimination complete — account + service CLEARED; fault is the work-machine/corp-network
+path.** Same account on a different machine + network: READY twice back-to-back. Work machine after
+fresh re-login: still hung. Stalled process TCP: ESTABLISHED to Cloudflare (api.x.ai front) with the
+response never arriving (established-but-silent, not connect-blocked). Cert issuers for api.x.ai /
+grok.com from the work machine = genuine Google Trust Services → NO corporate TLS interception.
+Residual hypotheses: Cloudflare/xAI bot-or-rate treatment of the corporate egress IP (`104.5.57.31`) —
+completion POSTs held while `models` GETs pass — or non-decrypting flow-level firewall behavior on
+streaming responses. Remediation = IT allowlist ticket for `*.x.ai` (evidence in the grok-diagnosis
+handoff), hotspot split-test if policy allows, else xAI support. Grok PARKED on this machine until then.
