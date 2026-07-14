@@ -29,7 +29,8 @@ Build order taught: **Step 0 foundations (global instructions + a 'Main' assista
 |---|---|---|
 | `master-onboarding-prompt.md` | The 90-second self-personalizing starter-kit prompt + usage | Everyone |
 | `main-assistant-project.md` | Step-0 foundation: global instructions + 'Main' assistant Project templates + build prompt | Account-workers |
-| `skill-forge-kickoff.md` | Step-5 tested skill-build kickoff prompt + a worked dry-run (a lean account-research skill) | Account-workers |
+| `skill-forge-kickoff.md` | Step-5 kickoff prompt (uses the shipped `skill-builder` skill) + a worked dry-run | Account-workers |
+| `../skills/skill-builder/SKILL.md` | The shipped rep-facing skill-maker — jargon-free interview → draft → test → wire-in; honesty rules baked in as defaults | Account-workers |
 | `../artifacts/pre-sko-starter-kit-sketch.html` | Interactive sketch of the starter-kit experience (3 taps → tailored kit) | Everyone |
 | `../artifacts/pre-sko-projects-playbook.html` | The highly polished Work-Area Playbook (interactive anatomy, context-window visual, all build prompts) | Account-workers |
 | `../artifacts/sko-package-overview.html` | Interactive overview of the whole SKO package (for reference/leadership) | Program |
@@ -42,4 +43,4 @@ Pre-SKO ends where `../01-PACKAGE-DESIGN.md` begins. A rep who did the runway wa
 
 - **Runway length + channel** — confirm days between licenses-live and SKO, and whether the Slack learning channel is the drip surface (sets one-shot vs. daily cadence).
 - **Mandatory vs. opt-in** — does this slot under the "Claude basics course, due July 15" from the source docs, or is it a softer nudge? (Changes completion mechanics.)
-- **skill-forge availability** — confirm skill-forge (or an equivalent Agent Skill) is publishable to the Sales workspace; the kickoff prompt degrades gracefully if not, but the named-skill path is better.
+- **skill-builder availability** — confirm the `skill-builder` skill is publishable to the Sales workspace (it's the rep path; `skill-forge` stays the Claude Code power tool). The kickoff prompt degrades gracefully if it isn't installed, but the named-skill path is better.

@@ -1,25 +1,25 @@
-# skill-forge Kickoff — build a Skill *with* Claude
+# Skill-Builder Kickoff — build a Skill *with* Claude
 
-Playbook Step 5. A rep turns a repeated piece of their work into a reusable Skill by answering questions, not by writing from a blank page. This is the paste-prompt that starts it, calibrated against the real `skill-forge` skill's **Capture Intent** flow and its **Claude.ai platform adaptation**.
+Playbook Step 5. A rep turns a repeated piece of their work into a reusable Skill by answering questions, not by writing from a blank page. This is the paste-prompt that starts it.
 
-## What skill-forge actually does on claude.ai (be honest with reps)
+**The rep-facing tool is `skill-builder`** — a purpose-built, jargon-free Agent Skill we ship to the Sales workspace (`../skills/skill-builder/SKILL.md`). It's the friendly path: interview → draft → quick test → wire it in. It's distilled from the heavier `skill-forge` lifecycle tool (author → validate → benchmark → optimize → package), which lives on Claude Code for power users who want to *measure* a skill. A busy seller almost never needs skill-forge; ship them skill-builder.
 
-`skill-forge` is a full skill-authoring lifecycle (author → validate → test → optimize → package). On **Claude Code / Cowork** it runs the heavy machinery — subagent eval runs, quantitative benchmarks, description-optimization loops. On **claude.ai the core still works** and is exactly what reps need:
+## What skill-builder does on claude.ai (be honest with reps)
 
-- **Capture Intent** — Claude interviews you: what the skill enables, when it triggers, the output shape, and 3–5 concrete example uses.
-- **Write the SKILL.md** — Claude drafts it (YAML frontmatter `name` + `description`, then markdown instructions).
-- **Sanity-test** — you run 1–2 real examples yourself and give feedback inline.
-- **Improve** — Claude refines from your feedback.
+- **Understand** — Claude interviews you one question at a time: what the task is, what triggers it, the output shape, and the honesty rules (pre-filled as defaults), plus 2–3 concrete example uses.
+- **Draft** — Claude writes the SKILL.md (YAML frontmatter `name` + `description`, then a lean markdown body with your rules and output shape).
+- **Sanity-test** — you run one real example and say what's off; Claude refines.
+- **Wire it in** — Claude hands you the one line to add to your Project's Custom Instructions.
 
-What's **skipped on claude.ai** (set expectations, don't promise it): parallel baseline eval runs, quantitative benchmark viewer, the `claude`-CLI description-optimization loop, blind A/B. Reps don't need those to make a useful first skill.
+What it deliberately **does NOT do** (that's skill-forge on Claude Code, not this): parallel baseline eval runs, quantitative benchmarks, the description-optimization loop, blind A/B. Reps don't need those to make a useful first skill — and leaving them out is what makes this a clean rep experience.
 
-**Prerequisite:** custom Skills must be enabled for the workspace, and the `skill-forge` skill installed there (enablement team's job — ties to the Day-1 platform gate, Gate A). If it isn't installed, the prompt below still works: Claude runs the same interview-and-author method conversationally, just without the named skill.
+**Prerequisite:** custom Skills must be enabled for the workspace, and `skill-builder` published there (enablement team's job — ties to the Day-1 platform gate, Gate A). If it isn't installed yet, the prompt below still works: Claude runs the same interview-and-author method conversationally, just without the named skill.
 
 ## The kickoff prompt (paste inside a Project)
 
 ```
-Use the skill-forge skill to help me turn a repeated piece of my sales work into a reusable
-Skill. If skill-forge isn't available, just run the same method conversationally.
+Use the skill-builder skill to help me turn a repeated piece of my sales work into a reusable
+Skill. If skill-builder isn't available, just run the same method conversationally.
 
 The task I want to package: [describe it — e.g. "research a hospitality prospect and produce a
 confidence-tagged 5-card brief"].
