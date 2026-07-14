@@ -1,0 +1,462 @@
+<title>Your Claude Starter Kit — Pre-SKO Orientation</title>
+<style>
+  :root{
+    --paper:#F5F6F8;--surface:#FFFFFF;--surface-2:#EEF0F3;--ink:#14181F;--text:#1B2029;
+    --text-2:#55606E;--text-3:#7C8794;--line:#E1E4E9;--line-2:#D2D7DE;
+    --teal:#12A594;--teal-deep:#0C7A6E;--teal-tint:#E4F3F0;--gold:#B8863B;--gold-tint:#F4EBD8;
+    --verified:#2FA36B;--verified-bg:#E5F3EC;--reported:#C0842A;--reported-bg:#F6ECD9;
+    --shadow:0 1px 2px rgba(20,24,31,.04),0 4px 18px rgba(20,24,31,.07);
+    --shadow-lg:0 12px 48px rgba(20,24,31,.14);
+    --radius:16px;--radius-sm:10px;
+    --mono:ui-monospace,"Cascadia Code","SF Mono","Consolas","Liberation Mono",monospace;
+    --sans:system-ui,-apple-system,"Segoe UI",Roboto,"Helvetica Neue",Arial,sans-serif;
+  }
+  @media (prefers-color-scheme:dark){:root{
+    --paper:#0F1218;--surface:#171C24;--surface-2:#1E242E;--ink:#F3F5F7;--text:#E7EAEE;
+    --text-2:#A5AEBA;--text-3:#7A8593;--line:#262D38;--line-2:#333B47;
+    --teal:#2CC0AD;--teal-deep:#58D3C3;--teal-tint:#14302D;--gold:#D6A24E;--gold-tint:#2C2416;
+    --verified:#4FBE86;--verified-bg:#16301F;--reported:#D6A24E;--reported-bg:#2C2416;
+    --shadow:0 1px 2px rgba(0,0,0,.3),0 4px 18px rgba(0,0,0,.38);--shadow-lg:0 14px 50px rgba(0,0,0,.55);
+  }}
+  :root[data-theme="light"]{
+    --paper:#F5F6F8;--surface:#FFFFFF;--surface-2:#EEF0F3;--ink:#14181F;--text:#1B2029;
+    --text-2:#55606E;--text-3:#7C8794;--line:#E1E4E9;--line-2:#D2D7DE;
+    --teal:#12A594;--teal-deep:#0C7A6E;--teal-tint:#E4F3F0;--gold:#B8863B;--gold-tint:#F4EBD8;
+    --verified:#2FA36B;--verified-bg:#E5F3EC;--reported:#C0842A;--reported-bg:#F6ECD9;
+    --shadow:0 1px 2px rgba(20,24,31,.04),0 4px 18px rgba(20,24,31,.07);--shadow-lg:0 12px 48px rgba(20,24,31,.14);
+  }
+  :root[data-theme="dark"]{
+    --paper:#0F1218;--surface:#171C24;--surface-2:#1E242E;--ink:#F3F5F7;--text:#E7EAEE;
+    --text-2:#A5AEBA;--text-3:#7A8593;--line:#262D38;--line-2:#333B47;
+    --teal:#2CC0AD;--teal-deep:#58D3C3;--teal-tint:#14302D;--gold:#D6A24E;--gold-tint:#2C2416;
+    --verified:#4FBE86;--verified-bg:#16301F;--reported:#D6A24E;--reported-bg:#2C2416;
+    --shadow:0 1px 2px rgba(0,0,0,.3),0 4px 18px rgba(0,0,0,.38);--shadow-lg:0 14px 50px rgba(0,0,0,.55);
+  }
+  *{box-sizing:border-box;}
+  body{margin:0;background:var(--paper);color:var(--text);font-family:var(--sans);line-height:1.55;-webkit-font-smoothing:antialiased;font-size:15px;}
+  .stage{max-width:640px;margin:0 auto;padding:0 18px;min-height:100dvh;display:flex;flex-direction:column;}
+  h1,h2,h3{text-wrap:balance;letter-spacing:-.02em;line-height:1.15;margin:0;}
+  p{margin:0;}
+  code,.mono{font-family:var(--mono);}
+  @media (prefers-reduced-motion:reduce){*{animation:none!important;transition:none!important;}}
+
+  /* top bar */
+  .bar{display:flex;align-items:center;gap:12px;padding:16px 0 6px;}
+  .mark{width:30px;height:30px;border-radius:8px;background:linear-gradient(150deg,var(--teal),var(--teal-deep));display:grid;place-items:center;color:#fff;font-family:var(--mono);font-weight:700;font-size:13px;box-shadow:var(--shadow);}
+  .bar .eb{font-family:var(--mono);font-size:10px;letter-spacing:.16em;text-transform:uppercase;color:var(--text-3);font-weight:600;}
+  .bar .tt{font-size:13.5px;font-weight:620;color:var(--ink);letter-spacing:-.01em;line-height:1.2;}
+  .theme{margin-left:auto;appearance:none;border:1px solid var(--line-2);background:var(--surface);color:var(--text-2);width:34px;height:34px;border-radius:9px;cursor:pointer;font-size:14px;}
+  .theme:hover{border-color:var(--teal);color:var(--teal);}
+
+  /* progress */
+  .prog{display:flex;gap:6px;margin:10px 0 2px;}
+  .prog i{height:4px;flex:1;border-radius:99px;background:var(--line);transition:background .3s;}
+  .prog i.on{background:var(--teal);}
+  .prog i.done{background:var(--teal-deep);}
+
+  .screen{flex:1;display:flex;flex-direction:column;justify-content:center;padding:14px 0 40px;animation:rise .35s ease;}
+  @keyframes rise{from{opacity:0;transform:translateY(10px);}to{opacity:1;transform:none;}}
+  .hidden{display:none!important;}
+
+  /* intro */
+  .kicker{font-family:var(--mono);font-size:11px;letter-spacing:.14em;text-transform:uppercase;color:var(--teal-deep);font-weight:600;}
+  .intro h1{font-size:clamp(28px,7vw,40px);font-weight:680;color:var(--ink);margin-top:14px;}
+  .intro p{color:var(--text-2);font-size:16px;margin-top:14px;max-width:46ch;}
+  .intro p b{color:var(--text);font-weight:620;}
+  .meta{display:flex;gap:8px;flex-wrap:wrap;margin-top:20px;}
+  .chip{font-family:var(--mono);font-size:11px;color:var(--text-2);border:1px solid var(--line-2);border-radius:99px;padding:5px 11px;}
+  .chip b{color:var(--ink);}
+
+  .cta{appearance:none;border:0;cursor:pointer;font-family:var(--sans);font-weight:640;font-size:15.5px;color:#fff;background:linear-gradient(150deg,var(--teal),var(--teal-deep));padding:15px 24px;border-radius:12px;box-shadow:var(--shadow);transition:transform .12s,box-shadow .2s;display:inline-flex;align-items:center;gap:9px;align-self:flex-start;margin-top:26px;}
+  .cta:hover{transform:translateY(-1px);box-shadow:var(--shadow-lg);}
+  .cta:active{transform:translateY(0);}
+  .cta.ghost{background:transparent;color:var(--teal-deep);border:1px solid var(--line-2);box-shadow:none;}
+
+  /* question */
+  .q-num{font-family:var(--mono);font-size:11px;letter-spacing:.14em;text-transform:uppercase;color:var(--text-3);font-weight:600;}
+  .q h2{font-size:clamp(21px,4.6vw,27px);font-weight:660;color:var(--ink);margin-top:8px;}
+  .q .sub{color:var(--text-3);font-size:13.5px;margin-top:7px;}
+  .opts{display:grid;gap:10px;margin-top:22px;}
+  @media (min-width:520px){.opts.two{grid-template-columns:1fr 1fr;}}
+  .opt{appearance:none;text-align:left;cursor:pointer;background:var(--surface);border:1.5px solid var(--line);border-radius:var(--radius-sm);padding:15px 16px;display:flex;align-items:center;gap:13px;transition:border-color .15s,background .15s,transform .1s;font-family:var(--sans);}
+  .opt:hover{border-color:var(--teal);transform:translateY(-1px);}
+  .opt:focus-visible{outline:2px solid var(--teal);outline-offset:2px;}
+  .opt .ico{flex:0 0 auto;width:38px;height:38px;border-radius:10px;background:var(--teal-tint);color:var(--teal-deep);display:grid;place-items:center;font-size:18px;}
+  .opt .ot{font-weight:620;color:var(--ink);font-size:14.5px;}
+  .opt .od{color:var(--text-3);font-size:12px;margin-top:1px;}
+  .opt.sel{border-color:var(--teal);background:var(--teal-tint);}
+  .backrow{margin-top:24px;display:flex;gap:12px;align-items:center;}
+  .back{appearance:none;border:0;background:transparent;color:var(--text-3);cursor:pointer;font-family:var(--sans);font-size:13px;padding:6px 2px;}
+  .back:hover{color:var(--text);}
+
+  /* free text */
+  .ta{width:100%;font-family:var(--sans);font-size:15px;color:var(--text);background:var(--surface);border:1.5px solid var(--line);border-radius:var(--radius-sm);padding:14px;resize:none;margin-top:20px;min-height:88px;}
+  .ta:focus{outline:none;border-color:var(--teal);}
+
+  /* generating */
+  .gen{align-items:flex-start;}
+  .gen .dots{font-family:var(--mono);color:var(--teal);font-size:15px;}
+  .gen .steps{margin-top:20px;display:grid;gap:12px;}
+  .gen .gstep{display:flex;gap:11px;align-items:center;color:var(--text-3);font-size:14px;opacity:.4;transition:opacity .3s,color .3s;}
+  .gen .gstep.live{opacity:1;color:var(--text);}
+  .gen .gstep.ok{opacity:1;color:var(--text-2);}
+  .gen .gstep .g-ic{width:22px;height:22px;border-radius:6px;display:grid;place-items:center;font-size:12px;background:var(--surface-2);color:var(--text-3);}
+  .gen .gstep.ok .g-ic{background:var(--verified-bg);color:var(--verified);}
+  .gen .gstep.live .g-ic{background:var(--teal-tint);color:var(--teal-deep);}
+  .spin{display:inline-block;animation:spin 1s linear infinite;}
+  @keyframes spin{to{transform:rotate(360deg);}}
+
+  /* KIT result */
+  .kit{padding-top:16px;padding-bottom:56px;}
+  .greet{background:var(--surface);border:1px solid var(--line);border-radius:var(--radius);padding:20px;box-shadow:var(--shadow);position:relative;overflow:hidden;}
+  .greet::before{content:"";position:absolute;inset:0 0 auto 0;height:3px;background:linear-gradient(90deg,var(--teal),var(--gold));}
+  .greet .hi{font-family:var(--mono);font-size:10.5px;letter-spacing:.14em;text-transform:uppercase;color:var(--teal-deep);font-weight:600;}
+  .greet h2{font-size:20px;color:var(--ink);margin-top:8px;}
+  .greet p{color:var(--text-2);font-size:14px;margin-top:9px;}
+  .greet p b{color:var(--text);}
+
+  .sec-l{font-family:var(--mono);font-size:11px;letter-spacing:.13em;text-transform:uppercase;color:var(--teal-deep);font-weight:600;margin:28px 0 4px;display:flex;align-items:center;gap:9px;}
+  .sec-l::after{content:"";flex:1;height:1px;background:var(--line);}
+  .sec-note{color:var(--text-3);font-size:12.5px;margin-bottom:12px;}
+
+  .pk{background:var(--surface);border:1px solid var(--line);border-radius:var(--radius-sm);box-shadow:var(--shadow);margin-bottom:11px;overflow:hidden;}
+  .pk .top{display:flex;gap:12px;align-items:flex-start;padding:15px 16px 12px;}
+  .pk .idx{flex:0 0 auto;width:26px;height:26px;border-radius:8px;background:var(--ink);color:var(--paper);font-family:var(--mono);font-weight:700;font-size:12px;display:grid;place-items:center;font-variant-numeric:tabular-nums;}
+  .pk.hero .idx{background:var(--gold);color:#fff;}
+  .pk .th{flex:1;min-width:0;}
+  .pk .th .tt{font-weight:640;color:var(--ink);font-size:14.5px;}
+  .pk .th .why{color:var(--text-2);font-size:12.5px;margin-top:3px;}
+  .pk .th .why b{color:var(--gold);}
+  .pk .badge{font-family:var(--mono);font-size:9px;font-weight:700;letter-spacing:.06em;padding:3px 7px;border-radius:5px;background:var(--gold-tint);color:var(--gold);flex:0 0 auto;}
+  .pk .prompt{font-family:var(--mono);font-size:12.5px;line-height:1.6;color:var(--text);background:var(--surface-2);margin:0 16px;border-radius:8px;padding:12px 13px;white-space:pre-wrap;word-break:break-word;}
+  .pk .act{display:flex;justify-content:flex-end;padding:9px 16px 14px;}
+  .copy{appearance:none;border:1px solid var(--line-2);background:var(--surface);color:var(--text-2);cursor:pointer;font-family:var(--sans);font-size:12px;font-weight:600;padding:7px 13px;border-radius:8px;display:inline-flex;gap:6px;align-items:center;transition:.15s;}
+  .copy:hover{border-color:var(--teal);color:var(--teal);}
+  .copy.done{border-color:var(--verified);color:var(--verified);background:var(--verified-bg);}
+
+  .plan{display:grid;gap:10px;}
+  .day{display:flex;gap:13px;background:var(--surface);border:1px solid var(--line);border-radius:var(--radius-sm);padding:14px 15px;box-shadow:var(--shadow);}
+  .day .d{flex:0 0 auto;font-family:var(--mono);font-weight:700;font-size:11px;color:var(--teal-deep);background:var(--teal-tint);border-radius:7px;padding:6px 9px;height:fit-content;white-space:nowrap;}
+  .day .dt{font-size:13.5px;color:var(--text);}
+  .day .dt b{color:var(--ink);font-weight:620;}
+
+  .habit{margin-top:14px;background:var(--gold-tint);border:1px dashed var(--gold);border-radius:var(--radius);padding:17px 18px;}
+  .habit .hl{font-family:var(--mono);font-size:10.5px;letter-spacing:.12em;text-transform:uppercase;color:var(--gold);font-weight:700;}
+  .habit p{color:var(--text);font-size:14px;margin-top:8px;}
+  .habit p b{color:var(--ink);}
+  .habit .sko{color:var(--text-2);font-size:12.5px;margin-top:9px;}
+
+  .save{display:flex;gap:10px;align-items:center;background:var(--surface);border:1px solid var(--line);border-radius:var(--radius-sm);padding:13px 15px;margin-top:20px;font-size:13px;color:var(--text-2);}
+  .save b{color:var(--ink);}
+  .restart{margin-top:18px;display:flex;gap:10px;}
+
+  .foot{color:var(--text-3);font-size:11.5px;padding:8px 0 20px;text-align:center;}
+  .foot .mono{color:var(--text-2);}
+  .demo-flag{font-family:var(--mono);font-size:10px;letter-spacing:.1em;text-transform:uppercase;color:var(--reported);background:var(--reported-bg);border-radius:6px;padding:3px 8px;display:inline-block;}
+</style>
+
+<div class="stage">
+  <div class="bar">
+    <div class="mark">C</div>
+    <div>
+      <div class="eb">Fourth · Pre-SKO Orientation</div>
+      <div class="tt">Build your Claude starter kit</div>
+    </div>
+    <button class="theme" id="theme" aria-label="Toggle theme" title="Toggle theme">◐</button>
+  </div>
+
+  <div class="prog" id="prog" aria-hidden="true"><i></i><i></i><i></i><i></i></div>
+
+  <!-- INTRO -->
+  <section class="screen intro" id="s-intro">
+    <div class="kicker">60 seconds · then it's yours</div>
+    <h1>Claude works best when it knows <em>your</em> job.</h1>
+    <p>Answer three quick taps and Claude builds you a <b>personal starter kit</b> — five prompts tuned to what you sell and the task you'd most love to hand off, plus a 3-day plan to try them on real deals before SKO.</p>
+    <div class="meta">
+      <span class="chip"><b>3</b> taps</span>
+      <span class="chip"><b>5</b> prompts, made for you</span>
+      <span class="chip"><b>1</b> habit that wins SKO</span>
+    </div>
+    <button class="cta" id="start">Build my kit &nbsp;→</button>
+    <div class="foot" style="text-align:left;margin-top:22px;"><span class="demo-flag">Interactive sketch</span> &nbsp;In the real thing, this is one paste-prompt on claude.ai and Claude generates the kit live.</div>
+  </section>
+
+  <!-- QUESTIONS -->
+  <section class="screen q hidden" id="s-q">
+    <div class="q-num" id="q-num">Question 1 of 3</div>
+    <h2 id="q-title"></h2>
+    <div class="sub" id="q-sub"></div>
+    <div class="opts" id="q-opts"></div>
+    <textarea class="ta hidden" id="q-ta" placeholder="e.g. rewriting the same follow-up email ten times, digging for who to call…" rows="3"></textarea>
+    <div class="backrow">
+      <button class="back" id="q-back">← Back</button>
+      <button class="cta ghost hidden" id="q-next" style="margin-top:0;padding:11px 20px;font-size:14px;">Build my kit →</button>
+    </div>
+  </section>
+
+  <!-- GENERATING -->
+  <section class="screen gen hidden" id="s-gen">
+    <div class="kicker">Claude is building your kit <span class="dots" id="dots">▍</span></div>
+    <div class="steps" id="gsteps">
+      <div class="gstep" data-g="0"><span class="g-ic">◇</span><span>Reading your role &amp; book…</span></div>
+      <div class="gstep" data-g="1"><span class="g-ic">◇</span><span>Choosing your 5 prompts…</span></div>
+      <div class="gstep" data-g="2"><span class="g-ic">◇</span><span>Tuning them to hospitality…</span></div>
+      <div class="gstep" data-g="3"><span class="g-ic">◇</span><span>Writing your 3-day plan…</span></div>
+    </div>
+  </section>
+
+  <!-- KIT -->
+  <section class="screen kit hidden" id="s-kit">
+    <div class="greet">
+      <div class="hi">Your kit is ready</div>
+      <h2 id="k-greet"></h2>
+      <p id="k-greet-p"></p>
+    </div>
+
+    <div class="sec-l">Your 5 starter prompts</div>
+    <div class="sec-note">Paste any one into claude.ai and swap the <code>[brackets]</code> for a real prospect or deal. Start with #1 — it's your dreaded task.</div>
+    <div id="k-prompts"></div>
+
+    <div class="sec-l">Your 3-day warm-up</div>
+    <div class="sec-note">Small reps on real work. By SKO you'll have muscle memory, not first-contact nerves.</div>
+    <div class="plan" id="k-plan"></div>
+
+    <div class="habit">
+      <div class="hl">◆ The one habit to keep</div>
+      <p><b>Claude sounds equally sure whether it's right or guessing.</b> Your move: always ask it to <b>cite its sources and flag what it's unsure about</b> — "give me a link for each fact, and tell me what you're inferring."</p>
+      <div class="sko">That single habit is the whole game — and it's exactly the skill you'll certify on at SKO.</div>
+    </div>
+
+    <div class="save">💾&nbsp; <span><b>This kit is yours.</b> Screenshot it, or paste it into a Claude chat titled "My Cheat Sheet" — bring it to SKO.</span></div>
+
+    <div class="restart">
+      <button class="cta ghost" id="k-again" style="margin-top:0;">↺ Start over</button>
+      <button class="cta" id="k-tweak" style="margin-top:0;">Change my answers</button>
+    </div>
+    <div class="foot"><span class="mono">Claude for Sales · Pre-SKO Orientation</span> — self-personalizing starter kit (sketch)</div>
+  </section>
+</div>
+
+<script>
+(function(){
+  "use strict";
+  var root=document.documentElement, tb=document.getElementById("theme");
+  function cur(){var a=root.getAttribute("data-theme");return a?a:(matchMedia("(prefers-color-scheme: dark)").matches?"dark":"light");}
+  function setT(t){root.setAttribute("data-theme",t);tb.textContent=cur()==="dark"?"☀":"☾";}
+  setT(cur()); tb.onclick=function(){setT(cur()==="dark"?"light":"dark");};
+
+  var state={role:null,seg:null,task:null,sink:""};
+
+  // ---- option sets ----
+  var ROLES=[
+    {id:"sdr", ico:"📞", t:"SDR / BDR", d:"Prospecting & first meetings"},
+    {id:"ae",  ico:"🤝", t:"Account Executive", d:"Running deals end to end"},
+    {id:"ent", ico:"🏛️", t:"Enterprise AE", d:"Multi-unit, multi-stakeholder"},
+    {id:"lead",ico:"📊", t:"Sales Leader", d:"Coaching a team"}
+  ];
+  var SEGS=[
+    {id:"qsr",  ico:"🍔", t:"QSR / fast-casual", d:"Speed, high turnover"},
+    {id:"fsr",  ico:"🍽️", t:"Full-service", d:"FOH/BOH scheduling"},
+    {id:"hotel",ico:"🏨", t:"Hotels & lodging", d:"24/7 departments"},
+    {id:"multi",ico:"🏢", t:"Multi-concept groups", d:"Many brands & units"},
+    {id:"mixed",ico:"🗂️", t:"A mixed book", d:"A bit of everything"}
+  ];
+  var TASKS=[
+    {id:"research",  ico:"🔎", t:"Researching prospects", d:"Who they are, who to call"},
+    {id:"outreach",  ico:"✉️", t:"Cold outreach", d:"Openers that don't get ignored"},
+    {id:"followup",  ico:"↩️", t:"Follow-up emails", d:"Turning notes into a reply"},
+    {id:"discovery", ico:"🧭", t:"Discovery prep", d:"Sharp questions, real signals"},
+    {id:"summary",   ico:"📝", t:"Call notes & CRM", d:"Messy call → clean summary"},
+    {id:"proposal",  ico:"📄", t:"Recaps & proposals", d:"The written follow-through"}
+  ];
+
+  // segment phrasing
+  var SEGX={
+    qsr:{n:"QSR / fast-casual operator", hook:"speed-of-service staffing and high turnover"},
+    fsr:{n:"full-service restaurant", hook:"scheduling across front- and back-of-house"},
+    hotel:{n:"hotel / lodging operator", hook:"round-the-clock departmental staffing"},
+    multi:{n:"multi-concept restaurant group", hook:"standardizing labor ops across brands and units"},
+    mixed:{n:"hospitality operator", hook:"labor cost and scheduling complexity"}
+  };
+  function segN(){return SEGX[state.seg||"mixed"].n;}
+  function segHook(){return SEGX[state.seg||"mixed"].hook;}
+
+  // ---- prompt library (composed with segment) ----
+  function P(){
+    var s=segN(), h=segHook();
+    return {
+      research:{tt:"Research a prospect before you dial", text:
+"Research [Company], a "+s+" I'm about to prospect. Give me: what they do, any recent news or expansion, who likely owns the labor / operations decision, and one specific opener I could use. Put a source link next to each fact and flag anything you're inferring — don't guess a name."},
+      outreach:{tt:"Write cold opens that sound human", text:
+"Write 3 cold-open variations for [Company], a "+s+". Each under 60 words, each anchored to something specific and real about them (not generic flattery). Their world runs on "+h+". Tell me which is strongest and why."},
+      followup:{tt:"Turn call notes into a follow-up", text:
+"Here are my rough notes from a call with [Prospect] (I'll paste them). Draft a short follow-up email in my voice — reference what they actually said, one clear next step, under 120 words, no fluff. Leave a [placeholder] anywhere you'd be guessing."},
+      discovery:{tt:"Prep discovery that finds the pain", text:
+"I have a discovery call with a "+s+". Give me 6 sharp discovery questions tuned to their world ("+h+"), and the 3 things I should listen for that signal a real opportunity vs. a tire-kicker."},
+      summary:{tt:"Messy call → clean CRM notes", text:
+"Turn this call transcript / my notes (I'll paste them) into: a 4-line summary, the key pains they mentioned, next steps with owners, and 3 CRM-ready bullet points. Flag anything I should double-check before I log it."},
+      proposal:{tt:"Draft the recap that moves the deal", text:
+"Draft a one-page recap I can send after my meeting with [Prospect], a "+s+" — what we discussed, the value hypothesis, and the mutual next steps. Confident but not salesy. Leave [placeholders] wherever I need their real numbers."},
+      planning:{tt:"A lightweight account plan skeleton", text:
+"Give me a lightweight account plan for [Account], a "+s+": a snapshot, who's likely on the buying committee, why now, and my next 3 moves. Clearly mark what you're inferring vs. what you actually know from a source."},
+      coaching:{tt:"Coach a rep's call summary", text:
+"Here's one of my reps' post-call summaries (I'll paste it). Point out what's strong, what's missing (did they capture the economic buyer? next step? a real pain?), and give me 2 specific coaching notes I can share in our 1:1."}
+    };
+  }
+
+  // role -> fill order (hero goes first, then these until 5)
+  var FILL={
+    sdr:["research","outreach","followup","summary","discovery"],
+    ae:["discovery","followup","summary","proposal","research"],
+    ent:["planning","discovery","research","proposal","summary"],
+    lead:["coaching","summary","discovery","followup","research"]
+  };
+
+  function whyLine(id, isHero){
+    if(isHero) return "<b>You told me this is the one you'd most love to hand off — so start here.</b>";
+    var map={
+      research:"Homework before every dial — the fastest credibility win.",
+      outreach:"Specific beats generic; this makes every open feel researched.",
+      followup:"The deal killer is a slow, vague follow-up. This fixes both.",
+      discovery:"Better questions surface real pain — the whole game.",
+      summary:"Get your evenings back; clean CRM notes in 30 seconds.",
+      proposal:"The written follow-through that keeps momentum after the call.",
+      planning:"See the whole account at a glance before you invest hours.",
+      coaching:"Turn one rep's call into a coaching moment for the team."
+    };
+    return map[id]||"A daily workhorse.";
+  }
+
+  function buildKit(){
+    var lib=P(), order=FILL[state.role]||FILL.ae, hero=state.task||order[0];
+    var ids=[hero];
+    order.forEach(function(id){ if(ids.indexOf(id)<0 && ids.length<5) ids.push(id); });
+    // ensure the two universal workhorses appear
+    ["followup","summary"].forEach(function(id){ if(ids.indexOf(id)<0 && ids.length<5) ids.push(id); });
+    ids=ids.slice(0,5);
+    var prompts=ids.map(function(id,i){ return {id:id, hero:i===0, tt:lib[id].tt, text:lib[id].text, why:whyLine(id,i===0)}; });
+
+    var roleName={sdr:"an SDR",ae:"an AE",ent:"an Enterprise AE",lead:"a sales leader"}[state.role]||"a seller";
+    var heroLabel=({research:"prospect research",outreach:"cold outreach",followup:"follow-ups",discovery:"discovery prep",summary:"call notes",proposal:"recaps",planning:"account planning"})[hero]||"that task";
+    var greet="Here's your kit, "+roleName.replace(/^an? /,"")+".";
+    var gp="Tuned for <b>"+segN()+"s</b> and built around <b>"+heroLabel+"</b> — the task you flagged. "+
+           (state.sink.trim()? "You mentioned <b>"+escapeHtml(state.sink.trim())+"</b> ate your week — prompt #1 and #"+(ids.indexOf("summary")>-1?(ids.indexOf("summary")+1):"2")+" go straight at that." : "Run #1 on a live deal today and you'll feel it immediately.");
+
+    var plan=[
+      {d:"Day 1", t:"<b>Run prompt #1</b> on ONE real prospect or deal. Don't polish — just see what a 3-minute head start feels like."},
+      {d:"Day 2", t:"<b>Use the two workhorses</b> (follow-up + call notes) on today's real work. Notice the time you got back."},
+      {d:"Day 3", t:"<b>Practice the habit:</b> re-run Day 1 and demand sources + \"what are you unsure about?\" Catch it being confidently wrong — that's the SKO skill."}
+    ];
+    return {greet:greet, gp:gp, prompts:prompts, plan:plan};
+  }
+
+  function escapeHtml(s){return s.replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;");}
+
+  // ---- flow control ----
+  var order=["intro","q","gen","kit"];
+  var screens={intro:byId("s-intro"),q:byId("s-q"),gen:byId("s-gen"),kit:byId("s-kit")};
+  function byId(i){return document.getElementById(i);}
+  function show(name){Object.keys(screens).forEach(function(k){screens[k].classList.toggle("hidden",k!==name);});}
+
+  // questions
+  var QSTEPS=[
+    {key:"role", num:"Question 1 of 3", title:"What's your role?", sub:"So the kit matches how you actually sell.", opts:ROLES, two:true},
+    {key:"seg",  num:"Question 2 of 3", title:"What's your book mostly?", sub:"Your prompts get tuned to this world.", opts:SEGS, two:true},
+    {key:"task", num:"Question 3 of 3", title:"Which task would you most love to hand off?", sub:"This becomes prompt #1 — your starting point.", opts:TASKS, two:true, free:true}
+  ];
+  var qi=0;
+  var prog=byId("prog").children;
+  function paintProg(){for(var i=0;i<prog.length;i++){prog[i].className=(i<qi?"done":(i===qi?"on":""));}}
+
+  function renderQ(){
+    var q=QSTEPS[qi];
+    byId("q-num").textContent=q.num;
+    byId("q-title").textContent=q.title;
+    byId("q-sub").textContent=q.sub;
+    var host=byId("q-opts"); host.innerHTML=""; host.className="opts"+(q.two?" two":"");
+    q.opts.forEach(function(o){
+      var b=document.createElement("button");
+      b.className="opt"+(state[q.key]===o.id?" sel":"");
+      b.innerHTML='<span class="ico">'+o.ico+'</span><span><span class="ot">'+o.t+'</span><span class="od">'+o.d+'</span></span>';
+      b.onclick=function(){
+        state[q.key]=o.id;
+        Array.prototype.forEach.call(host.children,function(c){c.classList.remove("sel");});
+        b.classList.add("sel");
+        if(q.free){ byId("q-next").classList.remove("hidden"); }  // let them fill the optional field, then tap Build
+        else { setTimeout(next, 180); }
+      };
+      host.appendChild(b);
+    });
+    var ta=byId("q-ta"), nx=byId("q-next");
+    if(q.free){ ta.classList.remove("hidden"); ta.value=state.sink; nx.classList.toggle("hidden", !state[q.key]); }
+    else { ta.classList.add("hidden"); nx.classList.add("hidden"); }
+    byId("q-back").style.visibility = qi===0 ? "hidden":"visible";
+    paintProg();
+  }
+  function next(){
+    if(qi<QSTEPS.length-1){ qi++; screens.q.classList.remove("hidden"); renderQ(); animate(screens.q); }
+    else { state.sink=byId("q-ta").value; runGen(); }
+  }
+  byId("q-back").onclick=function(){ if(qi>0){qi--; renderQ(); animate(screens.q);} else { show("intro"); } };
+  byId("q-next").onclick=function(){ state.sink=byId("q-ta").value; runGen(); };
+  function animate(el){ el.style.animation="none"; void el.offsetWidth; el.style.animation=""; }
+
+  byId("start").onclick=function(){ qi=0; show("q"); renderQ(); };
+
+  // generating animation -> kit
+  function runGen(){
+    show("gen");
+    var gs=document.querySelectorAll("#gsteps .gstep"), i=0;
+    gs.forEach(function(g){g.className="gstep"; g.querySelector(".g-ic").textContent="◇";});
+    var reduce=matchMedia("(prefers-reduced-motion: reduce)").matches;
+    function step(){
+      if(i>0){ gs[i-1].className="gstep ok"; gs[i-1].querySelector(".g-ic").textContent="✓"; }
+      if(i<gs.length){ gs[i].className="gstep live"; gs[i].querySelector(".g-ic").innerHTML='<span class="spin">◐</span>'; i++; setTimeout(step, reduce?60:520); }
+      else { setTimeout(renderKit, reduce?60:360); }
+    }
+    step();
+  }
+
+  function renderKit(){
+    var kit=buildKit();
+    byId("k-greet").textContent=kit.greet;
+    byId("k-greet-p").innerHTML=kit.gp;
+    var ph=byId("k-prompts"); ph.innerHTML="";
+    kit.prompts.forEach(function(p,i){
+      var card=document.createElement("div");
+      card.className="pk"+(p.hero?" hero":"");
+      var badge=p.hero?'<span class="badge">START HERE</span>':'';
+      card.innerHTML=
+        '<div class="top"><span class="idx">'+(i+1)+'</span>'+
+        '<span class="th"><span class="tt">'+p.tt+'</span><span class="why">'+p.why+'</span></span>'+badge+'</div>'+
+        '<div class="prompt">'+escapeHtml(p.text)+'</div>'+
+        '<div class="act"><button class="copy">⧉ Copy</button></div>';
+      var btn=card.querySelector(".copy");
+      btn.onclick=function(){ doCopy(p.text, btn); };
+      ph.appendChild(card);
+    });
+    var pl=byId("k-plan"); pl.innerHTML="";
+    kit.plan.forEach(function(d){
+      var row=document.createElement("div"); row.className="day";
+      row.innerHTML='<span class="d">'+d.d+'</span><span class="dt">'+d.t+'</span>';
+      pl.appendChild(row);
+    });
+    show("kit");
+    window.scrollTo({top:0,behavior:matchMedia("(prefers-reduced-motion: reduce)").matches?"auto":"smooth"});
+  }
+
+  function doCopy(text, btn){
+    var done=function(){ btn.classList.add("done"); btn.textContent="✓ Copied"; setTimeout(function(){btn.classList.remove("done");btn.textContent="⧉ Copy";},1400); };
+    if(navigator.clipboard && navigator.clipboard.writeText){
+      navigator.clipboard.writeText(text).then(done).catch(function(){ legacy(text,done); });
+    } else legacy(text,done);
+  }
+  function legacy(text,cb){
+    try{ var ta=document.createElement("textarea"); ta.value=text; ta.style.position="fixed"; ta.style.opacity="0"; document.body.appendChild(ta); ta.select(); document.execCommand("copy"); document.body.removeChild(ta); cb(); }
+    catch(e){ /* clipboard blocked in sandbox — no-op */ }
+  }
+
+  byId("k-again").onclick=function(){ state={role:null,seg:null,task:null,sink:""}; qi=0; byId("q-ta").value=""; show("intro"); };
+  byId("k-tweak").onclick=function(){ qi=0; show("q"); renderQ(); };
+})();
+</script>
