@@ -39,4 +39,4 @@ npm run dev:cleanup
 2. Set `DEV_PORT=<port>` in `.env.local`
 3. Update `package.json`: `"dev": "node scripts/dev-start.mjs"`
 4. Add `.dev-server.pid` to `.gitignore`
-5. Update the Port Registry table above
+5. Add the project (with its port) to the repo `project-registry.json` — see the project-registry skill
