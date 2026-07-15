@@ -44,6 +44,8 @@ if (existsSync(PID_FILE)) {
 
 ### scripts/dev-start.mjs
 
+**The spawn command MUST be derived from the project's ORIGINAL `package.json` `dev` script** (captured BEFORE you rewrite it to point at `dev-start.mjs`) — this template works for Next.js, Vite, Express, or anything else. Fill `{{DEV_COMMAND_ARGS}}` from the original dev script, appending the framework's port flag (`next dev -p`, `vite --port`, etc.; Express apps usually read `PORT` from env instead).
+
 ```javascript
 // Managed dev server start - cleanup + start + PID tracking
 import { spawn } from 'node:child_process';
@@ -59,7 +61,11 @@ const PORT = process.env.DEV_PORT || '{{DEV_PORT}}';
 
 console.log(`Starting dev server on port ${PORT}...`);
 
-const child = spawn('npx', ['next', 'dev', '-p', PORT], {
+// Derived from the project's original package.json dev script -- e.g.
+//   Next.js: spawn('npx', ['next', 'dev', '-p', PORT], ...)
+//   Vite:    spawn('npx', ['vite', '--port', PORT], ...)
+//   Express: spawn('node', ['server.js'], ...)  // reads PORT from env
+const child = spawn('npx', [{{DEV_COMMAND_ARGS}}], {
   cwd: ROOT,
   stdio: 'inherit',
   shell: true,
@@ -105,13 +111,7 @@ DEV_PORT={{PORT_NUMBER}}
 
 ## Port Assignment
 
-Check `~/.claude/project-registry.json` for used ports. Current assignments:
-- 3000: Fourth Connect
-- 3001: agent-factory
-- 3002: NorthStar Transformation
-- 3003: ECG Lead Reactivation Engine
-
-New projects should use the next available port (3004+).
+**Derive used ports from the registry at run time — never from a hardcoded list** (hardcoded mirrors rot; one already caused a double-assignment risk). Read `~/continuous-claude/.claude/project-registry.json` (canonical) and collect ALL `port` values, including non-web entries (MCP servers use 8xxx). Assign the next free 3xxx port.
 
 ## Caddy Setup (Optional, for HTTPS localhost)
 

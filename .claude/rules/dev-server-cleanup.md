@@ -22,15 +22,9 @@ This prevents zombie processes when restarting dev servers during development se
 
 ## Port Registry
 
-| Project | Port | Domain |
-|---------|------|--------|
-| Fourth Connect | 3000 | fourth-connect.localhost |
-| NorthStar Transformation | 3002 | northstar.localhost |
-| ECG Lead Reactivation Engine | 3003 | ecg.localhost |
+**Source of truth: `~/continuous-claude/.claude/project-registry.json`** (repo-canonical, mirrored to `~/.claude/`). Derive used ports from it at run time — do not maintain a table here (a hardcoded copy rotted and nearly caused a double-assignment). Examples of the convention (illustrative only): Fourth Connect → 3000 / fourth-connect.localhost; NorthStar → 3002 / northstar.localhost. MCP servers use 8xxx; new web projects take the next free 3xxx.
 
 Note: `import.meta.dirname` requires Node 21.2+. Current machine runs Node 24.4.1.
-
-Update this table when adding new projects.
 
 ## Manual Cleanup
 

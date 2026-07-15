@@ -43,6 +43,25 @@ SYNC_DIRS="rules agents skills scripts docs"
 
 NEVER_SYNC="CLAUDE.md RULES.md .env .credentials.json settings.json history.jsonl knowledge-tree.json"
 
+# JSON-validated copy for .claude/project-registry.json (repo = canonical, active = mirror).
+# Never propagates a corrupt registry: parse must succeed before the copy happens.
+copy_registry() {
+    local src="$REPO_CLAUDE/project-registry.json"
+    local dst="$ACTIVE_CLAUDE/project-registry.json"
+    [[ -f "$src" ]] || return 0
+    if $DRY_RUN; then
+        echo "[DRY RUN] Would copy: $src -> $dst"
+        return 0
+    fi
+    if ! node -e "JSON.parse(require('fs').readFileSync(process.argv[1],'utf8'))" "$src" 2>/dev/null; then
+        echo "  WARNING: repo project-registry.json is invalid JSON -- NOT synced"
+        return 0
+    fi
+    mkdir -p "$ACTIVE_CLAUDE"
+    cmp -s "$src" "$dst" 2>/dev/null || cp "$src" "$dst"
+    $VERBOSE && echo "Copied: project-registry.json" || true
+}
+
 copy_dir() {
     local dir="$1"
     local src_path="$REPO_CLAUDE/$dir"
@@ -172,6 +191,9 @@ if $CHANGED; then
             opc/scripts/core/project_memory.py)
                 printf '%s\n' "$ACTIVE_CLAUDE/scripts/core/project_memory.py"
                 ;;
+            .claude/project-registry.json)
+                printf '%s\n' "$ACTIVE_CLAUDE/project-registry.json"
+                ;;
         esac
         return 0
     }
@@ -201,6 +223,12 @@ if $CHANGED; then
         [[ "$path" == ".claude/settings.json" ]] && SETTINGS_CHANGED=true
 
         if [[ "$st" == "D" ]]; then
+            # Load-bearing singleton: never auto-delete the active registry mirror
+            # (memory scoping + roadmap contamination guard read it).
+            if [[ "$path" == ".claude/project-registry.json" ]]; then
+                echo "  WARNING: project-registry.json deleted in repo -- active mirror kept"
+                continue
+            fi
             # Conservative delete: only within the active subtree we just mapped.
             # (Full mode never deletes; this is a strict, scoped improvement.)
             case "$dst" in
@@ -215,6 +243,8 @@ if $CHANGED; then
                     fi
                     ;;
             esac
+        elif [[ "$path" == ".claude/project-registry.json" ]]; then
+            copy_registry
         else
             changed_copy_one "$REPO_ROOT/$path" "$dst"
         fi
@@ -283,6 +313,9 @@ fi
 for dir in $SYNC_DIRS; do
     copy_dir "$dir"
 done
+
+# Sync the project registry (repo canonical -> active mirror, JSON-validated)
+copy_registry
 
 # Sync top-level .claude/*.md files (canonical entry points / redirect stubs)
 # mkdir -p the target root first -- a fresh-install machine may not have ~/.claude/

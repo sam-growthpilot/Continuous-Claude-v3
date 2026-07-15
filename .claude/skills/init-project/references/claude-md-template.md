@@ -21,7 +21,7 @@ Use this template when generating a project-level CLAUDE.md. Replace all `{{PLAC
 
 | Layer | Technology | Notes |
 |-------|-----------|-------|
-| Frontend | {{e.g., Next.js 15, React 19}} | {{notes}} |
+| Frontend | {{e.g., Next.js <version>, React <version>}} | {{notes}} |
 | Styling | {{e.g., Tailwind CSS v4, shadcn/ui}} | {{notes}} |
 | Backend | {{e.g., Express, Hono, Next.js API routes}} | {{notes}} |
 | Database | {{e.g., PostgreSQL via Neon + Drizzle ORM}} | {{notes}} |
@@ -93,9 +93,13 @@ This project is managed by Continuous Claude v3.
 |------------|-----------|
 | Global config | `~/.claude/CLAUDE.md` and `~/.claude/rules/` |
 | Memory | `/recall "<topic>"` to search past learnings |
-| Agents | `/explore`, `/build`, `/fix`, `/ralph` for orchestrated workflows |
-| Code intelligence | Serena MCP for go-to-definition, find-references |
+| Workflows | `/explore`, `/build`, `/fix`, `/ralph` for orchestrated development |
+| Code intelligence | `/code-intel` (who-calls, find-symbol) routing codegraph/Serena/TLDR |
+| Cross-model workers | `/codex` (GPT) and `/grok` (xAI) execute tasks in isolated worktrees |
+| Tri-model features | `/game-plan <feature>` + `/workroom` for multi-milestone builds |
 | Research | Oracle agent with Nia, Exa, Context7, OpenCLI |
+| Reporting | `/log-work` when a unit of work is reportable (weekly tracker) |
+| System health | `/health-check` for full-stack diagnostics |
 
 Hooks auto-run on every session: ROADMAP sync, post-edit diagnostics, knowledge tree updates, memory extraction.
 ```

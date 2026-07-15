@@ -1,26 +1,18 @@
 # Project Registry
 
-A centralized project registry exists at `.claude/project-registry.json`. Use it when you need project paths, ports, URLs, stack info, or dev commands.
+A centralized project registry exists at `.claude/project-registry.json` in the **continuous-claude repo (canonical copy)**, mirrored to `~/.claude/project-registry.json` by `sync-to-active.sh`. Use it when you need project paths, ports, URLs, stack info, or dev commands.
 
 ## Quick Reference
 
-| Project | Path | Port | URL | Status |
-|---------|------|------|-----|--------|
-| continuous-claude | C:/Users/david.hayes/continuous-claude | -- | -- | active |
-| NorthStar Transformation | C:/Users/david.hayes/Projects/northstar-transformation | 3002 | https://northstar.localhost/ | active |
-| Fourth Connect | C:/Users/david.hayes/Projects/fourth-connect | 3000 | https://fourth-connect.localhost/ | active |
-| agent-factory | C:/Users/david.hayes/Projects/agent-factory | 3001 | -- | active |
-| ECG Lead Reactivation Engine | C:/Users/david.hayes/Projects/ECG Lead Reactivation Engine | 3003 | https://ecg.localhost/ | active |
-| LinkMap | C:/Users/david.hayes/Projects/linkmap | -- | -- | inactive |
+**Read the JSON — do not rely on a table here.** A hardcoded quick-reference table previously rotted 8 projects behind reality and was removed 2026-07-15. Illustrative examples of the entry shape (see the project-registry skill for the full schema): NorthStar Transformation → port 3002, https://northstar.localhost/; gong-mcp → port 8000 (mcp-server, non-web).
 
 ## Usage
 
-- Read `.claude/project-registry.json` for structured data
+- Read the repo `.claude/project-registry.json` for structured data (the `~/.claude/` copy is a read-only mirror)
 - Use the `project-registry` skill for interactive queries: "what port does NorthStar use?"
-- Keep the registry updated when adding or archiving projects
+- Update the REPO copy only, via single-process atomic read-modify-write (see the skill); the sync script propagates it
 
 ## Keeping in Sync
 
-When updating the registry, also check:
-- `dev-server-cleanup.md` port registry table (ports and domains)
-- `northstar-local-dev.md` (NorthStar-specific URL reference)
+- The mirror syncs automatically on commit (post-commit `--changed` sync) or via `bash scripts/sync-to-active.sh`
+- `northstar-local-dev.md` carries a NorthStar-specific URL reference — check it if that project's URL changes

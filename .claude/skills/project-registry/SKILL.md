@@ -12,7 +12,24 @@ Centralized registry of all managed projects with stack, port, URL, and status i
 
 ## Registry Location
 
-`.claude/project-registry.json` in the continuous-claude repo.
+`.claude/project-registry.json` in the continuous-claude repo — **this is the canonical copy**. `~/.claude/project-registry.json` is a sync mirror maintained by `scripts/sync-to-active.sh` (full and `--changed` modes, JSON-validated). Read from either; **write ONLY to the repo copy**, then let the sync propagate.
+
+## Write Discipline (atomic, single-process)
+
+Registry updates MUST be a single Node read-modify-write process with a temp-file + rename — never the Edit tool, never separate read and write calls (concurrent sessions + the sync script race on this file):
+
+```bash
+node -e "
+const fs = require('fs');
+const p = 'C:/Users/david.hayes/continuous-claude/.claude/project-registry.json';
+const reg = JSON.parse(fs.readFileSync(p, 'utf8'));
+// ... modify reg ...
+const tmp = p + '.tmp-' + process.pid;
+fs.writeFileSync(tmp, JSON.stringify(reg, null, 2) + '\n');
+JSON.parse(fs.readFileSync(tmp, 'utf8'));  // validate before replacing
+fs.renameSync(tmp, p);
+"
+```
 
 ## When to Use
 

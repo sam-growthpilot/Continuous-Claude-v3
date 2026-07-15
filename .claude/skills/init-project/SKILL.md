@@ -1,7 +1,7 @@
 ---
 name: init-project
 description: Initialize Continuous Claude v3 for a new project with full toolset activation. Creates project CLAUDE.md (interview-driven, 8 sections), ROADMAP.md, knowledge tree, Serena code intelligence, and project registry entry. Use when opening a new project folder for the first time, starting a new project, setting up CCv3 in an existing repo, or the user says "init project", "setup project", "new project", "initialize", "start new project".
-allowed-tools: [Bash, Read, Write, Edit, Glob, Grep, Agent]
+allowed-tools: [Bash, Read, Write, Edit, Glob, Grep, Agent, AskUserQuestion]
 metadata:
   user-invocable: true
   triggers: ["/init-project", "init project", "new project", "setup project", "initialize project", "start new project", "new project setup"]
@@ -15,11 +15,13 @@ Set up a project with the complete Continuous Claude v3 infrastructure. This goe
 
 | Artifact | Purpose | Phase |
 |----------|---------|-------|
+| Git repo + `.gitignore` | Preflight: HEAD must exist (workers, hooks assume it) | 0 (auto) |
 | `CLAUDE.md` | Project-specific instructions (stack, commands, conventions) | 1 (interview) |
 | `ROADMAP.md` | Goal tracking, auto-synced by hooks | 2 (auto) |
 | `.claude/knowledge-tree.json` | Project navigation map | 3 (auto) |
 | `.serena/project.yml` | LSP code intelligence activation | 4 (conditional) |
-| Registry entry | `~/.claude/project-registry.json` updated | 5 (auto) |
+| `.codegraph/` index | code-intel L3 symbol/caller queries | 4.6 (conditional) |
+| Registry entry | Repo-canonical `project-registry.json` updated + synced | 5 (auto) |
 | Sentry SDK | Per-framework error monitoring setup | 6 (conditional) |
 | E2E test scaffold | `e2e/smoke.spec.ts` + `playwright.config.ts` | 7 (conditional, web only) |
 | Dev server scripts | `scripts/dev-start.mjs` + `dev-cleanup.mjs` | 8 (conditional, web only) |
@@ -27,6 +29,39 @@ Set up a project with the complete Continuous Claude v3 infrastructure. This goe
 ## Execution Flow
 
 Run through each phase in order. Skip phases where the artifact already exists (re-running is safe).
+
+---
+
+### Phase 0: Git Preflight
+
+Worktree-based workers (`/codex` and `/grok` implement mode branch a worktree from HEAD) and several hooks assume a git repo with at least one commit. Verify before anything else.
+
+**Detect the real repo state with `git rev-parse`, never a bare `.git` directory test** (`.git` is a FILE in worktrees/submodules — a `-d .git` check misclassifies them):
+
+```bash
+git rev-parse --is-inside-work-tree 2>/dev/null   # "true" → repo exists
+git rev-parse --show-toplevel 2>/dev/null          # where its root actually is
+```
+
+- **Toplevel is a PARENT directory** → you're inside another repo's tree. Do NOT `git init` a nested repo — surface this to the user and ask whether the project should be its own repo or live in the parent.
+- **Repo exists here** → note current branch + remotes (feeds the Phase 1 git-workflow question). Warn if on `main` per global preflight rules. Verify HEAD exists (`git rev-parse HEAD`); if the repo has no commits yet, treat as the no-repo commit path below.
+- **No repo** → confirm with the user, then:
+  1. `git init`
+  2. Seed `.gitignore` with exactly:
+     ```
+     node_modules/
+     .env*
+     !.env.example
+     .dev-server.pid
+     .codegraph/
+     .serena/cache/
+     .claude/settings.local.json
+     .claude/cache/
+     .claude/knowledge-tree.json
+     ```
+     Do NOT ignore `CLAUDE.md`, `ROADMAP.md`, or `.claude/skill-rules.json` — those are committed project content. (`knowledge-tree.json` is regenerable, hence ignored.)
+  3. **Check identity before committing**: `git config user.name` and `git config user.email`. If either is unset the commit fails silently and leaves no HEAD — ask the user for values (or set from the global config) before proceeding.
+  4. Initial commit (use `--allow-empty` if the directory has nothing stageable yet) so HEAD always exists.
 
 ---
 
@@ -43,18 +78,16 @@ Before asking the user anything, scan the project:
 - List top-level directories for project structure
 - Check `.git/config` for remote names and URLs
 
-**Step 1.2: Ask the user to confirm and fill gaps**
+**Step 1.2: Ask the user to confirm and fill gaps (AskUserQuestion)**
 
-Present what you found and ask about what you couldn't detect:
+Present what you found, then use ONE `AskUserQuestion` call (up to 4 structured questions) covering the gaps:
 
-> "I detected: [stack], [structure], [git remotes]. Let me confirm a few things:
-> 1. Project name and one-line description?
-> 2. Is the stack detection correct? Anything to add?
-> 3. Dev port and local URL? (e.g., 3004, https://project.localhost/)
-> 4. Git remote convention? (origin = upstream never push, fork = always push?)
-> 5. Any critical conventions or patterns I should know?"
+1. **Identity** — project name + one-line description (offer the auto-detected values as the first option)
+2. **Stack** — "detection correct?" with the detected stack as the recommended option
+3. **Dev port/URL** — offer the next free port derived from the registry (see Phase 5) and the `https://<project>.localhost/` convention
+4. **Git workflow** — remote convention (origin = upstream never push / fork = always push / single remote), seeded from what Phase 0 found
 
-Keep it conversational. If the user says "just use defaults" or "figure it out", infer from the codebase.
+Give every question an "infer from codebase / use defaults" style option so "just figure it out" is one click. Skip questions Phase 0/1.1 already answered definitively. Follow up conversationally for critical conventions the structured form can't capture.
 
 **Step 1.3: Generate CLAUDE.md**
 
@@ -150,25 +183,47 @@ Reference: https://nextjs.org/docs/app/guides/mcp
 
 ---
 
+### Phase 4.6: codegraph Index (Conditional)
+
+If the project has TS/Py/Go/Rust source files AND the codegraph binary is installed (probe first; binary absent → skip silently and note "code-intel falls back to TLDR" in the summary):
+
+1. **Ensure `.codegraph/` is gitignored FIRST** — check the project's `.gitignore` and append `.codegraph/` if missing. This applies to brownfield repos with an existing `.gitignore` too, not just repos Phase 0 seeded; otherwise `codegraph.db` gets committed.
+2. Run `codegraph init` per the CLI shape in `rules/windows-platform.md` — invoke the real JS entrypoint via `node <pkg>/npm-shim.js`, never the `.cmd` shim directly (Node ≥18.20 EINVAL hardening).
+3. Expect ~10s for a small project; large brownfield repos take longer — tell the user it's running and that it's skippable.
+
+This makes `/code-intel` who-calls / find-symbol queries live from day one.
+
+---
+
 ### Phase 5: Project Registry
 
-Update `~/.claude/project-registry.json` with the new project:
+**The REPO copy is canonical**: `~/continuous-claude/.claude/project-registry.json`. The `~/.claude/` copy is a sync mirror — never hand-write it.
+
+1. **Assign a port** (web projects): collect ALL `port` values from the registry (including non-web 8xxx entries) and pick the next free 3xxx.
+2. **Update the repo registry** in a SINGLE Node read-modify-write process (temp file + rename — never the Edit tool, never separate read/write calls; see the project-registry skill's atomic-write rule):
 
 ```javascript
-// Read, add entry, write back
-const registry = JSON.parse(fs.readFileSync(registryPath));
-registry.projects.push({
+// node -e, one process: read, push, validate, atomic rename
+const fs = require('fs');
+const p = 'C:/Users/david.hayes/continuous-claude/.claude/project-registry.json';
+const reg = JSON.parse(fs.readFileSync(p, 'utf8'));
+reg.projects.push({
   name: "Project Name",
   path: "C:/Users/.../Projects/project-name",
-  port: 3004,
+  stack: ["Next.js", "TypeScript", "Drizzle"],   // ARRAY, per schema
+  description: "One-line description",           // required
+  port: 3006,
   url: "https://project.localhost/",
-  stack: "Next.js + TypeScript + Drizzle",
-  status: "active",
-  devCommand: "npm run dev"
+  devCommand: "npm run dev",
+  status: "active"
 });
+const tmp = p + '.tmp-' + process.pid;
+fs.writeFileSync(tmp, JSON.stringify(reg, null, 2) + '\n');
+JSON.parse(fs.readFileSync(tmp, 'utf8'));  // validate before replacing
+fs.renameSync(tmp, p);
 ```
 
-Check for port conflicts with existing entries before assigning.
+3. **Propagate to the mirror**: `bash ~/continuous-claude/scripts/sync-to-active.sh` (the script JSON-validates and copies the registry), or note that the next commit's post-commit sync will carry it.
 
 ---
 
@@ -238,11 +293,13 @@ Present a completion summary:
 
 ```
 CCv3 initialized for [Project Name]:
+  Git preflight    -- [Repo exists on branch X / Initialized + first commit / Nested-repo warning]
   CLAUDE.md        -- [X lines], 8 sections
   ROADMAP.md       -- Created with current focus: [goal]
   Knowledge tree   -- [Generated / Deferred to next session]
   Serena           -- [Activated / Skipped (no supported files)]
-  Registry         -- Added (port [PORT])
+  codegraph        -- [Indexed / Skipped (binary absent -- code-intel falls back to TLDR)]
+  Registry         -- Added to repo-canonical registry (port [PORT]) + mirror synced
   Sentry SDK       -- [Configured / Skipped (user declined or local-only)]
   E2E tests        -- [Scaffolded / Skipped (not a web project)]
   Dev server       -- [Scaffolded / Skipped (not a web project)]
@@ -273,7 +330,7 @@ These hooks work in every project once CCv3 is installed globally. Init-project 
 | `post-edit-diagnostics` | PostToolUse:Edit/Write | Runs `tsc --noEmit` on TS edits |
 | `session-start-continuity` | SessionStart | Loads handoff context, resumes state |
 | `tree-invalidate` | PostToolUse:Write | Marks knowledge tree for refresh |
-| `memory-extraction` | PreCompact/SessionEnd | Captures learnings automatically |
+| `pre-compact-extract` / `session-end-extract` | PreCompact / SessionEnd | Captures learnings automatically |
 
 ---
 
