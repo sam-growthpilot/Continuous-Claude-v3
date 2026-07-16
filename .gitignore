@@ -255,3 +255,9 @@ x-article-*
 # Large local binaries / profilers (kept on disk, not in the repo)
 tools/PerfView.exe
 tools/*.exe
+
+# claude-for-sales packaged-skill build artifacts (SKILL.md is the source; zip is a repackage)
+docs/claude-for-sales/skills/**/*.zip
+
+# project-cards sweep lock (machine-local transient runtime state)
+scripts/project-cards/.sweep.lock

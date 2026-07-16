@@ -253,6 +253,27 @@
       "deploy": null,
       "kind": "data-pipeline",
       "notes": "SQL -> JSON ETL feeding the EBR presentation builder. Not a web app."
+    },
+    {
+      "name": "fourth-netsuite-mcp",
+      "path": "C:/Users/david.hayes/Projects/fourth-netsuite-mcp",
+      "stack": [
+        "Python 3.12",
+        "FastMCP v3",
+        "httpx",
+        "uv"
+      ],
+      "description": "Fourth NetSuite MCP server — FastMCP v3 governance proxy (connector #3)",
+      "port": 8002,
+      "url": "http://localhost:8002/mcp",
+      "devCommand": "uv run python server.py",
+      "status": "active",
+      "github": "Rev4nchist/fourth-netsuite-mcp",
+      "deploy": "Azure Container Apps (Cosmos + Key Vault)",
+      "kind": "mcp-server",
+      "notes": "Governance proxy in front of NetSuite AI Connector Service MCP. Connector #3 of the FourthOS ecosystem; cloned from the fourth-salesforce-mcp mold (~95% reuse). Entra-rooted edge auth + per-user NetSuite OAuth (AuthCode+PKCE, no OBO exists), distributed rotate-on-use token lock, distributed account-concurrency governor, read-audit, SuiteQL safety. Phase 0 (spike gate) as of 2026-07-15; build not started.",
+      "sentryProject": "",
+      "linearTeam": ""
     }
   ]
 }

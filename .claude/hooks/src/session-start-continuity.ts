@@ -621,10 +621,19 @@ async function main() {
               continue;
             }
 
-            // Skip completed handoffs
+            // Skip completed handoffs. Accept both 'complete' and 'completed'
+            // (the handoff/Ralph convention writes 'complete'); a terminal
+            // outcome marker is also a done signal. Matching only 'completed'
+            // previously let 'complete'-marked handoffs linger on the banner.
             const statusMatch = content.match(/^status:\s*(\w+)/m);
-            if (statusMatch && statusMatch[1] === 'completed') {
-              console.error(`Skipping completed handoff: ${sessionName}`);
+            const statusValue = statusMatch ? statusMatch[1].toLowerCase() : '';
+            const outcomeMatch = content.match(/^outcome:\s*(\w+)/m);
+            const outcomeValue = outcomeMatch ? outcomeMatch[1].toUpperCase() : '';
+            const isDone =
+              ['complete', 'completed', 'done'].includes(statusValue) ||
+              outcomeValue === 'SUCCEEDED';
+            if (isDone) {
+              console.error(`Skipping completed handoff: ${sessionName} (status=${statusValue || 'n/a'}, outcome=${outcomeValue || 'n/a'})`);
               continue;
             }
 

@@ -1,11 +1,16 @@
 # Project Roadmap
 
 ## Current Focus
-**Notion Platform Integration + Living Project Cards** (branch `feature/notion-platform`)
-- **Done (2026-07-03):** N0 spikes all PASS (`docs/notion-platform-spike-report.md`) — ntn 0.18.1 via winget, page access proven, HTML publishing path = create-attachment + `<embed>` (sandboxed, interactive, workspace-private), Markdown round-trip byte-identical, Projects-DB upsert loop working. N1 shipped: notion-cli skill + notion-cli-safety rule + CLI inventory (24 tools). Helm design package delivered earlier (3 styled drafts + landing artifact + session report). Plan premortemed twice (34 findings folded in, Codex cross-model lift both times).
-- **Next:** A1 pilot card (CCv3 living status card replaces the S2 test embed) → N4r card engine (`scripts/project-cards/`, zero-LLM sweep assembler, `/project-card` skill) → N5 FourthOS rollout (cards on every active Projects-DB row + daily `CCv3-Project-Cards` sweep + Reporting Hub cards table) → N2 docs refresh (bridge-skill provenance merge v1.4/v1.5!) → N3 scheduled-job refits (dashboard-sync state machine, digest push).
-- Helm local SPA deferred behind the daily-use gate; card engine is the Notion-first v0 surface.
-- Plan: `~/.claude/plans/review-ccv3-system-wondrous-cascade.md` · Started: 2026-07-03
+**Fable — close-out + steady-state maintenance**
+- Fable build work is DONE and CLOSED (harvest + corpus + standing trap harness; PRs #20/#21/#22). **Verified 2026-07-16:** nothing Fable-derived is installed on ANY active behavioral surface — no rule, agent prompt, skill judgment text, hook, template, or `settings.json` registration (two independent greps: zero). The always-on `reasoning-discipline` rule was cancelled by the `no_lift` trap gate (Opus 4.8 scored 16/16 with and without it — it already saturates that judgment ceiling). Every Fable artifact is inert docs under `docs/fable-manual/`. **No hindrance to Opus agents; nothing to revert.**
+- The only change that actually touched Opus was the separate model-tier retier (PR #17: explicit 12 Opus / 25 Sonnet, `kraken` → Sonnet) + one global `effortLevel: high` — a deliberate, reversible cost/judgment-density call, not a degradation.
+- Two Fable follow-ups intentionally PARKED as backlog (below) — each gated behind the standing trap harness before any prompt-layer change ships, so a future Opus-hindrance can't land unmeasured.
+- claude-for-sales SKO package parked until end of July (built + merged PR #25; remainder is human-gated).
+
+## Fable Follow-ups — parked backlog (gated behind the trap harness)
+Not started; the organized parking spot so they aren't lost. Both build on the Fable harvest and are gated by `docs/fable-manual/TRAP-TESTS.md` (arm B must beat arm A). Full detail: memory `fable-intelligence-and-agent-model-policy-followup`.
+- **A — Targeted per-surface Fable injection.** Encode high-leverage Fable frameworks INTO specific agents/skills where a MEASURED gap justifies it (contract-writing → game-plan/workroom/worker agents; verify-by-re-derivation → critic/review-agent/principal-reviewer; risk = cost × lateness → premortem/aegis). NOT always-on — that debate is settled by the `no_lift` data. Depends on `docs/fable-manual/HIGH-LEVERAGE.md`.
+- **B — Per-agent model + effort policy.** Agents carry explicit `model: opus|sonnet`, but effort is ONE global `settings.json effortLevel` applied uniformly. Want an agent → model → effort matrix (mechanical `spark` low-effort; deep `sleuth`/`principal-reviewer` high/xhigh). Scope: audit tiers, determine the Task-spawn mechanism (Workflow `agent({effort})` can tune per-call; Task-spawn can't natively), add a drift-guard. Anchors: `.claude/rules/agent-model-selection.md`, `check-agent-model-drift.mjs`.
 
 ## Codex Integration — /codex worker (parallel track)
 - **v0 SHIPPED (2026-07-07):** `/codex` write-capable Codex task worker (ask / implement / resume, on the ChatGPT subscription, no API key). PR #15 (`feature/codex-worker`), commit `12a21dd`. Built from an 8-agent research pass, dogfood-hardened, hooks-collision safety spike RESOLVED.
@@ -14,6 +19,11 @@
 - **v3 BACKLOG (deferred 2026-07-07 — address later):** none blocking — all are premortem enhancement candidates: `subagents_spawned`/`subagent_models` telemetry (today's `multi_agent` field records fan-out ENABLED, not spawned), version+hash-keyed `--complex` re-verification (guards against a Codex CLI upgrade silently reintroducing the gpt-4.1 fallback), a local burn-rate heuristic before expensive implement/`--complex` runs, split-shell fail-loud for `--complex`, and a keep/resume GC sentinel. Full detail: `docs/codex-integration/DESIGN-RESEARCH.md` §12.
 
 ## Completed
+- [x] chore(maintenance): close out Fable build (verified zero Opus-surface footprint) + repoint ROADMAP + fix session-start handoff skip-check (complete vs completed) (2026-07-16)
+- [x] Merge PR #26 — /init-project review + hardening; new projects initialized (2026-07-15) `a9e7383`
+- [x] Merge PR #25 — claude-for-sales SKO package build complete + rep-facing skill-builder (2026-07-13) `7659f1e`
+- [x] docs(rules): fix stale port-table reference in dev-server-cleanup (2026-07-15) `2fb4b2f`
+- [x] feat(init-project): harden skill + canonicalize project registry (2026-07-15) `66713e4`
 - [x] feat(codex): /codex worker v1 — robust resume + --ignore-user-config latency + telemetry cleanups (dogfood-hardened) (2026-07-07) `832ce5a`
 - [x] feat(codex): /codex Codex task worker v0 — ship + dogfood-harden + safety-spike (PR #15) (2026-07-07) `12a21dd`
 - [x] docs(self-improvement): 07-01 hooks + 07-02 agents proposals + digest queue (2026-07-03) `7c4c79c`
@@ -216,7 +226,7 @@
 - [ ] HELM — Local Project Command Center: Spec + Build Plan (high priority)
 - [ ] Plan — Close out `snapshot/ccv3-system-update` + stage the fourthos v4 build (high priority)
 - [ ] CCv3 System Update — execute the ratified deep-review backlog (Wave 1 → Tier 2 → Tier 3 → Deletions) (high priority)
-- [ ] Agent + Skill Fleet Review — two-tier model map (Sonnet 5 / Opus 4.8-high; 12 Opus/25 Sonnet, `kraken`→Sonnet) + Pocock-aligned hygiene + Explore→scout fix (high priority) — plan: `~/.claude/plans/agent-skill-two-tier-model-policy`. Acceptance: R1-curate-decoupled-from-retier (DEL-11); explicit model on every surviving agent **`.md`+`.json`** (no omit/inherit/haiku, drift-checked; `.json` read at spawn by `claude_spawn.py`); `agent-factory` + `agent-model-selection.md` + `no-haiku.md` + CLAUDE.md agent-table/cost-routing rewritten; Explore→scout fixed (smart-search-router self-contradiction + `scout` route + `updatedInput` full-chain probe + regression test); Pocock 7-point pass per agent/skill (Trigger/Structure/Steering/Pruning); automated 4-surface drift test green; downgrade canary passed; Probe-Gate-verified (bare-alias + **effort** resolution, standing `CLAUDE_CODE_SUBAGENT_MODEL` guard, machine-wide `~/.claude` sync smoked in ≥1 other project)
+- [ ] Agent + Skill Fleet Review — two-tier model map (Sonnet 5 / Opus 4.8-high; 12 Opus/25 Sonnet, `kraken`→Sonnet) + Pocock-aligned hygiene + Explore→scout fix (high priority) — plan: `~/.claude/plans/agent-skill-two-tier-model-policy`. Acceptance: R1-curate-decoupled-from-retier (DEL-11); explicit model on every surviving agent **`.md`+`.json`** (no omit/inherit/haiku, drift-checked; `.json` read at spawn by `claude_spawn.py`); `agent-factory` + `agent-model-selection.md` + `no-haiku.md` + CLAUDE.md agent-table/cost-routing rewritten; Explore→scout fixed (smart-search-router self-contradiction + `scout` route + `updatedInput` full-chain probe + regression test); Pocock 7-point pass per agent/skill (Trigger/Structure/Steering/Pruning); automated 4-surface drift test green; downgrade canary passed; Probe-Gate-verified (medium priority)
 - [ ] CCv3-Hardening — Session 9: through Phase C (codegraph) (high priority)
 - [ ] P2 — Verify embedding daemon survives a REAL reboot (scheduled task only ad-hoc-verified; Codex flagged job-object detach). After next restart confirm `~/.claude/run/ccv3-embedding.json` appears <60s + warm recall (medium priority)
 - [ ] P2 — Ops: full parallel `vitest run` hangs on a pre-existing Windows daemon/socket suite — add a hard per-test timeout (medium priority)
@@ -237,6 +247,25 @@
 - Data note: use `count(*)` not `pg_stat` for usage calls (the latter mis-reported memory/PageIndex as empty). Live counts: archival_memory 569, pageindex_nodes 2418, file_claims 6720, sessions 1117.
 
 ## Recent Planning Sessions
+### 2026-07-15: /init-project Review + Hardening Plan
+**Key Decisions:**
+- Interview → CLAUDE.md: — auto-scan (package.json/README/configs/git), confirm with user, fill 8-section template from `references/claude-md-template.md`
+- ROADMAP.md: — created with user's current focus
+- Sentry: (conditional, deploy targets) → **7. E2E scaffold* → **8. dev-server scripts* (conditional web) → **9. summary**
+- Hook table at bottom: all names verified real in dist except "memory-extraction" (actual family: `pre-compact-extract`, `session-end-extract`, `periodic-extract`)
+- P1 — would cause a wrong outcome on the next run: *
+
+**Implementation:**
+- Normalize schema: in BOTH `continuous-claude/.claude/project-registry.json` and `~/.claude/project-registry.json` to the project-registry skill's schema: `name, path, stack[] (array), description, port, url, devCommand, status` (+ keep optional extras `github`, `deploy`, `kind`, `notes`, `sentryProject`, `linearTeam`). Convert the 7 string-stack entries to arrays; add missing `description` fields; make the two files byte-identical (repo ordering wins).
+- Add `project-registry.json` to forward sync: edit `scripts/sync-to-active.sh` to copy `.claude/project-registry.json` → `~/.claude/`, and add a row to `rules/sync-known-gaps.md`.
+- Rewrite init-project Phase 5: write the REPO copy (`~/continuous-claude/.claude/project-registry.json`) using the array schema, then run `bash ~/continuous-claude/scripts/sync-to-active.sh` (or copy both). Keep the port-conflict check, sourcing ports from the registry itself.
+- `references/dev-server-pattern.md`: delete the static port list; replace with "derive used ports from `~/.claude/project-registry.json` at run time; assign next free 3xxx."
+- `rules/dev-server-cleanup.md` + `rules/project-registry.md`: replace/trim their static tables the same way (keep 2–3 rows as *examples*, marked as examples, or point at the JSON). Prevents this class of rot permanently.
+
+**Files:** references/claude-md-template.md, knowledge_tree.py, .serena/project.yml, .mcp.json, ~/.claude/project-registry.json, .claude/project-registry.json, references/dev-server-pattern.md, rules/dev-server-cleanup.md
+
+**Verification:** `node -e` parse both registry copies → identical, all `stack` arrays, all have `description`.
+
 ### 2026-07-03: Notion Platform Integration + Helm Notion-First Pivot
 **Key Decisions:**
 - Helm pivots Notion-first: the approved Helm plan's **engine** (collectors, salience rules, brief pipeline + its premortem constraints) survives unchanged, but the v0 **presentation** layer becomes a Notion surface (Projects DB + views + HTML daily brief) synced via `ntn`. The local SPA (:3005, launchers, drawer, palette) is **deferred** behind the same daily-use gate — the graveyard lesson applied: ship the simplest surface tied to the key resource (Notion = Bridge/Eve/reports home).
@@ -244,10 +273,6 @@
 - Live MCP server already exposes the new tools (`notion-create-view` incl. dashboard type, `notion-query-data-sources` SQL, `notion-update-view`, `notion-query-database-view`, `notion-query-meeting-notes`, `notion-duplicate-page`, `notion-move-pages`, `notion-update-data-source`, `notion-get-async-task`, `notion-create-attachment`).
 - S1 CLI on Windows: `curl -fsSL https://ntn.dev | bash` under Git Bash → `ntn doctor`, `ntn login`, `ntn api v1/users` → 200. Headless: `NOTION_KEYRING=0` file auth works from a scheduled-task context. Never echo tokens.
 - S2 HTML block write path: (decides brief publishing): hand-create an HTML block on a scratch page; inspect via `notion-fetch` and `ntn pages get` (round-trip shape); attempt creation via MCP `notion-update-page`/`notion-create-pages` with HTML content. Verdict: MCP-writable / Agent-only / not-yet → pick HTML-block vs Embed-fallback.
-
-**Files:** docs/notion-platform-spike-report.md, .claude/skills/notion-cli/SKILL.md, .claude/rules/notion-cli-safety.md, .claude/rules/cli-integration-strategy.md, bash scripts/sync-to-active.sh, .claude/skills/notion-bridge/SKILL.md, .claude/skills/notion-bridge/notion-bridge/SKILL.md, references/bridge-schema.md
-
-**Verification:** N0: spike report exists with 4 verdicts; `ntn api v1/users` 200 both interactive and headless-file-auth.
 
 ### 2026-07-01: Plan — Close out `snapshot/ccv3-system-update` + stage the fourthos v4 build
 **Key Decisions:**
@@ -270,5 +295,3 @@
 - Step 0 repo reconciliation DONE: herd-fix PR #8 opened; 7 logical reconciliation commits on `chore/session9-reconciliation` (PR #9); 4 junk stderr-artifact files deleted; `.codex/` mirror + `tools/PerfView.exe` gitignored; leading-# memory-eval doc renamed + inbound ref fixed.
 - P1 bus-bias hybrid-recall lift: **KEEP ENABLED** (user-ratified). Verified warm gate +7.3% top-score / flat 69% hit-rate (n=13, corpus 584); read-only PASS. The documented +33.6%/63->88% does NOT reproduce (stale snapshot; repr-only ~+14.5% matches the original +15.3%, diluted to +7.3% by the 5 STRONG cases). Deferred: tune focus-term weighting. Memory id 79da5d25.
 - Two live-hazard findings flagged for follow-up (out of this push's scope): (a) a `store_learning.py` invocation with unquoted shell metacharacters creates junk files under `opc/` (one regenerated mid-session); (b) the `post-plan-roadmap` hook clobbered this Current Focus with a foreign project's goal (Salesforce/FastMCP plan `abstract-coral`) — the cross-project contamination guard did not catch it; this entry restores the correct session-9 record.
-
-### 2026-06-05: Planning Session

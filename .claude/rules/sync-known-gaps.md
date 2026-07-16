@@ -4,8 +4,8 @@ What auto-syncs (and what does not) between `continuous-claude/` (repo) and `~/.
 
 | Item | Auto-Syncs? | Why | Manual Command |
 |------|-------------|-----|----------------|
-| `hooks/src/*.ts` | Yes | Post-commit hook copies | N/A |
-| `hooks/dist/*.mjs` | Yes (NEW) | Enhanced sync script | `bash scripts/sync-to-active.sh` |
+| `hooks/src/*.ts` | **No (intentional)** | `sync-to-active.sh` explicitly EXCLUDES `hooks/src` — `dist/*.mjs` is what runs, and copying src stomps mtimes / breaks hook-dist-freshness. Source stays repo-only. | N/A (edit src in repo, rebuild → dist syncs) |
+| `hooks/dist/*.mjs` | Yes | Sync script (the compiled artifact that actually runs) | `bash scripts/sync-to-active.sh` |
 | `rules/*.md` | Yes | Post-commit hook copies | N/A |
 | `skills/*/` | Yes | Post-commit hook copies | N/A |
 | `agents/*.yml` | Yes | Post-commit hook copies | N/A |

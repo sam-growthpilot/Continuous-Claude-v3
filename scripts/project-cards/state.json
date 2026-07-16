@@ -4,66 +4,102 @@
     "connector-ecosystem": {
       "projectRowId": "e48adf47-146e-4d46-a099-ef919b1b9e4e",
       "pageId": "38776fd7ac8281c7a286ce6ae478b6be",
-      "attachmentId": "39376fd7-ac82-8120-a3c2-00b28dd07db5",
-      "contentHash": "5fb481c73a3f4b433861983b0db42770b4ce28569da03570742f9fdb22873fac",
-      "publishedHash": "3028bd332ec24f88ea2bfaf32d67226082e1f5ed4c1a40c7cc541413f7f0cdd6",
-      "lastPublished": "2026-07-04T06:01:15.403Z",
-      "lastRefreshAttempt": "2026-07-04T19:38:22.703Z"
+      "attachmentId": "39f76fd7-ac82-81c6-9075-00b2796d0501",
+      "contentHash": "5d053294db18bd7d5338ba0e92477328e95597749a1379ae2a5138951eaa0b49",
+      "publishedHash": "5d053294db18bd7d5338ba0e92477328e95597749a1379ae2a5138951eaa0b49",
+      "lastPublished": "2026-07-16T12:47:29.202Z",
+      "lastRefreshAttempt": "2026-07-16T12:45:22.223Z"
     },
     "ai-governance-research-cadence": {
       "projectRowId": "53320d1d-b2e4-405d-ac20-49274c6065a6",
       "pageId": null,
       "attachmentId": null,
-      "contentHash": "d0a1b2d1322caad2c746ad72c5869735d5c08173221e09bebff1323a7a2629ba",
+      "contentHash": "db820b903202d93274629cb4d2fc2d57d5f2b8e97396e71878a940beec6b1e1c",
       "publishedHash": null,
       "lastPublished": null,
-      "lastRefreshAttempt": "2026-07-04T19:38:17.895Z"
+      "lastRefreshAttempt": "2026-07-16T12:45:19.931Z"
     },
     "fourth-fabric-architecture-alignment": {
       "projectRowId": "dd2e154a-2249-4c02-a2ad-f7bd7b880c6e",
       "pageId": null,
       "attachmentId": null,
-      "contentHash": "9c50af352506f11ad2bafc278e57d88ee18a927c1e03f60b97775dfab221bffd",
+      "contentHash": "e211128ccc71fdc9fbe1579e8259c5a02592b8d3c4e8a3192245f624cf21a40b",
       "publishedHash": null,
       "lastPublished": null,
-      "lastRefreshAttempt": "2026-07-04T19:38:18.899Z"
+      "lastRefreshAttempt": "2026-07-16T12:45:20.416Z"
     },
     "everyday-business-ai-model-platform": {
       "projectRowId": "2c8d6a98-bd94-4408-b269-705766f836e8",
       "pageId": null,
       "attachmentId": null,
-      "contentHash": "1e34d61a1931f07138c7c6d34ac4ea5b60621a3b23372c38e95e7104ecd5dffe",
+      "contentHash": "2b7eaa9ca9ad112412dcc6c7c22f09c34e1ddb6dc8d3146fc8d1a7867018eeac",
       "publishedHash": null,
       "lastPublished": null,
-      "lastRefreshAttempt": "2026-07-04T19:38:19.936Z"
+      "lastRefreshAttempt": "2026-07-16T12:45:20.808Z"
     },
     "netsuite-connector": {
       "projectRowId": "39176fd7-ac82-819f-ad6c-d6709922b9ea",
       "pageId": null,
       "attachmentId": null,
-      "contentHash": "41a4b01c8a7b65d8e5a394ad4df1037352abc6133270a58626294b6ba2c75c6d",
+      "contentHash": "fb3c5b1c0c93a5a5a82a5d75fe43e3bafb5d60a6fa66df695499b97d584fb832",
       "publishedHash": null,
       "lastPublished": null,
-      "lastRefreshAttempt": "2026-07-04T19:38:20.751Z"
+      "lastRefreshAttempt": "2026-07-16T12:45:21.273Z"
     },
     "salesforce-connector": {
       "projectRowId": "39076fd7-ac82-81a9-b583-f5e928be50f2",
       "pageId": null,
       "attachmentId": null,
-      "contentHash": "e00dc1de23c960bd25d31c45bb14f9835c29e78f9fd6312b40ab3586e718ba58",
+      "contentHash": "abbdd7f0ff1fcbd480c5c2ecaa82df37f6bbdfe64d8e62d33b610f9a6077a9bc",
       "publishedHash": null,
       "lastPublished": null,
-      "lastRefreshAttempt": "2026-07-04T19:38:21.572Z"
+      "lastRefreshAttempt": "2026-07-16T12:45:21.677Z"
+    },
+    "zendesk-connector": {
+      "projectRowId": "8934a8d7-c010-4cd5-9cde-ae5521cf894b",
+      "pageId": null,
+      "attachmentId": null,
+      "contentHash": "26e1744259460225a193fe9c0efd910fca7ba46b688e8c84a84b537cfa4dbe0f",
+      "publishedHash": null,
+      "lastPublished": null,
+      "lastRefreshAttempt": "2026-07-16T12:45:19.528Z"
+    },
+    "go-to-market-risk-intelligence-dashboard": {
+      "projectRowId": "d112e482-5b12-44ea-8e39-0fe5486f49e6",
+      "pageId": null,
+      "attachmentId": null,
+      "contentHash": "cf64fcc00f12400a24bd947ee73039f25d916b4ccdb41166df12b76fd793320d",
+      "publishedHash": null,
+      "lastPublished": null,
+      "lastRefreshAttempt": "2026-07-16T12:45:22.612Z"
+    },
+    "ebr-presentation-suite": {
+      "projectRowId": "33276fd7-ac82-810b-9750-c7849f959416",
+      "pageId": null,
+      "attachmentId": null,
+      "contentHash": "deb1986e8cdb9fbe9c79747a28ba86ebba6c819bdf243ea1c16a1f8d5e7120e3",
+      "publishedHash": null,
+      "lastPublished": null,
+      "lastRefreshAttempt": "2026-07-16T12:45:23.008Z"
+    },
+    "agent-arch-platform": {
+      "projectRowId": "32a76fd7-ac82-8155-84a2-ef913cde68d1",
+      "pageId": null,
+      "attachmentId": null,
+      "contentHash": "498790353c0d51c0358a4a277a5ba9c1af064c012643c21e05f244f3630c8ee6",
+      "publishedHash": null,
+      "lastPublished": null,
+      "lastRefreshAttempt": "2026-07-16T12:45:23.402Z"
     }
   },
   "mobileCockpit": {
     "pageId": "39376fd7-ac82-817e-b2b7-faa3da23078c",
-    "attachmentId": "39376fd7-ac82-81c2-a284-00b271aea56a",
-    "prevAttachmentId": "39376fd7-ac82-8164-8066-00b204ca4312",
-    "contentHash": "64967b7be4ffe2db7129bac294dc389e41dc1b2c03f85babccf842b0f7bb0785",
-    "publishedHash": "f3e08ff5fd6259e7d88bd7e7f3c68d4ed8f1e6cc403ad28604a618a36afd866c",
-    "lastPublished": "2026-07-04T17:31:18.992Z",
-    "lastDigestWrite": "2026-07-04T23:20:20.152Z",
+    "attachmentId": "39f76fd7-ac82-8161-9556-00b2077f0418",
+    "prevAttachmentId": "39d76fd7-ac82-8123-bf03-00b22fb83a22",
+    "contentHash": "4ee25877b27c18217c9cda8a229da2417bfaf03739bb84dc58f9f99db576ed0d",
+    "publishedHash": "4ee25877b27c18217c9cda8a229da2417bfaf03739bb84dc58f9f99db576ed0d",
+    "lastPublished": "2026-07-16T12:53:42.507Z",
+    "lastDigestWrite": "2026-07-16T12:54:47.767Z",
     "setup": {
       "pmNotesDb": "c4347ee5-e3c9-4b45-afc8-5dca617ed839",
       "pmNotesDs": "bc7a9514-c5e2-4613-a6d2-37371dbdb430",
@@ -285,9 +321,16 @@
           "id": "39376fd7-ac82-81e9-b986-d9ad41338d44"
         }
       ],
-      "lastRun": "2026-07-04T23:18:36.048Z",
+      "lastRun": "2026-07-16T12:45:18.451Z",
       "consumed": 42,
       "skipped": 84
     }
+  },
+  "cockpit": {
+    "pageId": "38f76fd7ac8280478e50dd2956ba6e8a",
+    "attachmentId": "e0818cbc-3d2f-42f7-8ba2-f29c7035b5e2",
+    "contentHash": "f6992ab18ff69b597e1a3135a0e66c122b9326e05ed0de360c63ba786edc9ff5",
+    "publishedHash": "f6992ab18ff69b597e1a3135a0e66c122b9326e05ed0de360c63ba786edc9ff5",
+    "lastPublished": "2026-07-16T12:45:02.240Z"
   }
 }

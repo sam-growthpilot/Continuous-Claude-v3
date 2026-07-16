@@ -648,8 +648,12 @@ async function main() {
               continue;
             }
             const statusMatch = content.match(/^status:\s*(\w+)/m);
-            if (statusMatch && statusMatch[1] === "completed") {
-              console.error(`Skipping completed handoff: ${sessionName}`);
+            const statusValue = statusMatch ? statusMatch[1].toLowerCase() : "";
+            const outcomeMatch = content.match(/^outcome:\s*(\w+)/m);
+            const outcomeValue = outcomeMatch ? outcomeMatch[1].toUpperCase() : "";
+            const isDone = ["complete", "completed", "done"].includes(statusValue) || outcomeValue === "SUCCEEDED";
+            if (isDone) {
+              console.error(`Skipping completed handoff: ${sessionName} (status=${statusValue || "n/a"}, outcome=${outcomeValue || "n/a"})`);
               continue;
             }
             if (!mostRecentLedger || mtime > mostRecentLedger.mtime) {
