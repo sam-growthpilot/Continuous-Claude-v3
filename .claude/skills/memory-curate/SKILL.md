@@ -45,8 +45,23 @@ Run the following to fetch all memory entries:
 
 ```bash
 docker exec continuous-claude-postgres psql -U claude -d continuous_claude -c \
-  "SELECT id, session_id, learning_type, content, tags, confidence, created_at FROM archival_memory ORDER BY created_at DESC;"
+  "SELECT id, session_id,
+          COALESCE(metadata->>'learning_type', metadata->>'type') AS learning_type,
+          content,
+          metadata->'tags'        AS tags,
+          metadata->>'confidence' AS confidence,
+          created_at
+   FROM archival_memory
+   WHERE valid_until IS NULL           -- only live (non-superseded) entries
+   ORDER BY created_at DESC;"
 ```
+
+> **Schema note (verified 2026-07-16):** `archival_memory` has NO top-level
+> `learning_type` / `tags` / `confidence` / `context` columns — they live inside
+> the `metadata` jsonb (`metadata->>'learning_type'` or `metadata->>'type'`,
+> `metadata->'tags'`, `metadata->>'confidence'`). The archive table
+> `archival_memory_archived` likewise has only `id, session_id, agent_id, content,
+> metadata, embedding, created_at, project_id, scope, archived_at, archive_reason`.
 
 If the table has many entries, paginate with LIMIT/OFFSET:
 
@@ -59,16 +74,16 @@ docker exec continuous-claude-postgres psql -U claude -d continuous_claude -c \
 
 Apply the scoring rubric from `references/scoring-rubric.md` to each entry:
 
-| Points | Criterion |
-|--------|-----------|
-| +3 | Manual store (session_id does NOT contain "auto-" or "periodic-") |
-| +2 | Unique content > 100 chars with specific file paths or error messages |
-| +1 | High confidence tag |
-| +1 | Contains actionable fix (error message paired with solution) |
-| -2 | Tags contain both "periodic" AND "extraction" |
-| -1 | Content is heartbeat/checkpoint (e.g. "Session checkpoint at...", "Periodic extraction...") |
-| -1 | Near-duplicate of another entry (similar content, same topic) |
-| -1 | Generic statement with no specific details |
+| Points | Criterion | Signal (metadata-aware) |
+|--------|-----------|-------------------------|
+| +3 | Manual store | `metadata->'tags'` does NOT contain `periodic`/`extraction` AND `metadata->>'type'` is a manual type (`WORKING_SOLUTION`, `ERROR_FIX`, `ARCHITECTURAL_DECISION`, `USER_PREFERENCE`, `CODEBASE_PATTERN`, `FAILED_APPROACH`). NOTE: the old `session_id LIKE '%auto-%'` heuristic is DEAD — 0/707 session_ids match it. |
+| +2 | Unique content > 100 chars with specific file paths or error messages | `length(content) > 100` |
+| +1 | High confidence | `metadata->>'confidence' = 'high'` |
+| +1 | Contains actionable fix (error message paired with solution) | — |
+| -2 | Periodic extraction noise | `metadata->'tags' ?& array['periodic','extraction']` |
+| -1 | Content is heartbeat/checkpoint | `content ILIKE 'Mid-session checkpoint at%'` / `'Session checkpoint at%'` / `'Periodic extraction%'` |
+| -1 | Near-duplicate of another entry (identical/similar content, same topic) | e.g. the 27 identical `'Goal: Ralph orchestration for story unknown'` placeholders (curated 2026-07-16) |
+| -1 | Generic statement with no specific details | — |
 
 ### Step 3: Classify
 
@@ -129,10 +144,11 @@ docker exec continuous-claude-postgres psql -U claude -d continuous_claude -c \
 
 ```bash
 docker exec continuous-claude-postgres psql -U claude -d continuous_claude -c \
-  "INSERT INTO archival_memory_archived (id, session_id, learning_type, content, context, tags, confidence, embedding, created_at, archive_reason)
-   SELECT id, session_id, learning_type, content, context, tags, confidence, embedding, created_at, 'memory-curate: score <= 0'
+  "INSERT INTO archival_memory_archived (id, session_id, agent_id, content, metadata, embedding, created_at, project_id, scope, archive_reason)
+   SELECT id, session_id, agent_id, content, metadata, embedding, created_at, project_id, scope, 'memory-curate: score <= 0'
    FROM archival_memory
-   WHERE id IN (<comma-separated IDs>);"
+   WHERE id IN (<comma-separated IDs>)
+   ON CONFLICT (id) DO NOTHING;"
 ```
 
 4. **DELETE only after successful archive:**
@@ -151,14 +167,15 @@ To restore previously archived entries:
 ```bash
 # List archived entries
 docker exec continuous-claude-postgres psql -U claude -d continuous_claude -c \
-  "SELECT id, learning_type, content, archived_at, archive_reason FROM archival_memory_archived ORDER BY archived_at DESC;"
+  "SELECT id, COALESCE(metadata->>'learning_type', metadata->>'type') AS learning_type, content, archived_at, archive_reason FROM archival_memory_archived ORDER BY archived_at DESC;"
 
 # Restore specific entries
 docker exec continuous-claude-postgres psql -U claude -d continuous_claude -c \
-  "INSERT INTO archival_memory (id, session_id, learning_type, content, context, tags, confidence, embedding, created_at)
-   SELECT id, session_id, learning_type, content, context, tags, confidence, embedding, created_at
+  "INSERT INTO archival_memory (id, session_id, agent_id, content, metadata, embedding, created_at, project_id, scope)
+   SELECT id, session_id, agent_id, content, metadata, embedding, created_at, project_id, scope
    FROM archival_memory_archived
-   WHERE id IN (<comma-separated IDs>);
+   WHERE id IN (<comma-separated IDs>)
+   ON CONFLICT (id) DO NOTHING;
    DELETE FROM archival_memory_archived WHERE id IN (<comma-separated IDs>);"
 ```
 

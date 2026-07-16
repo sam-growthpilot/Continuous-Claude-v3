@@ -261,3 +261,6 @@ docs/claude-for-sales/skills/**/*.zip
 
 # project-cards sweep lock (machine-local transient runtime state)
 scripts/project-cards/.sweep.lock
+
+# MCP tool-schema catalog dumps (local reference; regenerated per MCP server)
+mcps/

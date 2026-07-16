@@ -153,11 +153,17 @@ async function main() {
       fs.mkdirSync(handoffDir, { recursive: true });
       const timestamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
       const ralphHandoffFile = `ralph-handoff-${timestamp}.yaml`;
-      const storyId = ralphYaml.match(/story_id:\s*"([^"]+)"/)?.[1] || 'unknown';
+      const storyId = ralphYaml.match(/story_id:\s*"([^"]+)"/)?.[1] || '';
       const currentTask = ralphYaml.match(/name:\s*"([^"]+)"/)?.[1] || 'orchestration';
+      // When story_id is unknown, describe the goal by the current task rather than
+      // a fixed "story unknown" placeholder — the fixed string was being extracted into
+      // archival_memory as identical WORKING_SOLUTION rows (curated out 2026-07-16).
+      const goal = storyId
+        ? `Ralph orchestration for story ${storyId}`
+        : `Ralph orchestration: ${currentTask}`;
       fs.writeFileSync(
         path.join(handoffDir, ralphHandoffFile),
-        `---\ntype: auto-handoff\nsession: ralph-auto\ndate: ${new Date().toISOString().split('T')[0]}\n---\n\ngoal: "Ralph orchestration for story ${storyId}"\nnow: "${currentTask}"\n\n${ralphYaml}\n`
+        `---\ntype: auto-handoff\nsession: ralph-auto\ndate: ${new Date().toISOString().split('T')[0]}\n---\n\ngoal: "${goal}"\nnow: "${currentTask}"\n\n${ralphYaml}\n`
       );
       ledgerMessage = `[PreCompact] Ralph state preserved to thoughts/shared/handoffs/ralph-auto/${ralphHandoffFile}`;
     }

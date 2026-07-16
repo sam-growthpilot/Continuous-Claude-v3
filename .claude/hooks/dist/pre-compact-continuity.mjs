@@ -403,8 +403,9 @@ Ledger: ${mostRecent}`;
       fs2.mkdirSync(handoffDir, { recursive: true });
       const timestamp = (/* @__PURE__ */ new Date()).toISOString().replace(/[:.]/g, "-").slice(0, 19);
       const ralphHandoffFile = `ralph-handoff-${timestamp}.yaml`;
-      const storyId = ralphYaml.match(/story_id:\s*"([^"]+)"/)?.[1] || "unknown";
+      const storyId = ralphYaml.match(/story_id:\s*"([^"]+)"/)?.[1] || "";
       const currentTask = ralphYaml.match(/name:\s*"([^"]+)"/)?.[1] || "orchestration";
+      const goal = storyId ? `Ralph orchestration for story ${storyId}` : `Ralph orchestration: ${currentTask}`;
       fs2.writeFileSync(
         path.join(handoffDir, ralphHandoffFile),
         `---
@@ -413,7 +414,7 @@ session: ralph-auto
 date: ${(/* @__PURE__ */ new Date()).toISOString().split("T")[0]}
 ---
 
-goal: "Ralph orchestration for story ${storyId}"
+goal: "${goal}"
 now: "${currentTask}"
 
 ${ralphYaml}

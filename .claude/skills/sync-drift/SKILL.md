@@ -37,22 +37,20 @@ ACTIVE="C:/Users/david.hayes/.claude"
 
 Compare each directory that the forward sync covers. For each, run a recursive diff to find differences.
 
-#### 1a. hooks/src/ (source files)
+#### 1a. hooks/src/ (source files) — NOT a drift check
 
-```bash
-diff -rq "$REPO/hooks/src/" "$ACTIVE/hooks/src/" 2>/dev/null | grep -v node_modules | grep -v .tldr || echo "hooks/src: in sync"
-```
+`hooks/src` is intentionally **NOT** forward-synced (`sync-to-active.sh` excludes it — `dist/*.mjs` is what runs, and copying src stomps mtimes / breaks build-freshness). So `$ACTIVE/hooks/src` is expected to be stale/absent and a repo-vs-active diff produces meaningless noise. **Do not diff hooks/src across repo↔active.** The only correctness check for hooks is build-freshness (1b), run entirely inside the repo.
 
 #### 1b. hooks/dist/ (built output)
 
-The dist directory IS synced by `sync-to-active.sh` -- the repo's pre-built `hooks/dist/*.mjs` are copied to active. Check for stale builds (active src newer than its synced dist) by comparing modification times.
+The dist directory IS synced by `sync-to-active.sh` -- the repo's pre-built `hooks/dist/*.mjs` are copied to active. The meaningful check is whether the **repo's** committed dist is built from the **repo's** committed src (compare REPO src → REPO dist, never the stale active src). Skip non-entrypoint modules (`shared/`, `patterns/`, `lib/`, `__tests__/`) — they are imported by entry hooks, not compiled to standalone dist.
 
 ```bash
-# Check if any src file is newer than its dist counterpart
+# Check if any repo src file is newer than its repo dist counterpart
 STALE=0
-for src_file in $(find "$ACTIVE/hooks/src" -name "*.ts" -type f 2>/dev/null); do
+for src_file in $(find "$REPO/hooks/src" -maxdepth 1 -name "*.ts" -type f 2>/dev/null); do
   base=$(basename "$src_file" .ts)
-  dist_file="$ACTIVE/hooks/dist/${base}.mjs"
+  dist_file="$REPO/hooks/dist/${base}.mjs"
   if [[ -f "$dist_file" ]]; then
     if [[ "$src_file" -nt "$dist_file" ]]; then
       echo "STALE BUILD: $base.mjs (src newer than dist)"
@@ -192,17 +190,17 @@ LOCAL_ONLY="settings.json|settings.local.json|CLAUDE.md|RULES.md|extraction-stat
 echo "=== Sync Drift Report ==="
 echo ""
 
-echo "--- hooks/src/ ---"
-diff -rq "$REPO/hooks/src/" "$ACTIVE/hooks/src/" 2>/dev/null | grep -vE "$LOCAL_ONLY" | grep -v node_modules | grep -v .tldr || echo "  In sync"
+echo "--- hooks/src/ (repo-only; NOT synced — no drift check) ---"
+echo "  skipped: hooks/src is intentionally repo-only; build-freshness below is the real check"
 
 echo ""
-echo "--- hooks/dist/ (build freshness) ---"
+echo "--- hooks/dist/ (build freshness: REPO src -> REPO dist) ---"
 STALE=0
-for src_file in $(find "$ACTIVE/hooks/src" -name "*.ts" -not -path "*/node_modules/*" -type f 2>/dev/null); do
+# -maxdepth 1 skips non-entrypoint modules (shared/ patterns/ lib/ __tests__/) that
+# are imported by entry hooks, not compiled to standalone dist.
+for src_file in $(find "$REPO/hooks/src" -maxdepth 1 -name "*.ts" -not -path "*/node_modules/*" -type f 2>/dev/null); do
   base=$(basename "$src_file" .ts)
-  # Skip shared directory files that aren't direct entry points
-  [[ "$src_file" == *"/shared/"* ]] && continue
-  dist_file="$ACTIVE/hooks/dist/${base}.mjs"
+  dist_file="$REPO/hooks/dist/${base}.mjs"
   if [[ -f "$dist_file" ]]; then
     if [[ "$src_file" -nt "$dist_file" ]]; then
       echo "  STALE: ${base}.mjs"
