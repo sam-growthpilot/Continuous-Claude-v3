@@ -1,6 +1,6 @@
 ---
 name: game-plan
-description: Run a feature through the full tri-model Game Plan pipeline — rostered roles (Claude hub, Grok builder/researcher, Codex reviewer/fixer), a workroom disk bus, and human gates. Use when the user types /game-plan <feature>, says "run the game plan on X", "full crew on this", "roster this feature", or wants a multi-milestone feature built with cross-model build/review separation. Opt-in orchestrator on top of /workroom; for one-shot tasks use /grok or /codex directly, for trivial edits use neither.
+description: Run a feature through the full tri-model Game Plan pipeline — rostered roles (Claude hub, Grok builder/researcher, Codex reviewer/fixer), a workroom disk bus, and human gates. Use when the user types /game-plan [feature], says "run the game plan on X", "full crew on this", "roster this feature", or wants a multi-milestone feature built with cross-model build/review separation. Opt-in orchestrator on top of /workroom; for one-shot tasks use /grok or /codex directly, for trivial edits use neither.
 ---
 
 # /game-plan — Tri-Model Roster Pipeline Orchestrator

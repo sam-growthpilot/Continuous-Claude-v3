@@ -241,8 +241,10 @@ non-engineer (Carly) reads every sentence cold; a CTO (Christian) reads for soun
 
 ## Fail-loud guards (never publish empty/stale over good content)
 
-1. If the Notion MCP is unreachable or returns an auth error → write `fourthos/preview/_ERROR.md`
-   with the reason, notify Dave "generation FAILED", and **do not** overwrite the stable `fourthos/`.
+1. If the Notion MCP is unreachable or returns an auth error → this IS a failure: write
+   `fourthos/preview/_ERROR.md` with the reason, notify Dave "generation FAILED", print
+   `fourthos-weekly: FAILED reason=notion-unreachable` and **exit 1**, and **do not** overwrite
+   the stable `fourthos/`.
 2. If the FourthOS Projects DB reads empty/missing → treat as failure (same as above), not as a
    valid "nothing to report".
 3. `promote.mjs` validates `decks.json` parses before committing — a broken manifest blanks the whole hub.
@@ -258,8 +260,19 @@ On a successful generate, notify Dave via **both**:
 - **Notion comment** on the cockpit's "Sponsor Update Workspace" section with the same.
 
 End the headless run with exactly one stdout line:
-`fourthos-weekly: OK preview=<url> changed=<n>` — or `fourthos-weekly: FAILED reason=<short>` (exit 1)
-— or `fourthos-weekly: SKIP reason=mcp-unavailable` (exit 0).
+`fourthos-weekly: OK preview=<url> changed=<n>` — or `fourthos-weekly: FAILED reason=<short>` (exit 1;
+INCLUDES Notion unreachable / auth errors, per guard #1) — or `fourthos-weekly: SKIP reason=<short>`
+(exit 0; reserved for a deliberate no-publish condition only, never an error path).
+
+**Wrapper-side verification (since 2026-07-16):** the scheduled `.bat` does not trust this line
+(or the exit code) alone. It captures the full headless output to
+`~/.claude/logs/fourthos-weekly/<YYYY-MM-DD>.log`, then `scripts/fourthos-weekly/verify-run.mjs`
+classifies the outcome from artifact truth — all four preview files present, committed, last
+`fourthos/preview` commit dated today, no `_ERROR.md` — plus the log sentinel, and records
+**OK / Warn / Skipped / Failed** (with a reason in the summary) in the Report Runs registry.
+A run that prints OK but staged no fresh artifact is recorded `Failed (no-artifact)`. The wrapper
+exits 1 only on Failed; OK/Warn/Skipped exit 0 (the registry row + dated log are the observability
+surface for a skip, not a red Task Scheduler light).
 
 ---
 

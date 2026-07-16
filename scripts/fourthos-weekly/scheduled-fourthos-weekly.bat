@@ -17,56 +17,109 @@ if not exist %GEN_PROMPT% (
     exit /b 1
 )
 
+REM Resolve an ABSOLUTE node path (needed by the verify + registry steps). A cmd
+REM .bat inherits a minimal PATH under Task Scheduler and bare `node` may not
+REM resolve (same class of failure that lost 4 months to bare `python`). Fall
+REM back to bare `node` only if the standard path is absent.
+set "NODE_EXE=C:\Program Files\nodejs\node.exe"
+if not exist "%NODE_EXE%" set "NODE_EXE=node"
+
+REM Today's date (YYYY-MM-DD), resolved BEFORE the claude run so the log file is
+REM dated. Use powershell (always on the System32 PATH) rather than %date%
+REM (locale-formatted) or node-in-`for /f` (the quoted spaced node path breaks
+REM cmd's for/f parsing). If the date can't be resolved we still run claude
+REM (logging to last-run.log) but skip the registry upsert later.
+set "RUN_DATE="
+for /f "usebackq delims=" %%d in (`powershell -NoProfile -Command "(Get-Date).ToString('yyyy-MM-dd')"`) do set "RUN_DATE=%%d"
+
+REM Log capture: every headless claude -p run writes its full stdout+stderr to a
+REM dated log so a silent no-op is diagnosable after the fact (a same-day manual
+REM rerun overwrites that day's log -- accepted).
+set "LOG_DIR=C:\Users\david.hayes\.claude\logs\fourthos-weekly"
+if not exist "%LOG_DIR%" mkdir "%LOG_DIR%"
+if defined RUN_DATE (set "LOG_NAME=%RUN_DATE%.log") else (set "LOG_NAME=last-run.log")
+set "LOG_FILE=%LOG_DIR%\%LOG_NAME%"
+echo [%date% %time%] claude -p output will be captured to %LOG_FILE%
+
 REM Feed the generate prompt to a non-interactive claude -p session. The prompt instructs
 REM Claude Code to read the FourthOS Notion cockpit, refresh the Tier-3 Update Package page,
 REM render the Tier-1 dashboard + Tier-2 deep-dive, stage them to fourthos/preview/ (unlisted),
 REM and notify Dave via Slack + a Notion comment. Fail-loud guards live inside the prompt.
 REM claude -p must auth via the claude.ai subscription login, not a stale ANTHROPIC_API_KEY in env.
 set "ANTHROPIC_API_KEY="
-type %GEN_PROMPT% | call claude -p --output-format text
+type %GEN_PROMPT% | call claude -p --output-format text > "%LOG_FILE%" 2>&1
 set EXIT_CODE=%ERRORLEVEL%
 
-echo [%date% %time%] FourthOS weekly generation finished. exit=%EXIT_CODE%
+echo [%date% %time%] FourthOS weekly generation finished. exit=%EXIT_CODE% log=%LOG_FILE%
 
-REM Exit code contract (mirrors the prompt's final stdout line):
-REM   0 = OK (preview staged + Dave notified)  OR  SKIP (Notion MCP unavailable; nothing published)
-REM   1 = FAILED (see Slack/Notion notice and fourthos/preview/_ERROR.md in the decks repo)
-REM The stable live sponsor deck is never overwritten by this task; promotion is manual.
+REM Outcome contract (since 2026-07-16):
+REM   The claude -p exit code alone CANNOT distinguish OK from SKIP or a silent
+REM   no-op (all exit 0). verify-run.mjs classifies the outcome deterministically
+REM   from ARTIFACT TRUTH (fresh committed fourthos/preview/ in the decks repo,
+REM   absence of _ERROR.md) plus the log sentinel line: OK / Warn / Skipped / Failed.
+REM   The registry row records that status; this wrapper exits 1 only on Failed
+REM   (OK/Warn/Skipped exit 0 -- Skipped is expected and distinctly recorded, so a
+REM   red Task Scheduler light for it would be noise).
+REM   The stable live sponsor deck is never overwritten by this task; promotion is manual.
 
-REM --- Report Runs registry (T3.3): FINAL non-fatal step. -------------------------
-REM Resolve an ABSOLUTE node path. A cmd .bat inherits a minimal PATH under Task
-REM Scheduler and bare `node` may not resolve (same class of failure that lost 4
-REM months to bare `python`). Fall back to bare `node` only if the standard path is
-REM absent. This step is observability, not the report's product -- it NEVER changes
-REM the exit contract above: EXIT_CODE is already captured, and we still
-REM `exit /b %EXIT_CODE%` at the end regardless of what the registry step does.
-set "NODE_EXE=C:\Program Files\nodejs\node.exe"
-if not exist "%NODE_EXE%" set "NODE_EXE=node"
+REM --- Deterministic outcome classification ---------------------------------
+REM verify-run.mjs prints exactly one line `STATUS|reason`. Route it through a
+REM temp file (not for/f backquotes -- the quoted spaced node path breaks cmd's
+REM for/f command parsing).
+set "VERIFY_OUT_FILE=%TEMP%\fourthos-verify-out.txt"
+del "%VERIFY_OUT_FILE%" 2>nul
+REM verify stderr goes into the dated log so a verify-crashed row stays debuggable
+"%NODE_EXE%" scripts\fourthos-weekly\verify-run.mjs --log "%LOG_FILE%" --exit %EXIT_CODE% > "%VERIFY_OUT_FILE%" 2>>"%LOG_FILE%"
+set "VERIFY_LINE="
+if exist "%VERIFY_OUT_FILE%" for /f "usebackq delims=" %%v in ("%VERIFY_OUT_FILE%") do set "VERIFY_LINE=%%v"
 
-REM Today's date (YYYY-MM-DD). Use powershell (always on the System32 PATH) rather
-REM than %date% (locale-formatted) or node-in-`for /f` (the quoted spaced node path
-REM breaks cmd's for/f parsing). GUARD: if the date can't be resolved, skip the
-REM registry step entirely -- an empty --period would otherwise emit a garbage row.
-set "RUN_DATE="
-for /f "usebackq delims=" %%d in (`powershell -NoProfile -Command "(Get-Date).ToString('yyyy-MM-dd')"`) do set "RUN_DATE=%%d"
-if not defined RUN_DATE (
-    echo [%date% %time%] could not resolve RUN_DATE -- skipping registry upsert ^(non-fatal^)
-    exit /b %EXIT_CODE%
+set "RUN_STATUS="
+set "RUN_REASON="
+if defined VERIFY_LINE for /f "tokens=1* delims=|" %%a in ("%VERIFY_LINE%") do (
+    set "RUN_STATUS=%%a"
+    set "RUN_REASON=%%b"
 )
 
-REM Status synthesized DETERMINISTICALLY from EXIT_CODE (not the claude -p output,
-REM which is fragile). exit 0 = OK-or-SKIP -- indistinguishable from the code alone,
-REM so recorded as OK; exit 1 = Failed.
-if "%EXIT_CODE%"=="0" (set "RUN_STATUS=OK") else (set "RUN_STATUS=Failed")
+REM Fail-open: if verify-run.mjs crashed or printed garbage, record Warn --
+REM never a silent OK.
+if not defined RUN_STATUS (
+    set "RUN_STATUS=Warn"
+    set "RUN_REASON=verify-crashed"
+)
+if not defined RUN_REASON set "RUN_REASON=unspecified"
+if not "%RUN_STATUS%"=="OK" if not "%RUN_STATUS%"=="Warn" if not "%RUN_STATUS%"=="Skipped" if not "%RUN_STATUS%"=="Failed" (
+    set "RUN_STATUS=Warn"
+    set "RUN_REASON=verify-bad-output"
+)
+echo [%date% %time%] verified outcome: %RUN_STATUS% ^(%RUN_REASON%^)
+
+REM --- Report Runs registry (T3.3): FINAL non-fatal step. -------------------
+REM Observability, not the report's product -- it never changes the exit
+REM contract below. GUARD: without RUN_DATE an empty --period would emit a
+REM garbage row, so skip the upsert entirely.
+if not defined RUN_DATE (
+    echo [%date% %time%] could not resolve RUN_DATE -- skipping registry upsert ^(non-fatal^)
+    goto :final_exit
+)
+
+REM Only advertise the preview URL for a verified-OK run; upsert.mjs omits
+REM non-http artifactUrl values.
+set "ARTIFACT_URL=none"
+if "%RUN_STATUS%"=="OK" set "ARTIFACT_URL=https://rev4nchist.github.io/ai-enablement-decks/fourthos/preview/"
 
 set "RUN_EMIT=%TEMP%\report-run-FourthOS-Weekly.json"
 del "%RUN_EMIT%" 2>nul
-"%NODE_EXE%" scripts\report-registry\make-run.mjs --type "FourthOS Sponsor" --source "FourthOS-Weekly" --period %RUN_DATE% --status %RUN_STATUS% --artifactUrl "https://rev4nchist.github.io/ai-enablement-decks/fourthos/preview/" --summary "sponsor update staged (exit=%EXIT_CODE%)"
-if exist "%RUN_EMIT%" (
-    "%NODE_EXE%" scripts\report-registry\upsert.mjs "%RUN_EMIT%"
-    echo [%date% %time%] report-run upsert done ^(exit=%ERRORLEVEL%, non-fatal^)
-) else (
+"%NODE_EXE%" scripts\report-registry\make-run.mjs --type "FourthOS Sponsor" --source "FourthOS-Weekly" --period %RUN_DATE% --status %RUN_STATUS% --artifactUrl "%ARTIFACT_URL%" --summary "%RUN_REASON% (exit=%EXIT_CODE%, log=%LOG_NAME%)"
+if not exist "%RUN_EMIT%" (
     echo [%date% %time%] no report-run.json emitted -- skipping registry upsert
+    goto :final_exit
 )
+"%NODE_EXE%" scripts\report-registry\upsert.mjs "%RUN_EMIT%"
+echo [%date% %time%] report-run upsert done ^(exit=%ERRORLEVEL%, non-fatal^)
 
-exit /b %EXIT_CODE%
+:final_exit
+REM Failed -> exit 1 (Task Scheduler Last Run Result shows the failure).
+REM OK/Warn/Skipped -> exit 0 (the registry row + dated log are the
+REM observability surface for those).
+if "%RUN_STATUS%"=="Failed" exit /b 1
+exit /b 0

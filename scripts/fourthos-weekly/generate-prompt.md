@@ -113,8 +113,10 @@ for these rules. Reusable patterns proven in `fourthos/2026-06-24/`: badge compo
    tab-menu ("How this connects").
 5b. **Write `fourthos/preview/card.json`** — hub-card metadata `promote.mjs` consumes:
    `{ "tag": "Sponsor Update", "title": "FourthOS — <human date>", "description": "<= the headline + biggest move>", "meta": "<human date>", "date": "YYYY-MM-DD" }`.
-6. **Stage + push.** From the decks repo: `git add fourthos/preview/`, commit
-   `chore(fourthos): weekly preview YYYY-MM-DD`, push to `main`. Do NOT touch `decks.json`.
+6. **Stage + push.** From the decks repo: if a stale `fourthos/preview/_ERROR.md` exists from a
+   prior failed week, DELETE it as part of this staging (a successful run must not leave it behind).
+   Then `git add fourthos/preview/`, commit `chore(fourthos): weekly preview YYYY-MM-DD`, push to
+   `main`. Do NOT touch `decks.json`.
 7. **Verify deploy.** `gh run list --repo Rev4nchist/ai-enablement-decks --limit 3` → expect `success`.
    Confirm `https://rev4nchist.github.io/ai-enablement-decks/fourthos/preview/` loads.
 8. **Notify Dave (both channels).**
@@ -123,13 +125,25 @@ for these rules. Reusable patterns proven in `fourthos/2026-06-24/`: badge compo
    - Notion comment on the cockpit's **Sponsor Update Workspace** section: same content.
 9. **Final stdout line** (exactly one):
    - success: `fourthos-weekly: OK preview=https://rev4nchist.github.io/ai-enablement-decks/fourthos/preview/ changed=<n>`
-   - failure: `fourthos-weekly: FAILED reason=<short>` and exit 1
-   - mcp down: `fourthos-weekly: SKIP reason=mcp-unavailable` and exit 0
+   - failure (INCLUDING Notion unreachable / auth error — see G1): `fourthos-weekly: FAILED reason=<short>`
+     (note: a model inside `claude -p` cannot set the process exit code — the FAILED **sentinel line**
+     plus `_ERROR.md` are the real failure signals; the wrapper's verify step turns them into a
+     Failed registry row and a nonzero Task Scheduler result)
+   - deliberate no-publish (a valid "nothing to publish this week" condition ONLY — never an error path):
+     `fourthos-weekly: SKIP reason=<short>` and exit 0
+
+   Note: the scheduled wrapper independently verifies the staged artifact in the decks repo
+   after this run (`scripts/fourthos-weekly/verify-run.mjs`) and records `Failed reason=no-artifact`
+   in the Report Runs registry if no fresh committed `fourthos/preview/` exists — regardless of
+   what this line claims. The sentinel is corroborating evidence, not the source of truth.
 
 ## Guardrails
 
-- **G1 — Notion unreachable / auth error:** write `fourthos/preview/_ERROR.md` (reason + timestamp),
-  push it, send the Slack + Notion "generation FAILED" notice, and print the SKIP line. **Never**
+- **G1 — Notion unreachable / auth error:** this IS a failure (it writes _ERROR.md and sends FAILED
+  notices — do not disguise it as a skip). Write `fourthos/preview/_ERROR.md` (reason + timestamp),
+  push it, send the Slack + Notion "generation FAILED" notice, and print
+  `fourthos-weekly: FAILED reason=notion-unreachable` as the final line (the wrapper's verify step
+  converts the sentinel + `_ERROR.md` into a Failed registry row and a nonzero task result). **Never**
   overwrite the stable `fourthos/` artifacts. The Notion package remains the source of truth.
 - **G2 — Empty/missing Projects data:** treat as failure, not as "nothing to report". Do not publish
   an empty dashboard over good content.
