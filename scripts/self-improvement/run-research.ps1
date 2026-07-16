@@ -29,7 +29,11 @@ $logDir = Join-Path $repo '.claude\logs\self-improvement'
 New-Item -ItemType Directory -Force -Path $logDir | Out-Null
 $log = Join-Path $logDir "$date.log"
 
-function Log($msg) { "[$(Get-Date -Format o)] $msg" | Tee-Object -FilePath $log -Append }
+# Every Tee-Object below pins -Encoding utf8: Windows PowerShell 5.1's Tee-Object
+# defaults to UTF-16 (Unicode) for a NEW file, which made these daily logs
+# unreadable to grep/`cat`/Node's fs.readFileSync('utf8') without an explicit
+# iconv/PowerShell-based read (same fix as project-cards/run-sweep.ps1).
+function Log($msg) { "[$(Get-Date -Format o)] $msg" | Tee-Object -FilePath $log -Append -Encoding utf8 }
 
 Log "Self-improvement research run starting (date=$date)"
 
@@ -61,12 +65,12 @@ Set-Content -Path $promptFile -Value $prompt -Encoding utf8
 Log "Invoking headless claude -p (allowlisted toolset)"
 Get-Content -Raw $promptFile |
   & claude -p --allowedTools "Read,Grep,Glob,Write,Bash,WebSearch,WebFetch,Task,Skill" 2>&1 |
-  Tee-Object -FilePath $log -Append
+  Tee-Object -FilePath $log -Append -Encoding utf8
 $claudeExit = $LASTEXITCODE
 Log "claude -p exited (code=$claudeExit)"
 
 # 4) Record the INDEX row deterministically (non-fatal if the proposal is missing)
-& node (Join-Path $si 'record-index.mjs') $date $c.id 2>&1 | Tee-Object -FilePath $log -Append
+& node (Join-Path $si 'record-index.mjs') $date $c.id 2>&1 | Tee-Object -FilePath $log -Append -Encoding utf8
 $recordExit = $LASTEXITCODE
 
 $proposal = "docs/self-improvement/proposals/$date-$($c.id).md"
@@ -98,7 +102,7 @@ try {
   $emit = ($emit | Select-Object -Last 1)
   if ($LASTEXITCODE -eq 0 -and $emit) {
     & $node (Join-Path $repo 'scripts\report-registry\upsert.mjs') $emit 2>&1 |
-      ForEach-Object { "$_" } | Tee-Object -FilePath $log -Append
+      ForEach-Object { "$_" } | Tee-Object -FilePath $log -Append -Encoding utf8
     Log "report-run upsert exit=$LASTEXITCODE (non-fatal)"
   } else {
     Log "make-run emitted no path (exit=$LASTEXITCODE) -- skipping upsert"

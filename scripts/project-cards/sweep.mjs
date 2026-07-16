@@ -14,7 +14,10 @@
 // the ntn CLI cannot do (S5): they run through the claude.ai Notion connector via
 // headless `claude -p`. The connector only loads when ANTHROPIC_API_KEY is UNSET,
 // so every spawned claude gets an env copy with that key deleted. --dry-run
-// spawns NO claude and writes neither state, health-history, nor Notion.
+// spawns NO claude and writes neither health-history nor Notion, but it DOES
+// still run refresh.mjs --all (runRefreshAll()), which unconditionally
+// writeState()s its bookkeeping (publishedHash/needsPublish) regardless of
+// --dry-run -- so state.json IS written even on a dry run.
 //
 // Reliability contract:
 //   REL#1 self-heal — a publish only advances publishedHash on a CONFIRMED +
@@ -75,14 +78,28 @@ export function deriveReportStatus({
   return 'OK';
 }
 
+// PURE: cap + flatten a failure reason for a compact one-line summary segment
+// (mirrors triageFailureReceiptLine's bounding so a verbose spawn/Notion error
+// can never balloon the registry headline).
+function capReason(reason, max = 60) {
+  const flat = String(reason ?? 'unknown').replace(/[\r\n]+/g, ' ').trim() || 'unknown';
+  return flat.length > max ? `${flat.slice(0, max - 1)}…` : flat;
+}
+
 // PURE + exported: the 1-line registry summary headline for a Project Portfolio
-// run. Kept separate so tests can assert the headline shape.
+// run. Kept separate so tests can assert the headline shape. Includes the
+// mobile-cockpit outcome (previously silently omitted, which hid 3 consecutive
+// mobile-embed publish failures behind an otherwise-clean "failed=0 hub=ok
+// cockpit=ok" headline — see deriveReportStatus, which already folds
+// mobileFailed into the registry Warn status).
 export function buildReportSummary({
   refreshed = 0, publishedOk = [], publishFailed = [], hubRefreshed, cockpitPublished,
+  mobileFailed = false, mobileFailureCode = null,
 } = {}) {
+  const mobile = mobileFailed ? `fail(${capReason(mobileFailureCode)})` : 'ok';
   return `cards refreshed=${refreshed} · published=${publishedOk.length}`
     + ` · failed=${publishFailed.length} · hub=${hubRefreshed ? 'ok' : 'fail'}`
-    + ` · cockpit=${cockpitPublished ? 'ok' : 'fail'}`;
+    + ` · cockpit=${cockpitPublished ? 'ok' : 'fail'} · mobile=${mobile}`;
 }
 
 // Best-effort: emit a Project Portfolio report-run.json for the registry spine
@@ -829,15 +846,30 @@ async function publishMobileCockpit({ liveRoster, seriesBySlug, lastSweep, asOfH
       console.error(`[sweep] WARN: mobile-cockpit could not write out/ files: ${e.message}`);
     }
 
-    const res = spawnClaude(buildMobilePrompt({ html, asOfHuman }));
-    const out = (res && res.stdout) || '';
-    const ok = !res.error && out.match(/MOBILEDONE attachment=(\S+)/);
+    // Retry-once (mitigation for the shared headless claude.ai Notion MCP
+    // connector's transient startup flakiness — observed ETIMEDOUT / "no
+    // MOBILEDONE marker" / "connector tools ... still connecting" failures that
+    // succeed on a bare re-run minutes later, e.g. 2026-07-15 22:53 failed ->
+    // 2026-07-16 12:57 published with no code change). Each attempt is still
+    // hard-bounded by CLAUDE_TIMEOUT_MS (spawnSync timeout), so the step can
+    // never hang the sweep — worst case is 2x the single-attempt bound, not
+    // unbounded. Read-back verification below still gates state advancement, so
+    // a retry can never falsely mark an unpublished embed as published.
+    let res = spawnClaude(buildMobilePrompt({ html, asOfHuman }));
+    let out = (res && res.stdout) || '';
+    let ok = !res.error && out.match(/MOBILEDONE attachment=(\S+)/);
+    if (!ok) {
+      console.error('[sweep] mobile-cockpit embed publish attempt 1 failed — retrying once');
+      res = spawnClaude(buildMobilePrompt({ html, asOfHuman }));
+      out = (res && res.stdout) || '';
+      ok = !res.error && out.match(/MOBILEDONE attachment=(\S+)/);
+    }
     if (!ok) {
       const fail = out.match(/FAILED\s+(.*)/);
       mob.embedStatus = 'failed';
       mob.failureCode = res.error ? `spawn: ${res.error.message}`
         : (fail ? fail[1].trim() : (res.status === null ? 'timeout/no-marker' : 'no MOBILEDONE marker'));
-      console.error(`[sweep] mobile-cockpit embed publish FAILED: ${mob.failureCode}`);
+      console.error(`[sweep] mobile-cockpit embed publish FAILED (after retry): ${mob.failureCode}`);
     } else {
       // Mitigation #6: never trust the stdout marker — read back the page and
       // require an embed block under the queue heading before advancing state.
@@ -1390,10 +1422,22 @@ async function main() {
       : (mobileCockpit && mobileCockpit.digestStatus === 'failed' ? 1 : 0));
   }
 
+  // Exit-code decision (fixes the 3-consecutive-failure incident where the
+  // scheduled task exited 1 on a mobile-only flake while the registry summary
+  // hid the reason): on a FULL run, the Mobile Cockpit is a secondary
+  // phone-first surface, independently try/caught, and its own retry-once +
+  // read-back-verify contract already keeps it from corrupting state. A
+  // mobile-alone degradation is fully surfaced (registry status Warn via
+  // deriveReportStatus + "mobile=fail(<reason>)" in buildReportSummary +
+  // mobileCockpit.failureCode in sweep.jsonl) but must NOT flip the scheduled
+  // task to a red exit code when the actual deliverables (cards/hub/cockpit)
+  // all landed — that false-red was masking the real signal. On a
+  // `--target mobile-cockpit` run, mobileFailed IS the whole point of the
+  // invocation, so it still drives the exit code there.
   const failed = mobileOnly
     ? (!!fatalError || mobileFailed || triageFailed)
     : (!!fatalError || publishFailed.length > 0 || !hubRefreshed || !cockpitPublished
-      || mobileFailed || triageFailed);
+      || triageFailed);
 
   // REL#4 heartbeat: only stamp last-success.json on a fully green FULL run
   // (a mobile-only refresh must not mask a stalled daily sweep).
@@ -1419,6 +1463,7 @@ async function main() {
     await emitPortfolioReportRun({
       fatalError, publishFailed, hubRefreshed, cockpitPublished,
       mobileFailed, triageFailed, refreshed, publishedOk,
+      mobileFailureCode: mobileCockpit && mobileCockpit.failureCode,
     });
   }
 

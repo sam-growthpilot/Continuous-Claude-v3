@@ -1,6 +1,6 @@
 @echo off
 REM AIWeeklyReport wrapper.
-REM The "AIWeeklyReport" scheduled task (Weekly Fri 06:00) previously ran `python ...weekly_run.py`,
+REM The "AIWeeklyReport" scheduled task (Weekly Thu 06:00) previously ran `python ...weekly_run.py`,
 REM but `python` is not on the Task Scheduler's minimal PATH -- it failed every week with
 REM 0x80070002 (FILE_NOT_FOUND) for ~4 months and never launched Python. This wrapper resolves the
 REM full Python path, sets the working directory, and logs all stdout/stderr to a durable file.

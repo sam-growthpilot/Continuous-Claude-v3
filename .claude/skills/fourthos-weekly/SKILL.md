@@ -53,8 +53,16 @@ This is the human-in-the-loop path; the `.bat` is the same flow on a timer.
 The Tier-3 **Update Package** is the structured source of truth (incl. a JSON data model in §9).
 Tiers 1 and 2 are rendered **from that package** — never invent status/outputs not present in it.
 
-> Headless reachability is proven: the `CCv3-Health-Check` task already writes Notion via
-> `claude -p`. The same OAuth/MCP path is used here.
+**Headless Notion-MCP is UNRELIABLE — do not assume it "just works."** The claude.ai Notion
+connector *does* load headless and its OAuth is valid (verified 2026-07-16), BUT non-interactive
+`claude -p` **auto-denies** any MCP tool that is not explicitly granted (via `--allowedTools` or a
+settings allow-list) — there is no interactive prompt to approve it. An un-granted call surfaces to
+the prompt as a permission error, which the guardrails record as `SKIP reason=mcp-unavailable` and
+exit 0. This is why the `CCv3-Health-Check` Notion mirror was **silently frozen for ~11 weeks** — the
+earlier "reachability is proven" claim was FALSE. Consequences for this pipeline: trust the outcome
+from `verify-run.mjs` (artifact truth), never from the model's self-reported status line; and prefer
+the **`ntn` CLI** for deterministic Notion steps (every `ntn` step succeeds headless), reserving the
+LLM+MCP path for genuinely generative work that must also carry a `--allowedTools` grant.
 
 ---
 

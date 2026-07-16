@@ -23,7 +23,9 @@
 
 import fs from "node:fs";
 import path from "node:path";
+import os from "node:os";
 import { execFileSync } from "node:child_process";
+import { fileURLToPath } from "node:url";
 
 const DEFAULT_REPO = "C:/Users/david.hayes/Projects/ai-enablement-decks";
 const SECTION = "sponsor-updates";
@@ -128,9 +130,11 @@ if (!DRY) fs.writeFileSync(decksJsonPath, serialized);
 
 // --- 3) Commit + push ----------------------------------------------------
 if (DRY) { log("DRY RUN complete — no files written, no git actions taken."); process.exit(0); }
+let commitSha = null;
 try {
   git(REPO, "add", "fourthos/", "decks.json");
   git(REPO, "commit", "-m", `fourthos: publish sponsor update ${date}`);
+  commitSha = git(REPO, "rev-parse", "--short", "HEAD");
   log("committed.");
   if (PUSH) {
     git(REPO, "push");
@@ -143,6 +147,50 @@ try {
   }
 } catch (e) {
   die(`git step failed: ${e.message}`);
+}
+
+// --- 4) Report Runs registry row (non-fatal, OBSERVABILITY ONLY) ---------
+// Records the promotion with the FINAL dated URL (the preview row upserted by the
+// scheduled generate job still points at fourthos/preview/, which is cleared by
+// step 1 above — leaving that row's link dead once promoted). Only meaningful once
+// the dated deck is actually live (pushed); a --no-push local commit has nothing
+// public to link to yet, so the registry step is skipped in that case. This step
+// can NEVER change promote's exit code — any failure here is caught and logged.
+if (PUSH) {
+  try {
+    const nodeExe = fs.existsSync("C:/Program Files/nodejs/node.exe")
+      ? "C:/Program Files/nodejs/node.exe"
+      : process.execPath;
+    const registryDir = path.join(path.dirname(fileURLToPath(import.meta.url)), "..", "report-registry");
+    const makeRunPath = path.join(registryDir, "make-run.mjs");
+    const upsertPath = path.join(registryDir, "upsert.mjs");
+    // Matches make-run.mjs's tempRunPath() precedence exactly (TEMP/TMP env win,
+    // then os.tmpdir()) so this path always lines up with what make-run actually writes.
+    const tmpDir = process.env.TEMP || process.env.TMP || os.tmpdir();
+    const runEmitPath = path.join(tmpDir, "report-run-FourthOS-Weekly.json");
+    if (fs.existsSync(runEmitPath)) fs.rmSync(runEmitPath, { force: true });
+
+    const artifactUrl = `https://rev4nchist.github.io/ai-enablement-decks/fourthos/${date}/`;
+    const summary = `promoted live: dated deck published (commit ${commitSha || "unknown"})`;
+    execFileSync(nodeExe, [
+      makeRunPath,
+      "--type", "FourthOS Sponsor",
+      "--source", "FourthOS-Weekly",
+      "--period", date,
+      "--status", "OK",
+      "--artifactUrl", artifactUrl,
+      "--summary", summary,
+    ], { cwd: REPO, encoding: "utf8" });
+
+    if (fs.existsSync(runEmitPath)) {
+      execFileSync(nodeExe, [upsertPath, runEmitPath], { cwd: REPO, encoding: "utf8" });
+      log(`registry: recorded promotion row (${artifactUrl})`);
+    } else {
+      log("registry: make-run.mjs emitted no report-run.json — skipping upsert (non-fatal)");
+    }
+  } catch (e) {
+    log(`registry: promotion row step FAILED (non-fatal, promote still succeeded): ${e.message}`);
+  }
 }
 
 log("OK");

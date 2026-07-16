@@ -28,8 +28,16 @@ test('healthStatus maps overall_status to a registry Status enum', () => {
   assert.equal(healthStatus('PASS'), 'OK');
   assert.equal(healthStatus('WARN'), 'Warn');
   assert.equal(healthStatus('FAIL'), 'Failed');
+  // HIGH_FAIL and CRITICAL_FAIL are real health_check.py _overall_status() values
+  // (the two fail severities above bare FAIL) -- a prior version of the map
+  // omitted them, so they silently fell through to the default and were
+  // recorded as OK (found + corrected 2026-07-16; see backfill remap).
+  assert.equal(healthStatus('HIGH_FAIL'), 'Failed');
+  assert.equal(healthStatus('CRITICAL_FAIL'), 'Failed');
   assert.equal(healthStatus('SKIP'), 'Skipped');
-  assert.equal(healthStatus('weird'), 'OK');
+  // Fail-safe default: an unrecognized overall_status must never silently read
+  // as healthy -- it maps to Warn so a human notices, not OK.
+  assert.equal(healthStatus('weird'), 'Warn');
 });
 
 // --- VP Weekly -----------------------------------------------------------------

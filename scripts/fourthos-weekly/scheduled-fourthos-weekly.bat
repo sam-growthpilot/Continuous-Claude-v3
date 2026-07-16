@@ -1,7 +1,7 @@
 @echo off
 REM Weekly FourthOS sponsor update package (Carly & Christian)
 REM Registered in Windows Task Scheduler as "CCv3-FourthOS-Weekly"
-REM Runs every Friday at 07:00am (local time)
+REM Runs every Thursday at 07:00am (local time)
 REM Stages an UNLISTED preview to the ai-enablement-decks GitHub Pages site and pings Dave.
 REM It deliberately does NOT promote to the live sponsor URL -- that is Dave's approval step:
 REM     node scripts\fourthos-weekly\promote.mjs
@@ -47,7 +47,11 @@ REM render the Tier-1 dashboard + Tier-2 deep-dive, stage them to fourthos/previ
 REM and notify Dave via Slack + a Notion comment. Fail-loud guards live inside the prompt.
 REM claude -p must auth via the claude.ai subscription login, not a stale ANTHROPIC_API_KEY in env.
 set "ANTHROPIC_API_KEY="
-type %GEN_PROMPT% | call claude -p --output-format text > "%LOG_FILE%" 2>&1
+REM Headless claude -p AUTO-DENIES any MCP tool not explicitly granted (root-caused
+REM 2026-07-16: this, not connector unavailability, caused the silent SKIP no-ops).
+REM Grant exactly the Notion + Slack tools the generate prompt needs -- nothing more.
+set "GEN_TOOLS=mcp__claude_ai_Notion__notion-fetch,mcp__claude_ai_Notion__notion-search,mcp__claude_ai_Notion__notion-query-data-sources,mcp__claude_ai_Notion__notion-create-pages,mcp__claude_ai_Notion__notion-update-page,mcp__claude_ai_Notion__notion-create-comment,mcp__claude_ai_Slack__slack_send_message"
+type %GEN_PROMPT% | call claude -p --output-format text --allowedTools "%GEN_TOOLS%,Bash,Read,Write,Edit,Glob,Grep" > "%LOG_FILE%" 2>&1
 set EXIT_CODE=%ERRORLEVEL%
 
 echo [%date% %time%] FourthOS weekly generation finished. exit=%EXIT_CODE% log=%LOG_FILE%

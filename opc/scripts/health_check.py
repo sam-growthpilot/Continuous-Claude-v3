@@ -1954,9 +1954,19 @@ def check_skills_no_broken_refs() -> CheckResult:
             text = skill_md.read_text(encoding="utf-8", errors="replace")
         except OSError:
             continue
-        # find `references/XYZ` mentions
-        for rel in re.findall(r"references/[\w\-./]+\.md", text):
-            target = skill_md.parent / rel
+        # find `references/XYZ` mentions. Two shapes:
+        #  - cross-skill / repo-rooted (`.claude/skills/<name>/references/<f>.md`)
+        #    → resolve from REPO_ROOT, NOT the current skill dir (else a valid
+        #      cross-skill ref like init-project → sentry-cli/references/sdk-setup.md
+        #      false-positives as broken).
+        #  - bare / skill-relative (`references/<f>.md`) → resolve from this skill dir.
+        for rel in re.findall(
+            r"(?:\.claude/skills/[\w\-.]+/)?references/[\w\-./]+\.md", text
+        ):
+            if rel.startswith(".claude/skills/"):
+                target = REPO_ROOT / rel
+            else:
+                target = skill_md.parent / rel
             if not target.exists():
                 broken_refs.append(f"{d.name} -> {rel}")
     dur = int((time.perf_counter() - start) * 1000)

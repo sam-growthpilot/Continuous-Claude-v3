@@ -27,13 +27,35 @@ REM disk remain authoritative and the scheduled task still reports health status
 cd /d C:\Users\david.hayes\continuous-claude
 set NOTION_PROMPT=scripts\notion-health-prompt.md
 
+REM Log capture (since 2026-07-16): the claude -p Notion step discarded stdout for ~11
+REM weeks, hiding a silent failure. Every run recorded SKIP reason=mcp-unavailable, which
+REM was actually a PERMISSION-DENIED on the claude.ai Notion MCP tool in non-interactive
+REM mode (the connector loads and OAuth is valid, but headless claude -p auto-denies any
+REM tool not granted via --allowedTools / a settings allow-list). Capture full stdout+stderr
+REM to a dated log so a no-op is diagnosable. Resolve the date via powershell (System32,
+REM always on the Task Scheduler minimal PATH); fall back to last-run.log. This capture
+REM NEVER alters %EXIT_CODE% (the python exit captured above); the Notion step stays non-fatal.
+set "NLOG_DIR=C:\Users\david.hayes\.claude\logs\health-check"
+if not exist "%NLOG_DIR%" mkdir "%NLOG_DIR%"
+set "NLOG_DATE="
+for /f "usebackq delims=" %%d in (`powershell -NoProfile -Command "(Get-Date).ToString('yyyy-MM-dd')"`) do set "NLOG_DATE=%%d"
+if defined NLOG_DATE (set "NLOG=%NLOG_DIR%\%NLOG_DATE%.log") else (set "NLOG=%NLOG_DIR%\last-run.log")
+
 if exist %NOTION_PROMPT% (
-    echo [%date% %time%] Posting results to Notion dashboard...
+    echo [%date% %time%] Posting results to Notion dashboard... log=%NLOG%
     REM claude -p must auth via the claude.ai subscription login, NOT the invalid ANTHROPIC_API_KEY
     REM in the environment (it 401s and takes precedence). Clear it for this process only.
+    REM NOTE: clearing the key is necessary but NOT sufficient -- headless claude -p also
+    REM needs the Notion MCP tools granted, or the call is auto-denied (see the dated log).
     set "ANTHROPIC_API_KEY="
-    type %NOTION_PROMPT% | call claude -p --output-format text
-    echo [%date% %time%] Notion update step finished.
+    REM Scoped grant (root-caused 2026-07-16): headless claude -p auto-denies ungranted
+    REM MCP tools; this permission gap -- not connector unavailability -- froze the
+    REM Notion mirror for 11 weeks.
+    set "HEALTH_TOOLS=mcp__claude_ai_Notion__notion-fetch,mcp__claude_ai_Notion__notion-search,mcp__claude_ai_Notion__notion-update-page"
+    type %NOTION_PROMPT% | call claude -p --output-format text --allowedTools "%HEALTH_TOOLS%,Read,Glob,Grep,Bash" > "%NLOG%" 2>&1
+    REM %ERRORLEVEL% inside this block parse-time-expands to the pre-block value, so it is
+    REM not echoed; the captured log's final line (OK/SKIP/FAILED) is the real outcome.
+    echo [%date% %time%] Notion update step finished ^(non-fatal^). log=%NLOG%
 ) else (
     echo [%date% %time%] WARN: %NOTION_PROMPT% not found -- skipping Notion update.
 )

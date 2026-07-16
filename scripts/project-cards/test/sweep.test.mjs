@@ -345,7 +345,37 @@ test('buildReportSummary: 1-line headline with counts + ok/fail flags', () => {
     refreshed: 8, publishedOk: ['a', 'b', 'c'], publishFailed: [{ slug: 'd' }],
     hubRefreshed: true, cockpitPublished: false,
   });
-  assert.equal(s, 'cards refreshed=8 · published=3 · failed=1 · hub=ok · cockpit=fail');
+  assert.equal(s, 'cards refreshed=8 · published=3 · failed=1 · hub=ok · cockpit=fail · mobile=ok');
+});
+
+test('buildReportSummary: mobile failure is surfaced with its reason (was silently omitted)', () => {
+  const s = buildReportSummary({
+    refreshed: 8, publishedOk: ['a', 'b', 'c'], publishFailed: [],
+    hubRefreshed: true, cockpitPublished: true,
+    mobileFailed: true, mobileFailureCode: 'spawn: spawnSync claude ETIMEDOUT',
+  });
+  assert.equal(s, 'cards refreshed=8 · published=3 · failed=0 · hub=ok · cockpit=ok'
+    + ' · mobile=fail(spawn: spawnSync claude ETIMEDOUT)');
+});
+
+test('buildReportSummary: mobile failure reason is capped + newline-collapsed', () => {
+  const s = buildReportSummary({
+    refreshed: 1, publishedOk: [], publishFailed: [], hubRefreshed: true, cockpitPublished: true,
+    mobileFailed: true,
+    mobileFailureCode: 'a very long multi\nline Notion connector error message that goes on and on and on',
+  });
+  const mobileSegment = s.split(' · mobile=')[1];
+  assert.ok(mobileSegment.startsWith('fail('));
+  assert.ok(!mobileSegment.includes('\n'));
+  assert.ok(mobileSegment.length <= 'fail(…)'.length + 60);
+});
+
+test('buildReportSummary: mobile failure with no failureCode falls back to "unknown"', () => {
+  const s = buildReportSummary({
+    refreshed: 1, publishedOk: [], publishFailed: [], hubRefreshed: true, cockpitPublished: true,
+    mobileFailed: true, mobileFailureCode: null,
+  });
+  assert.ok(s.endsWith('· mobile=fail(unknown)'));
 });
 
 console.log(`\n${pass} passed`);

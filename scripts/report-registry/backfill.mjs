@@ -67,12 +67,21 @@ export function isoWeekMonday(year, week) {
   return monday.toISOString().slice(0, 10);
 }
 
-// System Health overall_status -> a registry Status enum value.
+// System Health overall_status -> a registry Status enum value. Mirrors
+// health_check.py's _overall_status() severities exactly: CRITICAL_FAIL and
+// HIGH_FAIL are the two HIGH/CRITICAL fail severities that (bare) FAIL doesn't
+// cover — a prior version of this map omitted them, so an unrecognized key fell
+// through to the `|| 'OK'` default and silently recorded a CRITICAL/HIGH health
+// failure as OK in the registry (found + corrected 2026-07-16).
 const HEALTH_STATUS_MAP = {
-  PASS: 'OK', OK: 'OK', WARN: 'Warn', FAIL: 'Failed', ERROR: 'Failed', SKIP: 'Skipped',
+  PASS: 'OK', OK: 'OK', WARN: 'Warn',
+  FAIL: 'Failed', HIGH_FAIL: 'Failed', CRITICAL_FAIL: 'Failed', ERROR: 'Failed',
+  SKIP: 'Skipped',
 };
 export function healthStatus(overall) {
-  return HEALTH_STATUS_MAP[String(overall || '').toUpperCase()] || 'OK';
+  // Fail-safe default: an unrecognized overall_status should never silently
+  // read as healthy. 'Warn' surfaces it for a human to check instead of hiding it.
+  return HEALTH_STATUS_MAP[String(overall || '').toUpperCase()] || 'Warn';
 }
 
 // --- extractors (pure: content in, run objects out) ----------------------------
