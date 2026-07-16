@@ -107,10 +107,24 @@ export function extractRun(row) {
 // Chronologically newest row (defensive over the DS `Run Date descending` sort:
 // mixed-tz strings from different pipelines can defeat a lexicographic pick — this
 // compares by epoch ms). Returns null on an empty set; never throws.
+//
+// Corrective-row guard (2026-07-16): backfill/remap rows carry an OLD period but
+// TODAY'S Run Date, so a naive newest-by-date pick would present a correction of
+// ancient history as the "Current run". Rows whose Summary starts with
+// "backfill"/"remap" (the corrective-row convention) are excluded from the pick
+// unless a type has ONLY corrective rows.
+function isCorrectiveRow(r) {
+  const rt = r?.properties?.Summary?.rich_text;
+  const s = (Array.isArray(rt) ? rt.map((t) => t?.plain_text || '').join('') : '').trim().toLowerCase();
+  return s.startsWith('backfill') || s.startsWith('remap');
+}
 export function pickNewest(rows) {
+  const all = rows || [];
+  const genuine = all.filter((r) => !isCorrectiveRow(r));
+  const pool = genuine.length > 0 ? genuine : all;
   let best = null;
   let bestMs = -Infinity;
-  for (const r of rows || []) {
+  for (const r of pool) {
     const d = dateStart(r?.properties?.['Run Date']) || r?.last_edited_time || '';
     const ms = Date.parse(d);
     const cmp = Number.isNaN(ms) ? -Infinity : ms;

@@ -1270,6 +1270,9 @@ async function main() {
       const cockpitHtml = buildCockpitHtml({
         roster: cockpitRoster, seriesBySlug, asOf: startedIso, lastSweep,
       });
+      // Disk copy of the built cockpit (debug artifact + source for manual
+      // re-binds elsewhere, e.g. the overview page's example embed).
+      try { writeFileSync(join(OUT_DIR, 'portfolio-cockpit.html'), cockpitHtml); } catch { /* non-fatal */ }
       // Hash-gate (mirrors the mobile-cockpit gate): republish ONLY when the
       // SEMANTIC inputs change. Excludes the timestamped HTML (asOf / lastSweep.ts).
       const cockpitHash = cockpitContentHash({
