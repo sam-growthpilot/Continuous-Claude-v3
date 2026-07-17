@@ -22,13 +22,20 @@ $logDir = Join-Path $repo '.claude\logs\project-cards'
 New-Item -ItemType Directory -Force -Path $logDir | Out-Null
 $log = Join-Path $logDir "$date.log"
 
-# Every Tee-Object below pins -Encoding utf8: Windows PowerShell 5.1's Tee-Object
-# defaults to UTF-16 (Unicode) for a NEW file, which made these daily logs
-# unreadable to grep/`cat`/Node's fs.readFileSync('utf8') without an explicit
-# iconv/PowerShell-based read. Log filenames are date-stamped (one file/day), so
-# the switch takes effect cleanly on the next new day's file -- no mid-file
-# encoding split on existing logs.
-"[$(Get-Date -Format o)] CCv3-Project-Cards sweep starting" | Tee-Object -FilePath $log -Append -Encoding utf8
+# UTF-8 logging, Windows-PowerShell-5.1-COMPATIBLE (root-caused 2026-07-17):
+# `Tee-Object -Encoding` is PowerShell 6+ ONLY. The scheduled task runs
+# powershell.exe (5.1), where that parameter binding fails -- and under
+# $ErrorActionPreference='Stop' the wrapper died on its FIRST log line (exit 1,
+# no log, no sweep: the 7/16 17:45 and 7/17 07:45 runs). Probe evidence:
+# 5.1 -> "A parameter cannot be found that matches parameter name 'Encoding'".
+# Tee-Log uses Out-File -Encoding utf8 (exists in 5.1; BOM there, BOM-less on 7,
+# both readable by grep/Node) and works under BOTH engines. Never reintroduce
+# `Tee-Object -Encoding` in a wrapper that powershell.exe runs.
+function Tee-Log {
+  param([Parameter(ValueFromPipeline=$true)]$Line)
+  process { $Line | Out-File -FilePath $log -Append -Encoding utf8; $Line }
+}
+"[$(Get-Date -Format o)] CCv3-Project-Cards sweep starting" | Tee-Log
 
 # T3.1: the sweep emits a Project Portfolio report-run.json to $TEMP for the
 # registry spine. Remove any stale emit from a prior run FIRST so the final
@@ -49,9 +56,9 @@ $ErrorActionPreference = 'Continue'
 # lands as a plain log line. $LASTEXITCODE still reflects node's exit code (cmdlets don't
 # reset it), so exit-code gating below is unaffected.
 & node (Join-Path $repo 'scripts\project-cards\sweep.mjs') @args 2>&1 |
-    ForEach-Object { "$_" } | Tee-Object -FilePath $log -Append -Encoding utf8
+    ForEach-Object { "$_" } | Tee-Log
 $code = $LASTEXITCODE
-"[$(Get-Date -Format o)] sweep exited (code=$code)" | Tee-Object -FilePath $log -Append -Encoding utf8
+"[$(Get-Date -Format o)] sweep exited (code=$code)" | Tee-Log
 
 # T3.1 FINAL step: upsert the emitted report-run.json into the Report Runs
 # registry. NON-FATAL by contract -- the registry is observability, not the
@@ -65,10 +72,10 @@ $node = if (Test-Path 'C:\Program Files\nodejs\node.exe') { 'C:\Program Files\no
 if (Test-Path $emitFile) {
     try {
         & $node (Join-Path $repo 'scripts\report-registry\upsert.mjs') $emitFile 2>&1 |
-            ForEach-Object { "$_" } | Tee-Object -FilePath $log -Append -Encoding utf8
-        "[$(Get-Date -Format o)] report-run upsert exit=$LASTEXITCODE (non-fatal)" | Tee-Object -FilePath $log -Append -Encoding utf8
+            ForEach-Object { "$_" } | Tee-Log
+        "[$(Get-Date -Format o)] report-run upsert exit=$LASTEXITCODE (non-fatal)" | Tee-Log
     } catch {
-        "[$(Get-Date -Format o)] report-run upsert threw (non-fatal): $_" | Tee-Object -FilePath $log -Append -Encoding utf8
+        "[$(Get-Date -Format o)] report-run upsert threw (non-fatal): $_" | Tee-Log
     }
 
     # T7.1 FINAL step: refresh the 6 report child pages' "Current run" callouts +
@@ -81,13 +88,13 @@ if (Test-Path $emitFile) {
     # row. Wrapped in try/catch; never touches $code.
     try {
         & $node (Join-Path $repo 'scripts\report-registry\refresh-pages.mjs') 2>&1 |
-            ForEach-Object { "$_" } | Tee-Object -FilePath $log -Append -Encoding utf8
-        "[$(Get-Date -Format o)] report-page refresh exit=$LASTEXITCODE (non-fatal)" | Tee-Object -FilePath $log -Append -Encoding utf8
+            ForEach-Object { "$_" } | Tee-Log
+        "[$(Get-Date -Format o)] report-page refresh exit=$LASTEXITCODE (non-fatal)" | Tee-Log
     } catch {
-        "[$(Get-Date -Format o)] report-page refresh threw (non-fatal): $_" | Tee-Object -FilePath $log -Append -Encoding utf8
+        "[$(Get-Date -Format o)] report-page refresh threw (non-fatal): $_" | Tee-Log
     }
 } else {
-    "[$(Get-Date -Format o)] no report-run.json emitted (dry-run or sub-target) -- skipping registry upsert + page refresh" | Tee-Object -FilePath $log -Append -Encoding utf8
+    "[$(Get-Date -Format o)] no report-run.json emitted (dry-run or sub-target) -- skipping registry upsert + page refresh" | Tee-Log
 }
 
 exit $code

@@ -29,11 +29,17 @@ $logDir = Join-Path $repo '.claude\logs\self-improvement'
 New-Item -ItemType Directory -Force -Path $logDir | Out-Null
 $log = Join-Path $logDir "$date.log"
 
-# Every Tee-Object below pins -Encoding utf8: Windows PowerShell 5.1's Tee-Object
-# defaults to UTF-16 (Unicode) for a NEW file, which made these daily logs
-# unreadable to grep/`cat`/Node's fs.readFileSync('utf8') without an explicit
-# iconv/PowerShell-based read (same fix as project-cards/run-sweep.ps1).
-function Log($msg) { "[$(Get-Date -Format o)] $msg" | Tee-Object -FilePath $log -Append -Encoding utf8 }
+# UTF-8 logging, Windows-PowerShell-5.1-COMPATIBLE (root-caused 2026-07-17):
+# `Tee-Object -Encoding` is PowerShell 6+ ONLY. This task runs powershell.exe
+# (5.1), where that parameter binding fails -- and under this wrapper's
+# EAP='Stop' it killed the run on its first Log call (exit 1, no log: the
+# 7/17 07:30 run). Tee-Log (Out-File -Encoding utf8) works under both 5.1
+# and 7. Never reintroduce `Tee-Object -Encoding` under powershell.exe.
+function Tee-Log {
+  param([Parameter(ValueFromPipeline=$true)]$Line)
+  process { $Line | Out-File -FilePath $log -Append -Encoding utf8; $Line }
+}
+function Log($msg) { "[$(Get-Date -Format o)] $msg" | Tee-Log }
 
 Log "Self-improvement research run starting (date=$date)"
 
@@ -65,12 +71,12 @@ Set-Content -Path $promptFile -Value $prompt -Encoding utf8
 Log "Invoking headless claude -p (allowlisted toolset)"
 Get-Content -Raw $promptFile |
   & claude -p --allowedTools "Read,Grep,Glob,Write,Bash,WebSearch,WebFetch,Task,Skill" 2>&1 |
-  Tee-Object -FilePath $log -Append -Encoding utf8
+  Tee-Log
 $claudeExit = $LASTEXITCODE
 Log "claude -p exited (code=$claudeExit)"
 
 # 4) Record the INDEX row deterministically (non-fatal if the proposal is missing)
-& node (Join-Path $si 'record-index.mjs') $date $c.id 2>&1 | Tee-Object -FilePath $log -Append -Encoding utf8
+& node (Join-Path $si 'record-index.mjs') $date $c.id 2>&1 | Tee-Log
 $recordExit = $LASTEXITCODE
 
 $proposal = "docs/self-improvement/proposals/$date-$($c.id).md"
@@ -102,7 +108,7 @@ try {
   $emit = ($emit | Select-Object -Last 1)
   if ($LASTEXITCODE -eq 0 -and $emit) {
     & $node (Join-Path $repo 'scripts\report-registry\upsert.mjs') $emit 2>&1 |
-      ForEach-Object { "$_" } | Tee-Object -FilePath $log -Append -Encoding utf8
+      ForEach-Object { "$_" } | Tee-Log
     Log "report-run upsert exit=$LASTEXITCODE (non-fatal)"
   } else {
     Log "make-run emitted no path (exit=$LASTEXITCODE) -- skipping upsert"

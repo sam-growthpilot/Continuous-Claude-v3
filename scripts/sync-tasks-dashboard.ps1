@@ -19,18 +19,26 @@ New-Item -ItemType Directory -Force -Path $logDir | Out-Null
 $log    = Join-Path $logDir "$date.log"
 $prompt = Join-Path $repo 'scripts\sync-tasks-dashboard-prompt.md'
 
-# Every Tee-Object below pins -Encoding utf8: Windows PowerShell 5.1's Tee-Object
-# defaults to UTF-16 (Unicode) for a NEW file, which made these daily logs
-# unreadable to grep/`cat`/Node's fs.readFileSync('utf8') without an explicit
-# iconv/PowerShell-based read (same fix as project-cards/run-sweep.ps1).
-"[$(Get-Date -Format o)] dashboard-sync starting" | Tee-Object -FilePath $log -Append -Encoding utf8
+# UTF-8 logging, Windows-PowerShell-5.1-COMPATIBLE (root-caused 2026-07-17):
+# `Tee-Object -Encoding` is PowerShell 6+ ONLY. This task runs powershell.exe
+# (5.1), where the parameter binding fails; under this wrapper's EAP='Continue'
+# the failure was WORSE than a crash -- each pipeline STATEMENT that piped into
+# Tee-Object silently never executed (binding fails before the pipeline starts),
+# so the claude sync step itself could no-op while the wrapper exited 0.
+# Tee-Log (Out-File -Encoding utf8) works under both 5.1 and 7. Never
+# reintroduce `Tee-Object -Encoding` in a wrapper that powershell.exe runs.
+function Tee-Log {
+  param([Parameter(ValueFromPipeline=$true)]$Line)
+  process { $Line | Out-File -FilePath $log -Append -Encoding utf8; $Line }
+}
+"[$(Get-Date -Format o)] dashboard-sync starting" | Tee-Log
 Get-Content -Raw $prompt |
   & claude -p --allowedTools "Bash,ReadMcpResourceTool,mcp__claude_ai_Notion__notion-fetch,mcp__claude_ai_Notion__notion-update-page" 2>&1 |
-  Tee-Object -FilePath $log -Append -Encoding utf8
+  Tee-Log
 # Capture the claude -p exit code FIRST -- before any cmdlet/native call below can
 # perturb $LASTEXITCODE (premortem X3: the registry Status needs a reliable signal).
 $code = $LASTEXITCODE
-"[$(Get-Date -Format o)] dashboard-sync finished (exit=$code)" | Tee-Object -FilePath $log -Append -Encoding utf8
+"[$(Get-Date -Format o)] dashboard-sync finished (exit=$code)" | Tee-Log
 
 # --- Post-write verification (non-fatal, read-only): confirm the write actually
 # landed server-side before the registry records OK. A `claude -p` exit=0 proves
@@ -92,7 +100,7 @@ if ($code -eq 0) {
 } else {
   $verifyReason = "claude -p exited nonzero ($code) -- skipped verify"
 }
-"[$(Get-Date -Format o)] post-write verify: ok=$verifyOk reason=$verifyReason" | Tee-Object -FilePath $log -Append -Encoding utf8
+"[$(Get-Date -Format o)] post-write verify: ok=$verifyOk reason=$verifyReason" | Tee-Log
 
 # --- Report Runs registry (T3.4): non-fatal final step. --------------------------
 # Status is synthesized DETERMINISTICALLY from the captured exit code AND the
@@ -113,13 +121,13 @@ try {
   $emit = ($emit | Select-Object -Last 1)
   if ($LASTEXITCODE -eq 0 -and $emit) {
     & $node (Join-Path $repo 'scripts\report-registry\upsert.mjs') $emit 2>&1 |
-      ForEach-Object { "$_" } | Tee-Object -FilePath $log -Append -Encoding utf8
-    "[$(Get-Date -Format o)] report-run upsert exit=$LASTEXITCODE (non-fatal)" | Tee-Object -FilePath $log -Append -Encoding utf8
+      ForEach-Object { "$_" } | Tee-Log
+    "[$(Get-Date -Format o)] report-run upsert exit=$LASTEXITCODE (non-fatal)" | Tee-Log
   } else {
-    "[$(Get-Date -Format o)] make-run emitted no path (exit=$LASTEXITCODE) -- skipping upsert" | Tee-Object -FilePath $log -Append -Encoding utf8
+    "[$(Get-Date -Format o)] make-run emitted no path (exit=$LASTEXITCODE) -- skipping upsert" | Tee-Log
   }
 } catch {
-  "[$(Get-Date -Format o)] report-run registry step threw (non-fatal): $_" | Tee-Object -FilePath $log -Append -Encoding utf8
+  "[$(Get-Date -Format o)] report-run registry step threw (non-fatal): $_" | Tee-Log
 }
 
 # --- Silent-miss watchdog (T5): non-fatal final step, NEVER touches $code. -------
@@ -132,10 +140,10 @@ try {
 # watchdog outage can NEVER change $code or this task's Last Run Result.
 try {
   & $node (Join-Path $repo 'scripts\report-registry\watchdog.mjs') 2>&1 |
-    ForEach-Object { "$_" } | Tee-Object -FilePath $log -Append -Encoding utf8
-  "[$(Get-Date -Format o)] watchdog sweep exit=$LASTEXITCODE (non-fatal)" | Tee-Object -FilePath $log -Append -Encoding utf8
+    ForEach-Object { "$_" } | Tee-Log
+  "[$(Get-Date -Format o)] watchdog sweep exit=$LASTEXITCODE (non-fatal)" | Tee-Log
 } catch {
-  "[$(Get-Date -Format o)] watchdog sweep threw (non-fatal): $_" | Tee-Object -FilePath $log -Append -Encoding utf8
+  "[$(Get-Date -Format o)] watchdog sweep threw (non-fatal): $_" | Tee-Log
 }
 
 # X3 fix: the script previously logged $LASTEXITCODE but never `exit`ed with it, so
