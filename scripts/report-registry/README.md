@@ -234,3 +234,106 @@ is where pipeline-facing emits get validated.
    drift from the single source of truth either.
 
 See `scripts/report-registry/test/conventions.test.mjs` for the enforcement tests.
+
+## Reporting Health strip + trust metrics (proposals 05 + 09, 2026-07-17)
+
+The hub launcher (`## 🗂 Report pages`) is now a single machine-owned "Reporting
+Health" surface: a wider table plus an appended weekly trust-metrics rollup, all
+written and replaced idempotently by `refresh-pages.mjs`'s existing section-splice
+(same `HUB_LAUNCHER_HEADING` section as before — nothing new to lock or splice).
+
+### Hub table columns
+
+| Column | Source |
+|---|---|
+| Report | link to the type's child page |
+| Status | the newest genuine row's `Status` (`pickNewest()`; corrective rows excluded) |
+| Run date | that row's `Run Date` |
+| Artifact | that row's `Artifact URL`, if http(s) |
+| Next expected | `watchdog.mjs`'s `SCHEDULE` — the next deadline+period this type is due, via `nextExpectedDeadline()` (the SAME schedule the real silent-miss watchdog checks against) |
+| Log | a STATIC per-type hint at that pipeline's own wrapper log location (`config.mjs LOG_HINT_BY_TYPE` — cheap by design, not a live filesystem lookup; update the map if a wrapper's log dir moves) |
+| Watchdog | `refresh-pages.mjs`'s `watchdogVerdict()` — one of `present` / `stale` / `missing` / `no runs` / `unscheduled` (see below) |
+
+**Watchdog verdict definitions** (`watchdogVerdict(type, run, opts)`):
+- `missing` — the newest known row's Summary carries the `watchdog:` prefix
+  (`watchdog.mjs WATCHDOG_MISS_PREFIX_RE` / `isWatchdogMissRow()`) — i.e. the last
+  thing the registry knows about this type IS a synthesized silent-miss row.
+- `stale` — a real row exists but its Run Date is older than `maxAgeHours`
+  (default 48h, `check-drift.mjs`'s `computeDrift()` — the SAME staleness
+  definition check-drift.mjs and watchdog.mjs's report-only freshness signal
+  already share).
+- `present` — a real, fresh row exists.
+- `no runs` — the type has zero registry rows at all.
+- `unscheduled` — the type has no `watchdog.mjs SCHEDULE` entry (a proposal-08
+  watchdog-parity violation; should never happen in practice).
+
+### Trust-metrics rollup (`trust-metrics.mjs`)
+
+A pure module (`computeTrustMetrics()`) that measures the registry against
+itself over a lookback window (default `DEFAULT_LOOKBACK_WEEKS = 4`):
+
+- **Expected-vs-landed per week** — for each Mon-Sun week bucket in the window,
+  sums across every `SCHEDULE` entry the number of periods whose deadline has
+  elapsed (`expectedPeriodsInWeek()`, reusing `watchdog.mjs`'s `candidateForDay()`
+  so this can never diverge from what the real watchdog itself checks) against
+  the number of those periods with a genuine landed row (excludes both
+  `watchdog:`-prefixed miss-rows and `backfill:`/`remap:` corrective rows from
+  "landed" — see proposal 08's conventions above). `gap = expected - landed`.
+- **`silentMissCount`** — count of `watchdog:`-prefixed rows within the lookback
+  window (**target: zero**). Each one is a run that the watchdog itself had to
+  synthesize because nothing else ever landed for that period.
+- **`meanTimeToDetectionHours`** — mean(miss-row's `Run Date` − the expected
+  deadline it detected), computed via `expectedDeadlineForPeriod()` (the
+  INVERSE of `candidateForDay()`). **Only computable for `date`-format periods**
+  — VP Weekly's `isoWeek` period has no single unambiguous calendar day to
+  reverse to, so those samples are honestly EXCLUDED (`ttdSampleCount` reflects
+  this), never fabricated as zero or averaged in incorrectly.
+- **`correctiveRowRate`** — `backfill:`/`remap:`-prefixed rows as a fraction of
+  all rows in the window (`config.mjs CORRECTIVE_PREFIX_RE`).
+
+Rendered as 3 compact paragraphs (`renderTrustRollupBlocks()`) appended to the
+SAME hub `## 🗂 Report pages` section body — one surface, not a second one — by
+`refresh-pages.mjs`'s CLI, which computes the summary via a best-effort,
+non-fatal live read (`computeHubTrustSummary()`) before every hub refresh.
+
+Standalone CLI:
+
+```
+node scripts/report-registry/trust-metrics.mjs                 # human-readable, 4-week window
+node scripts/report-registry/trust-metrics.mjs --json           # JSON summary
+node scripts/report-registry/trust-metrics.mjs --weeks 8        # custom lookback
+```
+
+### Human-section freshness (reviewed-date stamp convention)
+
+`trust-metrics.mjs`'s CLI also runs a best-effort, non-fatal freshness check on
+the Reports hub's HUMAN-authored sections (everything on the hub that isn't the
+machine-owned `🗂 Report pages` table) — it never edits a human section, only
+reads and reports:
+
+- **Convention:** a human section adopts freshness tracking by including the
+  literal text `Reviewed: YYYY-MM-DD` anywhere in its body (e.g. as a trailing
+  note under the section heading). `trust-metrics.mjs REVIEWED_DATE_RE` is the
+  exact pattern matched.
+- A section with **no stamp** is reported `unstamped: true` — a WARN inviting
+  adoption, not an error (the convention is opt-in until a human adds the first
+  stamp).
+- A stamped section older than `HUMAN_SECTION_MAX_AGE_DAYS` (default 30) is
+  reported `stale: true`.
+
+### What remains manual (deferred, by design)
+
+- **Deleting the superseded 7/02 hub callouts** — a live-surface edit to
+  pre-existing hub content, out of scope for this machine-owned strip (the
+  orchestrator/human handles cleaning up stale hand-written callouts).
+  `buildHubLauncherBlocks()`'s section-splice REPLACES the machine-owned strip
+  section idempotently on every run, so stale MACHINE content can never persist
+  — only the old human callouts need a one-time manual removal.
+- **Team Dashboard child-page rollup** — proposal 09 floated a rollup embedded
+  on the Team Dashboard child page too; the hub strip is the single surface for
+  now. A future pass can mirror the same `renderTrustRollupBlocks()` output onto
+  that page's own section once there's a concrete need for a second view.
+
+See `scripts/report-registry/test/trust-metrics.test.mjs` for the full behavior
+matrix (week-bucket math, expected-vs-landed, time-to-detection reconstruction,
+corrective-rate, and the freshness checker).

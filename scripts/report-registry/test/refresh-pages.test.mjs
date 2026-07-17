@@ -112,6 +112,9 @@ const CHILD = {
   'Team Dashboard': '39576fd7-ac82-810b-9fc8-c2d1f4f76fc3',
 };
 
+// Fixed "now" so nextExpectedLabel/watchdogVerdict (SCHEDULE-driven) are deterministic.
+const HUB_NOW = new Date(2026, 6, 16, 13, 0, 0); // Thursday 13:00
+
 test('buildHubLauncherBlocks -> a table (header + one row per type) + trailing overview link', () => {
   const blocks = buildHubLauncherBlocks({
     latestByType: {
@@ -122,13 +125,18 @@ test('buildHubLauncherBlocks -> a table (header + one row per type) + trailing o
     hubId: '38f76fd7ac8280478e50dd2956ba6e8a',
     overviewViewId: '39576fd7-ac82-81d6-be38-000ce9bbd794',
     types: ['VP Weekly', 'Team Dashboard'],
+    now: HUB_NOW,
   });
   const table = findTable(blocks);
   assert.ok(table, 'has a table block');
-  assert.equal(table.table.table_width, 4);
+  assert.equal(table.table.table_width, 7);
   assert.equal(table.table.has_column_header, true);
   // header + 2 type rows
   assert.equal(table.table.children.length, 3);
+  assert.deepEqual(
+    table.table.children[0].table_row.cells.map((c) => flat(c)),
+    ['Report', 'Status', 'Run date', 'Artifact', 'Next expected', 'Log', 'Watchdog'],
+  );
 
   // VP Weekly row: name cell links to the child page url; status + date; http artifact link
   const vp = table.table.children[1].table_row.cells;
@@ -137,13 +145,17 @@ test('buildHubLauncherBlocks -> a table (header + one row per type) + trailing o
   assert.match(flat(vp[1]), /OK/);
   assert.match(flat(vp[2]), /2026-06-29/);
   assert.equal(vp[3][0].text.link.url, 'https://x/y');
+  assert.match(flat(vp[4]), /^2026-W\d{2} \(by 2026-07-\d{2}\)$/); // next expected
+  assert.notEqual(flat(vp[5]), '—'); // log hint present for a scheduled type
+  assert.equal(flat(vp[6]), 'stale'); // present row from 2026-06-29 is > 48h old at HUB_NOW
 
-  // Team Dashboard row (no runs): status + date + artifact all show a dash placeholder
+  // Team Dashboard row (no runs): status + date + artifact + watchdog all show "no data"
   const td = table.table.children[2].table_row.cells;
   assert.equal(flat(td[0]), 'Team Dashboard');
   assert.equal(flat(td[1]), '—');
   assert.equal(flat(td[2]), '—');
   assert.equal(flat(td[3]), '—');
+  assert.equal(flat(td[6]), 'no runs');
 
   // trailing overview link paragraph
   const para = blocks.find((b) => b.type === 'paragraph');
@@ -157,10 +169,71 @@ test('buildHubLauncherBlocks: a non-http artifact yields a dash, not a broken li
     latestByType: { 'Self-Improvement': { runDate: '2026-07-05', status: 'OK', artifactUrl: 'docs/x.md' } },
     childPages: { 'Self-Improvement': '39576fd7-ac82-8139-8438-ed06fdedebb7' },
     types: ['Self-Improvement'],
+    now: HUB_NOW,
   });
   const cells = findTable(blocks).table.children[1].table_row.cells;
   assert.equal(cells[3][0].text?.link, undefined);
   assert.equal(flat(cells[3]), '—');
+});
+
+test('buildHubLauncherBlocks: a watchdog miss-row summary yields verdict "missing"', () => {
+  const blocks = buildHubLauncherBlocks({
+    latestByType: {
+      'VP Weekly': {
+        runDate: HUB_NOW.toISOString(), status: 'Failed', summary: 'watchdog: no "VP Weekly" row found for period 2026-W29 by its deadline+grace',
+      },
+    },
+    childPages: CHILD,
+    types: ['VP Weekly'],
+    now: HUB_NOW,
+  });
+  const cells = findTable(blocks).table.children[1].table_row.cells;
+  assert.equal(flat(cells[6]), 'missing');
+});
+
+test('buildHubLauncherBlocks: a fresh recent row yields verdict "present"', () => {
+  const blocks = buildHubLauncherBlocks({
+    latestByType: { 'VP Weekly': { runDate: HUB_NOW.toISOString(), status: 'OK', summary: 'ok' } },
+    childPages: CHILD,
+    types: ['VP Weekly'],
+    now: HUB_NOW,
+  });
+  const cells = findTable(blocks).table.children[1].table_row.cells;
+  assert.equal(flat(cells[6]), 'present');
+});
+
+test('buildHubLauncherBlocks: an unscheduled type degrades to dashes/unscheduled instead of throwing', () => {
+  const blocks = buildHubLauncherBlocks({
+    latestByType: { 'Not A Real Type': { runDate: HUB_NOW.toISOString(), status: 'OK' } },
+    childPages: { 'Not A Real Type': 'x' },
+    types: ['Not A Real Type'],
+    now: HUB_NOW,
+  });
+  const cells = findTable(blocks).table.children[1].table_row.cells;
+  assert.equal(flat(cells[4]), '—'); // next expected
+  assert.equal(flat(cells[6]), 'unscheduled');
+});
+
+test('buildHubLauncherBlocks: appends the trust rollup when trustSummary is supplied; omits it when null', () => {
+  const trustSummary = {
+    lookbackWeeks: 1,
+    weeks: [{ week: '2026-W29', expected: 1, landed: 1, gap: 0 }],
+    silentMissCount: 0,
+    meanTimeToDetectionHours: null,
+    ttdSampleCount: 0,
+    correctiveRowRate: 0,
+    correctiveRowCount: 0,
+    totalRowsInWindow: 1,
+  };
+  const withSummary = buildHubLauncherBlocks({
+    latestByType: {}, childPages: CHILD, types: ['VP Weekly'], now: HUB_NOW, trustSummary,
+  });
+  assert.ok(withSummary.some((b) => b.type === 'paragraph' && flat(b.paragraph.rich_text).includes('Trust metrics')));
+
+  const withoutSummary = buildHubLauncherBlocks({
+    latestByType: {}, childPages: CHILD, types: ['VP Weekly'], now: HUB_NOW,
+  });
+  assert.equal(withoutSummary.some((b) => b.type === 'paragraph' && flat(b.paragraph.rich_text).includes('Trust metrics')), false);
 });
 
 // --- orchestration (mocked transport) ------------------------------------------

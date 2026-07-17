@@ -74,6 +74,21 @@ export const CORRECTIVE_PREFIX_RE = /^(backfill|remap):/i;
 // only http(s) is accepted.
 export const HTTP_URL_RE = /^https?:\/\//i;
 
+// --- log-location hints (proposal 05, hub health strip) -------------------------
+// A STATIC per-type string pointing at where a human would look for that
+// pipeline's own wrapper log — not a live lookup (the wrappers' log dirs are
+// documented in the CCv3 rules/README; verified against the wrapper scripts
+// themselves, 2026-07-17). Cheap-by-design: no filesystem walk, no per-run file
+// discovery. Update this map if a wrapper's log location ever moves.
+export const LOG_HINT_BY_TYPE = {
+  'VP Weekly': 'ai-report-card/logs/scheduled-run.log (out-of-repo)',
+  'FourthOS Sponsor': '~/.claude/logs/fourthos-weekly/',
+  'System Health': '~/.claude/logs/health-check/',
+  'Team Dashboard': '.claude/logs/dashboard-sync/',
+  'Project Portfolio': '.claude/logs/project-cards/',
+  'Self-Improvement': '.claude/logs/self-improvement/',
+};
+
 // --- ntn CLI (absolute winget exe — solves the ntn-PATH problem) ---
 // Re-exported for callers that want the exe path without importing project-cards
 // config. lib/notion.mjs already enforces the non-interactive contract around it.

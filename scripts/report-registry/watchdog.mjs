@@ -135,12 +135,14 @@ export function scheduleFormatMismatches(schedule = SCHEDULE) {
 }
 
 // --- local-time date helpers (pure) ---------------------------------------------
-function startOfDay(d) { return new Date(d.getFullYear(), d.getMonth(), d.getDate()); }
-function addDays(d, n) { const c = new Date(d); c.setDate(c.getDate() + n); return c; }
-function atTime(d, { h, m }) {
+// Exported (proposals 05/09): the hub health strip and trust-metrics rollup reuse
+// these instead of re-deriving local-time day math independently.
+export function startOfDay(d) { return new Date(d.getFullYear(), d.getMonth(), d.getDate()); }
+export function addDays(d, n) { const c = new Date(d); c.setDate(c.getDate() + n); return c; }
+export function atTime(d, { h, m }) {
   const c = new Date(d); c.setHours(h, m, 0, 0); return c;
 }
-function ymd(d) {
+export function ymd(d) {
   const p2 = (n) => String(n).padStart(2, '0');
   return `${d.getFullYear()}-${p2(d.getMonth() + 1)}-${p2(d.getDate())}`;
 }
@@ -191,6 +193,43 @@ export function computeCandidate(entry, now) {
   return { due: true, candidate, graceEnd, period: formatPeriod(candidate, entry.periodFormat) };
 }
 
+// --- candidate/deadline for an ARBITRARY calendar day (proposals 05/09) --------
+// Generalizes computeCandidate's candidate-day/deadline/period mapping to any day,
+// not just "now" — the building block for "what's the NEXT expected deadline" (05)
+// and "which periods were expected within week W" (09). For a weekly entry, `day`
+// is assumed by the caller to already be the scheduled weekday (callers iterate
+// days and check `day.getDay() === entry.weekday` before calling this); this
+// function itself does not re-gate on weekday, mirroring computeCandidate's own
+// two branches exactly (same `candidate`/`graceEnd` derivation). Pure; never throws.
+export function candidateForDay(entry, day) {
+  const today = startOfDay(day);
+  const candidateDay = entry.cadence === 'weekly'
+    ? today
+    : (entry.crossesMidnight ? addDays(today, -1) : today);
+  const deadline = atTime(today, entry.grace);
+  return { candidateDay, deadline, period: formatPeriod(candidateDay, entry.periodFormat) };
+}
+
+// The next (strictly future, relative to `now`) deadline+period for a schedule
+// entry, regardless of whether an earlier one is already overdue. Bounded to an
+// 8-day lookahead (a weekly cadence repeats every 7 days; +1 buffer) so this can
+// never loop unboundedly. Pure; exported for tests and the hub health strip.
+export function nextExpectedDeadline(entry, now) {
+  let day = startOfDay(now);
+  for (let i = 0; i < 8; i += 1) {
+    if (entry.cadence === 'weekly' && day.getDay() !== entry.weekday) {
+      day = addDays(day, 1);
+      continue;
+    }
+    const { deadline, period, candidateDay } = candidateForDay(entry, day);
+    if (deadline > now) return { deadline, period, candidateDay };
+    day = addDays(day, 1);
+  }
+  // Unreachable for a well-formed SCHEDULE entry (weekly cycles within 7 days,
+  // daily within 2) — fail loud rather than silently return a wrong answer.
+  throw new Error(`nextExpectedDeadline: no candidate found within 8 days for "${entry.type}"`);
+}
+
 // --- registry read (transport-injectable) ---------------------------------------
 // All rows of `type` whose Period equals `period`, regardless of Status — a
 // Warn/Failed row still proves the run LAUNCHED (that's a different, already
@@ -238,6 +277,17 @@ export function assessFreshness(rows, { now = new Date(), maxAgeHours = DEFAULT_
   return {
     newestRunDate: d.newestRunDate, ageHours: d.ageHours, stale: d.drift, reason: freshnessReason(d),
   };
+}
+
+// --- miss-row identification (pure; proposal 09) ---------------------------------
+// A row's Summary written by buildMissRun below always starts with "watchdog:" —
+// this is the ONE marker that distinguishes a watchdog-authored miss-row from a
+// genuine pipeline row anywhere downstream (the hub health-strip verdict column,
+// trust-metrics' silent-miss counter). Mirrors config.mjs's CORRECTIVE_PREFIX_RE
+// pattern: anchored + case-insensitive, single source of truth for the prefix.
+export const WATCHDOG_MISS_PREFIX_RE = /^watchdog:/i;
+export function isWatchdogMissRow(summary) {
+  return WATCHDOG_MISS_PREFIX_RE.test(String(summary || '').trim());
 }
 
 // --- miss-row builder (pure) -----------------------------------------------------

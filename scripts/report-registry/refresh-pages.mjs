@@ -49,8 +49,13 @@ import {
 } from '../project-cards/lib/page-lock.mjs';
 import {
   REPORT_RUNS_DS_ID, REPORT_CHILD_PAGES, REPORTS_HUB_PAGE_ID,
-  REPORT_TYPES, REPORT_RUNS_VIEWS,
+  REPORT_TYPES, REPORT_RUNS_VIEWS, LOG_HINT_BY_TYPE,
 } from './config.mjs';
+import {
+  SCHEDULE, nextExpectedDeadline, isWatchdogMissRow, ymd,
+} from './watchdog.mjs';
+import { computeDrift, DEFAULT_MAX_AGE_HOURS } from './check-drift.mjs';
+import { computeTrustMetrics, renderTrustRollupBlocks } from './trust-metrics.mjs';
 
 // The two section headings this refresh owns/writes.
 export const CURRENT_RUN_HEADING = '## Current run';
@@ -168,17 +173,61 @@ export function buildCurrentRunBlocks(row) {
   }];
 }
 
+// --- health-strip columns (proposal 05) -----------------------------------------
+// "Next expected" — the upcoming deadline+period for a type, from watchdog.mjs's
+// SCHEDULE (the SAME schedule the real silent-miss watchdog checks against). A
+// type absent from SCHEDULE (should never happen — proposal 08's watchdog-parity
+// convention enforces coverage) degrades to a dash rather than throwing, since
+// this renders on every hub refresh and must never abort the write.
+export function nextExpectedLabel(type, { schedule = SCHEDULE, now = new Date() } = {}) {
+  const entry = schedule.find((e) => e.type === type);
+  if (!entry) return '—';
+  try {
+    const { deadline, period } = nextExpectedDeadline(entry, now);
+    return `${period} (by ${ymd(deadline)})`;
+  } catch {
+    return '—';
+  }
+}
+
+// "Watchdog" verdict — reuses check-drift's computeDrift (the SAME staleness
+// definition check-drift.mjs and watchdog.mjs's report-only freshness signal
+// already share) plus watchdog.mjs's isWatchdogMissRow marker:
+//   'missing'     — the newest known row for this type IS a watchdog miss-row
+//                    (a genuine silent miss the watchdog already caught).
+//   'stale'       — a real row exists but its Run Date is older than maxAgeHours.
+//   'present'     — a real, fresh row exists.
+//   'no runs'     — the type has zero registry rows at all.
+//   'unscheduled' — the type has no watchdog SCHEDULE entry (parity violation).
+export function watchdogVerdict(type, run, {
+  schedule = SCHEDULE, now = new Date(), maxAgeHours = DEFAULT_MAX_AGE_HOURS,
+} = {}) {
+  const entry = schedule.find((e) => e.type === type);
+  if (!entry) return 'unscheduled';
+  if (!run) return 'no runs';
+  if (isWatchdogMissRow(run.summary)) return 'missing';
+  const [drift] = computeDrift({ [type]: run.runDate }, { maxAgeHours, now: now.getTime(), types: [type] });
+  return drift.drift ? 'stale' : 'present';
+}
+
 // --- Hub launcher builder (pure) -----------------------------------------------
-// Returns the BODY blocks for the `## 🗂 Report pages` hub section: a 4-column table
-// (Report | Status | Run date | Artifact), one row per report type linking to its
-// child page, plus a trailing paragraph linking the overview view. `latestByType`
-// maps a type -> its normalized run (from extractRun) or null.
+// Returns the BODY blocks for the `## 🗂 Report pages` hub section: a 7-column
+// table (Report | Status | Run date | Artifact | Next expected | Log | Watchdog),
+// one row per report type linking to its child page, a trailing paragraph linking
+// the overview view, and (when `trustSummary` is supplied) the trust-metrics
+// weekly rollup appended to this SAME section — one machine-owned surface,
+// idempotent under the existing section-splice (proposals 05 + 09).
+// `latestByType` maps a type -> its normalized run (from extractRun) or null.
 export function buildHubLauncherBlocks({
   latestByType = {},
   childPages = REPORT_CHILD_PAGES,
   hubId = REPORTS_HUB_PAGE_ID,
   overviewViewId = OVERVIEW_VIEW_ID,
   types = REPORT_TYPES,
+  schedule = SCHEDULE,
+  now = new Date(),
+  maxAgeHours = DEFAULT_MAX_AGE_HOURS,
+  trustSummary = null,
 } = {}) {
   const header = {
     type: 'table_row',
@@ -188,6 +237,9 @@ export function buildHubLauncherBlocks({
         cell(seg('Status', { bold: true })),
         cell(seg('Run date', { bold: true })),
         cell(seg('Artifact', { bold: true })),
+        cell(seg('Next expected', { bold: true })),
+        cell(seg('Log', { bold: true })),
+        cell(seg('Watchdog', { bold: true })),
       ],
     },
   };
@@ -199,12 +251,18 @@ export function buildHubLauncherBlocks({
     const artCell = isHttpUrl(run?.artifactUrl)
       ? cell(seg('link', { link: run.artifactUrl }))
       : cell(seg('—'));
-    return { type: 'table_row', table_row: { cells: [nameCell, statusCell, dateCell, artCell] } };
+    const nextCell = cell(seg(nextExpectedLabel(type, { schedule, now })));
+    const logCell = cell(seg(LOG_HINT_BY_TYPE[type] || '—'));
+    const watchdogCell = cell(seg(watchdogVerdict(type, run, { schedule, now, maxAgeHours })));
+    return {
+      type: 'table_row',
+      table_row: { cells: [nameCell, statusCell, dateCell, artCell, nextCell, logCell, watchdogCell] },
+    };
   });
   const table = {
     type: 'table',
     table: {
-      table_width: 4,
+      table_width: 7,
       has_column_header: true,
       has_row_header: false,
       children: [header, ...rows],
@@ -219,7 +277,7 @@ export function buildHubLauncherBlocks({
       ],
     },
   };
-  return [table, overview];
+  return [table, overview, ...renderTrustRollupBlocks(trustSummary)];
 }
 
 // --- dry-run rendering (pure) --------------------------------------------------
@@ -301,11 +359,14 @@ const defaultReleaseHubLock = () => releasePageLock(HUB_LOCK_PATH);
 export function refreshHub({
   latestByType = {}, dryRun = false, hubId = REPORTS_HUB_PAGE_ID,
   childPages = REPORT_CHILD_PAGES, overviewViewId = OVERVIEW_VIEW_ID, types = REPORT_TYPES,
+  now = new Date(), trustSummary = null,
   getBlocks = getPageBlocks, findSection = findSectionBlocks,
   replaceSection = replaceSectionBlocks, insertAfter = insertBlocksAfter,
   acquireHubLock = defaultAcquireHubLock, releaseHubLock = defaultReleaseHubLock,
 } = {}) {
-  const body = buildHubLauncherBlocks({ latestByType, childPages, hubId, overviewViewId, types });
+  const body = buildHubLauncherBlocks({
+    latestByType, childPages, hubId, overviewViewId, types, now, trustSummary,
+  });
   if (dryRun) {
     console.log(`\n[dry-run] HUB "${HUB_LAUNCHER_HEADING}" (${hubId}):`);
     console.log(describeBlocks(body));
@@ -342,7 +403,9 @@ export function refreshHub({
 // `onlyType` (optional) scopes the child-page WRITES to that one report type; every
 // type is still queried because the hub launcher table is replaced whole and needs
 // all types' latest rows. An unknown onlyType throws (config error, fail loud).
-export function refreshAll({ dryRun = false, onlyType = null, deps = {} } = {}) {
+export function refreshAll({
+  dryRun = false, onlyType = null, now = new Date(), trustSummary = null, deps = {},
+} = {}) {
   if (onlyType != null && !REPORT_TYPES.includes(onlyType)) {
     throw new Error(`unknown --type "${onlyType}" (allowed: ${REPORT_TYPES.join(', ')})`);
   }
@@ -402,6 +465,8 @@ export function refreshAll({ dryRun = false, onlyType = null, deps = {} } = {}) 
     results.hub = refreshHub({
       latestByType,
       dryRun,
+      now,
+      trustSummary,
       getBlocks: d.getBlocks,
       findSection: d.findSection,
       replaceSection: d.replaceSection,
@@ -431,11 +496,26 @@ export function parseTypeArg(argv) {
   return val;
 }
 
+// Best-effort, non-fatal trust-metrics computation for the hub's rollup block
+// (proposal 09). A failure here (e.g. a transient ntn read) never blocks the
+// page refreshes — the hub simply omits the rollup for this run and self-heals
+// on the next refresh, same non-fatal contract as everything else in this file.
+function computeHubTrustSummary() {
+  try {
+    const rawRows = queryDataSource(REPORT_RUNS_DS_ID, {});
+    return computeTrustMetrics({ rawRows });
+  } catch (e) {
+    console.error(`[refresh-pages] WARN: trust-metrics computation failed (non-fatal, hub omits the rollup): ${e.message}`);
+    return null;
+  }
+}
+
 function main() {
   const argv = process.argv.slice(2);
   const dryRun = argv.includes('--dry-run');
   const onlyType = parseTypeArg(argv);
-  const results = refreshAll({ dryRun, onlyType });
+  const trustSummary = computeHubTrustSummary();
+  const results = refreshAll({ dryRun, onlyType, trustSummary });
   const wrote = results.children.filter((c) => c.wrote).length;
   const expected = onlyType ? 1 : REPORT_TYPES.length;
   const hubAction = results.hub ? results.hub.action : 'skipped';
