@@ -16,9 +16,16 @@ set "LOG=%REPORT_DIR%\logs\scheduled-run.log"
 cd /d "%REPORT_DIR%"
 echo [%date% %time%] AIWeeklyReport starting >> "%LOG%" 2>&1
 
-REM mit #4: the Task Scheduler process env may lack ANTHROPIC_API_KEY if the key was set at
-REM User scope AFTER last logon. If it is missing, source it from the User-scope registry
-REM (HKCU\Environment) so a freshly-set key still reaches this run.
+REM KEY SOURCE (updated 2026-07-17): the ambient ANTHROPIC_API_KEY User-scope env var was
+REM REMOVED so it no longer leaks into interactive Claude Code sessions (a set key disables
+REM claude.ai account features -- remote control, connectors). The secret now lives ONLY in the
+REM dedicated User-scope var ANTHROPIC_API_KEY_REPORTING, read here and exported in-process.
+REM Resolution order: (1) process env ANTHROPIC_API_KEY if already set; else (2) the dedicated
+REM ANTHROPIC_API_KEY_REPORTING from HKCU\Environment; else (3) legacy ANTHROPIC_API_KEY from
+REM HKCU\Environment (back-compat, in case the ambient var is ever restored).
+if not defined ANTHROPIC_API_KEY (
+  for /f "tokens=2,*" %%A in ('reg query HKCU\Environment /v ANTHROPIC_API_KEY_REPORTING 2^>nul ^| findstr /i ANTHROPIC_API_KEY_REPORTING') do set "ANTHROPIC_API_KEY=%%B"
+)
 if not defined ANTHROPIC_API_KEY (
   for /f "tokens=2,*" %%A in ('reg query HKCU\Environment /v ANTHROPIC_API_KEY 2^>nul ^| findstr /i ANTHROPIC_API_KEY') do set "ANTHROPIC_API_KEY=%%B"
 )
