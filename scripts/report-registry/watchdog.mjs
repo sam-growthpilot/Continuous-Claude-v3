@@ -57,12 +57,28 @@
 // always exits 0 (observability must never fail whatever wraps it — see the
 // dashboard-sync wrapper wiring).
 //
+// SUPERSET GROUNDWORK (2026-07-17): the watchdog's write path detects ONE class
+// — a period with ZERO rows (a run that never launched / was killed). The sibling
+// check-drift.mjs owns two OTHER classes the watchdog historically ignored: a row
+// exists but its newest Run Date is STALE (older than a threshold), or its Run
+// Date is MALFORMED/absent (unparseable). To let a future consolidation collapse
+// to a SINGLE superset detector, evaluateEntry now ALSO reports the freshness of
+// the row(s) it finds for the expected period, routed through check-drift's OWN
+// staleness core (newestRunDate + computeDrift) so both files share one definition
+// of "stale". This is REPORT-ONLY and ADDITIVE: it never writes a miss-row, never
+// changes the exit code, and never changes the absence→miss-row write path. See
+// the detector-coverage-matrix test for the full class-by-class characterization.
+//
 // Reuses upsert.mjs (upsertReportRun, validateRun) + config.mjs (enums) +
-// project-cards/lib/notion.mjs (queryDataSource). ESM, no external deps.
+// project-cards/lib/notion.mjs (queryDataSource) + check-drift.mjs (freshness
+// core). ESM, no external deps.
 import { pathToFileURL } from 'node:url';
 import { queryDataSource } from '../project-cards/lib/notion.mjs';
 import { REPORT_RUNS_DS_ID } from './config.mjs';
 import { upsertReportRun } from './upsert.mjs';
+import {
+  newestRunDate, computeDrift, DEFAULT_MAX_AGE_HOURS, parseMaxAgeHours,
+} from './check-drift.mjs';
 
 // --- declarative schedule (pure data) -------------------------------------------
 // weekday: JS Date#getDay() convention (Sun=0 .. Sat=6). Thursday=4, Friday=5.
@@ -156,11 +172,13 @@ export function computeCandidate(entry, now) {
 }
 
 // --- registry read (transport-injectable) ---------------------------------------
-// Any row of `type` whose Period equals `period`, regardless of Status — a
+// All rows of `type` whose Period equals `period`, regardless of Status — a
 // Warn/Failed row still proves the run LAUNCHED (that's a different, already
-// visible failure mode); the watchdog only cares about total absence.
-export function hasRowForPeriod(type, period, { dsId = REPORT_RUNS_DS_ID, query = queryDataSource } = {}) {
-  const rows = query(dsId, {
+// visible failure mode); the write path only cares about total absence. The rows
+// themselves are returned (not just a count) so the additive freshness assessment
+// can inspect their Run Dates — see assessFreshness / the superset note up top.
+export function rowsForPeriod(type, period, { dsId = REPORT_RUNS_DS_ID, query = queryDataSource } = {}) {
+  return query(dsId, {
     filter: {
       and: [
         { property: 'Report Type', select: { equals: type } },
@@ -168,7 +186,38 @@ export function hasRowForPeriod(type, period, { dsId = REPORT_RUNS_DS_ID, query 
       ],
     },
   }) || [];
-  return rows.length > 0;
+}
+
+// Presence-only convenience wrapper (unchanged public contract): true iff ANY row
+// exists for the type+period, regardless of Status. This is the exact predicate
+// the absence→miss-row write path keys off of.
+export function hasRowForPeriod(type, period, opts = {}) {
+  return rowsForPeriod(type, period, opts).length > 0;
+}
+
+// --- freshness of the present rows (superset groundwork, REPORT-ONLY) ------------
+// Classifies the two check-drift classes the watchdog's presence check ignores:
+//   'fresh'                 — newest Run Date within maxAgeHours
+//   'stale'                 — newest Run Date older than maxAgeHours
+//   'no-parseable-run-date' — malformed/absent Run Date (age unknowable)
+// derived purely from the shape computeDrift returns (ageHours===null iff the
+// newest date was unparseable/absent).
+export function freshnessReason(drift) {
+  if (!drift.drift) return 'fresh';
+  return drift.ageHours === null ? 'no-parseable-run-date' : 'stale';
+}
+
+// Assess the freshness of a period's rows by routing the newest Run Date through
+// check-drift's OWN computeDrift core (one shared definition of "stale"). Returns
+// { newestRunDate, ageHours, stale, reason }. Pure; NEVER writes; NEVER throws for
+// well-formed row arrays. `type` is only a computeDrift bucket key here (the rows
+// are already period-scoped by rowsForPeriod), so a sentinel is fine.
+export function assessFreshness(rows, { now = new Date(), maxAgeHours = DEFAULT_MAX_AGE_HOURS, type = '_watchdog' } = {}) {
+  const newest = newestRunDate(rows);
+  const [d] = computeDrift({ [type]: newest }, { maxAgeHours, now: now.getTime(), types: [type] });
+  return {
+    newestRunDate: d.newestRunDate, ageHours: d.ageHours, stale: d.drift, reason: freshnessReason(d),
+  };
 }
 
 // --- miss-row builder (pure) -----------------------------------------------------
@@ -188,18 +237,23 @@ export function buildMissRun(entry, period, now) {
 
 // --- per-type evaluation (transport-injectable) ---------------------------------
 // Returns one of:
-//   { type, checked:false }                              — not due yet / wrong day
-//   { type, checked:true, period, status:'ok', ... }      — a real row exists
+//   { type, checked:false }                                        — not due / wrong day
+//   { type, checked:true, period, status:'ok', freshness }          — a real row exists
 //   { type, checked:true, period, status:'would-write'|'written'|'error', run, ... }
+// The `freshness` field on the 'ok' result is the additive superset signal
+// (stale/malformed classes). It is REPORT-ONLY — the status stays 'ok' and no
+// miss-row is written for a stale/malformed present row (the write path is still
+// absence-only), so existing callers/behavior are unchanged.
 export function evaluateEntry(entry, now, {
   dsId = REPORT_RUNS_DS_ID, query = queryDataSource, upsert = upsertReportRun, dryRun = false,
+  maxAgeHours = DEFAULT_MAX_AGE_HOURS,
 } = {}) {
   const c = computeCandidate(entry, now);
   if (!c.due) return { type: entry.type, checked: false };
 
-  let present;
+  let rows;
   try {
-    present = hasRowForPeriod(entry.type, c.period, { dsId, query });
+    rows = rowsForPeriod(entry.type, c.period, { dsId, query });
   } catch (e) {
     console.error(`[watchdog] ERROR querying "${entry.type}" period ${c.period} (non-fatal): ${e.message}`);
     return {
@@ -207,9 +261,10 @@ export function evaluateEntry(entry, now, {
     };
   }
 
-  if (present) {
+  if (rows.length > 0) {
     return {
       type: entry.type, checked: true, period: c.period, status: 'ok',
+      freshness: assessFreshness(rows, { now, maxAgeHours, type: entry.type }),
     };
   }
 
@@ -236,9 +291,10 @@ export function evaluateEntry(entry, now, {
 export function runWatchdog({
   now = new Date(), dryRun = false, schedule = SCHEDULE,
   dsId = REPORT_RUNS_DS_ID, query = queryDataSource, upsert = upsertReportRun,
+  maxAgeHours = DEFAULT_MAX_AGE_HOURS,
 } = {}) {
   return schedule.map((entry) => evaluateEntry(entry, now, {
-    dsId, query, upsert, dryRun,
+    dsId, query, upsert, dryRun, maxAgeHours,
   }));
 }
 
@@ -254,12 +310,13 @@ function parseNow(argv) {
 function main() {
   const argv = process.argv.slice(2);
   const dryRun = argv.includes('--dry-run');
+  const maxAgeHours = parseMaxAgeHours(argv);
   const now = parseNow(argv);
   if (Number.isNaN(now.getTime())) {
     throw new Error(`--now value did not parse to a valid date/time`);
   }
 
-  const results = runWatchdog({ now, dryRun });
+  const results = runWatchdog({ now, dryRun, maxAgeHours });
 
   console.log(`[watchdog] check instant: ${now.toISOString()} (local: ${now.toString()})`);
   for (const r of results) {
@@ -268,7 +325,14 @@ function main() {
       continue;
     }
     if (r.status === 'ok') {
-      console.log(`  ${r.type}: OK — a row exists for period ${r.period}`);
+      // Present-path: a row exists, so this is NOT a silent miss (no write). The
+      // additive freshness verdict is REPORT-ONLY — a stale/malformed present row
+      // is surfaced loudly but never written and never affects the exit code.
+      if (r.freshness?.stale) {
+        console.log(`  ${r.type}: OK-but-STALE — a row exists for period ${r.period}, but its newest Run Date is ${r.freshness.reason} (age=${r.freshness.ageHours ?? 'n/a'}h > ${maxAgeHours}h) [report-only, not written]`);
+      } else {
+        console.log(`  ${r.type}: OK — a row exists for period ${r.period} (age=${r.freshness?.ageHours ?? 'n/a'}h)`);
+      }
     } else if (r.status === 'would-write') {
       console.log(`  ${r.type}: MISSING for period ${r.period} — [DRY-RUN] would upsert:`);
       console.log(`    ${JSON.stringify(r.run)}`);
@@ -280,8 +344,10 @@ function main() {
   }
 
   const missing = results.filter((r) => r.checked && (r.status === 'would-write' || r.status === 'written'));
-  console.error(`[watchdog] ${dryRun ? 'DRY-RUN ' : ''}done — checked=${results.filter((r) => r.checked).length}/${results.length}, missing=${missing.length}${missing.length ? ': ' + missing.map((m) => `${m.type}(${m.period})`).join(', ') : ''}`);
-  // Non-fatal by contract: this is an observability sweep, never a gate.
+  const stale = results.filter((r) => r.checked && r.status === 'ok' && r.freshness?.stale);
+  console.error(`[watchdog] ${dryRun ? 'DRY-RUN ' : ''}done — checked=${results.filter((r) => r.checked).length}/${results.length}, missing=${missing.length}${missing.length ? ': ' + missing.map((m) => `${m.type}(${m.period})`).join(', ') : ''}, stale=${stale.length}${stale.length ? ': ' + stale.map((m) => `${m.type}(${m.period})`).join(', ') : ''}`);
+  // Non-fatal by contract: this is an observability sweep, never a gate. The
+  // stale/malformed superset signal is REPORT-ONLY and does NOT change this.
   process.exit(0);
 }
 

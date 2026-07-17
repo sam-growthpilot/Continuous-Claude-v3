@@ -259,8 +259,9 @@ tools/*.exe
 # claude-for-sales packaged-skill build artifacts (SKILL.md is the source; zip is a repackage)
 docs/claude-for-sales/skills/**/*.zip
 
-# project-cards sweep lock (machine-local transient runtime state)
+# project-cards sweep + shared hub-page write locks (machine-local transient runtime state)
 scripts/project-cards/.sweep.lock
+scripts/project-cards/.hub.lock
 
 # MCP tool-schema catalog dumps (local reference; regenerated per MCP server)
 mcps/

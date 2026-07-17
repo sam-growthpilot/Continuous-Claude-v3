@@ -34,7 +34,7 @@ import { spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import {
   readFileSync, writeFileSync, mkdirSync, appendFileSync, realpathSync,
-  existsSync, copyFileSync, unlinkSync,
+  existsSync, copyFileSync,
 } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { join } from 'node:path';
@@ -51,6 +51,10 @@ import {
 } from './lib/state.mjs';
 import { appendHealth, readSeries } from './lib/history.mjs';
 import { computeAttention } from './lib/attention.mjs';
+import {
+  acquirePageLock, releasePageLock, acquirePageLockWaiting,
+  HUB_LOCK_PATH, HUB_LOCK_STALE_MS, HUB_LOCK_WAIT_MS, HUB_LOCK_POLL_MS,
+} from './lib/page-lock.mjs';
 import {
   ROOT, OUT_DIR, REFRESH_PATH, LOGS_DIR, SWEEP_LOG_PATH, REPORTING_HUB_PAGE_ID,
   CARD_SECTION_HEADING, HUB_SECTION_HEADING, STATIC_EXTRA_CARDS,
@@ -315,34 +319,39 @@ async function loadCockpitBuilder() {
 // Try to acquire the sweep lock exclusively. Returns 'acquired' on a clean
 // take, 'stale-replaced' when a >30min-old lock was swept aside and re-taken,
 // or 'held' when another live sweep owns it (caller must exit 0 with a warn).
+// Thin wrapper over the shared page-lock primitive (behavior unchanged).
 export function acquireSweepLock(path = LOCK_PATH, nowMs = Date.now()) {
-  const payload = `${JSON.stringify({ pid: process.pid, ts: new Date(nowMs).toISOString() })}\n`;
-  const tryTake = () => writeFileSync(path, payload, { flag: 'wx' });
-  try {
-    tryTake();
-    return 'acquired';
-  } catch (e) {
-    if (e.code !== 'EEXIST') throw e;
-  }
-  // Lock exists — stale (crashed run) or genuinely held?
-  let heldTs = NaN;
-  try {
-    heldTs = new Date(JSON.parse(readFileSync(path, 'utf8')).ts).getTime();
-  } catch { /* unreadable/corrupt lock counts as stale */ }
-  if (!Number.isFinite(heldTs) || nowMs - heldTs > LOCK_STALE_MS) {
-    try { unlinkSync(path); } catch { /* raced: fall through to retake attempt */ }
-    try {
-      tryTake();
-      return 'stale-replaced';
-    } catch {
-      return 'held'; // another process re-took it between unlink and create
-    }
-  }
-  return 'held';
+  return acquirePageLock(path, { staleMs: LOCK_STALE_MS, nowMs });
 }
 
 export function releaseSweepLock(path = LOCK_PATH) {
-  try { unlinkSync(path); } catch { /* best-effort */ }
+  releasePageLock(path);
+}
+
+// --- shared hub-page write lock (premortem mitigation #6, W4 race) ---
+
+// Acquire the shared .hub.lock for ONE hub-write step (bounded WAIT-then-proceed).
+// The Reporting Hub is written by three independently-scheduled writers — this
+// sweep (cockpit embed + gallery table), report-registry's refresh-pages (launcher
+// section), and dashboard-sync. The lock is taken PER hub-write STEP, not as one
+// span across the whole cockpit→hub window, on purpose: the mobile-cockpit /
+// overview steps between them spawn claude (up to 5min each), so a single span
+// could outlive the 10min stale threshold and get stale-replaced mid-write by
+// another writer — the very race this guards. Per-step, each hold is ≤ one claude
+// publish (<10min) and the lock is FREE during the slow gap, so refresh-pages can
+// slip in cleanly. Returns whether we own it (caller MUST releasePageLock if so);
+// on a live holder we wait up to 60s then PROCEED with a loud warn — availability
+// beats strictness, the lock only REDUCES overlap and must never deadlock a sweep.
+function acquireHubLockForStep(step) {
+  const hl = acquirePageLockWaiting(HUB_LOCK_PATH, {
+    staleMs: HUB_LOCK_STALE_MS, waitMs: HUB_LOCK_WAIT_MS, pollMs: HUB_LOCK_POLL_MS,
+  });
+  if (!hl.acquired) {
+    console.error(`[sweep] WARN: proceeding with ${step} without .hub.lock after ${hl.waitedMs}ms wait (another hub writer holds it) — availability > strictness`);
+  } else if (hl.status === 'stale-replaced') {
+    console.error(`[sweep] WARN: replaced a stale (>10min) .hub.lock before ${step}`);
+  }
+  return hl.acquired;
 }
 
 // --- markdown -> Notion blocks (AI-digest write path) ---
@@ -1295,6 +1304,7 @@ async function main() {
   let fatalError = null;
   let dryRunExit = false;
   let lockHeld = false;
+  let hubLockHeld = false;
 
   // Single-instance lock (mitigation #2): covers the WHOLE sweep, all targets.
   // --dry-run writes nothing and spawns nothing, so it skips the lock entirely.
@@ -1417,9 +1427,10 @@ async function main() {
 
     // --- STEP: COCKPIT — flagship portfolio cockpit published as an <embed> at
     //     the TOP of the hub, under "## 🎯 Portfolio Cockpit" (above the gallery).
-    //     Fully isolated: any failure here (missing cockpit.mjs, build throw,
-    //     publish failure) is caught and recorded as cockpitPublished=false; the
-    //     hub step still runs.
+    //     This is the sweep's FIRST hub-page write, so it takes the shared .hub.lock
+    //     (per-step; see acquireHubLockForStep). Fully isolated: any failure here
+    //     (missing cockpit.mjs, build throw, publish failure) is caught and recorded
+    //     as cockpitPublished=false; the hub step still runs.
     phase = 'cockpit';
     const cockpitRoster = liveRoster.map((r) => ({
       name: r.projectName,
@@ -1433,6 +1444,9 @@ async function main() {
     if (mobileOnly || triageOnly) {
       // cockpit + hub intentionally skipped under --target mobile-cockpit/triage
     } else {
+    // Hub write #1 — hold the shared lock only for this step (a real run; --dry-run
+    // writes nothing). Released in the finally below so mobile/overview run lock-free.
+    if (!dryRun) hubLockHeld = acquireHubLockForStep('cockpit');
     try {
       const buildCockpitHtml = await loadCockpitBuilder();
       if (!buildCockpitHtml) throw new Error('cockpit.mjs buildCockpitHtml unavailable');
@@ -1492,6 +1506,11 @@ async function main() {
       }
     } catch (cockErr) {
       console.error(`[sweep] cockpit step FAILED: ${cockErr.message}`);
+    } finally {
+      // Release the hub lock as soon as the cockpit write is done — mobile-cockpit
+      // and overview (below) write OTHER pages and must run lock-free so a slow
+      // spawn can't hold .hub.lock long enough to be stale-replaced mid-hold.
+      if (hubLockHeld) { releasePageLock(HUB_LOCK_PATH); hubLockHeld = false; }
     }
     }
 
@@ -1554,13 +1573,21 @@ async function main() {
         return;
       }
 
-      hubRefreshed = refreshHub(table, asOfHuman, hubRows.length);
-      // Mitigation #9: the hub refresh writes the SAME shared page as the cockpit
-      // (the gallery section, BELOW the cockpit). Cheaply confirm the hub write
-      // did not clobber the cockpit embed above it. A WARN here is self-healing —
-      // the next sweep's mitigation #1 skip-branch read-back republishes it.
-      if (!verifyCardEmbed(REPORTING_HUB_PAGE_ID, COCKPIT_SECTION_HEADING)) {
-        console.error('[sweep] WARN: cockpit embed missing after hub refresh — hub write may have clobbered it (self-heals next sweep)');
+      // Hub write #2 — re-take the shared lock only for the gallery write + its
+      // read-back (a real run; --dry-run already returned above). Freed in the
+      // finally so the hold never outlives this one step.
+      hubLockHeld = acquireHubLockForStep('hub gallery');
+      try {
+        hubRefreshed = refreshHub(table, asOfHuman, hubRows.length);
+        // Mitigation #9: the hub refresh writes the SAME shared page as the cockpit
+        // (the gallery section, BELOW the cockpit). Cheaply confirm the hub write
+        // did not clobber the cockpit embed above it. A WARN here is self-healing —
+        // the next sweep's mitigation #1 skip-branch read-back republishes it.
+        if (!verifyCardEmbed(REPORTING_HUB_PAGE_ID, COCKPIT_SECTION_HEADING)) {
+          console.error('[sweep] WARN: cockpit embed missing after hub refresh — hub write may have clobbered it (self-heals next sweep)');
+        }
+      } finally {
+        if (hubLockHeld) { releasePageLock(HUB_LOCK_PATH); hubLockHeld = false; }
       }
     } else if (dryRun) {
       console.log('\nDry run complete — no claude spawned; state, history, and Notion untouched.');
@@ -1597,6 +1624,10 @@ async function main() {
         console.error(`[sweep] WARN: could not append run-log: ${logErr.message}`);
       }
     }
+    // Backstop: each hub-write step already releases its own .hub.lock in a
+    // finally, so hubLockHeld is normally false here. This only fires if a throw
+    // escaped a step's try/finally while the lock was still held — never leak it.
+    if (hubLockHeld) releasePageLock(HUB_LOCK_PATH);
     if (lockHeld) releaseSweepLock();
   }
 

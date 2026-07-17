@@ -44,6 +44,10 @@ import {
   insertBlocksAfter, selectName, dateStart, richText, urlVal, title,
 } from '../project-cards/lib/notion.mjs';
 import {
+  acquirePageLockWaiting, releasePageLock,
+  HUB_LOCK_PATH, HUB_LOCK_STALE_MS, HUB_LOCK_WAIT_MS, HUB_LOCK_POLL_MS,
+} from '../project-cards/lib/page-lock.mjs';
+import {
   REPORT_RUNS_DS_ID, REPORT_CHILD_PAGES, REPORTS_HUB_PAGE_ID,
   REPORT_TYPES, REPORT_RUNS_VIEWS,
 } from './config.mjs';
@@ -274,16 +278,32 @@ export function refreshChildPage(type, pageId, {
 }
 
 // --- hub launcher refresh (transport-injectable) -------------------------------
+// Default hub-lock acquire/release: the shared .hub.lock, bounded WAIT-then-proceed
+// (poll a live holder up to 60s, then proceed with a warn). Injectable so a test can
+// verify acquire/release without touching a real lock file. See lib/page-lock.mjs.
+const defaultAcquireHubLock = () => acquirePageLockWaiting(HUB_LOCK_PATH, {
+  staleMs: HUB_LOCK_STALE_MS, waitMs: HUB_LOCK_WAIT_MS, pollMs: HUB_LOCK_POLL_MS,
+});
+const defaultReleaseHubLock = () => releasePageLock(HUB_LOCK_PATH);
+
 // Maintain the ADDITIVE `## 🗂 Report pages` section. If it exists, replace ONLY its
 // body (idempotent). If absent, CREATE it near the top: insert `[heading, ...body]`
 // after the block immediately preceding the page's first heading (so it splits no
 // existing section); if the page opens with a heading, append at the end instead.
 // Returns { wrote, action }.
+//
+// The Reporting Hub is written by three independent writers (premortem mitigation
+// #6, W4 race): this launcher refresh, the project-cards sweep (cockpit + gallery),
+// and dashboard-sync. The hub-page WRITE is serialized on the shared .hub.lock —
+// bounded WAIT-then-proceed: on a live holder we wait up to 60s then PROCEED with a
+// loud warn (availability > strictness; the lock only reduces overlap and must never
+// deadlock the pipeline). --dry-run takes no lock (it writes nothing).
 export function refreshHub({
   latestByType = {}, dryRun = false, hubId = REPORTS_HUB_PAGE_ID,
   childPages = REPORT_CHILD_PAGES, overviewViewId = OVERVIEW_VIEW_ID, types = REPORT_TYPES,
   getBlocks = getPageBlocks, findSection = findSectionBlocks,
   replaceSection = replaceSectionBlocks, insertAfter = insertBlocksAfter,
+  acquireHubLock = defaultAcquireHubLock, releaseHubLock = defaultReleaseHubLock,
 } = {}) {
   const body = buildHubLauncherBlocks({ latestByType, childPages, hubId, overviewViewId, types });
   if (dryRun) {
@@ -291,18 +311,26 @@ export function refreshHub({
     console.log(describeBlocks(body));
     return { wrote: false, action: 'dry-run' };
   }
-  const blocks = getBlocks(hubId);
-  if (findSection(blocks, HUB_LAUNCHER_HEADING)) {
-    replaceSection(hubId, HUB_LAUNCHER_HEADING, body);
-    console.error(`[refresh-pages] hub: replaced "${HUB_LAUNCHER_HEADING}" body`);
-    return { wrote: true, action: 'replaced' };
+  const lock = acquireHubLock();
+  if (!lock.acquired) {
+    console.error(`[refresh-pages] WARN: proceeding without .hub.lock after ${lock.waitedMs}ms wait (another hub writer holds it) — availability > strictness`);
   }
-  const headingBlock = { type: 'heading_2', heading_2: { rich_text: [seg(HUB_LAUNCHER_TEXT)] } };
-  const firstHeadingIdx = blocks.findIndex((b) => /^heading_[123]$/.test(b?.type));
-  const anchorId = firstHeadingIdx > 0 ? blocks[firstHeadingIdx - 1].id : null;
-  insertAfter(hubId, anchorId, [headingBlock, ...body]);
-  console.error(`[refresh-pages] hub: created "${HUB_LAUNCHER_HEADING}" (${anchorId ? `after ${anchorId}` : 'appended'})`);
-  return { wrote: true, action: 'created' };
+  try {
+    const blocks = getBlocks(hubId);
+    if (findSection(blocks, HUB_LAUNCHER_HEADING)) {
+      replaceSection(hubId, HUB_LAUNCHER_HEADING, body);
+      console.error(`[refresh-pages] hub: replaced "${HUB_LAUNCHER_HEADING}" body`);
+      return { wrote: true, action: 'replaced' };
+    }
+    const headingBlock = { type: 'heading_2', heading_2: { rich_text: [seg(HUB_LAUNCHER_TEXT)] } };
+    const firstHeadingIdx = blocks.findIndex((b) => /^heading_[123]$/.test(b?.type));
+    const anchorId = firstHeadingIdx > 0 ? blocks[firstHeadingIdx - 1].id : null;
+    insertAfter(hubId, anchorId, [headingBlock, ...body]);
+    console.error(`[refresh-pages] hub: created "${HUB_LAUNCHER_HEADING}" (${anchorId ? `after ${anchorId}` : 'appended'})`);
+    return { wrote: true, action: 'created' };
+  } finally {
+    if (lock.acquired) releaseHubLock();
+  }
 }
 
 // --- orchestrator --------------------------------------------------------------
@@ -324,6 +352,8 @@ export function refreshAll({ dryRun = false, onlyType = null, deps = {} } = {}) 
     getBlocks: getPageBlocks,
     findSection: findSectionBlocks,
     insertAfter: insertBlocksAfter,
+    acquireHubLock: defaultAcquireHubLock,
+    releaseHubLock: defaultReleaseHubLock,
     ...deps,
   };
   const results = { children: [], hub: null, errors: [] };
@@ -376,6 +406,8 @@ export function refreshAll({ dryRun = false, onlyType = null, deps = {} } = {}) 
       findSection: d.findSection,
       replaceSection: d.replaceSection,
       insertAfter: d.insertAfter,
+      acquireHubLock: d.acquireHubLock,
+      releaseHubLock: d.releaseHubLock,
     });
   } catch (e) {
     console.error(`[refresh-pages] ERROR hub launcher (non-fatal): ${e.message}`);

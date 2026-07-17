@@ -15,6 +15,19 @@
 // NONZERO if ANY type is in drift, so a scheduler/health-check can gate on it.
 //
 // Queries the Report Runs DS only — never writes. ESM, no external deps.
+//
+// RELATIONSHIP TO watchdog.mjs (consolidation groundwork, 2026-07-17): this
+// detector and the silent-miss watchdog cover DIFFERENT, complementary classes and
+// are BOTH kept. This file owns two classes the watchdog's presence check ignores —
+// a STALE newest row (older than the threshold) and a MALFORMED/absent Run Date
+// (unparseable) — but is period-BLIND and Status-BLIND (it never inspects Period or
+// Status; only the newest Run Date's age). The watchdog owns the period-precise,
+// schedule-aware "expected period has ZERO rows" class and WRITES a miss-row. As
+// superset groundwork the watchdog now REUSES this file's `newestRunDate` +
+// `computeDrift` core to additively REPORT (never write) the stale/malformed classes
+// on its present-path, so a future consolidation can collapse to one superset
+// detector. The exhaustive class-by-class behavior of both is pinned in
+// test/detector-coverage-matrix.test.mjs.
 import { pathToFileURL } from 'node:url';
 import { queryDataSource, selectName, dateStart } from '../project-cards/lib/notion.mjs';
 import { REPORT_RUNS_DS_ID, REPORT_TYPES } from './config.mjs';

@@ -165,8 +165,13 @@ test('buildHubLauncherBlocks: a non-http artifact yields a dash, not a broken li
 
 // --- orchestration (mocked transport) ------------------------------------------
 
-function mockDeps({ rowsByType = {}, failWriteFor = null, hubHasSection = false } = {}) {
-  const calls = { query: [], replaceSection: [], insertAfter: [], getBlocks: 0 };
+// hubLockAcquired=false simulates the bounded-wait timing out on a live holder
+// (refreshHub then proceeds WITHOUT the lock and releases nothing).
+function mockDeps({ rowsByType = {}, failWriteFor = null, hubHasSection = false, hubLockAcquired = true } = {}) {
+  const calls = {
+    query: [], replaceSection: [], insertAfter: [], getBlocks: 0,
+    acquireHubLock: 0, releaseHubLock: 0,
+  };
   return {
     calls,
     query: (dsId, opts) => {
@@ -192,6 +197,12 @@ function mockDeps({ rowsByType = {}, failWriteFor = null, hubHasSection = false 
       return idx === -1 ? null : { headingIndex: idx, start: idx + 1, end: blocks.length, blocks: [] };
     },
     insertAfter: (pageId, afterId, blocks) => { calls.insertAfter.push({ pageId, afterId, blocks }); },
+    // No-op hub lock so orchestration tests never touch a real .hub.lock file.
+    acquireHubLock: () => {
+      calls.acquireHubLock += 1;
+      return { acquired: hubLockAcquired, status: hubLockAcquired ? 'acquired' : 'held', waitedMs: hubLockAcquired ? 0 : 60_000 };
+    },
+    releaseHubLock: () => { calls.releaseHubLock += 1; },
   };
 }
 
@@ -230,6 +241,7 @@ test('refreshHub CREATES the section (heading + body) when absent, near the top'
     latestByType: { 'VP Weekly': { runDate: '2026-06-29', status: 'OK' } },
     childPages: CHILD, types: ['VP Weekly'],
     getBlocks: d.getBlocks, findSection: d.findSection, replaceSection: d.replaceSection, insertAfter: d.insertAfter,
+    acquireHubLock: d.acquireHubLock, releaseHubLock: d.releaseHubLock,
   });
   assert.equal(res.action, 'created');
   assert.equal(d.calls.insertAfter.length, 1);
@@ -246,10 +258,86 @@ test('refreshHub REPLACES only the section body when it already exists (idempote
     latestByType: { 'VP Weekly': { runDate: '2026-06-29', status: 'OK' } },
     childPages: CHILD, types: ['VP Weekly'],
     getBlocks: d.getBlocks, findSection: d.findSection, replaceSection: d.replaceSection, insertAfter: d.insertAfter,
+    acquireHubLock: d.acquireHubLock, releaseHubLock: d.releaseHubLock,
   });
   assert.equal(res.action, 'replaced');
   assert.equal(d.calls.insertAfter.length, 0);
   assert.equal(d.calls.replaceSection[0].heading, HUB_LAUNCHER_HEADING);
+});
+
+// --- shared hub-page write lock (premortem mitigation #6, W4 race) --------------
+
+test('refreshHub acquires the hub lock, writes, then releases it (happy path)', () => {
+  const d = mockDeps({ hubHasSection: true });
+  const res = refreshHub({
+    latestByType: { 'VP Weekly': { runDate: '2026-06-29', status: 'OK' } },
+    childPages: CHILD, types: ['VP Weekly'],
+    getBlocks: d.getBlocks, findSection: d.findSection, replaceSection: d.replaceSection, insertAfter: d.insertAfter,
+    acquireHubLock: d.acquireHubLock, releaseHubLock: d.releaseHubLock,
+  });
+  assert.equal(res.wrote, true);
+  assert.equal(d.calls.acquireHubLock, 1);
+  assert.equal(d.calls.releaseHubLock, 1);
+  // the write happened between acquire and release (release matches acquire)
+  assert.equal(d.calls.replaceSection.length, 1);
+});
+
+test('refreshHub --dry-run takes NO hub lock (it writes nothing)', () => {
+  const d = mockDeps({ hubHasSection: true });
+  const res = refreshHub({
+    latestByType: { 'VP Weekly': { runDate: '2026-06-29', status: 'OK' } },
+    childPages: CHILD, types: ['VP Weekly'], dryRun: true,
+    getBlocks: d.getBlocks, findSection: d.findSection, replaceSection: d.replaceSection, insertAfter: d.insertAfter,
+    acquireHubLock: d.acquireHubLock, releaseHubLock: d.releaseHubLock,
+  });
+  assert.equal(res.action, 'dry-run');
+  assert.equal(d.calls.acquireHubLock, 0);
+  assert.equal(d.calls.releaseHubLock, 0);
+  assert.equal(d.calls.replaceSection.length, 0);
+});
+
+test('refreshHub PROCEEDS (and releases nothing) when the bounded wait times out on a live holder', () => {
+  const d = mockDeps({ hubHasSection: true, hubLockAcquired: false });
+  const res = refreshHub({
+    latestByType: { 'VP Weekly': { runDate: '2026-06-29', status: 'OK' } },
+    childPages: CHILD, types: ['VP Weekly'],
+    getBlocks: d.getBlocks, findSection: d.findSection, replaceSection: d.replaceSection, insertAfter: d.insertAfter,
+    acquireHubLock: d.acquireHubLock, releaseHubLock: d.releaseHubLock,
+  });
+  // availability > strictness: the write still lands, and we release nothing we don't own.
+  assert.equal(res.wrote, true);
+  assert.equal(d.calls.acquireHubLock, 1);
+  assert.equal(d.calls.releaseHubLock, 0);
+  assert.equal(d.calls.replaceSection.length, 1);
+});
+
+test('refreshHub releases the hub lock even when the write throws', () => {
+  const d = mockDeps({ hubHasSection: true });
+  const boom = () => { throw new Error('simulated hub write failure'); };
+  assert.throws(() => refreshHub({
+    latestByType: { 'VP Weekly': { runDate: '2026-06-29', status: 'OK' } },
+    childPages: CHILD, types: ['VP Weekly'],
+    getBlocks: d.getBlocks, findSection: d.findSection, replaceSection: boom, insertAfter: d.insertAfter,
+    acquireHubLock: d.acquireHubLock, releaseHubLock: d.releaseHubLock,
+  }), /simulated hub write failure/);
+  assert.equal(d.calls.acquireHubLock, 1);
+  assert.equal(d.calls.releaseHubLock, 1); // finally released despite the throw
+});
+
+test('refreshAll threads the hub lock through to refreshHub (acquired + released once)', () => {
+  const d = mockDeps({
+    rowsByType: { 'VP Weekly': [row({ runDate: '2026-06-29', status: 'OK' })] },
+    hubHasSection: true,
+  });
+  refreshAll({
+    deps: {
+      query: d.query, replaceSection: d.replaceSection,
+      getBlocks: d.getBlocks, findSection: d.findSection, insertAfter: d.insertAfter,
+      acquireHubLock: d.acquireHubLock, releaseHubLock: d.releaseHubLock,
+    },
+  });
+  assert.equal(d.calls.acquireHubLock, 1);
+  assert.equal(d.calls.releaseHubLock, 1);
 });
 
 test('refreshAll is non-fatal per page: one child write failing still writes the others + the hub', () => {
@@ -265,6 +353,7 @@ test('refreshAll is non-fatal per page: one child write failing still writes the
     deps: {
       query: d.query, replaceSection: d.replaceSection,
       getBlocks: d.getBlocks, findSection: d.findSection, insertAfter: d.insertAfter,
+      acquireHubLock: d.acquireHubLock, releaseHubLock: d.releaseHubLock,
     },
   });
   // VP Weekly recorded an error but the run kept going; the hub still refreshed.
@@ -287,6 +376,7 @@ test('refreshAll onlyType writes ONLY that type\'s child page, still queries all
     deps: {
       query: d.query, replaceSection: d.replaceSection,
       getBlocks: d.getBlocks, findSection: d.findSection, insertAfter: d.insertAfter,
+      acquireHubLock: d.acquireHubLock, releaseHubLock: d.releaseHubLock,
     },
   });
   // all 6 types still queried (the hub table needs every type's latest row)
