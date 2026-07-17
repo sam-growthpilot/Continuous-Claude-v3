@@ -1,7 +1,8 @@
 # Project Roadmap
 
 ## Current Focus
-**Fable — close-out + steady-state maintenance**
+**Steady-state maintenance + reporting optimization proposals 04–09** (confirmed 2026-07-17; sequence 08 → 05+09 → 04-remainder → 07; 06 blocked on IT ticket)
+**Fable — close-out (CLOSED)**
 - Fable build work is DONE and CLOSED (harvest + corpus + standing trap harness; PRs #20/#21/#22). **Verified 2026-07-16:** nothing Fable-derived is installed on ANY active behavioral surface — no rule, agent prompt, skill judgment text, hook, template, or `settings.json` registration (two independent greps: zero). The always-on `reasoning-discipline` rule was cancelled by the `no_lift` trap gate (Opus 4.8 scored 16/16 with and without it — it already saturates that judgment ceiling). Every Fable artifact is inert docs under `docs/fable-manual/`. **No hindrance to Opus agents; nothing to revert.**
 - The only change that actually touched Opus was the separate model-tier retier (PR #17: explicit 12 Opus / 25 Sonnet, `kraken` → Sonnet) + one global `effortLevel: high` — a deliberate, reversible cost/judgment-density call, not a degradation.
 - Two Fable follow-ups intentionally PARKED as backlog (below) — each gated behind the standing trap harness before any prompt-layer change ships, so a future Opus-hindrance can't land unmeasured.
@@ -19,6 +20,11 @@ Not started; the organized parking spot so they aren't lost. Both build on the F
 - **v3 BACKLOG (deferred 2026-07-07 — address later):** none blocking — all are premortem enhancement candidates: `subagents_spawned`/`subagent_models` telemetry (today's `multi_agent` field records fan-out ENABLED, not spawned), version+hash-keyed `--complex` re-verification (guards against a Codex CLI upgrade silently reintroducing the gpt-4.1 fallback), a local burn-rate heuristic before expensive implement/`--complex` runs, split-shell fail-loud for `--complex`, and a keep/resume GC sentinel. Full detail: `docs/codex-integration/DESIGN-RESEARCH.md` §12.
 
 ## Completed
+- [x] feat(reporting): ntn-first health mirror — replace claude -p Notion step with deterministic health-mirror.mjs (2026-07-17) `7fcee47`
+- [x] feat(reporting): shared hub page-lock + watchdog/check-drift consolidation groundwork (2026-07-17) `9ff3414`
+- [x] fix(reporting): remap-proof Current-run picker + cockpit disk artifact (2026-07-16) `2087e04`
+- [x] fix(reporting): audit follow-ups — tool grants, watchdog, truthful statuses (2026-07-16) `462d1aa`
+- [x] fix(fourthos-weekly): never record OK without artifact truth (2026-07-16) `dc71cca`
 - [x] chore(maintenance): close out Fable build (verified zero Opus-surface footprint) + repoint ROADMAP + fix session-start handoff skip-check (complete vs completed) (2026-07-16)
 - [x] Merge PR #26 — /init-project review + hardening; new projects initialized (2026-07-15) `a9e7383`
 - [x] Merge PR #25 — claude-for-sales SKO package build complete + rep-facing skill-builder (2026-07-13) `7659f1e`
@@ -223,21 +229,18 @@ Not started; the organized parking spot so they aren't lost. Both build on the F
 - [x] Eliminate Excessive Permission Prompts for Autonomous Agent Tasks (2026-04-02)
 
 ## Planned
-- [ ] HELM — Local Project Command Center: Spec + Build Plan (high priority)
-- [ ] Plan — Close out `snapshot/ccv3-system-update` + stage the fourthos v4 build (high priority)
-- [ ] CCv3 System Update — execute the ratified deep-review backlog (Wave 1 → Tier 2 → Tier 3 → Deletions) (high priority)
-- [ ] Agent + Skill Fleet Review — two-tier model map (Sonnet 5 / Opus 4.8-high; 12 Opus/25 Sonnet, `kraken`→Sonnet) + Pocock-aligned hygiene + Explore→scout fix (high priority) — plan: `~/.claude/plans/agent-skill-two-tier-model-policy`. Acceptance: R1-curate-decoupled-from-retier (DEL-11); explicit model on every surviving agent **`.md`+`.json`** (no omit/inherit/haiku, drift-checked; `.json` read at spawn by `claude_spawn.py`); `agent-factory` + `agent-model-selection.md` + `no-haiku.md` + CLAUDE.md agent-table/cost-routing rewritten; Explore→scout fixed (smart-search-router self-contradiction + `scout` route + `updatedInput` full-chain probe + regression test); Pocock 7-point pass per agent/skill (Trigger/Structure/Steering/Pruning); automated 4-surface drift test green; downgrade canary passed; Probe-Gate-verified (medium priority)
-- [ ] CCv3-Hardening — Session 9: through Phase C (codegraph) (high priority)
+*(curated 2026-07-17 — stale entries removed with evidence: Agent+Skill Fleet Review shipped as PR #17 `c2a9db2`; CCv3-Hardening through Phase C shipped — codegraph LIVE 2026-06-07 per `code-intel-boundaries.md`; WS-0/WS-1 + hardening waves shipped 2026-06-28/29 per `docs/system-update/BACKLOG.md` (Wave 0 + Wave 1 DONE); `snapshot/ccv3-system-update` close-out executed via the 2026-07-01 plan; early hygiene gate + scope decision long-since resolved.)*
+- [ ] **Reporting optimization proposals 04–09** (active track, confirmed 2026-07-17): 04 ntn-first migration (first slice SHIPPED `7fcee47` — health mirror; remaining: audit other `claude -p` steps for deterministic conversion) · 05 Reporting Health strip · 06 unattended VP Weekly (**blocked on IT ticket** "Log on as a batch job") · 07 `/reporting` command · 08 registry conventions · 09 trust metrics. Source: optimization report artifact `a45fad78` + handoff `thoughts/shared/handoffs/reporting-optimization/2026-07-16-opt-01-03.md` (high priority)
+- [ ] Verify first unattended fourthos-weekly run — Thu 2026-07-23 07:00; check `~/.claude/logs/fourthos-weekly/` + verify-run.mjs classification (high priority, time-gated)
+- [ ] fourthos v4 report enhancements — design-approved, staged on main via PR #12; dedicated session, resolve the 4 open choices first (memory: `fourthos-v4-build-queued`) (medium priority)
+- [ ] HELM — Notion-first command center (pivoted 2026-07-03: engine unchanged, presentation = Notion Projects DB + HTML daily brief via `ntn`; local SPA deferred behind daily-use gate) (medium priority)
+- [ ] Grok check-back — externally blocked (corp egress). When probe.ps1 shows READY: `/harness-update grok` (0.2.99 unverified) → grok-adversary pass on the parked plan. IT allowlist ticket for `*.x.ai` (medium priority, externally gated)
+- [ ] Fleet-review residuals (post-PR #17): DEL-11 curation, Pocock 7-point deep-review pass, downgrade canary, `updatedInput` spike (low priority)
+- [ ] CCv3 system-update backlog remainder — Tier 2 structural arcs, Tier 2b multi-session coordination, Tier 3 strategic programs, 12 deletions: tracked in `docs/system-update/BACKLOG.md` (medium priority)
+- [ ] WS-2 remainder: Phase B enforcement teeth (facade shipped inert; C codegraph is LIVE) → D memory bridge (needs GIN index) → E observability (medium priority)
 - [ ] P2 — Verify embedding daemon survives a REAL reboot (scheduled task only ad-hoc-verified; Codex flagged job-object detach). After next restart confirm `~/.claude/run/ccv3-embedding.json` appears <60s + warm recall (medium priority)
 - [ ] P2 — Ops: full parallel `vitest run` hangs on a pre-existing Windows daemon/socket suite — add a hard per-test timeout (medium priority)
 - [ ] P3 — Ops: async post-commit forward-sync race leaves active hook dist stale — hash-verify + `cp` after every hook commit until root-fixed (low priority)
-- [ ] WS-2 Phase B activation: facade/enforcer shipped INERT — wire real routing-through-facade + enforcement teeth, then Phase C (codegraph) → D (memory bridge, needs GIN index) → E (observability) (medium priority)
-- [ ] CCv3 Full Hardening & Improvement Program — make the system lean, correct, and *used-correctly* (high priority)
-- [ ] WS-0 — Present-day bugs + live hazards: session-id consolidation (0.1, +`file_claims` migration), memory prompt-injection fix (0.2), structural sync-footgun fix (0.3 — delete `npm run build` from `sync-to-active.sh`), stale-Ralph `ccv3-visualization` deactivation (0.4), knowledge-tree regen (medium priority)
-- [ ] WS-1 — Lean prune/consolidate: per-prompt hot-path (P1), memory reliability + agent-recall activation (P2), dedup/dead-code + Neon-token security (P3), enforcement-docs fix (medium priority)
-- [ ] WS-2 — v3 Cohesive Intelligence substrate: Phase A foundations (context-bus) → B facade (`/code-intel` CLI) → C codegraph → D memory bridge (needs GIN index) → E observability (medium priority)
-- [ ] Hygiene gate (early): verify `architecture-stats-sync` hook registered/built/synced; triage scratch files; push 5 commits to `fork` (medium priority)
-- [ ] Scope decision (next session): full v3 arc vs Phase 0+A (recommended) vs Phase 0 only (medium priority)
 
 ## Notes
 **CCv3 Hardening — durable pointers (preserved across planning per `bf91c19`):**
