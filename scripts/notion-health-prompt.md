@@ -1,7 +1,15 @@
 # Notion Health-Check Update Prompt
 
-This prompt is fed to `claude -p` by `scripts/scheduled-health-check.bat` after each weekly
-run of the CCv3 health check. It instructs Claude Code to mirror the latest results onto
+> **DEPRECATED (2026-07-17).** `scripts/scheduled-health-check.bat` no longer feeds this
+> prompt to `claude -p`. The Notion mirror is now the deterministic (ntn-only, NO MCP,
+> NO LLM) `scripts/report-registry/health-mirror.mjs` — the mirror is ~90% mechanical,
+> so the LLM round-trip added cost, non-determinism, and the headless-MCP permission-grant
+> footgun that silently froze this pipeline for 11 weeks (see `.claude/rules/headless-claude-mcp.md`).
+> This file is retained for historical reference / as the spec of the section shapes the
+> deterministic renderer reproduces. Do not wire it back into the batch file.
+
+This prompt WAS fed to `claude -p` by `scripts/scheduled-health-check.bat` after each weekly
+run of the CCv3 health check. It instructed Claude Code to mirror the latest results onto
 the **CCv3 Weekly Health Checks** Notion dashboard.
 
 ---

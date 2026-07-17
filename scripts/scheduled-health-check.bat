@@ -18,63 +18,50 @@ set EXIT_CODE=%ERRORLEVEL%
 
 echo [%date% %time%] Health check finished. exit=%EXIT_CODE%
 
-REM --- Notion dashboard update ---
-REM After the Python run, mirror the results onto the CCv3 Weekly Health Checks Notion page.
-REM This runs claude -p in non-interactive mode with the prompt at scripts/notion-health-prompt.md.
-REM The prompt is deliberately read-only from the health check's perspective (it only touches
-REM Notion). If claude -p fails, we log but do not alter EXIT_CODE -- the Python artifacts on
-REM disk remain authoritative and the scheduled task still reports health status correctly.
+REM --- Notion dashboard mirror (deterministic; Stream C, approved proposal 04) ---
+REM After the Python run, mirror the newest health_*.json onto the CCv3 Weekly Health
+REM Checks Notion page via scripts/report-registry/health-mirror.mjs -- ntn-only, NO MCP,
+REM NO claude -p. This REPLACES the old claude -p + scripts/notion-health-prompt.md step
+REM (that prompt is now DEPRECATED, kept on disk for reference). The mirror is a mechanical
+REM section rewrite, so the LLM round-trip added cost, non-determinism, and the headless-MCP
+REM permission-grant footgun (the missing --allowedTools grant silently froze this pipeline
+REM for 11 weeks -- see .claude/rules/headless-claude-mcp.md). The node path needs no key
+REM clearing and no tool grant. NON-FATAL: a mirror failure NEVER alters %EXIT_CODE% (the
+REM python exit captured above); the mjs exits 0 on success/partial by contract.
 cd /d C:\Users\david.hayes\continuous-claude
-set NOTION_PROMPT=scripts\notion-health-prompt.md
 
-REM Log capture (since 2026-07-16): the claude -p Notion step discarded stdout for ~11
-REM weeks, hiding a silent failure. Every run recorded SKIP reason=mcp-unavailable, which
-REM was actually a PERMISSION-DENIED on the claude.ai Notion MCP tool in non-interactive
-REM mode (the connector loads and OAuth is valid, but headless claude -p auto-denies any
-REM tool not granted via --allowedTools / a settings allow-list). Capture full stdout+stderr
-REM to a dated log so a no-op is diagnosable. Resolve the date via powershell (System32,
-REM always on the Task Scheduler minimal PATH); fall back to last-run.log. This capture
-REM NEVER alters %EXIT_CODE% (the python exit captured above); the Notion step stays non-fatal.
+REM node is resolved to an ABSOLUTE path because the Task Scheduler minimal PATH does not
+REM include node (the registry steps below reuse these same two vars).
+set "NODE=C:\Program Files\nodejs\node.exe"
+if not exist "%NODE%" set "NODE=node"
+set "REGISTRY=C:\Users\david.hayes\continuous-claude\scripts\report-registry"
+
+REM Dated-log capture (since 2026-07-16): keep full stdout+stderr so a no-op is diagnosable.
+REM Resolve the date via powershell (System32, always on the Task Scheduler minimal PATH);
+REM fall back to last-run.log. Set lines stay ABOVE the parenthesized block below -- batch
+REM parse-time-expands every %VAR% when it parses the whole block, so a `set` INSIDE the
+REM block would be too late (same mechanism as the %ERRORLEVEL% note in the registry step).
 set "NLOG_DIR=C:\Users\david.hayes\.claude\logs\health-check"
 if not exist "%NLOG_DIR%" mkdir "%NLOG_DIR%"
 set "NLOG_DATE="
 for /f "usebackq delims=" %%d in (`powershell -NoProfile -Command "(Get-Date).ToString('yyyy-MM-dd')"`) do set "NLOG_DATE=%%d"
 if defined NLOG_DATE (set "NLOG=%NLOG_DIR%\%NLOG_DATE%.log") else (set "NLOG=%NLOG_DIR%\last-run.log")
+set "HEALTH_MIRROR=%REGISTRY%\health-mirror.mjs"
 
-REM claude -p must auth via the claude.ai subscription login, NOT a stale ANTHROPIC_API_KEY
-REM in the environment (it 401s and takes precedence). Clear it for this process only.
-REM NOTE: clearing the key is necessary but NOT sufficient -- headless claude -p also
-REM needs the Notion MCP tools granted, or the call is auto-denied (see the dated log).
-set "ANTHROPIC_API_KEY="
-REM Scoped grant (root-caused 2026-07-16): headless claude -p auto-denies ungranted
-REM MCP tools; this permission gap -- not connector unavailability -- froze the
-REM Notion mirror for 11 weeks.
-REM PARSE-TIME EXPANSION BUG (root-caused 2026-07-17, first unattended run): these two
-REM `set` lines used to live INSIDE the parenthesized block below, where %HEALTH_TOOLS%
-REM had already parse-time-expanded to EMPTY before the set executed -- so the run was
-REM granted no Notion tools and the mirror failed permission-denied. Batch expands %VARS%
-REM when it parses the whole block (same mechanism as the %ERRORLEVEL% note below). They
-REM MUST stay above the block.
-set "HEALTH_TOOLS=mcp__claude_ai_Notion__notion-fetch,mcp__claude_ai_Notion__notion-search,mcp__claude_ai_Notion__notion-update-page"
-
-if exist %NOTION_PROMPT% (
-    echo [%date% %time%] Posting results to Notion dashboard... log=%NLOG%
-    type %NOTION_PROMPT% | call claude -p --output-format text --allowedTools "%HEALTH_TOOLS%,Read,Glob,Grep,Bash" > "%NLOG%" 2>&1
-    REM %ERRORLEVEL% inside this block parse-time-expands to the pre-block value, so it is
-    REM not echoed; the captured log's final line (OK/SKIP/FAILED) is the real outcome.
-    echo [%date% %time%] Notion update step finished ^(non-fatal^). log=%NLOG%
+if exist "%HEALTH_MIRROR%" (
+    echo [%date% %time%] Mirroring results to Notion dashboard... log=%NLOG%
+    "%NODE%" "%HEALTH_MIRROR%" > "%NLOG%" 2>&1
+    REM The captured log's final line (health-mirror: OK/PARTIAL ...) is the real outcome.
+    echo [%date% %time%] Notion mirror step finished ^(non-fatal^). log=%NLOG%
 ) else (
-    echo [%date% %time%] WARN: %NOTION_PROMPT% not found -- skipping Notion update.
+    echo [%date% %time%] WARN: %HEALTH_MIRROR% not found -- skipping Notion mirror.
 )
 
 REM --- Report Runs registry (T3.5) ---
 REM FINAL step, NON-FATAL: map the health check exit code to a registry Status, build a
 REM report-run.json via make-run.mjs, then upsert it. This must NEVER change %EXIT_CODE%
-REM (captured above and untouched below). node is resolved to an ABSOLUTE path because the
-REM Task Scheduler minimal PATH does not include node.
-set "NODE=C:\Program Files\nodejs\node.exe"
-if not exist "%NODE%" set "NODE=node"
-set "REGISTRY=C:\Users\david.hayes\continuous-claude\scripts\report-registry"
+REM (captured above and untouched below). %NODE% and %REGISTRY% were resolved above (the
+REM Notion mirror step) to absolute paths -- the Task Scheduler minimal PATH lacks node.
 REM Map exit code -> Status, DEFAULTING TO THE WORSE state (T6.1 #3): an unrecognized or
 REM unexpected nonzero code (2, 3, 9009 command-not-found, or anything else) must NOT be
 REM silently recorded as OK. Order matters: start OK, downgrade ANY nonzero to Failed, then
