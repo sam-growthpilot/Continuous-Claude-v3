@@ -5,10 +5,10 @@
       "projectRowId": "e48adf47-146e-4d46-a099-ef919b1b9e4e",
       "pageId": "38776fd7ac8281c7a286ce6ae478b6be",
       "attachmentId": "3a076fd7-ac82-8192-9072-00b2bcc1ab3b",
-      "contentHash": "a69ad6dff2a0fbc4477f77a02d1e6225a3e480816de9d615c9b7f7d9ea311f67",
+      "contentHash": "5d906a5a5b30bdb426fd3eab65d5cceb6d5ec56bd9ad25e2214856ae62e10b90",
       "publishedHash": "a69ad6dff2a0fbc4477f77a02d1e6225a3e480816de9d615c9b7f7d9ea311f67",
       "lastPublished": "2026-07-17T00:36:22.807Z",
-      "lastRefreshAttempt": "2026-07-17T00:24:25.799Z"
+      "lastRefreshAttempt": "2026-07-17T16:20:23.959Z"
     },
     "ai-governance-research-cadence": {
       "projectRowId": "53320d1d-b2e4-405d-ac20-49274c6065a6",
@@ -17,7 +17,7 @@
       "contentHash": "56a812aecff9c2d6e4027d53d12a47a213c8c5cf59b9e122ecb5027ac4495195",
       "publishedHash": "56a812aecff9c2d6e4027d53d12a47a213c8c5cf59b9e122ecb5027ac4495195",
       "lastPublished": "2026-07-17T00:27:43.466Z",
-      "lastRefreshAttempt": "2026-07-17T00:24:23.770Z"
+      "lastRefreshAttempt": "2026-07-17T16:20:16.307Z"
     },
     "fourth-fabric-architecture-alignment": {
       "projectRowId": "dd2e154a-2249-4c02-a2ad-f7bd7b880c6e",
@@ -26,7 +26,7 @@
       "contentHash": "8bc5f1426dc04d414d93394ae6e5787a2d37d5339ee0ec3e34baff64eab744e5",
       "publishedHash": "8bc5f1426dc04d414d93394ae6e5787a2d37d5339ee0ec3e34baff64eab744e5",
       "lastPublished": "2026-07-17T00:29:12.606Z",
-      "lastRefreshAttempt": "2026-07-17T00:24:24.138Z"
+      "lastRefreshAttempt": "2026-07-17T16:20:17.071Z"
     },
     "everyday-business-ai-model-platform": {
       "projectRowId": "2c8d6a98-bd94-4408-b269-705766f836e8",
@@ -35,7 +35,7 @@
       "contentHash": "0a2684ac78d73afa06b1b9b9218cb6b92efbd792cb16a43c55e42c9e46fcb8a6",
       "publishedHash": "0a2684ac78d73afa06b1b9b9218cb6b92efbd792cb16a43c55e42c9e46fcb8a6",
       "lastPublished": "2026-07-17T00:30:49.572Z",
-      "lastRefreshAttempt": "2026-07-17T00:24:24.509Z"
+      "lastRefreshAttempt": "2026-07-17T16:20:21.218Z"
     },
     "netsuite-connector": {
       "projectRowId": "39176fd7-ac82-819f-ad6c-d6709922b9ea",
@@ -44,7 +44,7 @@
       "contentHash": "33c0f648ef67004622a73817e541154cc1213c5fc425a365f685c81be18e6249",
       "publishedHash": "33c0f648ef67004622a73817e541154cc1213c5fc425a365f685c81be18e6249",
       "lastPublished": "2026-07-17T00:32:37.739Z",
-      "lastRefreshAttempt": "2026-07-17T00:24:24.930Z"
+      "lastRefreshAttempt": "2026-07-17T16:20:22.531Z"
     },
     "salesforce-connector": {
       "projectRowId": "39076fd7-ac82-81a9-b583-f5e928be50f2",
@@ -53,7 +53,7 @@
       "contentHash": "812359e644868e9e8ed2cee342b0c76578cb5bede9d16b3a6140fb26ad63e588",
       "publishedHash": "812359e644868e9e8ed2cee342b0c76578cb5bede9d16b3a6140fb26ad63e588",
       "lastPublished": "2026-07-17T00:34:21.513Z",
-      "lastRefreshAttempt": "2026-07-17T00:24:25.338Z"
+      "lastRefreshAttempt": "2026-07-17T16:20:23.343Z"
     },
     "zendesk-connector": {
       "projectRowId": "8934a8d7-c010-4cd5-9cde-ae5521cf894b",
@@ -62,7 +62,7 @@
       "contentHash": "5cf4f33d9fbeeeb05a03ff42793fb2d93f0577a4940237ac2afa513dd2234d8e",
       "publishedHash": "5cf4f33d9fbeeeb05a03ff42793fb2d93f0577a4940237ac2afa513dd2234d8e",
       "lastPublished": "2026-07-17T00:25:54.690Z",
-      "lastRefreshAttempt": "2026-07-17T00:24:23.342Z"
+      "lastRefreshAttempt": "2026-07-17T16:20:15.409Z"
     },
     "go-to-market-risk-intelligence-dashboard": {
       "projectRowId": "d112e482-5b12-44ea-8e39-0fe5486f49e6",
@@ -71,7 +71,7 @@
       "contentHash": "c251206882f4f7201ed379b23329bda264cc7f083ac00c660237b8e99fbb78c9",
       "publishedHash": "c251206882f4f7201ed379b23329bda264cc7f083ac00c660237b8e99fbb78c9",
       "lastPublished": "2026-07-17T00:38:03.621Z",
-      "lastRefreshAttempt": "2026-07-17T00:24:26.228Z"
+      "lastRefreshAttempt": "2026-07-17T16:20:24.760Z"
     },
     "ebr-presentation-suite": {
       "projectRowId": "33276fd7-ac82-810b-9750-c7849f959416",
@@ -80,7 +80,7 @@
       "contentHash": "18dff89dcf1e2875862842a05cbc571cb7b1058e41a12f6c1794e5f420ac4918",
       "publishedHash": "18dff89dcf1e2875862842a05cbc571cb7b1058e41a12f6c1794e5f420ac4918",
       "lastPublished": "2026-07-17T00:39:58.855Z",
-      "lastRefreshAttempt": "2026-07-17T00:24:26.619Z"
+      "lastRefreshAttempt": "2026-07-17T16:20:25.783Z"
     },
     "agent-arch-platform": {
       "projectRowId": "32a76fd7-ac82-8155-84a2-ef913cde68d1",
@@ -89,7 +89,7 @@
       "contentHash": "b698e9e2aa488777a777510dff8e2eac6de7645b3cb234158a565cd175f4b6de",
       "publishedHash": "b698e9e2aa488777a777510dff8e2eac6de7645b3cb234158a565cd175f4b6de",
       "lastPublished": "2026-07-17T00:41:47.489Z",
-      "lastRefreshAttempt": "2026-07-17T00:24:26.984Z"
+      "lastRefreshAttempt": "2026-07-17T16:20:26.444Z"
     }
   },
   "mobileCockpit": {
