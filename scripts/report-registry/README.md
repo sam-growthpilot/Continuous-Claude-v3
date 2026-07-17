@@ -187,3 +187,50 @@ node scripts/report-registry/check-drift.mjs --max-age-hours 72
 Prints a JSON array of `{ type, newestRunDate, ageHours, drift }` per report type
 and exits **nonzero** if any type is in drift (stale beyond the threshold, or has
 no rows at all). Read-only — it only queries the DS.
+
+## Registry conventions (proposal 08, 2026-07-17)
+
+Four conventions that earlier fixes established informally are now codified and
+enforced. `config.mjs` is the single source of truth for the shapes; `make-run.mjs`
+is where pipeline-facing emits get validated.
+
+1. **Corrective-row prefix.** A row that RE-EMITS an old period under today's Run
+   Date (a manual `backfill`/`remap` correction) must carry a summary that starts
+   with `backfill:` or `remap:` (`config.mjs CORRECTIVE_PREFIX_RE`, case-insensitive).
+   `refresh-pages.mjs`'s `pickNewest()` relies on exactly this prefix to exclude
+   corrective rows from "Current run" (see the 2026-07-16 remap-proof fix — without
+   the prefix, a correction of old history would present itself as today's run).
+   Enforced in `buildRun()` (`make-run.mjs`) **bidirectionally**: pass
+   `corrective: true` (CLI: `--corrective`) and it REQUIRES the prefix; a summary
+   that happens to start with the prefix WITHOUT `corrective: true` is also
+   rejected, so an accidental "backfill: ..." wording can't silently opt a normal
+   run out of "Current run" consideration. `backfill.mjs` and `watchdog.mjs` build
+   run objects directly (they don't call `buildRun()`), so this guard covers
+   pipeline emits through the normal `make-run.mjs` path — not those two scripts'
+   own summaries.
+
+2. **Durable artifact URLs.** `artifactUrl`/`docxUrl` must outlive promotion —
+   they're read back from Notion long after the run's temp workspace is gone, so a
+   local filesystem path or `file:` URL is worthless once the row is written (and
+   `upsert.mjs` already silently drops non-URL values rather than 400 the whole
+   row). `buildRun()` now rejects a non-`http(s)` `artifactUrl`/`docxUrl` at EMIT
+   time (`config.mjs HTTP_URL_RE`) instead of letting it be silently dropped later.
+
+3. **One period format per cadence.** `config.mjs PERIOD_FORMAT_BY_TYPE` pins
+   exactly one period shape per report type: `isoWeek` (`YYYY-Www`, e.g.
+   `2026-W29`) for **VP Weekly only** — the documented lone exception — and `date`
+   (`YYYY-MM-DD`) for every other type. `buildRun()` validates `--period`/`period`
+   against the type's format and throws on a mismatch (e.g. a date-shaped period
+   for VP Weekly, or an ISO-week period for anything else).
+
+4. **Watchdog parity.** Every entry in `config.mjs REPORT_TYPES` must have a
+   corresponding entry in `watchdog.mjs SCHEDULE` — a type with no schedule entry
+   is invisible to the silent-miss detector. `watchdog.mjs` exports
+   `scheduleMissingTypes()` (asserted empty by a test) and `runWatchdog()` prints a
+   non-fatal `WARN` to stderr on any gap (the watchdog's contract is always-exit-0
+   observability, so this is a loud warning, not a thrown error). A companion
+   `scheduleFormatMismatches()` cross-checks each schedule entry's `periodFormat`
+   against convention 3's `PERIOD_FORMAT_BY_TYPE`, so the schedule can't silently
+   drift from the single source of truth either.
+
+See `scripts/report-registry/test/conventions.test.mjs` for the enforcement tests.

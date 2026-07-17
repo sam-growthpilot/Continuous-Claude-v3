@@ -46,6 +46,34 @@ export const SOURCES = [...new Set(Object.values(SOURCE_BY_TYPE))];
 // upsert.mjs; this is the full key set the pipelines emit.
 export const REPORT_RUN_KEYS = ids.reportRunContract.keys;
 
+// --- registry conventions (proposal 08, 2026-07-17) -----------------------------
+// Codifies, in ONE place, conventions that were previously only informally
+// established by ad-hoc fixes. Single source of truth so make-run.mjs and
+// watchdog.mjs can never independently drift on what a valid period/URL/
+// corrective-row looks like.
+
+// One period format per report-type cadence. VP Weekly's ISO-week period
+// (`Get-Date -UFormat '%Y-W%V'`, e.g. "2026-W29") is the documented LONE
+// exception (see watchdog.mjs's module doc, verified against the real wrapper
+// scripts) — every other type emits a plain `YYYY-MM-DD` date period.
+export const PERIOD_FORMAT_BY_TYPE = Object.fromEntries(
+  REPORT_TYPES.map((t) => [t, t === 'VP Weekly' ? 'isoWeek' : 'date']),
+);
+export const ISO_WEEK_PERIOD_RE = /^\d{4}-W\d{2}$/;
+export const ISO_DATE_PERIOD_RE = /^\d{4}-\d{2}-\d{2}$/;
+
+// Corrective rows (backfill/remap re-emits of an OLD period under TODAY's Run
+// Date) must carry a `backfill:`/`remap:` summary prefix — refresh-pages.mjs's
+// pickNewest() relies on exactly this prefix to exclude them from "Current run"
+// (see the 2026-07-16 remap-proof fix). Anchored + case-insensitive.
+export const CORRECTIVE_PREFIX_RE = /^(backfill|remap):/i;
+
+// A Notion `url`-typed property (Artifact URL / Docx-Deck) rejects a non-URL
+// value outright; a local filesystem path also stops resolving the moment the
+// run's temp workspace is cleaned up. Artifact URLs must outlive promotion —
+// only http(s) is accepted.
+export const HTTP_URL_RE = /^https?:\/\//i;
+
 // --- ntn CLI (absolute winget exe — solves the ntn-PATH problem) ---
 // Re-exported for callers that want the exe path without importing project-cards
 // config. lib/notion.mjs already enforces the non-interactive contract around it.

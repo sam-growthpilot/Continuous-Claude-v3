@@ -15,15 +15,29 @@
 //   -> writes $TEMP/report-run-Project-Cards.json and prints the path to stdout.
 //
 // Flags: --type --period --status --source (required); --runDate --artifactUrl
-//   --docxUrl --summary --commit (optional); --out <path> (override target path).
+//   --docxUrl --summary --commit --corrective (optional); --out <path> (override
+//   target path).
 //
 // ESM, no external deps. Reuses the REPORT_TYPES / STATUSES enums from config.mjs
 // (single source of truth) so validation here can never drift from the upsert.
+//
+// REGISTRY CONVENTIONS (proposal 08, 2026-07-17) — enforced here so they can't
+// drift: (1) corrective (backfill/remap) rows must carry a `backfill:`/`remap:`
+// summary prefix, declared via `corrective: true` / `--corrective`; (2)
+// artifactUrl/docxUrl must be http(s) — artifact URLs must outlive promotion;
+// (3) one period format per report-type cadence, per config.mjs
+// PERIOD_FORMAT_BY_TYPE (VP Weekly's ISO-week format is the lone exception);
+// (4) watchdog schedule parity is enforced in watchdog.mjs (every REPORT_TYPES
+// entry needs a schedule entry). See README.md "Registry conventions".
 import { writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { pathToFileURL } from 'node:url';
-import { REPORT_TYPES, STATUSES, SOURCES } from './config.mjs';
+import {
+  REPORT_TYPES, STATUSES, SOURCES,
+  PERIOD_FORMAT_BY_TYPE, ISO_WEEK_PERIOD_RE, ISO_DATE_PERIOD_RE,
+  CORRECTIVE_PREFIX_RE, HTTP_URL_RE,
+} from './config.mjs';
 
 // ACCEPTED RISK (T6.1): two runs of the SAME source share the canonical
 // $TEMP/report-run-<source>.json emit path, so overlapping same-job invocations could
@@ -39,9 +53,16 @@ const OPTIONAL_STR_KEYS = ['artifactUrl', 'docxUrl', 'summary', 'commit'];
 // Build a validated report-run object. Throws (fail-loud) on a missing/invalid
 // required field so a pipeline can never emit an un-upsertable record. runDate
 // defaults to now (ISO); runId is derived from type|period|runDate.
+//
+// `corrective` (optional boolean) declares INTENT for a backfill/remap re-emit
+// of an old period. It is enforced bidirectionally against the summary's
+// `backfill:`/`remap:` prefix (proposal 08, registry conventions) — pickNewest()
+// in refresh-pages.mjs relies on that exact prefix to exclude corrective rows
+// from "Current run", so an accidental prefix (or a missing one on a row that
+// claims to be corrective) is exactly the drift this guard prevents.
 export function buildRun({
   type, period, runDate, status, source,
-  artifactUrl, docxUrl, summary, commit,
+  artifactUrl, docxUrl, summary, commit, corrective,
 } = {}) {
   const req = { type, period, status, source };
   for (const [k, v] of Object.entries(req)) {
@@ -59,6 +80,32 @@ export function buildRun({
   // a stray option in the shared Notion select (T6.1 #4).
   if (!SOURCES.includes(source)) {
     throw new Error(`buildRun: invalid source "${source}" (allowed: ${SOURCES.join(', ')})`);
+  }
+  // Registry convention: one period format per report-type cadence (config.mjs
+  // PERIOD_FORMAT_BY_TYPE is the single source of truth; VP Weekly's ISO-week
+  // format is the documented lone exception).
+  const periodFormat = PERIOD_FORMAT_BY_TYPE[type];
+  const periodRe = periodFormat === 'isoWeek' ? ISO_WEEK_PERIOD_RE : ISO_DATE_PERIOD_RE;
+  if (!periodRe.test(String(period))) {
+    const example = periodFormat === 'isoWeek' ? 'YYYY-Www, e.g. "2026-W29"' : 'YYYY-MM-DD, e.g. "2026-07-17"';
+    throw new Error(`buildRun: period "${period}" does not match the "${periodFormat}" format required for type "${type}" (expected ${example})`);
+  }
+  // Registry convention: corrective rows (backfill/remap) MUST carry the prefix,
+  // and only rows that intend to be corrective may carry it.
+  const summaryHasCorrectivePrefix = summary != null && CORRECTIVE_PREFIX_RE.test(String(summary));
+  if (corrective && !summaryHasCorrectivePrefix) {
+    throw new Error('buildRun: corrective:true requires a summary starting with "backfill:" or "remap:" (pickNewest excludes these from "Current run" by this exact prefix)');
+  }
+  if (!corrective && summaryHasCorrectivePrefix) {
+    throw new Error('buildRun: summary starts with "backfill:"/"remap:" but corrective:true was not passed — pass corrective:true to confirm this is an intentional corrective row, or reword the summary if it is not');
+  }
+  // Registry convention: artifact/docx URLs must outlive promotion — a local
+  // filesystem path stops resolving once the run's temp workspace is cleaned up,
+  // and Notion's `url` property rejects non-URL values outright.
+  for (const [field, value] of [['artifactUrl', artifactUrl], ['docxUrl', docxUrl]]) {
+    if (value != null && String(value).trim() !== '' && !HTTP_URL_RE.test(String(value))) {
+      throw new Error(`buildRun: "${field}" must be an http(s) URL (got "${value}") — artifact URLs must outlive promotion, so local paths are rejected here rather than silently dropped later`);
+    }
   }
   const ts = (runDate != null && String(runDate).trim() !== '')
     ? String(runDate)
@@ -130,6 +177,7 @@ function main() {
     type: f.type, period: f.period, runDate: f.runDate, status: f.status,
     source: f.source, artifactUrl: f.artifactUrl, docxUrl: f.docxUrl,
     summary: f.summary, commit: f.commit,
+    corrective: f.corrective === true || f.corrective === 'true',
   });
   const path = writeRun(run, { out: typeof f.out === 'string' ? f.out : undefined });
   console.error(`[report-registry] emitted run ${run.runId} -> ${path}`);

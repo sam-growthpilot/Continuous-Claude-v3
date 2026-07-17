@@ -74,7 +74,7 @@
 // core). ESM, no external deps.
 import { pathToFileURL } from 'node:url';
 import { queryDataSource } from '../project-cards/lib/notion.mjs';
-import { REPORT_RUNS_DS_ID } from './config.mjs';
+import { REPORT_RUNS_DS_ID, REPORT_TYPES, PERIOD_FORMAT_BY_TYPE } from './config.mjs';
 import { upsertReportRun } from './upsert.mjs';
 import {
   newestRunDate, computeDrift, DEFAULT_MAX_AGE_HOURS, parseMaxAgeHours,
@@ -113,6 +113,26 @@ export const SCHEDULE = [
     grace: { h: 12, m: 0 }, periodFormat: 'date', crossesMidnight: false,
   },
 ];
+
+// --- watchdog parity (proposal 08, 2026-07-17) -----------------------------------
+// Registry convention: every new pipeline ships with a watchdog schedule entry on
+// day one — a report type that exists in REPORT_TYPES but has no SCHEDULE entry
+// is invisible to the silent-miss detector. Pure, exported for tests.
+export function scheduleMissingTypes(schedule = SCHEDULE) {
+  const covered = new Set(schedule.map((e) => e.type));
+  return REPORT_TYPES.filter((t) => !covered.has(t));
+}
+
+// Registry convention: one period format per cadence, single source of truth =
+// config.mjs PERIOD_FORMAT_BY_TYPE. The schedule's own `periodFormat` field is
+// kept (it drives formatPeriod()) but must never independently drift from the
+// config — this catches the drift instead of silently emitting the wrong
+// period shape for a type. Pure, exported for tests.
+export function scheduleFormatMismatches(schedule = SCHEDULE) {
+  return schedule
+    .filter((e) => PERIOD_FORMAT_BY_TYPE[e.type] !== e.periodFormat)
+    .map((e) => ({ type: e.type, scheduled: e.periodFormat, expected: PERIOD_FORMAT_BY_TYPE[e.type] }));
+}
 
 // --- local-time date helpers (pure) ---------------------------------------------
 function startOfDay(d) { return new Date(d.getFullYear(), d.getMonth(), d.getDate()); }
@@ -293,6 +313,18 @@ export function runWatchdog({
   dsId = REPORT_RUNS_DS_ID, query = queryDataSource, upsert = upsertReportRun,
   maxAgeHours = DEFAULT_MAX_AGE_HOURS,
 } = {}) {
+  // Registry convention parity (proposal 08): warn loudly — but stay non-fatal,
+  // this is an observability sweep that must always exit 0 — on any REPORT_TYPES
+  // entry missing a schedule row, or a schedule entry whose periodFormat has
+  // drifted from config.mjs's single source of truth.
+  const missingTypes = scheduleMissingTypes(schedule);
+  if (missingTypes.length) {
+    console.error(`[watchdog] WARN: report type(s) with no watchdog schedule entry (registry convention: every pipeline ships with one on day one): ${missingTypes.join(', ')}`);
+  }
+  const formatMismatches = scheduleFormatMismatches(schedule);
+  for (const m of formatMismatches) {
+    console.error(`[watchdog] WARN: schedule periodFormat "${m.scheduled}" for "${m.type}" does not match config.mjs PERIOD_FORMAT_BY_TYPE "${m.expected}" (registry convention: one period format per cadence)`);
+  }
   return schedule.map((entry) => evaluateEntry(entry, now, {
     dsId, query, upsert, dryRun, maxAgeHours,
   }));
