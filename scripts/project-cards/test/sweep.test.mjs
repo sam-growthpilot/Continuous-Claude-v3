@@ -12,7 +12,10 @@ import {
   triageFailureReceiptLine, TRIAGE_EXIT_CODE, mapPmNoteRow,
   cockpitContentHash, cockpitEmbedIdFromUrl,
   deriveReportStatus, buildReportSummary,
+  buildOverviewExamplePrompt, OVERVIEW_EXAMPLES,
 } from '../sweep.mjs';
+import { getOverviewExample, recordOverviewExample } from '../lib/state.mjs';
+import { OVERVIEW_PAGE_ID, OVERVIEW_COCKPIT_HEADING, OVERVIEW_CARD_HEADING } from '../lib/config.mjs';
 
 let pass = 0;
 function test(name, fn) {
@@ -376,6 +379,68 @@ test('buildReportSummary: mobile failure with no failureCode falls back to "unkn
     mobileFailed: true, mobileFailureCode: null,
   });
   assert.ok(s.endsWith('· mobile=fail(unknown)'));
+});
+
+// --- optimization 01: overview-page example embeds -----------------------------
+
+test('OVERVIEW_EXAMPLES defines both tracked surfaces with distinct headings + sources', () => {
+  assert.deepEqual(Object.keys(OVERVIEW_EXAMPLES).sort(), ['card', 'cockpit']);
+  assert.equal(OVERVIEW_EXAMPLES.cockpit.heading, OVERVIEW_COCKPIT_HEADING);
+  assert.equal(OVERVIEW_EXAMPLES.card.heading, OVERVIEW_CARD_HEADING);
+  assert.equal(OVERVIEW_EXAMPLES.cockpit.htmlFile, 'portfolio-cockpit.html');
+  assert.equal(OVERVIEW_EXAMPLES.card.htmlFile, 'connector-ecosystem.html');
+});
+
+test('buildOverviewExamplePrompt: targets the overview page, replaces only the named section, fences the HTML', () => {
+  const p = buildOverviewExamplePrompt({
+    heading: OVERVIEW_COCKPIT_HEADING,
+    html: '<html>X</html>',
+    caption: 'Example caption; refreshed',
+    asOfHuman: '16 Jul 2026',
+  });
+  assert.ok(p.includes(`Target Notion page id: ${OVERVIEW_PAGE_ID}`));
+  assert.ok(p.includes(`titled exactly "${OVERVIEW_COCKPIT_HEADING}"`));
+  assert.ok(p.includes('EXAMPLEDONE attachment=<id>'));
+  assert.ok(p.includes('Example caption; refreshed 16 Jul 2026.'));
+  assert.ok(p.includes('UNTRUSTED'));
+  assert.ok(p.includes('--- BEGIN EXAMPLE HTML'));
+  assert.ok(p.indexOf('<html>X</html>') > p.indexOf('--- BEGIN EXAMPLE HTML'));
+});
+
+test('state: getOverviewExample tolerates absence; recordOverviewExample merges per key', () => {
+  const s = {};
+  const fresh = getOverviewExample(s, 'cockpit');
+  assert.deepEqual(fresh, {
+    pageId: null, attachmentId: null, contentHash: null, publishedHash: null, lastPublished: null,
+  });
+  recordOverviewExample(s, 'cockpit', { pageId: 'pg', publishedHash: 'h1' });
+  recordOverviewExample(s, 'card', { attachmentId: 'att' });
+  assert.equal(getOverviewExample(s, 'cockpit').publishedHash, 'h1');
+  assert.equal(getOverviewExample(s, 'cockpit').pageId, 'pg');
+  assert.equal(getOverviewExample(s, 'card').attachmentId, 'att');
+  assert.equal(getOverviewExample(s, 'card').publishedHash, null);
+});
+
+test('deriveReportStatus: overview-example degradation -> Warn', () => {
+  assert.equal(deriveReportStatus({
+    fatalError: null, publishFailed: [], hubRefreshed: true, cockpitPublished: true,
+    overviewFailed: true,
+  }), 'Warn');
+});
+
+test('buildReportSummary: bound count + overview-example failure segments (opt-01/03)', () => {
+  const s = buildReportSummary({
+    refreshed: 10, boundCards: 1, publishedOk: ['a'], publishFailed: [],
+    hubRefreshed: true, cockpitPublished: true,
+    overviewFailed: true, overviewFailureCode: 'cockpit:failed',
+  });
+  assert.equal(s, 'cards refreshed=10 (bound=1) · published=1 · failed=0 · hub=ok'
+    + ' · cockpit=ok · mobile=ok · examples=fail(cockpit:failed)');
+  // back-compat: both omitted when absent
+  const legacy = buildReportSummary({
+    refreshed: 8, publishedOk: [], publishFailed: [], hubRefreshed: true, cockpitPublished: true,
+  });
+  assert.equal(legacy, 'cards refreshed=8 · published=0 · failed=0 · hub=ok · cockpit=ok · mobile=ok');
 });
 
 console.log(`\n${pass} passed`);

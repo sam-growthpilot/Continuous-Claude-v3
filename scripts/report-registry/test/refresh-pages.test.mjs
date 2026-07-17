@@ -12,9 +12,10 @@ import test from 'node:test';
 import {
   notionPageUrl, notionViewUrl, extractRun, pickNewest,
   buildCurrentRunBlocks, buildHubLauncherBlocks,
-  refreshChildPage, refreshHub, refreshAll,
+  refreshChildPage, refreshHub, refreshAll, parseTypeArg,
   CURRENT_RUN_HEADING, HUB_LAUNCHER_HEADING,
 } from '../refresh-pages.mjs';
+import { REPORT_CHILD_PAGES } from '../config.mjs';
 
 // --- helpers to fabricate raw Notion rows ---
 function row({ runDate, status, summary, artifactUrl, title } = {}) {
@@ -272,4 +273,44 @@ test('refreshAll is non-fatal per page: one child write failing still writes the
   assert.equal(res.hub.action, 'replaced');
   // every type was queried (all 6)
   assert.equal(d.calls.query.length, 6);
+});
+
+// --- scoped refresh (optimization 02: --type) ------------------------------------
+
+test('refreshAll onlyType writes ONLY that type\'s child page, still queries all types, still refreshes the hub', () => {
+  const d = mockDeps({
+    rowsByType: { 'VP Weekly': [row({ runDate: '2026-06-29', status: 'OK' })] },
+    hubHasSection: true,
+  });
+  const res = refreshAll({
+    onlyType: 'VP Weekly',
+    deps: {
+      query: d.query, replaceSection: d.replaceSection,
+      getBlocks: d.getBlocks, findSection: d.findSection, insertAfter: d.insertAfter,
+    },
+  });
+  // all 6 types still queried (the hub table needs every type's latest row)
+  assert.equal(d.calls.query.length, 6);
+  // exactly two section writes: the scoped child page + the hub launcher body
+  assert.equal(d.calls.replaceSection.length, 2);
+  const childWrite = d.calls.replaceSection.find((c) => c.heading === CURRENT_RUN_HEADING);
+  assert.equal(childWrite.pageId, REPORT_CHILD_PAGES['VP Weekly']);
+  assert.ok(d.calls.replaceSection.some((c) => c.heading === HUB_LAUNCHER_HEADING));
+  // the other 5 children are recorded as scoped skips, not silent omissions
+  const skipped = res.children.filter((c) => c.skipped === 'scoped');
+  assert.equal(skipped.length, 5);
+  assert.equal(res.children.filter((c) => c.wrote).length, 1);
+  assert.equal(res.hub.action, 'replaced');
+});
+
+test('refreshAll onlyType rejects an unknown report type (fail loud)', () => {
+  assert.throws(() => refreshAll({ onlyType: 'Nonsense Type', deps: {} }), /unknown --type/);
+});
+
+test('parseTypeArg: space form, = form, absent, and missing value', () => {
+  assert.equal(parseTypeArg(['--type', 'VP Weekly']), 'VP Weekly');
+  assert.equal(parseTypeArg(['--type=Team Dashboard']), 'Team Dashboard');
+  assert.equal(parseTypeArg(['--dry-run']), null);
+  assert.throws(() => parseTypeArg(['--type']), /--type requires/);
+  assert.throws(() => parseTypeArg(['--type', '--dry-run']), /--type requires/);
 });

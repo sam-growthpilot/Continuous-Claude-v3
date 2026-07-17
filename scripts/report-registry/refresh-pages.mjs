@@ -28,8 +28,13 @@
 // config/spawn fatal exits 2.
 //
 // CLI:
-//   node refresh-pages.mjs            # refresh all 6 child pages + the hub launcher
-//   node refresh-pages.mjs --dry-run  # print the planned callouts + launcher table; write nothing
+//   node refresh-pages.mjs                 # refresh all 6 child pages + the hub launcher
+//   node refresh-pages.mjs --dry-run       # print the planned callouts + launcher table; write nothing
+//   node refresh-pages.mjs --type "<Report Type>"  # SCOPED: write only that type's
+//     child page, then the hub launcher. The hub table still renders every type's
+//     latest row (its body is replaced whole), so all 6 types are still QUERIED —
+//     scoping saves the 5 unneeded child-page WRITES, not the reads. Used by
+//     upsert.mjs's post-write refresh so the hub can never lag a registry write.
 //
 // Reuses scripts/project-cards/lib/notion.mjs (absolute-NTN_EXE non-interactive
 // contract). ESM, no external deps.
@@ -305,7 +310,14 @@ export function refreshHub({
 // its write, so a per-page write failure still contributes its latest row to the hub
 // table. Every write is independently try/caught (non-fatal). `deps` overrides the
 // transport for tests. Returns { children, hub, errors }.
-export function refreshAll({ dryRun = false, deps = {} } = {}) {
+//
+// `onlyType` (optional) scopes the child-page WRITES to that one report type; every
+// type is still queried because the hub launcher table is replaced whole and needs
+// all types' latest rows. An unknown onlyType throws (config error, fail loud).
+export function refreshAll({ dryRun = false, onlyType = null, deps = {} } = {}) {
+  if (onlyType != null && !REPORT_TYPES.includes(onlyType)) {
+    throw new Error(`unknown --type "${onlyType}" (allowed: ${REPORT_TYPES.join(', ')})`);
+  }
   const d = {
     query: queryDataSource,
     replaceSection: replaceSectionBlocks,
@@ -330,6 +342,13 @@ export function refreshAll({ dryRun = false, deps = {} } = {}) {
       continue; // no data -> hub row shows dashes; nothing to splice into the child
     }
     latestByType[type] = extractRun(newest);
+
+    // Scoped run: only the target type's child page is WRITTEN; the query above
+    // still ran because the hub table (replaced whole below) needs every type.
+    if (onlyType && type !== onlyType) {
+      results.children.push({ type, pageId, rows: rows.length, wrote: false, skipped: 'scoped' });
+      continue;
+    }
 
     const blocks = buildCurrentRunBlocks(newest);
     if (dryRun) {
@@ -367,13 +386,29 @@ export function refreshAll({ dryRun = false, deps = {} } = {}) {
 }
 
 // --- CLI -----------------------------------------------------------------------
+// PURE, exported for tests: extract the --type value from argv (either
+// `--type <value>` or `--type=<value>`). Returns null when absent; throws when
+// the flag is present but has no value.
+export function parseTypeArg(argv) {
+  const eq = argv.find((a) => a.startsWith('--type='));
+  if (eq) return eq.slice('--type='.length);
+  const idx = argv.indexOf('--type');
+  if (idx === -1) return null;
+  const val = argv[idx + 1];
+  if (val == null || val.startsWith('--')) throw new Error('--type requires a report-type value');
+  return val;
+}
+
 function main() {
-  const dryRun = process.argv.slice(2).includes('--dry-run');
-  const results = refreshAll({ dryRun });
+  const argv = process.argv.slice(2);
+  const dryRun = argv.includes('--dry-run');
+  const onlyType = parseTypeArg(argv);
+  const results = refreshAll({ dryRun, onlyType });
   const wrote = results.children.filter((c) => c.wrote).length;
+  const expected = onlyType ? 1 : REPORT_TYPES.length;
   const hubAction = results.hub ? results.hub.action : 'skipped';
   console.error(
-    `[refresh-pages] ${dryRun ? 'DRY-RUN ' : ''}done — children=${wrote}/${REPORT_TYPES.length} written, `
+    `[refresh-pages] ${dryRun ? 'DRY-RUN ' : ''}${onlyType ? `SCOPED(${onlyType}) ` : ''}done — children=${wrote}/${expected} written, `
     + `hub=${hubAction}, errors=${results.errors.length}`,
   );
   // Non-fatal by contract: per-page/hub errors are logged but never fail the sweep.

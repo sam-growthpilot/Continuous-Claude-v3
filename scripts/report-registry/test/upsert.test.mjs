@@ -7,6 +7,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import {
   validateRun, buildProperties, upsertReportRun, readInput,
+  wantsRefresh, runScopedRefresh,
 } from '../upsert.mjs';
 
 const DS = 'c7d2d9e3-d388-4640-a66e-88f7dd50f854';
@@ -250,4 +251,41 @@ test('non-transient create failure throws immediately (no adopt, no retry)', () 
 test('readInput handles --emit inline json', () => {
   assert.equal(readInput(['--emit', '{"a":1}']), '{"a":1}');
   assert.equal(readInput(['--emit={"b":2}']), '{"b":2}');
+});
+
+// --- event-driven scoped refresh (optimization 02) --------------------------------
+
+test('wantsRefresh defaults ON; --no-refresh opts out; flag never leaks into readInput path pick', () => {
+  assert.equal(wantsRefresh([]), true);
+  assert.equal(wantsRefresh(['run.json']), true);
+  assert.equal(wantsRefresh(['--no-refresh', 'run.json']), false);
+  // --no-refresh starts with '--' so readInput's first-non-flag path pick skips it
+  assert.equal(readInput(['--no-refresh', '--emit', '{"a":1}']), '{"a":1}');
+});
+
+test('runScopedRefresh spawns refresh-pages.mjs with --type and reports ok on exit 0', () => {
+  const calls = [];
+  const spawn = (cmd, args, opts) => { calls.push({ cmd, args, opts }); return { status: 0 }; };
+  const res = runScopedRefresh('VP Weekly', { spawn });
+  assert.equal(res.ok, true);
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0].cmd, process.execPath);
+  assert.match(calls[0].args[0], /refresh-pages\.mjs$/);
+  assert.deepEqual(calls[0].args.slice(1), ['--type', 'VP Weekly']);
+  assert.ok(calls[0].opts.timeout > 0, 'hard-bounded');
+});
+
+test('runScopedRefresh is NON-FATAL on spawn error, nonzero exit, and throw', () => {
+  assert.deepEqual(
+    runScopedRefresh('VP Weekly', { spawn: () => ({ error: new Error('ENOENT') }) }),
+    { ok: false, status: null },
+  );
+  assert.deepEqual(
+    runScopedRefresh('VP Weekly', { spawn: () => ({ status: 2 }) }),
+    { ok: false, status: 2 },
+  );
+  assert.deepEqual(
+    runScopedRefresh('VP Weekly', { spawn: () => { throw new Error('boom'); } }),
+    { ok: false, status: null },
+  );
 });

@@ -84,6 +84,18 @@ export const MOBILE_INTRO_HEADING = '# 📱 Mobile Cockpit';
 export const MOBILE_EMBED_HEADING = '## 🚨 Attention Queue';
 export const AI_DIGEST_HEADING = '## 🤖 AI digest (machine-written)';
 
+// --- Overview page ("Living Project Cards & Portfolio Cockpit") ---------------
+// Hosts two EXAMPLE embeds under "## See it live" that must track the live
+// surfaces (optimization 01: no orphan surfaces — they rotted untracked for 12
+// days after the July-4 launch). The sweep republishes each when its live
+// counterpart's published content changes.
+export const OVERVIEW_PAGE_ID = '39376fd7-ac82-81ec-a734-d56cdd390c22';
+// Section headings on the overview page (heading_3, inside "## See it live").
+export const OVERVIEW_COCKPIT_HEADING = '### The Portfolio Cockpit';
+export const OVERVIEW_CARD_HEADING = '### A project card';
+// The roster card whose HTML doubles as the overview page's card example.
+export const OVERVIEW_CARD_EXAMPLE_SLUG = 'connector-ecosystem';
+
 // --- timeouts (ms) ---
 export const NTN_TIMEOUT_MS = 30000;
 export const REFRESH_TIMEOUT_MS = 120000;

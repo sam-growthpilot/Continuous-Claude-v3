@@ -156,6 +156,15 @@ node scripts/report-registry/upsert.mjs "$TEMP\report-run-Project-Cards.json"
 callers wrap it so that nonzero exit never reddens the parent report run. The
 drift detector (below) catches any resulting missing-row drift.
 
+**Event-driven hub (optimization 02, 2026-07-16):** after a SUCCESSFUL write, the
+upsert CLI automatically runs `refresh-pages.mjs --type "<run.type>"` — a SCOPED
+refresh of that type's child page plus the hub launcher — so the registry and its
+Notion surfaces can never disagree for longer than one write. The refresh is
+strictly non-fatal (any failure is logged; the upsert's exit code is unchanged).
+Opt out with `--no-refresh` for bulk callers that refresh once at the end. Note
+`backfill.mjs` and `watchdog.mjs` import `upsertReportRun` directly, so they do
+NOT auto-refresh — run `refresh-pages.mjs` manually after a bulk backfill.
+
 ### Backfill (one-time / repeatable history seed)
 
 ```

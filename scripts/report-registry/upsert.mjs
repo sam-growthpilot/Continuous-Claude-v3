@@ -22,10 +22,20 @@
 //   node upsert.mjs --emit '<json-string>'        # inline JSON
 //   echo '<json>' | node upsert.mjs               # stdin (no path, no --emit)
 //
+// EVENT-DRIVEN HUB (optimization 02): after a SUCCESSFUL row write, the CLI runs a
+// SCOPED surface refresh (refresh-pages.mjs --type "<run.type>": that type's child
+// page + the hub launcher row) so the registry and its Notion surfaces can never
+// disagree for longer than one write. Strictly non-fatal — a refresh failure is
+// logged and never changes the upsert's exit code (the row IS the truth; the
+// surfaces self-heal on the next refresh). Opt out with --no-refresh (e.g. a bulk
+// backfill that will run one refresh at the end).
+//
 // Reuses scripts/project-cards/lib/notion.mjs (absolute-NTN_EXE non-interactive
 // contract + queryDataSource / createPage / updatePageProperties). No new deps.
 import { readFileSync } from 'node:fs';
-import { pathToFileURL } from 'node:url';
+import { spawnSync } from 'node:child_process';
+import { fileURLToPath, pathToFileURL } from 'node:url';
+import { dirname, join } from 'node:path';
 import {
   queryDataSource, createPage, updatePageProperties, trashPage, richText, dateStart,
 } from '../project-cards/lib/notion.mjs';
@@ -251,6 +261,49 @@ export function upsertReportRun(run, {
   return { action: 'updated', pageId: target.id, duplicates: 1 };
 }
 
+// --- event-driven scoped refresh (optimization 02) -------------------------------
+
+const REFRESH_PAGES_PATH = join(dirname(fileURLToPath(import.meta.url)), 'refresh-pages.mjs');
+// 6 DS reads + hub read/writes, each ntn call bounded at 30s — 240s covers the
+// worst case with headroom while still hard-bounding a wedged refresh.
+const REFRESH_TIMEOUT_MS = 240_000;
+
+// PURE, exported for tests: the CLI refreshes surfaces after a successful write
+// unless --no-refresh was passed.
+export function wantsRefresh(argv) {
+  return !argv.includes('--no-refresh');
+}
+
+// Run the SCOPED surface refresh for one report type as a child process
+// (refresh-pages.mjs --type "<type>"). NON-FATAL by contract: any failure —
+// spawn error, nonzero exit, timeout — is logged loudly and swallowed; the
+// registry row already landed and the surfaces self-heal on the next refresh.
+// Returns { ok, status } for observability/tests. `spawn` injectable for tests.
+export function runScopedRefresh(type, { spawn = spawnSync } = {}) {
+  try {
+    const res = spawn(process.execPath, [REFRESH_PAGES_PATH, '--type', String(type)], {
+      input: '',
+      timeout: REFRESH_TIMEOUT_MS,
+      windowsHide: true,
+      encoding: 'utf8',
+      stdio: ['pipe', 'inherit', 'inherit'],
+    });
+    if (res.error) {
+      console.error(`[report-registry] WARN: scoped refresh spawn failed (non-fatal): ${res.error.message}`);
+      return { ok: false, status: null };
+    }
+    if (res.status !== 0) {
+      console.error(`[report-registry] WARN: scoped refresh exited ${res.status} (non-fatal)`);
+      return { ok: false, status: res.status };
+    }
+    console.error(`[report-registry] scoped refresh ok (type "${type}": child page + hub)`);
+    return { ok: true, status: 0 };
+  } catch (e) {
+    console.error(`[report-registry] WARN: scoped refresh threw (non-fatal): ${e.message}`);
+    return { ok: false, status: null };
+  }
+}
+
 // --- input resolution (CLI) ----------------------------------------------------
 export function readInput(argv) {
   const emitIdx = argv.indexOf('--emit');
@@ -277,6 +330,14 @@ async function main() {
   }
   const result = upsertReportRun(run);
   console.log(`[report-registry] ${result.action} row for Run ID "${run.runId}" (page ${result.pageId})`);
+  // Event-driven hub (optimization 02): a successful write triggers the scoped
+  // surface refresh unless the caller opted out. Non-fatal — never changes the
+  // upsert's outcome or exit code.
+  if (wantsRefresh(process.argv.slice(2))) {
+    runScopedRefresh(run.type);
+  } else {
+    console.error('[report-registry] --no-refresh: skipping scoped surface refresh');
+  }
   return result;
 }
 

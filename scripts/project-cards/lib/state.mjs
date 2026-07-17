@@ -186,6 +186,41 @@ export function recordTriage(state, { created, hash, ranAt, consumed, skipped } 
   return state;
 }
 
+// --- overview-page example embeds (optimization 01) ----------------------------
+// state.overviewExamples maps an example key ('cockpit' | 'card') -> the same
+// publish-tracking shape the cockpit uses: { pageId, attachmentId, contentHash,
+// publishedHash, lastPublished }. contentHash mirrors the LIVE surface's
+// published content hash; publishedHash advances only on a confirmed +
+// read-back-verified example publish (REL#1 self-heal). Readers tolerate
+// absence (older state.json files predate this block).
+
+function freshOverviewExample() {
+  return {
+    pageId: null,
+    attachmentId: null,
+    contentHash: null,
+    publishedHash: null,
+    lastPublished: null,
+  };
+}
+
+// Tolerant reader: always returns the full shape for one example key.
+export function getOverviewExample(state, key) {
+  const all = state && state.overviewExamples && typeof state.overviewExamples === 'object'
+    ? state.overviewExamples : {};
+  const cur = all[key] && typeof all[key] === 'object' ? all[key] : {};
+  return { ...freshOverviewExample(), ...cur };
+}
+
+// Merge a patch into state.overviewExamples[key]. Mutates and returns `state`
+// (caller persists via writeState) — mirrors recordCockpit's contract.
+export function recordOverviewExample(state, key, patch = {}) {
+  state.overviewExamples = state.overviewExamples && typeof state.overviewExamples === 'object'
+    ? state.overviewExamples : {};
+  state.overviewExamples[key] = { ...getOverviewExample(state, key), ...patch };
+  return state;
+}
+
 // --- one-time setup registry (mitigation #9) ----------------------------------
 // state.mobileCockpit.setup maps a setup-step key (e.g. pmNotesDs, triageLogHeading,
 // notesView) -> the created resource id/marker. Setup steps check this and skip
