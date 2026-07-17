@@ -41,17 +41,24 @@ set "NLOG_DATE="
 for /f "usebackq delims=" %%d in (`powershell -NoProfile -Command "(Get-Date).ToString('yyyy-MM-dd')"`) do set "NLOG_DATE=%%d"
 if defined NLOG_DATE (set "NLOG=%NLOG_DIR%\%NLOG_DATE%.log") else (set "NLOG=%NLOG_DIR%\last-run.log")
 
+REM claude -p must auth via the claude.ai subscription login, NOT a stale ANTHROPIC_API_KEY
+REM in the environment (it 401s and takes precedence). Clear it for this process only.
+REM NOTE: clearing the key is necessary but NOT sufficient -- headless claude -p also
+REM needs the Notion MCP tools granted, or the call is auto-denied (see the dated log).
+set "ANTHROPIC_API_KEY="
+REM Scoped grant (root-caused 2026-07-16): headless claude -p auto-denies ungranted
+REM MCP tools; this permission gap -- not connector unavailability -- froze the
+REM Notion mirror for 11 weeks.
+REM PARSE-TIME EXPANSION BUG (root-caused 2026-07-17, first unattended run): these two
+REM `set` lines used to live INSIDE the parenthesized block below, where %HEALTH_TOOLS%
+REM had already parse-time-expanded to EMPTY before the set executed -- so the run was
+REM granted no Notion tools and the mirror failed permission-denied. Batch expands %VARS%
+REM when it parses the whole block (same mechanism as the %ERRORLEVEL% note below). They
+REM MUST stay above the block.
+set "HEALTH_TOOLS=mcp__claude_ai_Notion__notion-fetch,mcp__claude_ai_Notion__notion-search,mcp__claude_ai_Notion__notion-update-page"
+
 if exist %NOTION_PROMPT% (
     echo [%date% %time%] Posting results to Notion dashboard... log=%NLOG%
-    REM claude -p must auth via the claude.ai subscription login, NOT the invalid ANTHROPIC_API_KEY
-    REM in the environment (it 401s and takes precedence). Clear it for this process only.
-    REM NOTE: clearing the key is necessary but NOT sufficient -- headless claude -p also
-    REM needs the Notion MCP tools granted, or the call is auto-denied (see the dated log).
-    set "ANTHROPIC_API_KEY="
-    REM Scoped grant (root-caused 2026-07-16): headless claude -p auto-denies ungranted
-    REM MCP tools; this permission gap -- not connector unavailability -- froze the
-    REM Notion mirror for 11 weeks.
-    set "HEALTH_TOOLS=mcp__claude_ai_Notion__notion-fetch,mcp__claude_ai_Notion__notion-search,mcp__claude_ai_Notion__notion-update-page"
     type %NOTION_PROMPT% | call claude -p --output-format text --allowedTools "%HEALTH_TOOLS%,Read,Glob,Grep,Bash" > "%NLOG%" 2>&1
     REM %ERRORLEVEL% inside this block parse-time-expands to the pre-block value, so it is
     REM not echoed; the captured log's final line (OK/SKIP/FAILED) is the real outcome.
