@@ -1,7 +1,7 @@
 # Project Roadmap
 
 ## Current Focus
-**Steady-state maintenance + reporting optimization proposals 04–09** (confirmed 2026-07-17; sequence 08 → 05+09 → 04-remainder → 07; 06 blocked on IT ticket)
+**Steady-state maintenance** — reporting optimization track COMPLETE for local work (2026-07-17: 01–03 + 05 + 07 + 08 + 09 shipped; 04 first slice shipped, remainder = efficiency Phase 2 dedicated session; 06 awaiting Dave's IT ticket submission). Next up: verify first unattended fourthos-weekly run Thu 2026-07-23 07:00.
 **Fable — close-out (CLOSED)**
 - Fable build work is DONE and CLOSED (harvest + corpus + standing trap harness; PRs #20/#21/#22). **Verified 2026-07-16:** nothing Fable-derived is installed on ANY active behavioral surface — no rule, agent prompt, skill judgment text, hook, template, or `settings.json` registration (two independent greps: zero). The always-on `reasoning-discipline` rule was cancelled by the `no_lift` trap gate (Opus 4.8 scored 16/16 with and without it — it already saturates that judgment ceiling). Every Fable artifact is inert docs under `docs/fable-manual/`. **No hindrance to Opus agents; nothing to revert.**
 - The only change that actually touched Opus was the separate model-tier retier (PR #17: explicit 12 Opus / 25 Sonnet, `kraken` → Sonnet) + one global `effortLevel: high` — a deliberate, reversible cost/judgment-density call, not a degradation.
@@ -20,6 +20,10 @@ Not started; the organized parking spot so they aren't lost. Both build on the F
 - **v3 BACKLOG (deferred 2026-07-07 — address later):** none blocking — all are premortem enhancement candidates: `subagents_spawned`/`subagent_models` telemetry (today's `multi_agent` field records fan-out ENABLED, not spawned), version+hash-keyed `--complex` re-verification (guards against a Codex CLI upgrade silently reintroducing the gpt-4.1 fallback), a local burn-rate heuristic before expensive implement/`--complex` runs, split-shell fail-loud for `--complex`, and a keep/resume GC sentinel. Full detail: `docs/codex-integration/DESIGN-RESEARCH.md` §12.
 
 ## Completed
+- [x] feat(reporting): proposal 07 — /reporting ops verbs (status/run/heal) folded into the reporting skill (2026-07-17) `c38926b`
+- [x] feat(reporting): proposals 05+09 — hub Reporting Health strip + trust metrics rollup (2026-07-17) `b534dd5`
+- [x] feat(reporting): proposal 08 — registry conventions codified + enforced in make-run validation (2026-07-17) `62ff375`
+- [x] docs(roadmap): curate stale Planned section + repoint Current Focus at reporting 04-09 (2026-07-17) `148b81c`
 - [x] feat(reporting): ntn-first health mirror — replace claude -p Notion step with deterministic health-mirror.mjs (2026-07-17) `7fcee47`
 - [x] feat(reporting): shared hub page-lock + watchdog/check-drift consolidation groundwork (2026-07-17) `9ff3414`
 - [x] fix(reporting): remap-proof Current-run picker + cockpit disk artifact (2026-07-16) `2087e04`
@@ -230,7 +234,7 @@ Not started; the organized parking spot so they aren't lost. Both build on the F
 
 ## Planned
 *(curated 2026-07-17 — stale entries removed with evidence: Agent+Skill Fleet Review shipped as PR #17 `c2a9db2`; CCv3-Hardening through Phase C shipped — codegraph LIVE 2026-06-07 per `code-intel-boundaries.md`; WS-0/WS-1 + hardening waves shipped 2026-06-28/29 per `docs/system-update/BACKLOG.md` (Wave 0 + Wave 1 DONE); `snapshot/ccv3-system-update` close-out executed via the 2026-07-01 plan; early hygiene gate + scope decision long-since resolved.)*
-- [ ] **Reporting optimization proposals 04–09** (active track, confirmed 2026-07-17): 04 ntn-first migration (first slice SHIPPED `7fcee47` — health mirror; remaining: audit other `claude -p` steps for deterministic conversion) · 05 Reporting Health strip · 06 unattended VP Weekly (**blocked on IT ticket** "Log on as a batch job") · 07 `/reporting` command · 08 registry conventions · 09 trust metrics. Source: optimization report artifact `a45fad78` + handoff `thoughts/shared/handoffs/reporting-optimization/2026-07-16-opt-01-03.md` (high priority)
+- [ ] **Reporting optimization — remainder** (05/07/08/09 SHIPPED 2026-07-17: `62ff375` conventions, `b534dd5` health strip + trust metrics, `c38926b` /reporting ops verbs; statuses live in artifact `a45fad78`): **04 remainder** = reporting-efficiency Phase 2 (batched STDIN bind + meaning-based hash-gates — spec'd with premortem mitigations in `thoughts/shared/handoffs/reporting-efficiency/2026-07-17-phase1-shipped-phase2-next.md`; dedicated session; dashboard-sync deterministic repoint stays BLOCKED on GAP-1..4) · **06** unattended VP Weekly — IT ticket DRAFTED (`thoughts/shared/handoffs/reporting-optimization/it-ticket-batch-logon-draft.md`), Dave submits · manual follow-ups: live 7/02 hub-callout cleanup + reviewed-date stamps on human sections; ROADMAP-guard hook fix (H1/H2 file:line spec in the efficiency handoff) (high priority)
 - [ ] Verify first unattended fourthos-weekly run — Thu 2026-07-23 07:00; check `~/.claude/logs/fourthos-weekly/` + verify-run.mjs classification (high priority, time-gated)
 - [ ] fourthos v4 report enhancements — design-approved, staged on main via PR #12; dedicated session, resolve the 4 open choices first (memory: `fourthos-v4-build-queued`) (medium priority)
 - [ ] HELM — Notion-first command center (pivoted 2026-07-03: engine unchanged, presentation = Notion Projects DB + HTML daily brief via `ntn`; local SPA deferred behind daily-use gate) (medium priority)

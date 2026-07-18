@@ -16,11 +16,11 @@
       "docs/architecture/rlm/rlm-architecture.md",
       "docs/memory-architecture.md"
     ],
-    "lastCommit": "2026-07-17T15:07:44-05:00",
+    "lastCommit": "2026-07-17T16:33:39-05:00",
     "stats": {
       "totalHooks": 112,
       "totalAgents": 43,
-      "totalSkills": 143,
+      "totalSkills": 144,
       "mcpServers": 10,
       "scripts": 34
     }
