@@ -16,9 +16,25 @@
 
 ```bash
 git clone https://github.com/sam-growthpilot/Continuous-Claude-v3.git continuous-claude
-cd continuous-claude/opc
-uv run python -m scripts.setup.wizard
+cd continuous-claude
+
+# Snapshot your existing settings FIRST — the wizard overwrites settings.json
+# unconditionally (claude_integration.py has no exists-check on that file).
+cp ~/.claude/settings.json ~/.claude/settings.json.mine 2>/dev/null || true
+
+cd opc && uv run python -m scripts.setup.wizard
+cd ..
+
+# Layer your model/theme/voice/plugin/env preferences back on top of the
+# wizard's hook registrations. Idempotent — safe to re-run any time.
+node scripts/merge-settings.mjs \
+  --mine ~/.claude/settings.json.mine \
+  --theirs ~/.claude/settings.json \
+  --out ~/.claude/settings.json
 ```
+
+> Your `permissions` live in `settings.local.json`, which the wizard never
+> touches — no action needed there.
 
 The wizard handles:
 - Docker PostgreSQL + pgvector container (4 tables, idempotent schema)
