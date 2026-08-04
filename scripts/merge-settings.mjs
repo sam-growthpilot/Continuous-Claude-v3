@@ -79,7 +79,14 @@ const THEIRS_WINS = ['allowedTools'];
  */
 const REFUSE = [
   'skipDangerousModePermissionPrompt', // suppresses the dangerous-mode confirm prompt
-  'statusLine', // points at claude-hud, not installed here — would error every render
+  // statusLine: keep REFUSING even once claude-hud IS installed. The template's
+  // `node <home>/.claude/plugins/claude-hud/launcher.mjs` is the Windows-only
+  // shim path and is wrong on macOS/Linux three ways: marketplace plugins live
+  // under plugins/cache/<marketplace>/claude-hud/<version>/, the entrypoint is
+  // dist/index.js (or src/index.ts under bun), and the real command globs for
+  // the newest installed version at each render. `/claude-hud:setup` generates
+  // the correct platform-specific command — YOURS_WINS then preserves it.
+  'statusLine',
   'mcpServers', // 10 servers; firecrawl/morph/perplexity/nia need API keys to connect
   'autoCompact', // wizard sets false; only safe once its continuity system is running
   'alwaysThinkingEnabled', // leave at your current default
