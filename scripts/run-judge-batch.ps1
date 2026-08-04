@@ -18,7 +18,7 @@
 # of the recurring 0x80070001 self-aborts (empty log + missing END line). "Continue" + capture-first.
 $ErrorActionPreference = "Continue"
 
-$repo    = "C:\Users\david.hayes\continuous-claude"
+$repo    = "~\continuous-claude"
 $opc     = Join-Path $repo "opc"
 $logDir  = Join-Path $repo ".claude\logs"
 $logFile = Join-Path $logDir "judge-batch.log"
@@ -26,7 +26,7 @@ $since   = (Get-Date).AddDays(-1).ToString("yyyy-MM-dd")
 
 # Resolve uv (PATH may differ under Task Scheduler)
 $uv = (Get-Command uv -ErrorAction SilentlyContinue).Source
-if (-not $uv) { $uv = "C:\Users\david.hayes\AppData\Local\Programs\Python\Python313\Scripts\uv.exe" }
+if (-not $uv) { $uv = "~\AppData\Local\Programs\Python\Python313\Scripts\uv.exe" }
 
 if (-not (Test-Path $logDir)) { New-Item -ItemType Directory -Force $logDir | Out-Null }
 

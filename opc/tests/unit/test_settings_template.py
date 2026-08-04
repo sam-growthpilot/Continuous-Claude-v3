@@ -254,22 +254,22 @@ class TestSettingsTemplate:
 
     def test_template_exists(self):
         """settings.json.template exists in .claude/ directory."""
-        template_path = Path("C:/Users/david.hayes/continuous-claude/.claude/settings.json.template")
+        template_path = Path("~/continuous-claude/.claude/settings.json.template")
         assert template_path.exists(), "settings.json.template must exist"
 
     def test_template_has_no_hardcoded_paths(self):
-        """Template contains zero occurrences of 'david.hayes'."""
-        template_path = Path("C:/Users/david.hayes/continuous-claude/.claude/settings.json.template")
+        """Template contains zero occurrences of 'test-user'."""
+        template_path = Path("~/continuous-claude/.claude/settings.json.template")
         if not template_path.exists():
             pytest.skip("Template not yet created")
         content = template_path.read_text()
-        assert "david.hayes" not in content, (
-            f"Template still contains hardcoded 'david.hayes' path"
+        assert "test-user" not in content, (
+            f"Template still contains hardcoded 'test-user' path"
         )
 
     def test_template_has_placeholders(self):
         """Template contains expected placeholder tokens."""
-        template_path = Path("C:/Users/david.hayes/continuous-claude/.claude/settings.json.template")
+        template_path = Path("~/continuous-claude/.claude/settings.json.template")
         if not template_path.exists():
             pytest.skip("Template not yet created")
         content = template_path.read_text()
@@ -278,7 +278,7 @@ class TestSettingsTemplate:
 
     def test_template_is_parseable_with_placeholders(self):
         """Template is valid JSON (placeholders are inside string values)."""
-        template_path = Path("C:/Users/david.hayes/continuous-claude/.claude/settings.json.template")
+        template_path = Path("~/continuous-claude/.claude/settings.json.template")
         if not template_path.exists():
             pytest.skip("Template not yet created")
         content = template_path.read_text()
@@ -290,7 +290,7 @@ class TestSettingsTemplate:
         """Generating from template produces valid settings with correct structure."""
         from scripts.setup.claude_integration import generate_settings_json
 
-        template_path = Path("C:/Users/david.hayes/continuous-claude/.claude/settings.json.template")
+        template_path = Path("~/continuous-claude/.claude/settings.json.template")
         if not template_path.exists():
             pytest.skip("Template not yet created")
 
@@ -321,6 +321,6 @@ class TestSettingsTemplate:
 
             # Verify paths point to testuser
             assert "C:/Users/testuser" in content
-            assert "david.hayes" not in content
+            assert "test-user" not in content
         finally:
             target.unlink(missing_ok=True)

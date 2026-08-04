@@ -4,7 +4,7 @@ import { describe, test, setTier, assertFileExists, assertContains, assertNotCon
          assertTruthy, execCmd, fileContains, skip, run } from '../harness.mjs';
 import { readFileSync } from 'fs';
 
-const STRATEGY = 'C:/Users/david.hayes/continuous-claude/.claude/rules/cli-integration-strategy.md';
+const STRATEGY = '~/continuous-claude/.claude/rules/cli-integration-strategy.md';
 
 describe('CLI Integration Strategy', () => {
   test('strategy file exists', () => {

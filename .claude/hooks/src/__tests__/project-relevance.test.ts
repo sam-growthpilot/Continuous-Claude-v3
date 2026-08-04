@@ -34,27 +34,27 @@ const MOCK_REGISTRY = {
   projects: [
     {
       name: 'continuous-claude',
-      path: 'C:/Users/david.hayes/continuous-claude',
+      path: '~/continuous-claude',
       status: 'active',
     },
     {
-      name: 'NorthStar Transformation',
-      path: 'C:/Users/david.hayes/Projects/northstar-transformation',
+      name: 'ExampleApp',
+      path: '~/Projects/exampleapp-transformation',
       status: 'active',
     },
     {
-      name: 'Fourth Connect',
-      path: 'C:/Users/david.hayes/Projects/fourth-connect',
+      name: 'Example Connect',
+      path: '~/Projects/example-connect',
       status: 'active',
     },
     {
       name: 'ECG Lead Reactivation Engine',
-      path: 'C:/Users/david.hayes/Projects/ECG Lead Reactivation Engine',
+      path: '~/Projects/ECG Lead Reactivation Engine',
       status: 'active',
     },
     {
       name: 'agent-factory',
-      path: 'C:/Users/david.hayes/Projects/agent-factory',
+      path: '~/Projects/agent-factory',
       status: 'active',
     },
   ],
@@ -75,7 +75,7 @@ function setupRegistryMock(projectDir: string, registry: object | null, packageJ
   mockedReadFileSync.mockImplementation((filePath: fs.PathOrFileDescriptor, _options?: any) => {
     const p = String(filePath);
     const registryPath = path.join(projectDir, '.claude', 'project-registry.json');
-    const fallbackRegistryPath = 'C:/Users/david.hayes/continuous-claude/.claude/project-registry.json';
+    const fallbackRegistryPath = '~/continuous-claude/.claude/project-registry.json';
     const pkgPath = path.join(projectDir, 'package.json');
 
     if (registry && (p === registryPath || p === fallbackRegistryPath)) {
@@ -106,29 +106,29 @@ afterEach(() => {
 
 describe('getProjectIdentity', () => {
   it('returns dir basename as dirName', () => {
-    setupRegistryMock('C:/Users/david.hayes/continuous-claude', null);
-    const identity = getProjectIdentity('C:/Users/david.hayes/continuous-claude');
+    setupRegistryMock('~/continuous-claude', null);
+    const identity = getProjectIdentity('~/continuous-claude');
     expect(identity.dirName).toBe('continuous-claude');
   });
 
   it('extracts keywords from directory name split on hyphens', () => {
-    setupRegistryMock('C:/Users/david.hayes/Projects/northstar-transformation', null);
-    const identity = getProjectIdentity('C:/Users/david.hayes/Projects/northstar-transformation');
-    expect(identity.keywords).toContain('northstar');
+    setupRegistryMock('~/Projects/exampleapp-transformation', null);
+    const identity = getProjectIdentity('~/Projects/exampleapp-transformation');
+    expect(identity.keywords).toContain('exampleapp');
     expect(identity.keywords).toContain('transformation');
   });
 
   it('reads registry and finds matching project by path', () => {
-    setupRegistryMock('C:/Users/david.hayes/continuous-claude', MOCK_REGISTRY);
-    const identity = getProjectIdentity('C:/Users/david.hayes/continuous-claude');
+    setupRegistryMock('~/continuous-claude', MOCK_REGISTRY);
+    const identity = getProjectIdentity('~/continuous-claude');
     expect(identity.registryName).toBe('continuous-claude');
   });
 
   it('returns other project names from registry', () => {
-    setupRegistryMock('C:/Users/david.hayes/continuous-claude', MOCK_REGISTRY);
-    const identity = getProjectIdentity('C:/Users/david.hayes/continuous-claude');
-    expect(identity.otherProjects).toContain('NorthStar Transformation');
-    expect(identity.otherProjects).toContain('Fourth Connect');
+    setupRegistryMock('~/continuous-claude', MOCK_REGISTRY);
+    const identity = getProjectIdentity('~/continuous-claude');
+    expect(identity.otherProjects).toContain('ExampleApp');
+    expect(identity.otherProjects).toContain('Example Connect');
     expect(identity.otherProjects).toContain('ECG Lead Reactivation Engine');
     expect(identity.otherProjects).toContain('agent-factory');
     expect(identity.otherProjects).not.toContain('continuous-claude');
@@ -143,15 +143,15 @@ describe('getProjectIdentity', () => {
   });
 
   it('reads package.json name field', () => {
-    setupRegistryMock('C:/Users/david.hayes/continuous-claude', MOCK_REGISTRY, MOCK_PACKAGE_JSON);
-    const identity = getProjectIdentity('C:/Users/david.hayes/continuous-claude');
+    setupRegistryMock('~/continuous-claude', MOCK_REGISTRY, MOCK_PACKAGE_JSON);
+    const identity = getProjectIdentity('~/continuous-claude');
     expect(identity.packageName).toBe('continuous-claude');
   });
 
   it('handles Windows paths with mixed separators via path.resolve', () => {
     // path.resolve normalizes separators, so both forward and back slashes work
-    setupRegistryMock('C:/Users/david.hayes/continuous-claude', MOCK_REGISTRY);
-    const identity = getProjectIdentity('C:\\Users\\david.hayes\\continuous-claude');
+    setupRegistryMock('~/continuous-claude', MOCK_REGISTRY);
+    const identity = getProjectIdentity('~\\continuous-claude');
     // path.resolve will normalize, so the registry match should still work
     expect(identity.dirName).toBe('continuous-claude');
     // registryName depends on path.resolve normalization matching
@@ -160,16 +160,16 @@ describe('getProjectIdentity', () => {
   });
 
   it('adds registry name as a keyword', () => {
-    setupRegistryMock('C:/Users/david.hayes/continuous-claude', MOCK_REGISTRY);
-    const identity = getProjectIdentity('C:/Users/david.hayes/continuous-claude');
+    setupRegistryMock('~/continuous-claude', MOCK_REGISTRY);
+    const identity = getProjectIdentity('~/continuous-claude');
     expect(identity.keywords).toContain('continuous-claude');
     expect(identity.keywords).toContain('continuous');
     expect(identity.keywords).toContain('claude');
   });
 
   it('stopwords toxic generic tokens out of distinctiveKeywords', () => {
-    setupRegistryMock('C:/Users/david.hayes/continuous-claude', MOCK_REGISTRY);
-    const identity = getProjectIdentity('C:/Users/david.hayes/continuous-claude');
+    setupRegistryMock('~/continuous-claude', MOCK_REGISTRY);
+    const identity = getProjectIdentity('~/continuous-claude');
     // The bare tokens "continuous" and "claude" are poisonous -- they match
     // unrelated plans ("continuous integration", any "claude" mention).
     expect(identity.distinctiveKeywords).not.toContain('continuous');
@@ -178,31 +178,31 @@ describe('getProjectIdentity', () => {
     expect(identity.distinctiveKeywords).toContain('continuous-claude');
   });
 
-  it('keeps distinctive single tokens (e.g. northstar) but drops stopwords', () => {
-    setupRegistryMock('C:/Users/david.hayes/Projects/northstar-transformation', MOCK_REGISTRY);
-    const identity = getProjectIdentity('C:/Users/david.hayes/Projects/northstar-transformation');
-    expect(identity.distinctiveKeywords).toContain('northstar');
+  it('keeps distinctive single tokens (e.g. exampleapp) but drops stopwords', () => {
+    setupRegistryMock('~/Projects/exampleapp-transformation', MOCK_REGISTRY);
+    const identity = getProjectIdentity('~/Projects/exampleapp-transformation');
+    expect(identity.distinctiveKeywords).toContain('exampleapp');
     expect(identity.distinctiveKeywords).toContain('transformation');
   });
 
   it('records the resolved project path on the identity', () => {
-    setupRegistryMock('C:/Users/david.hayes/continuous-claude', MOCK_REGISTRY);
-    const identity = getProjectIdentity('C:/Users/david.hayes/continuous-claude');
-    expect(identity.projectPath).toBe(path.resolve('C:/Users/david.hayes/continuous-claude'));
+    setupRegistryMock('~/continuous-claude', MOCK_REGISTRY);
+    const identity = getProjectIdentity('~/continuous-claude');
+    expect(identity.projectPath).toBe(path.resolve('~/continuous-claude'));
   });
 
   it('collects distinctive tokens of other registered projects', () => {
-    setupRegistryMock('C:/Users/david.hayes/continuous-claude', MOCK_REGISTRY);
-    const identity = getProjectIdentity('C:/Users/david.hayes/continuous-claude');
-    expect(identity.otherProjectTokens).toContain('northstar');
+    setupRegistryMock('~/continuous-claude', MOCK_REGISTRY);
+    const identity = getProjectIdentity('~/continuous-claude');
+    expect(identity.otherProjectTokens).toContain('exampleapp');
     expect(identity.otherProjectTokens).toContain('ecg');
     // Generic stopwords from sibling names must not leak in.
     expect(identity.otherProjectTokens).not.toContain('the');
   });
 
   it('deduplicates keywords', () => {
-    setupRegistryMock('C:/Users/david.hayes/continuous-claude', MOCK_REGISTRY, MOCK_PACKAGE_JSON);
-    const identity = getProjectIdentity('C:/Users/david.hayes/continuous-claude');
+    setupRegistryMock('~/continuous-claude', MOCK_REGISTRY, MOCK_PACKAGE_JSON);
+    const identity = getProjectIdentity('~/continuous-claude');
     const uniqueKeywords = [...new Set(identity.keywords)];
     expect(identity.keywords.length).toBe(uniqueKeywords.length);
   });
@@ -219,39 +219,39 @@ describe('isContentRelevantToProject', () => {
       dirName: 'continuous-claude',
       registryName: 'continuous-claude',
       packageName: 'continuous-claude',
-      projectPath: 'C:/Users/david.hayes/continuous-claude',
+      projectPath: '~/continuous-claude',
       keywords: ['continuous', 'claude', 'continuous-claude'],
       // distinctiveKeywords drops generic stopwords (continuous, claude, code, ...)
       // and keeps multi-token identity signals.
       distinctiveKeywords: ['continuous-claude'],
-      otherProjects: ['NorthStar Transformation', 'Fourth Connect', 'ECG Lead Reactivation Engine'],
-      otherProjectTokens: ['northstar', 'transformation', 'fourth', 'connect', 'ecg', 'lead', 'reactivation', 'engine'],
+      otherProjects: ['ExampleApp', 'Example Connect', 'ECG Lead Reactivation Engine'],
+      otherProjectTokens: ['exampleapp', 'transformation', 'example', 'connect', 'ecg', 'lead', 'reactivation', 'engine'],
       ...overrides,
     };
   }
 
-  it('returns relevant=false when content mentions NorthStar but identity is continuous-claude', () => {
+  it('returns relevant=false when content mentions ExampleApp but identity is continuous-claude', () => {
     const identity = makeIdentity();
-    const content = 'Plan: Implement the NorthStar Transformation dashboard with new metrics and charts for the enterprise platform.';
+    const content = 'Plan: Implement the ExampleApp dashboard with new metrics and charts for the enterprise platform.';
     const result = isContentRelevantToProject(content, identity);
     expect(result.relevant).toBe(false);
     expect(result.confidence).toBe('high');
-    expect(result.reason).toContain('NorthStar Transformation');
+    expect(result.reason).toContain('ExampleApp');
   });
 
-  it('returns relevant=false when content mentions Fourth Connect but identity is ECG', () => {
+  it('returns relevant=false when content mentions Example Connect but identity is ECG', () => {
     const identity = makeIdentity({
       dirName: 'ECG Lead Reactivation Engine',
       registryName: 'ECG Lead Reactivation Engine',
       packageName: null,
       keywords: ['ecg', 'lead', 'reactivation', 'engine', 'ecg lead reactivation engine'],
-      otherProjects: ['continuous-claude', 'NorthStar Transformation', 'Fourth Connect'],
+      otherProjects: ['continuous-claude', 'ExampleApp', 'Example Connect'],
     });
-    const content = 'Plan: Update the Fourth Connect dashboard with new brand components and navigation redesign for the platform.';
+    const content = 'Plan: Update the Example Connect dashboard with new brand components and navigation redesign for the platform.';
     const result = isContentRelevantToProject(content, identity);
     expect(result.relevant).toBe(false);
     expect(result.confidence).toBe('high');
-    expect(result.reason).toContain('Fourth Connect');
+    expect(result.reason).toContain('Example Connect');
   });
 
   it('returns relevant=true when content mentions hook development with identity for continuous-claude', () => {
@@ -280,7 +280,7 @@ describe('isContentRelevantToProject', () => {
 
   it('returns relevant=true for content shorter than 50 chars (fail-open)', () => {
     const identity = makeIdentity();
-    const result = isContentRelevantToProject('Short plan about NorthStar', identity);
+    const result = isContentRelevantToProject('Short plan about ExampleApp', identity);
     expect(result.relevant).toBe(true);
     expect(result.confidence).toBe('low');
     expect(result.reason).toBe('content too short');
@@ -289,7 +289,7 @@ describe('isContentRelevantToProject', () => {
   it('returns relevant=true when no other projects in registry (fail-open)', () => {
     // No registry => no sibling names AND no sibling tokens (they derive together).
     const identity = makeIdentity({ otherProjects: [], otherProjectTokens: [] });
-    const content = 'Plan: Implement the NorthStar Transformation dashboard with new metrics and charts for the enterprise.';
+    const content = 'Plan: Implement the ExampleApp dashboard with new metrics and charts for the enterprise.';
     const result = isContentRelevantToProject(content, identity);
     expect(result.relevant).toBe(true);
     expect(result.confidence).toBe('low');
@@ -302,9 +302,9 @@ describe('isContentRelevantToProject', () => {
       registryName: null,
       packageName: null,
       keywords: ['my'],  // too short (< 3 chars), will be skipped
-      otherProjects: ['NorthStar Transformation'],
+      otherProjects: ['ExampleApp'],
     });
-    const content = 'Plan: Implement the NorthStar Transformation dashboard with new metrics and charts for the enterprise platform.';
+    const content = 'Plan: Implement the ExampleApp dashboard with new metrics and charts for the enterprise platform.';
     const result = isContentRelevantToProject(content, identity);
     expect(result.relevant).toBe(false);
     expect(result.confidence).toBe('high');
@@ -312,14 +312,14 @@ describe('isContentRelevantToProject', () => {
 
   it('returns relevant=true when content mentions BOTH this project and another project', () => {
     const identity = makeIdentity();
-    const content = 'Plan: Sync the continuous-claude hook system with NorthStar Transformation to share the authentication patterns across both projects.';
+    const content = 'Plan: Sync the continuous-claude hook system with ExampleApp to share the authentication patterns across both projects.';
     const result = isContentRelevantToProject(content, identity);
     expect(result.relevant).toBe(true);
   });
 
   it('is case-insensitive when matching project names', () => {
     const identity = makeIdentity();
-    const content = 'Plan: Update the northstar transformation platform with new dashboard components and redesigned navigation for better UX.';
+    const content = 'Plan: Update the exampleapp transformation platform with new dashboard components and redesigned navigation for better UX.';
     const result = isContentRelevantToProject(content, identity);
     expect(result.relevant).toBe(false);
     expect(result.confidence).toBe('high');
@@ -346,13 +346,13 @@ describe('isContentRelevantToProject', () => {
   // SEED-02 / Session-9: the post-plan-roadmap hook clobbered continuous-claude's
   // Current Focus with a foreign "Harden the Alpha + Lay a Solid FastMCP v3
   // Foundation" goal mentioning Salesforce/FastMCP. The registered sibling is
-  // named "fourth-salesforce-mcp" (its literal name is NOT a substring of the
+  // named "example-salesforce-mcp" (its literal name is NOT a substring of the
   // title), so the old registered-name substring check passed it through.
   it('Session-9 regression: BLOCKS a foreign Salesforce/FastMCP goal with no continuous-claude identity', () => {
     const identity = makeIdentity({
-      // The sibling distinctive token "salesforce" comes from fourth-salesforce-mcp.
-      otherProjects: ['NorthStar Transformation', 'fourth-salesforce-mcp', 'agent-factory'],
-      otherProjectTokens: ['northstar', 'transformation', 'fourth', 'salesforce', 'mcp', 'agent', 'factory'],
+      // The sibling distinctive token "salesforce" comes from example-salesforce-mcp.
+      otherProjects: ['ExampleApp', 'example-salesforce-mcp', 'agent-factory'],
+      otherProjectTokens: ['exampleapp', 'transformation', 'example', 'salesforce', 'mcp', 'agent', 'factory'],
     });
     const content =
       'Harden the Alpha and Lay a Solid FastMCP v3 Foundation. Ship the approved ' +
@@ -389,7 +389,7 @@ describe('isContentRelevantToProject', () => {
   it("'claude' false-positive: BLOCKS a foreign plan that only mentions the word 'claude'", () => {
     const identity = makeIdentity();
     const content =
-      'Add a Claude-powered chat assistant to the NorthStar Transformation dashboard, ' +
+      'Add a Claude-powered chat assistant to the ExampleApp dashboard, ' +
       'wiring streaming responses into the existing enterprise metrics view.';
     const result = isContentRelevantToProject(content, identity);
     expect(result.relevant).toBe(false);
@@ -411,7 +411,7 @@ describe('isContentRelevantToProject', () => {
     const identity = makeIdentity();
     const content =
       'Refactor the contamination guard at ' +
-      'C:/Users/david.hayes/continuous-claude/.claude/hooks/src/shared/project-relevance.ts ' +
+      '~/continuous-claude/.claude/hooks/src/shared/project-relevance.ts ' +
       'to require positive own-project evidence before writing the ROADMAP Current Focus.';
     const result = isContentRelevantToProject(content, identity);
     expect(result.relevant).toBe(true);

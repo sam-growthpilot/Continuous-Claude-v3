@@ -1089,7 +1089,7 @@
       "enforcement": "suggest",
       "failures": []
     },
-    "fourth-presentation-suite": {
+    "example-presentation-suite": {
       "accuracy": 100,
       "tier": "verified",
       "pass": 13,

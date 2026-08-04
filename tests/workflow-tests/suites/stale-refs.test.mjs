@@ -4,11 +4,11 @@ import { readFileSync, existsSync } from 'fs';
 import { describe, test, assertEqual, assertTruthy, assertContains,
          grepDir, fileContains, skip, run } from '../harness.mjs';
 
-const BROWSER_SKILL = 'C:/Users/david.hayes/continuous-claude/.claude/skills/browser-dev-cycle';
-const RULES_DIR = 'C:/Users/david.hayes/continuous-claude/.claude/rules';
-const BROWSER_RULE = 'C:/Users/david.hayes/continuous-claude/.claude/rules/browser-automation.md';
-const GLOBAL_MCP = 'C:/Users/david.hayes/.mcp.json';
-const USER_MCP = 'C:/Users/david.hayes/.claude/mcp.json';
+const BROWSER_SKILL = '~/continuous-claude/.claude/skills/browser-dev-cycle';
+const RULES_DIR = '~/continuous-claude/.claude/rules';
+const BROWSER_RULE = '~/continuous-claude/.claude/rules/browser-automation.md';
+const GLOBAL_MCP = '~/.mcp.json';
+const USER_MCP = '~/.claude/mcp.json';
 
 describe('Stale References', () => {
   test('no "Chrome DevTools MCP" in browser-dev-cycle skill', () => {

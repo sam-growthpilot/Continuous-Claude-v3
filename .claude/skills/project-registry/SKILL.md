@@ -21,7 +21,7 @@ Registry updates MUST be a single Node read-modify-write process with a temp-fil
 ```bash
 node -e "
 const fs = require('fs');
-const p = 'C:/Users/david.hayes/continuous-claude/.claude/project-registry.json';
+const p = '~/continuous-claude/.claude/project-registry.json';
 const reg = JSON.parse(fs.readFileSync(p, 'utf8'));
 // ... modify reg ...
 const tmp = p + '.tmp-' + process.pid;
@@ -45,10 +45,10 @@ fs.renameSync(tmp, p);
 
 Read `.claude/project-registry.json` and find the entry where `name` matches (case-insensitive partial match).
 
-Example user asks: "What port does NorthStar use?"
+Example user asks: "What port does ExampleApp use?"
 1. Read `.claude/project-registry.json`
-2. Find entry with name containing "northstar"
-3. Return: port 3002, URL https://northstar.localhost/, dev command `npm run dev`
+2. Find entry with name containing "exampleapp"
+3. Return: port 3002, URL https://exampleapp.localhost/, dev command `npm run dev`
 
 ### List All Active Projects
 
@@ -59,8 +59,8 @@ Present as a table:
 | Project | Port | URL | Stack |
 |---------|------|-----|-------|
 | continuous-claude | -- | -- | TypeScript, Node.js, PostgreSQL, esbuild |
-| NorthStar Transformation | 3002 | https://northstar.localhost/ | Next.js, TypeScript, Tailwind, Drizzle, Neon |
-| Fourth Connect | 3000 | https://fourth-connect.localhost/ | Next.js, TypeScript, Tailwind |
+| ExampleApp | 3002 | https://exampleapp.localhost/ | Next.js, TypeScript, Tailwind, Drizzle, Neon |
+| Example Connect | 3000 | https://example-connect.localhost/ | Next.js, TypeScript, Tailwind |
 | agent-factory | 3001 | -- | Next.js, AI SDK v6, OpenRouter, Docker |
 
 ### Filter by Stack
@@ -73,7 +73,7 @@ Example: "Which projects use TypeScript?" returns all projects with "TypeScript"
 
 Read the registry and find the entry where `port` matches the queried number.
 
-Example: "What's on port 3000?" returns Fourth Connect.
+Example: "What's on port 3000?" returns Example Connect.
 
 ## Update Operations
 
@@ -84,7 +84,7 @@ Append a new entry to the `projects` array in `.claude/project-registry.json`:
 ```json
 {
   "name": "new-project",
-  "path": "C:/Users/david.hayes/Projects/new-project",
+  "path": "~/Projects/new-project",
   "stack": ["React", "TypeScript"],
   "description": "What this project does",
   "port": null,

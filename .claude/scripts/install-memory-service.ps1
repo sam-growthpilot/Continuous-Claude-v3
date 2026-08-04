@@ -1,11 +1,11 @@
 # Install Claude Memory Daemon as Windows Service
 # Run this script as Administrator
 
-$nssmPath = "C:\Users\david.hayes\AppData\Local\Microsoft\WinGet\Packages\NSSM.NSSM_Microsoft.Winget.Source_8wekyb3d8bbwe\nssm-2.24-101-g897c7ad\win64\nssm.exe"
+$nssmPath = "~\AppData\Local\Microsoft\WinGet\Packages\NSSM.NSSM_Microsoft.Winget.Source_8wekyb3d8bbwe\nssm-2.24-101-g897c7ad\win64\nssm.exe"
 $serviceName = "ClaudeMemoryDaemon"
 $pythonPath = (Get-Command python).Source
-$daemonScript = "C:\Users\david.hayes\.claude\scripts\core\core\memory_daemon.py"
-$workDir = "C:\Users\david.hayes\.claude"
+$daemonScript = "~\.claude\scripts\core\core\memory_daemon.py"
+$workDir = "~\.claude"
 
 Write-Host "Installing Claude Memory Daemon as Windows Service..." -ForegroundColor Cyan
 Write-Host "NSSM: $nssmPath"

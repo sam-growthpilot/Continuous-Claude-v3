@@ -81,7 +81,7 @@ The Markdown report groups issues by severity, has a per-category pass/warn/fail
 
 Every scheduled run also mirrors results onto a Notion page so trends, WARN breakdown, and suggested actions live outside the repo where they can be reviewed casually and discussed.
 
-- **Page:** [CCv3 Weekly Health Checks](https://www.notion.so/innovativemusings/CCv3-Weekly-Health-Checks-34c76fd7ac8280a984afc486a9844290) (id `34c76fd7-ac82-80a9-84af-c486a9844290`)
+- **Page:** [CCv3 Weekly Health Checks](https://www.notion.so/innovativemusings/CCv3-Weekly-Health-Checks-<YOUR_NOTION_ID>) (id `<YOUR_NOTION_ID>`)
 - **Sections auto-refreshed every run:** Current Status, Critical Path, Run Log (new row appended), WARN Breakdown, Your Suggested Actions
 - **Sections preserved across runs:** Improvement Ideas (brainstorm), Automation (this section's doc)
 - **Mechanism:** `scripts/scheduled-health-check.bat` pipes `scripts/notion-health-prompt.md` into `claude -p` after the Python run finishes. The prompt is deterministic: same page ID, same sections, same guardrails. If the Notion MCP is unavailable the step prints `notion-health-update: SKIP` and the scheduled task still reports correct exit status based on the Python run.
@@ -93,7 +93,7 @@ To test the Notion update manually without waiting for Friday:
 type scripts\notion-health-prompt.md | claude -p --output-format text
 ```
 
-(run from `C:\Users\david.hayes\continuous-claude`)
+(run from `~\continuous-claude`)
 
 ## When to run it
 

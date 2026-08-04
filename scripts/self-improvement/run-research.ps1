@@ -6,7 +6,7 @@
 # Manual run:  powershell -NoProfile -ExecutionPolicy Bypass -File scripts\self-improvement\run-research.ps1
 $ErrorActionPreference = 'Stop'
 
-$repo = 'C:\Users\david.hayes\continuous-claude'
+$repo = '~\continuous-claude'
 $si   = Join-Path $repo 'scripts\self-improvement'
 Set-Location $repo
 

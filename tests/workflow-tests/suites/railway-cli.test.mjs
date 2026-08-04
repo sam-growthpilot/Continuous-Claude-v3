@@ -6,7 +6,7 @@ import {
   assertFileExists, execCmd, fileContains, skip, run
 } from '../harness.mjs';
 
-const ROOT = 'C:/Users/david.hayes/continuous-claude';
+const ROOT = '~/continuous-claude';
 const SKILL = `${ROOT}/.claude/skills/railway-cli`;
 
 describe('railway-cli smoke', () => {

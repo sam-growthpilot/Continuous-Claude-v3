@@ -21,7 +21,7 @@ This doc is self-sufficient. Read it fully, then the linked plans. Verify every 
 
 ## 1. Current state (verified facts — re-verify them)
 
-- **Git:** `HEAD = b12db49`, branch `main`. **9 commits this session**, **NOT pushed** to `fork` (Rev4nchist; push target — never `origin`). The user chose "don't push yet".
+- **Git:** `HEAD = b12db49`, branch `main`. **9 commits this session**, **NOT pushed** to `fork` (upstream; push target — never `origin`). The user chose "don't push yet".
 - **Working tree:** clean of session-2 changes. The only `M` files (`ROADMAP.md`, `docs/architecture/system-visualization/{architecture.json,index.html}`, `docs/fastmcp-connector-playbook.md`, `opc/scripts/core/store_learning.py`) are **pre-existing, not mine** — leave them. Plus pre-existing `??` untracked docs/dirs (`.codex/`, `ONBOARDING.md`, etc.) — also not mine.
 - **Baseline (re-run to confirm):** `npm run build` clean · `audit-braintrust-emits.sh` 4/4 (+ context-bus surface guard OK) · all 9 bus test files green. **Verified end of session 2: a clean run is 152/152.** (One run *during* the handoff commit's concurrent sync showed 2 transient cap-test failures — the §6 flake; the immediate clean re-run was 152/152.)
 - **Live bus confirmed working:** a real `.claude/cache/session/<bus_id>/context.json` was written this session and `.claude/logs/intel-bus.jsonl` is accumulating (~114 KB) — the populator + post-edit writers fire correctly.

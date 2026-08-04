@@ -239,7 +239,7 @@ export function isContentRelevantToProject(content: string, identity: ProjectIde
     }
   }
   // (b) a registered sibling's distinctive token (registry-derived; catches
-  //     "Salesforce" from fourth-salesforce-mcp without the literal name)
+  //     "Salesforce" from example-salesforce-mcp without the literal name)
   for (const token of identity.otherProjectTokens) {
     if (token.length < 3) continue;
     if (matchesAsWord(content, token)) {

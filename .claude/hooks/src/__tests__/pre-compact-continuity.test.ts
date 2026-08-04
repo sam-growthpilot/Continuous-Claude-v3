@@ -310,7 +310,7 @@ describe('pre-compact-continuity -- source code verification', () => {
   // Use the real fs (not the mock) to read source code
   // eslint-disable-next-line @typescript-eslint/no-var-requires
   const { readFileSync: realReadFileSync } = require('fs');
-  const sourcePath = 'C:/Users/david.hayes/continuous-claude/.claude/hooks/src/pre-compact-continuity.ts';
+  const sourcePath = '~/continuous-claude/.claude/hooks/src/pre-compact-continuity.ts';
 
   let sourceCode: string;
 

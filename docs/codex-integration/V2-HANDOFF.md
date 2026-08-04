@@ -1,14 +1,14 @@
 # /codex — v2 Handoff Brief
 
 **For:** a fresh session building v2 of the CCv3 Codex worker.
-**Created:** 2026-07-07 (recon + plan session). **Scope approved by Dave:** lean high-value set; `--in-place` skipped.
+**Created:** 2026-07-07 (recon + plan session). **Scope approved by the user:** lean high-value set; `--in-place` skipped.
 **Companion:** `DESIGN-RESEARCH.md` (§7 phased plan, §10/§11 dogfood + v1 findings) · `.claude/rules/codex-worker-safety.md` · memory `codex-worker-v0` · full plan file `~/.claude/plans/idempotent-imagining-pancake.md`.
 
 ---
 
 ## Where things stand
 
-`/codex` v0 + v1 are **merged to `main`** (PR #15 → `e10cd5f`). The write-capable worker (ask / implement / resume, ChatGPT subscription, no API key) is feature-complete + hardened. **v2 is enhancement-tier — nothing load-bearing.** This session ran the v2 recon and Dave chose the lean scope.
+`/codex` v0 + v1 are **merged to `main`** (PR #15 → `e10cd5f`). The write-capable worker (ask / implement / resume, ChatGPT subscription, no API key) is feature-complete + hardened. **v2 is enhancement-tier — nothing load-bearing.** This session ran the v2 recon and the user chose the lean scope.
 
 ## Recon findings (verified 2026-07-07, `codex-cli 0.131.0`)
 

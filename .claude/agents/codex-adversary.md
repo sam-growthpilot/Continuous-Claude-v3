@@ -282,5 +282,5 @@ Return a concise summary to your caller:
 3. **Read-only sandbox** - adversarial review never modifies files
 4. **Fail loud** - if Codex errors, surface it; don't pretend to have findings
 5. **Cite the source of findings** - prefix Codex's findings with "[Codex]" so synthesis can distinguish them from critic's findings
-6. **Cost-aware** - each invocation counts against Dave's ChatGPT Codex subscription quota; don't run unless the caller asked for adversarial review
+6. **Cost-aware** - each invocation counts against the user's ChatGPT Codex subscription quota; don't run unless the caller asked for adversarial review
 7. **Single blocking call, never a background poll-loop** - invoke codex exactly as Step 5 shows: one foreground call bounded by the Bash-tool `timeout`, followed by the proc-sweep. NEVER run codex with `run_in_background` + a Monitor poll waiting for the output file — an unbounded poll is what turned a hung grok-adversary into a ~64-min / ~3.8M-token runaway (2026-07-12). If a call would exceed the Bash-tool limit, lower `CODEX_ADV_TIMEOUT_MS`, don't background it.

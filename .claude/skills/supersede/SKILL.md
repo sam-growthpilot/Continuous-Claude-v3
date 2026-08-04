@@ -41,11 +41,11 @@ learning text -- a fresh embedding is generated automatically.
 ## Examples
 
 ```
-/supersede 613a1764-7c40-450d-86fc-814553c05c15 "Updated: always validate JWT issuer claim AND signature, not just signature" --reason "Discovered token-spoofing CVE; original guidance was incomplete"
+/supersede <YOUR_NOTION_ID> "Updated: always validate JWT issuer claim AND signature, not just signature" --reason "Discovered token-spoofing CVE; original guidance was incomplete"
 ```
 
 ```
-/supersede 2ae48c4f-6073-4366-9636-6fd732327710 "Memory pressure: prefer reboot at >85% RAM; surgical kills no longer help on Windows 11 26200" --reason "Earlier guidance was for Windows 10; new build changes Modified/Standby behaviour"
+/supersede <YOUR_NOTION_ID> "Memory pressure: prefer reboot at >85% RAM; surgical kills no longer help on Windows 11 26200" --reason "Earlier guidance was for Windows 10; new build changes Modified/Standby behaviour"
 ```
 
 ## What It Does
@@ -87,9 +87,9 @@ Valid learning types: `FAILED_APPROACH`, `WORKING_SOLUTION`, `USER_PREFERENCE`,
 ```json
 {
   "success": true,
-  "old_id": "613a1764-7c40-450d-86fc-814553c05c15",
-  "new_id": "7bfe8f13-8054-4355-8923-55b5086f3e11",
-  "supersedes": "613a1764-7c40-450d-86fc-814553c05c15",
+  "old_id": "<YOUR_NOTION_ID>",
+  "new_id": "<YOUR_NOTION_ID>",
+  "supersedes": "<YOUR_NOTION_ID>",
   "valid_from": "2026-05-16T15:08:13.733061+00:00",
   "valid_until": "2026-05-16T15:08:18.845321+00:00",
   "learning_type": "CODEBASE_PATTERN",

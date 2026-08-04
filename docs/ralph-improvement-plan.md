@@ -99,7 +99,7 @@ cat ~/.claude/logs/hooks.log | tail -5
   "hooks": [
     {
       "type": "command",
-      "command": "node C:/Users/david.hayes/.claude/hooks/dist/ralph-monitor.mjs",
+      "command": "node ~/.claude/hooks/dist/ralph-monitor.mjs",
       "timeout": 5000
     }
   ]
@@ -108,7 +108,7 @@ cat ~/.claude/logs/hooks.log | tail -5
 // Add to PreToolUse:Task section (before maestro-enforcer, line 50):
 {
   "type": "command",
-  "command": "node C:/Users/david.hayes/.claude/hooks/dist/ralph-template-inject.mjs",
+  "command": "node ~/.claude/hooks/dist/ralph-template-inject.mjs",
   "timeout": 5000
 }
 ```

@@ -543,7 +543,7 @@ def check_claude_opc_dir() -> CheckResult:
                  "CLAUDE_OPC_DIR not set",
                  severity="MEDIUM",
                  remediation="export CLAUDE_OPC_DIR="
-                             "C:/Users/david.hayes/continuous-claude/opc")
+                             "~/continuous-claude/opc")
 
 
 def check_opc_env_file() -> CheckResult:
@@ -2401,8 +2401,8 @@ def check_git_uncommitted() -> CheckResult:
                  dur, metadata=metadata)
 
 
-# Backup remote convention: origin = upstream (parcadei, never push), fork = backup
-# (Rev4nchist, always push). The "real" sync delta is HEAD vs fork/main.
+# Backup remote convention: origin = upstream (upstream, never push), fork = backup
+# (upstream, always push). The "real" sync delta is HEAD vs fork/main.
 GIT_BACKUP_REF = "fork/main"
 
 
@@ -2417,7 +2417,7 @@ def check_git_remote_sync() -> CheckResult:
     Uses ``git rev-list --left-right --count`` against ``GIT_BACKUP_REF``
     rather than ``git status -sb`` because the latter only inspects the
     current branch's upstream, which may be unset or pointed at the wrong
-    remote (origin = parcadei, never pushed).
+    remote (origin = upstream, never pushed).
     """
     start = time.perf_counter()
     # Pass argv as a list (no shell=True) so user-controlled refs can never be

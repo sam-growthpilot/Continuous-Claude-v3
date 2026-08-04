@@ -12,10 +12,10 @@ Spike evidence: `docs/notion-platform-spike-report.md` (continuous-claude repo).
 
 - Install: `winget install Notion.ntn` (native x64). NOT `curl|bash` (that's macOS/Linux). npm alt: `npm i -g ntn` (Node 22+).
 - **Absolute exe path** (scheduled tasks MUST use this; winget adds no Links alias):
-  `C:\Users\david.hayes\AppData\Local\Microsoft\WinGet\Packages\Notion.ntn_Microsoft.Winget.Source_8wekyb3d8bbwe\ntn-x86_64-pc-windows-msvc\ntn.exe`
+  `~\AppData\Local\Microsoft\WinGet\Packages\Notion.ntn_Microsoft.Winget.Source_8wekyb3d8bbwe\ntn-x86_64-pc-windows-msvc\ntn.exe`
 - Login: `ntn login` prints a URL + verification code → user approves in browser → `ntn login poll` completes. Credentials in Windows keychain; config `%APPDATA%\notion`.
 - Health: `ntn doctor` (the real auth probe). **Do NOT probe with `ntn api v1/users`** — personal access tokens get 403 on it by design.
-- Page access: the user-scoped token sees everything Dave sees — no integration-connect grants needed.
+- Page access: the user-scoped token sees everything the user sees — no integration-connect grants needed.
 - Env for automation: `NOTION_API_TOKEN` (overrides keychain), `NOTION_WORKSPACE_ID`, `NOTION_KEYRING=0` (file auth — if used, pin `NOTION_HOME` to a LOCAL non-roaming dir + ACL-restrict; default config dir is roaming).
 - Updates are MANUAL only for job stability: `winget upgrade Notion.ntn`. Jobs log `ntn --version` per run (0.18.1 at integration).
 
@@ -69,7 +69,7 @@ EOF
 | Semantic search, meeting notes, comments | **MCP** | No CLI equivalent |
 | Create databases, views (dashboard/chart), SQL across sources | **MCP** | `create-database`/`create-view`/`query-data-sources` are MCP-only |
 | Publish interactive HTML (≤200 KiB) | **MCP** `create-attachment` → `<embed src="file-upload://…">` | The agent HTML-block path; attach within 1 h; renders sandboxed iframe, JS runs |
-| Bridge HQ / queue operations | **MCP** per notion-bridge skill | Battle-tested selection-string conventions; do not migrate |
+| Workspace HQ / queue operations | **MCP** per notion-bridge skill | Battle-tested selection-string conventions; do not migrate |
 | Row upserts into a known data source | **ntn** (`api v1/pages` stdin JSON) | Resolve `data_source_id` each run; query-by-key 0/1/>1 → create/update/fail-loud |
 
 ## HTML publishing pattern (the "HTML block" for agents)
@@ -85,14 +85,14 @@ Hosted TS runtime in Notion's sandbox: `ntn workers new/deploy/exec`, scheduled 
 
 ## Known workspace IDs (safety rule references these)
 
-Bridge HQ `30e76fd7ac8281e99fe1c0b257088b34` · Reports hub `38f76fd7ac8280478e50dd2956ba6e8a` · Bridge Archive `30e76fd7ac8281258cd9d281aa873298` — mutating any of these via `ntn` is confirm-first (see `.claude/rules/notion-cli-safety.md`).
+Workspace HQ `<YOUR_NOTION_ID>` · Reports hub `<YOUR_NOTION_ID>` · Workspace Archive `<YOUR_NOTION_ID>` — mutating any of these via `ntn` is confirm-first (see `.claude/rules/notion-cli-safety.md`).
 
 ## Report Runs registry — the report-history spine
 
-Every scheduled report (VP Weekly, FourthOS Sponsor, Team Dashboard, System Health, Project Portfolio, Self-Improvement) upserts one **append-all-attempts** row into the **Report Runs** database. This is the uniform history surface for both humans (Notion views under the Reports hub) and AI — prefer it over per-pipeline file globs when you need "what did report X do recently / did it fail".
+Every scheduled report (VP Weekly, ExampleOS Sponsor, Team Dashboard, System Health, Project Portfolio, Self-Improvement) upserts one **append-all-attempts** row into the **Report Runs** database. This is the uniform history surface for both humans (Notion views under the Reports hub) and AI — prefer it over per-pipeline file globs when you need "what did report X do recently / did it fail".
 
-- **DB** `4e4c9460-8818-4352-a056-88badbaa94ce` · **data source** `c7d2d9e3-d388-4640-a66e-88f7dd50f854` (child of the Reports hub). All IDs (DB + DS + 6 child pages + 7 views) pinned in `scripts/report-registry/report-runs.ids.json`.
-- **AI history read (deterministic, no LLM):** `"$NTN" datasources query c7d2d9e3-d388-4640-a66e-88f7dd50f854 --json` then filter by the `Report Type` select and sort `Run Date` desc. Row shape: `{Report Run, Run ID, Report Type, Run Date, Period, Status, Artifact URL, Docx/Deck, Summary, Source}`. Run ID = `<type>|<period>|<ISO-ts>` (unique per run).
+- **DB** `<YOUR_NOTION_ID>` · **data source** `<YOUR_NOTION_ID>` (child of the Reports hub). All IDs (DB + DS + 6 child pages + 7 views) pinned in `scripts/report-registry/report-runs.ids.json`.
+- **AI history read (deterministic, no LLM):** `"$NTN" datasources query <YOUR_NOTION_ID> --json` then filter by the `Report Type` select and sort `Run Date` desc. Row shape: `{Report Run, Run ID, Report Type, Run Date, Period, Status, Artifact URL, Docx/Deck, Summary, Source}`. Run ID = `<type>|<period>|<ISO-ts>` (unique per run).
 - **Writes are job-owned** (see `notion-cli-safety.md`): pipelines upsert via `scripts/report-registry/upsert.mjs` keyed by unique Run ID; humans read the views, don't hand-edit rows. `check-drift.mjs` flags any report type with no fresh row.
 
 ## `ntn api` — Notion 2025-09-03 specifics (learned in practice, 2026-07-06)

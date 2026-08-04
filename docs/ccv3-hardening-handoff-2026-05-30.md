@@ -114,7 +114,7 @@ WS-0.4 (stale Ralph), WS-0.5 (knowledge-tree), and the Hygiene Gate (§5) are in
 ## 5. Hygiene gate (early)
 - After WS-0.3, verify `architecture-stats-sync.ts` (commit `158ad4c`) is **registered in settings.json + built + synced** (it's the live footgun casualty).
 - Triage working-tree scratch — delete: `dump_meta.txt`, `status_dump.{txt,py}`, `final_status.{txt,py}`, `final_check.txt`, `eval_log_tail.txt`, `ps_kill_log.txt`. Resolve the pre-staged index set (commit or unstage). ROADMAP.md churn is expected.
-- Push 5 commits to **`fork`** (Rev4nchist/Continuous-Claude-v3) — **NEVER `origin`** (parcadei). Delete `fix/roadmap-hooks` after (identical to main).
+- Push 5 commits to **`fork`** (upstream/Continuous-Claude-v3) — **NEVER `origin`** (upstream). Delete `fix/roadmap-hooks` after (identical to main).
 
 ---
 

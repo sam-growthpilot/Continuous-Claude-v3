@@ -45,7 +45,7 @@ Before running ANY of these, explain what it does and wait for explicit user app
 
 ## Auth Model
 
-Codex authenticates via OAuth against Dave's ChatGPT subscription (Plus/Pro). Quota usage counts against that subscription, not against an OpenAI API key. There is no separate API billing - if `codex auth status` shows a logged-in ChatGPT account, every adversarial-review call is on the subscription.
+Codex authenticates via OAuth against the user's ChatGPT subscription (Plus/Pro). Quota usage counts against that subscription, not against an OpenAI API key. There is no separate API billing - if `codex auth status` shows a logged-in ChatGPT account, every adversarial-review call is on the subscription.
 
 **Verified 2026-06-01:** with `codex-cli 0.131.0` and `codex login status` reporting "Logged in using ChatGPT", a smoke test of `codex exec --sandbox read-only --model gpt-5.5 -c model_reasoning_effort=xhigh` returned model output at exit 0. `exec` is authorized by the ChatGPT subscription **alone — no `OPENAI_API_KEY` is needed** (for the single-model path the adversary uses). The `no-API-key` finding holds. **Correction (2026-06-01):** an earlier version of this note dismissed the broken run's `o3`/`gpt-4.1`/`gpt-4o` model errors as "hallucinated noise after the binary hung." That was WRONG — those errors are REAL: Codex's multi-agent feature spawns built-in sub-agents that request `gpt-4.1`/`o3`, which a ChatGPT subscription rejects. See "Multi-agent / gpt-4.1" below. The lesson stands but inverts: do not dismiss a broken run's model errors as hallucination without verifying — here they pointed at a genuine feature bug.
 

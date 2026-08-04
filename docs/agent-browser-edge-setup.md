@@ -1,6 +1,6 @@
 # Agent-Browser Edge CDP Setup Guide
 
-Connect Claude to your authenticated Edge browser via Chrome DevTools Protocol (CDP). This lets Claude browse sites protected by Microsoft SSO (like agent-arch.fourth.com) without automating the login flow.
+Connect Claude to your authenticated Edge browser via Chrome DevTools Protocol (CDP). This lets Claude browse sites protected by Microsoft SSO (like agent-arch.example.com) without automating the login flow.
 
 ## Why CDP?
 
@@ -11,7 +11,7 @@ Standard Playwright launches a fresh browser profile with no session cookies. Mi
 - **agent-browser** installed globally: `npm install -g agent-browser`
 - **Edge** installed at `C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe`
 - **Node.js** available on PATH
-- **User is signed in** to the target site (e.g., agent-arch.fourth.com) in Edge
+- **User is signed in** to the target site (e.g., agent-arch.example.com) in Edge
 
 ## Step-by-Step Setup
 
@@ -28,7 +28,7 @@ Start-Sleep -Seconds 3
 
 ```powershell
 Start-Process 'C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe' `
-  -ArgumentList '--remote-debugging-port=9222','https://agent-arch.fourth.com/tasks/'
+  -ArgumentList '--remote-debugging-port=9222','https://agent-arch.example.com/tasks/'
 Start-Sleep -Seconds 6
 ```
 
@@ -243,7 +243,7 @@ await send({ id: 'ss', action: 'screenshot', path: path.join(os.tmpdir(), 'page.
 await send({ id: 'gt', action: 'gettext', ref: 'e1' });
 
 // Navigate to a URL
-await send({ id: 'nav', action: 'open', url: 'https://agent-arch.fourth.com/dashboard' });
+await send({ id: 'nav', action: 'open', url: 'https://agent-arch.example.com/dashboard' });
 
 // Switch tabs
 await send({ id: 'tab', action: 'tab_list' });
@@ -268,7 +268,7 @@ When authenticated, the snapshot reveals this navigation sidebar:
 | e10 | Architecture Lab |
 | e11 | Feedback Hub |
 | e12 | Audit Trail |
-| e13 | Fourth AI Guide |
+| e13 | Example AI Guide |
 | e14 | User Memories |
 | e15 | Feature Updates |
 | e16 | User Management |

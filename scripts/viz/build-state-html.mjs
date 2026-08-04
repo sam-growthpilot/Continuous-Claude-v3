@@ -204,7 +204,7 @@ footer a{color:var(--dim2);margin-right:18px}
   <h1>State of the CCv3 Rework</h1>
   <span class="sub">Fable-5 Deep Review · SHA 86b8f60</span>
   <span class="spacer"></span>
-  <a class="ghost" href="https://github.com/Rev4nchist/Continuous-Claude-v3" target="_blank">GitHub</a>
+  <a class="ghost" href="https://github.com/upstream/Continuous-Claude-v3" target="_blank">GitHub</a>
   <span class="verified">verified 2026-06-27</span>
 </header>
 
@@ -247,7 +247,7 @@ footer a{color:var(--dim2);margin-right:18px}
   <a href="../">← AI Enablement Decks</a>
   <a href="./viewer/?f=master-3state" target="_blank">interactive diagrams</a>
   <a href="./master-3state.excalidraw" download>diagram sources (.excalidraw)</a>
-  <a href="https://github.com/Rev4nchist/Continuous-Claude-v3" target="_blank">CCv3 repo</a>
+  <a href="https://github.com/upstream/Continuous-Claude-v3" target="_blank">CCv3 repo</a>
   <div style="margin-top:10px">CCv3 State of Rework · generated from the Fable-5 deep review (190 confirmed findings) · last verified 2026-06-27 · diagrams editable in <a href="https://excalidraw.com" target="_blank" style="margin:0">excalidraw.com</a></div>
   ` : `
   <a href="../hub.html">← Architecture Hub</a>

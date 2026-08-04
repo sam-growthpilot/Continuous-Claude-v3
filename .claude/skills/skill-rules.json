@@ -1595,30 +1595,6 @@
       "evalTier": "verified",
       "evalDate": "2026-03-07"
     },
-    "fourth-presentation-suite": {
-      "type": "domain",
-      "enforcement": "suggest",
-      "priority": "medium",
-      "description": "Generate Fourth-branded EBR/QBR and sales presentations with professional design system",
-      "promptTriggers": {
-        "keywords": [
-          "/fourth-presentation-suite",
-          "fourth presentation",
-          "ebr presentation",
-          "qbr presentation",
-          "sales deck",
-          "fourth brand"
-        ],
-        "intentPatterns": [
-          "(create|generate|build).*?(ebr|qbr|presentation|deck)",
-          "fourth.*?(brand|style|presentation)",
-          "(executive|business|quarterly).*?review"
-        ]
-      },
-      "evalScore": 100,
-      "evalTier": "verified",
-      "evalDate": "2026-03-07"
-    },
     "find-skills": {
       "type": "domain",
       "enforcement": "suggest",

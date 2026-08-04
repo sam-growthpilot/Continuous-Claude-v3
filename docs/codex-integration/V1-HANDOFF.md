@@ -18,7 +18,7 @@ The scope detail below is the original brief (retained for context).
 
 ## Where things stand (v0 = DONE)
 
-`/codex` is a live, hardened, write-capable Codex task worker on Dave's ChatGPT subscription (no API key). Shipped in **PR #15** (`Rev4nchist/Continuous-Claude-v3`, branch `feature/codex-worker`, commit `12a21dd`).
+`/codex` is a live, hardened, write-capable Codex task worker on the user's ChatGPT subscription (no API key). Shipped in **PR #15** (`upstream/Continuous-Claude-v3`, branch `feature/codex-worker`, commit `12a21dd`).
 
 - **Skill:** `.claude/skills/codex/SKILL.md` — `/codex` with modes ask / implement / resume / `--review` alias.
 - **Agent (engine):** `.claude/agents/codex-worker.md` — preflight → invoke `codex exec` → capture (`-o`) → independent verify → telemetry.
@@ -55,7 +55,7 @@ The scope detail below is the original brief (retained for context).
 
 **Problem.** Each `codex exec` is ~120–180s, dominated by **startup noise** (≈16 MCP-server connection attempts + a large `~/.agents/skills/` YAML scan), NOT model work.
 
-**Fix.** A worker-scoped config that mutes the noise for worker calls only, leaving Dave's interactive `~/.codex/config.toml` untouched:
+**Fix.** A worker-scoped config that mutes the noise for worker calls only, leaving the user's interactive `~/.codex/config.toml` untouched:
 - Create `~/.codex/worker.config.toml` (or a `[profiles.worker]` block) that sets **no MCP servers** (empty `[mcp_servers]`) + keeps `model=gpt-5.5`, `model_reasoning_effort`, `multi_agent=false`.
 - Pass the profile on every worker `codex exec`. **Verify the exact flag on 0.131.0** — `codex exec --help` (candidates: `--profile <name>` / `-p`; the design doc §5.3 wrote `--profile-v2 worker` speculatively — CONFIRM before wiring).
 - The `~/.agents/skills/` YAML scan is a *separate* source from MCP (see `codex-adversarial.md` "Startup Noise") — measure how much each contributes; the profile likely cuts MCP but not the skill scan. Do NOT delete the `.agents/skills` mirror blindly (unknown provenance — investigate what regenerates it first).

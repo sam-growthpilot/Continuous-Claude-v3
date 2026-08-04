@@ -219,4 +219,4 @@ Each layer builds on the previous. Start simple, expand as you find friction.
 
 ---
 
-*This architecture is what we've built in the [Continuous Claude](https://github.com/davidhayes/continuous-claude) project for coding workflows. The same patterns apply to any domain.*
+*This architecture is what we've built in the [Continuous Claude](https://github.com/YOUR_GITHUB_USER/continuous-claude) project for coding workflows. The same patterns apply to any domain.*

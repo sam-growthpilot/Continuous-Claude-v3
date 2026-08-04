@@ -31,9 +31,9 @@ Start by understanding what the user wants. The conversation might already conta
 4. Should we set up test cases? Skills with objectively verifiable outputs (file transforms, data extraction, code generation) benefit from test cases. Subjective skills (writing style, art) often don't. Suggest the appropriate default but let the user decide.
 
 Get 3-5 concrete examples of how the skill would be used before proceeding:
-- "Create Q4 budget template with Fourth branding"
+- "Create Q4 budget template with Example branding"
 - "Generate P&L report in our standard format"
-- "Build sales dashboard with Fourth colors and logo"
+- "Build sales dashboard with Example colors and logo"
 
 ### Plan Reusable Resources
 

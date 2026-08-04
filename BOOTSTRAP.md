@@ -15,7 +15,7 @@
 ## Quick Start
 
 ```bash
-git clone https://github.com/parcadei/Continuous-Claude-v3.git continuous-claude
+git clone https://github.com/sam-growthpilot/Continuous-Claude-v3.git continuous-claude
 cd continuous-claude/opc
 uv run python -m scripts.setup.wizard
 ```

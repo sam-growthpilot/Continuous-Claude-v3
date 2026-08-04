@@ -1,6 +1,6 @@
 # Codex Worker Safety Rules
 
-Companion to `.claude/skills/codex/SKILL.md` and the `codex-worker` agent. This is the **write-capable** sibling of `.claude/rules/codex-adversarial.md` (which stays read-only, review-only). Different safety posture → separate rule. The `/codex` skill hands a task to the OpenAI Codex harness (`gpt-5.5`) on Dave's **ChatGPT subscription** to actually execute — so it can write files and run commands. Treat every write mode with the same care as any destructive operation.
+Companion to `.claude/skills/codex/SKILL.md` and the `codex-worker` agent. This is the **write-capable** sibling of `.claude/rules/codex-adversarial.md` (which stays read-only, review-only). Different safety posture → separate rule. The `/codex` skill hands a task to the OpenAI Codex harness (`gpt-5.5`) on the user's **ChatGPT subscription** to actually execute — so it can write files and run commands. Treat every write mode with the same care as any destructive operation.
 
 Grounding: verified 2026-07-06 against `codex-cli 0.131.0`, `Logged in using ChatGPT`; **re-verified 2026-07-11 against `codex-cli 0.144.1`** (upgrade + full §3 re-run: flags, workspace-write fixture, hooks-collision, resume/thread_id — all hold; rollback pin `npm i -g @openai/codex@0.131.0`). See `docs/codex-integration/DESIGN-RESEARCH.md` for the full evidence trail.
 
@@ -46,7 +46,7 @@ Hard-reject any `--model` not in `{gpt-5.6-sol, gpt-5.6-terra, gpt-5.6-luna, gpt
 
 ## Startup profile — `--ignore-user-config` is `ask`-ONLY (latency v1; write-bug v2)
 
-The **`ask`** mode passes **`--ignore-user-config`** to skip loading Dave's interactive `~/.codex/config.toml` (~16 MCP servers whose network handshakes dominate cold-start), cutting a read-only smoke **~47s → ~18s** and removing the config-defined MCP connection-failure noise (verified 2026-07-07 v1 benchmark).
+The **`ask`** mode passes **`--ignore-user-config`** to skip loading the user's interactive `~/.codex/config.toml` (~16 MCP servers whose network handshakes dominate cold-start), cutting a read-only smoke **~47s → ~18s** and removing the config-defined MCP connection-failure noise (verified 2026-07-07 v1 benchmark).
 
 **`implement`/`resume` must NOT pass `--ignore-user-config`** (corrected 2026-07-07). A v2 dogfood + an independent A/B proved it **silently BREAKS workspace-write file creation on Windows**: `config.toml` carries the sandbox writable-root / approval policy, so stripping it makes Codex's sandbox reject the write (`exit 0`, **ZERO diff** — a silent no-op that looks like success). The v1 benchmark only exercised read-only `ask`, so this went unseen. Write modes take the slower cold-start in exchange for actually writing.
 

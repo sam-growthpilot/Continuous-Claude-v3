@@ -18,12 +18,12 @@ const fs = require('fs');
 const path = require('path');
 
 // === Configuration ===
-const SKILLS_DIR = 'C:/Users/david.hayes/.claude/skills';
-const HOOK_PATH = 'C:/Users/david.hayes/.claude/hooks/dist/skill-activation-prompt.mjs';
+const SKILLS_DIR = '~/.claude/skills';
+const HOOK_PATH = '~/.claude/hooks/dist/skill-activation-prompt.mjs';
 const RULES_PATH = path.join(SKILLS_DIR, 'skill-rules.json');
 const EVAL_DIR = path.join(SKILLS_DIR, '_eval');
 const RESULTS_PATH = path.join(EVAL_DIR, 'eval-results.json');
-const CWD = 'C:/Users/david.hayes/continuous-claude';
+const CWD = '~/continuous-claude';
 
 // === Helpers ===
 
@@ -45,8 +45,8 @@ function runHook(prompt) {
     timeout: 10000,
     env: {
       ...process.env,
-      HOME: 'C:/Users/david.hayes',
-      USERPROFILE: 'C:/Users/david.hayes',
+      HOME: '~',
+      USERPROFILE: '~',
       CLAUDE_PROJECT_DIR: CWD,
     },
     stdio: ['pipe', 'pipe', 'pipe'],
@@ -280,7 +280,7 @@ function generateNegativeCases(skillName, config, rules) {
     git: ['commit', 'describe_pr', 'release', 'review', 'git-commits'],
     browser: ['agent-browser', 'claude-in-chrome', 'browser-dev-cycle'],
     search: ['search-router', 'morph-search', 'github-search', 'perplexity-search'],
-    presentation: ['fourth-presentation-suite', 'fourth-presentation-builder', 'frontend-slides'],
+    presentation: ['example-presentation-suite', 'example-presentation-builder', 'frontend-slides'],
     testing: ['tdd', 'test', 'full-test-suite'],
     infrastructure: ['hook-developer', 'hooks', 'debug-hooks'],
   };

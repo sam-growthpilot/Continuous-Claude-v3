@@ -102,7 +102,7 @@ new3 = '''def extract_memories(session_id: str, project_dir: str, started_at=Non
     if not jsonl_dir.exists():
         jsonl_dir = Path.home() / ".claude" / "projects"
 
-    # Convert project path to folder name (C:\\Users\\david -> C--Users-david)
+    # Convert project path to folder name (~ -> C--Users-test-user)
     project_folder = project_dir.replace("\\\\", "-").replace("\\", "-").replace("/", "-").replace(":", "-").rstrip("-")
     project_path = jsonl_dir / project_folder
 

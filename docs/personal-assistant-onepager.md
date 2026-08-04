@@ -77,4 +77,4 @@ MCPs provide access → Skills encode expertise → Agents do the work → Hooks
 
 ---
 
-*Built on patterns from [Continuous Claude](https://github.com/davidhayes/continuous-claude)*
+*Built on patterns from [Continuous Claude](https://github.com/YOUR_GITHUB_USER/continuous-claude)*

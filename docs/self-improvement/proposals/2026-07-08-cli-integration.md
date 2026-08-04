@@ -94,7 +94,7 @@ Verification status is explicit per source. **Seven primary sources were re-fetc
 - **Sequencing:** R2/R4/R5 are independent doc edits, do anytime. R1's config half should ride **SG-02** (it *is* a settings-drift concern) and be gated on a measurement pass — do not prune blind.
 - **What could go wrong:** the biggest failure mode is R1 pruning an MCP server that a skill/agent silently depends on. Mitigation is strict: (1) measure context cost first — the harness already defers these, so the real win may be small and not worth the risk; (2) prefer `defer_loading` over disconnect; (3) enumerate every `mcp__<server>__` caller (skills, agents, rules) before touching a server; (4) treat documented dual-substrate cases as out of scope.
 
-## 6. Benefits (for Dave)
+## 6. Benefits (for the user)
 
 - **Cheaper / faster sessions** — if the measurement (R1) shows the connected-MCP surface has non-trivial resident cost, deferring/pruning duplicates lowers session-start token cost and latency. (Honest caveat: the harness already defers these, so the win must be *measured*, not assumed.)
 - **More reliable wrappers, fewer retry loops** — R2 makes `cdp.mjs` and future Pattern-5 wrappers return concise, high-signal output with error messages that teach the correct invocation, so the model self-corrects instead of looping (source 6's SWE-bench-style effect).

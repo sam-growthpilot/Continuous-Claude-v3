@@ -4,13 +4,13 @@ Sibling of `docs/codex-integration/DESIGN-RESEARCH.md`. Same discipline: **nothi
 
 ## 1. Executive summary
 
-xAI's **Grok Build CLI** (`grok`) is installed, subscription-authenticated, and headless-capable on this Windows 11 machine. The `/grok` worker rides Dave's **X Premium+ subscription via OAuth (auth.x.ai, oidc)** — no API key, no per-token billing. The load-bearing question from planning ("does headless stay on OAuth?") is **answered YES by live probe**. The biggest surprises: headless mode **writes files with zero approval by default**, `--permission-mode plan` and `--sandbox` do **not** block writes, and the native `-w` worktree flag is **silently ignored** in `-p` mode — so read-only safety comes from the `--tools` allowlist and implement-mode isolation reuses the proven codex-worker hand-rolled worktree recipe.
+xAI's **Grok Build CLI** (`grok`) is installed, subscription-authenticated, and headless-capable on this Windows 11 machine. The `/grok` worker rides the user's **X Premium+ subscription via OAuth (auth.x.ai, oidc)** — no API key, no per-token billing. The load-bearing question from planning ("does headless stay on OAuth?") is **answered YES by live probe**. The biggest surprises: headless mode **writes files with zero approval by default**, `--permission-mode plan` and `--sandbox` do **not** block writes, and the native `-w` worktree flag is **silently ignored** in `-p` mode — so read-only safety comes from the `--tools` allowlist and implement-mode isolation reuses the proven codex-worker hand-rolled worktree recipe.
 
 ## 2. Verified surface (all probed 2026-07-11, grok 0.2.93 stable, Windows 11)
 
 ### 2.1 Auth & identity
-- `grok login` (browser OAuth) done by Dave 2026-07-11. `grok models` header: "You are logged in with grok.com."
-- `~/.grok/auth.json` (keyed by `https://auth.x.ai::<uuid>`): non-secret fields `email = dkhayes44@gmail.com`, `auth_mode = "oidc"`, `principal_type = "User"`. **Preflight identity pin = `.email`** — read via jq, NEVER touch `.key` / `.refresh_token`.
+- `grok login` (browser OAuth) done by the user 2026-07-11. `grok models` header: "You are logged in with grok.com."
+- `~/.grok/auth.json` (keyed by `https://auth.x.ai::<uuid>`): non-secret fields `email = you@example.com`, `auth_mode = "oidc"`, `principal_type = "User"`. **Preflight identity pin = `.email`** — read via jq, NEVER touch `.key` / `.refresh_token`.
 - `~/.grok/models_cache.json`: `auth_method: "session"` (subscription session, not API key). This file is the **ground-truth model cache** (Codex analog: `~/.codex/models_cache.json`).
 - **Negative control PASS:** with `XAI_API_KEY=bogus-key-negative-control` set, `grok -p` succeeded (exit 0) — a bogus key would have failed if used, so the run stayed on OAuth. The CLI does not hijack auth from that env var. (Worker still sanitizes it defensively.)
 - Re-auth for headless environments exists: `grok login --device-auth`.
@@ -61,7 +61,7 @@ xAI's **Grok Build CLI** (`grok`) is installed, subscription-authenticated, and 
 - **Auto-update churn is real:** CLI went 0.2.82 → 0.2.93 between sessions without action. Version-stamp every verified claim; `/harness-update grok` re-probes on version change. `grok update` can pin/install specific versions.
 
 ### 2.9 Context ingestion / data egress ⚠️
-`grok inspect` shows Grok auto-discovers and loads **Claude Code's own config**: Dave's `~/.claude/Claude.md` (~5,090 tokens), permissions from `settings.local.json`, and **292 Claude skills**. Every `/grok` run therefore ships that context (plus the prompt + any files the model reads) to xAI under Dave's account. Covered by the data-egress section of `grok-worker-safety.md` (first-use confirm, secret-scan, no `.env*`, payload awareness). `--verbatim`, `--rules`, `--system-prompt-override` exist as shaping levers; a future probe could test whether config ingestion can be disabled for worker runs.
+`grok inspect` shows Grok auto-discovers and loads **Claude Code's own config**: the user's `~/.claude/Claude.md` (~5,090 tokens), permissions from `settings.local.json`, and **292 Claude skills**. Every `/grok` run therefore ships that context (plus the prompt + any files the model reads) to xAI under the user's account. Covered by the data-egress section of `grok-worker-safety.md` (first-use confirm, secret-scan, no `.env*`, payload awareness). `--verbatim`, `--rules`, `--system-prompt-override` exist as shaping levers; a future probe could test whether config ingestion can be disabled for worker runs.
 
 ### 2.10 Quota/billing
 Subscription-gated (X Premium+); no per-token invoice observed. No quota surface found in the CLI this pass (mirror of Codex: detection will be reactive — parse the rate-limit error when it first appears, then codify).

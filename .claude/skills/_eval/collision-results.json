@@ -132,7 +132,7 @@
     "arscontexta-ralph | ralph": 2,
     "vercel-cli | workflow-router": 2,
     "math/real-analysis | vercel-cli": 2,
-    "code-review | fourth-presentation-suite": 2,
+    "code-review | example-presentation-suite": 2,
     "find-skills | github-search": 2,
     "plan-mode | ralph": 1,
     "plan-agent | ralph": 1,
@@ -281,9 +281,9 @@
     "knowledge-guide | phoenix": 1,
     "ralph | workflow-router": 1,
     "arscontexta-ralph | workflow-router": 1,
-    "fourth-presentation-suite | workflow-router": 1,
-    "describe_pr | fourth-presentation-suite": 1,
-    "fourth-presentation-suite | review": 1,
+    "example-presentation-suite | workflow-router": 1,
+    "describe_pr | example-presentation-suite": 1,
+    "example-presentation-suite | review": 1,
     "find-skills | scout": 1
   },
   "expectedPairs": [
@@ -416,7 +416,7 @@
     "arscontexta-ralph | ralph",
     "vercel-cli | workflow-router",
     "math/real-analysis | vercel-cli",
-    "code-review | fourth-presentation-suite",
+    "code-review | example-presentation-suite",
     "find-skills | github-search",
     "plan-mode | ralph",
     "plan-agent | ralph",
@@ -563,9 +563,9 @@
     "knowledge-guide | phoenix",
     "ralph | workflow-router",
     "arscontexta-ralph | workflow-router",
-    "fourth-presentation-suite | workflow-router",
-    "describe_pr | fourth-presentation-suite",
-    "fourth-presentation-suite | review",
+    "example-presentation-suite | workflow-router",
+    "describe_pr | example-presentation-suite",
+    "example-presentation-suite | review",
     "find-skills | scout"
   ],
   "details": [
@@ -2865,28 +2865,28 @@
     },
     {
       "prompt": "Can you help me qbr presentation?",
-      "expected": "fourth-presentation-suite",
+      "expected": "example-presentation-suite",
       "matched": [
         "workflow-router",
-        "fourth-presentation-suite"
+        "example-presentation-suite"
       ]
     },
     {
       "prompt": "I want to create ebr in this project",
-      "expected": "fourth-presentation-suite",
+      "expected": "example-presentation-suite",
       "matched": [
         "code-review",
         "describe_pr",
-        "fourth-presentation-suite"
+        "example-presentation-suite"
       ]
     },
     {
       "prompt": "I want to executive review in this project",
-      "expected": "fourth-presentation-suite",
+      "expected": "example-presentation-suite",
       "matched": [
         "code-review",
         "review",
-        "fourth-presentation-suite"
+        "example-presentation-suite"
       ]
     },
     {

@@ -6,7 +6,7 @@ finish line for this push: **through Phase C (codegraph)**. Repo reconciliation
 is **mandatory step 0**.
 
 Two hard constraints, always:
-- Push to **`fork`** (Rev4nchist), **never `origin`** (parcadei = upstream).
+- Push to **`fork`** (upstream), **never `origin`** (upstream = upstream).
 - Do **NOT** change the BGE model or dim (`BAAI/bge-large-en-v1.5`, dim 1024).
 
 ---
@@ -77,9 +77,9 @@ The tree is messy: real uncommitted work tangled with junk and an unmerged branc
 
 **2.1 Open the herd-fix PR** (branch is already pushed to fork):
 ```
-gh pr create --repo Rev4nchist/Continuous-Claude-v3 --base main --head feature/embedding-daemon-herd-fix --title "fix(memory): herd-proof embedding-daemon spawn + test kill-switch" --body "Atomic wx spawn lock + no-shell Windows spawn (ea1b03c); test kill-switch CCV3_EMBEDDING_NO_SPAWN so npm test never spawns real daemons (c1b110d). Second root cause after PR #7's rendezvous fix. 35/35 embedding tests green; daemon count flat across full run; T1 probe = zero windows."
+gh pr create --repo upstream/Continuous-Claude-v3 --base main --head feature/embedding-daemon-herd-fix --title "fix(memory): herd-proof embedding-daemon spawn + test kill-switch" --body "Atomic wx spawn lock + no-shell Windows spawn (ea1b03c); test kill-switch CCV3_EMBEDDING_NO_SPAWN so npm test never spawns real daemons (c1b110d). Second root cause after PR #7's rendezvous fix. 35/35 embedding tests green; daemon count flat across full run; T1 probe = zero windows."
 ```
-You should see a PR URL. (If `gh` targets upstream by default, the explicit `--repo Rev4nchist/...` keeps it on the fork.)
+You should see a PR URL. (If `gh` targets upstream by default, the explicit `--repo upstream/...` keeps it on the fork.)
 
 **2.2 Commit the real loose work** — recommended on a separate `chore/` branch off `main` so it doesn't collide with the herd PR. Logical commits, each its own:
 - `opc/scripts/core/store_learning.py` (+141 lines — new `_emit_store_quality_score()` Braintrust scoring). Run the emit guard after: `bash scripts/audit-braintrust-emits.sh`.
@@ -170,4 +170,4 @@ Acceptance criteria (v3 design §10): Windows **platform contract test** (20× e
 | Embedding daemon + client | `opc/scripts/core/embedding_daemon.py`, `.claude/hooks/src/shared/embedding-client.ts`, `opc/scripts/core/recall_learnings.py` |
 | Emit-invariant guard | `scripts/audit-braintrust-emits.sh` |
 
-Remotes: `fork` = Rev4nchist (push here), `origin` = parcadei (never). Other branches: `ws2/phase-3-code-intel` (merged), `fork/ws2/phase-b-context-bus`.
+Remotes: `fork` = upstream (push here), `origin` = upstream (never). Other branches: `ws2/phase-3-code-intel` (merged), `fork/ws2/phase-b-context-bus`.

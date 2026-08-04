@@ -81,12 +81,12 @@ Phase B shipped **INERT**: the `/code-intel` facade is a manual CLI; the enforce
 
 ## Guardrails (unchanged, still apply)
 - **Do NOT change the BGE model or dim** — `archival_memory` is bound to 1024-dim.
-- **Push `fork` (Rev4nchist), never `origin` (parcadei).**
+- **Push `fork` (upstream), never `origin` (upstream).**
 - **Edit repo files, not `~/.claude/`** (forward-sync is the only auto direction). The pre-commit build-forget guard blocks staging a hook `.ts` without the rebuilt `.mjs`; legitimate `SKIP_BUILD_GUARD=1` only when `git diff HEAD` on dist is genuinely empty (comment-only change).
 - **Cross-model `/review` + `/premortem`** for concurrency/socket/path code — both paid off this session.
 
 ## Key references
-- This PR: https://github.com/Rev4nchist/Continuous-Claude-v3/pull/7 (merged `3a398236`)
+- This PR: https://github.com/upstream/Continuous-Claude-v3/pull/7 (merged `3a398236`)
 - Prior handoff: `docs/ccv3-ws2-phaseB-SESSION6-HANDOFF-2026-06-04.md` (note: its daemon root-cause theory was WRONG — see above; its `$TEMP` path references are pre-fix historical)
 - Phase B plan + warm-gate caveat: `docs/ccv3-ws2-phaseB-plan-2026-06-02.md`
 - Root-cause learning: archival_memory id `966936ef`

@@ -563,7 +563,7 @@ def test_get_registered_hooks_extracts_basenames(tmp_path):
                         {
                             "type": "command",
                             "command": (
-                                "node C:/Users/david.hayes/.claude/hooks/"
+                                "node ~/.claude/hooks/"
                                 "dist/agent-validate.mjs"
                             ),
                         },

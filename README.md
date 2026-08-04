@@ -296,7 +296,7 @@ You need these installed:
 
 ```bash
 # Clone the repository
-git clone https://github.com/parcadei/Continuous-Claude-v3.git
+git clone https://github.com/sam-growthpilot/Continuous-Claude-v3.git
 cd Continuous-Claude-v3/opc
 
 # Run the setup wizard
@@ -809,9 +809,9 @@ uv run python -m scripts.setup.wizard
 ```
 
 **Get help:**
-- [GitHub Issues](https://github.com/parcadei/Continuous-Claude-v3/issues) — file a bug report
-- [Discussions](https://github.com/parcadei/Continuous-Claude-v3/discussions) — ask questions
-- [Documentation](https://github.com/parcadei/Continuous-Claude-v3/tree/main/docs) — detailed guides
+- [GitHub Issues](https://github.com/sam-growthpilot/Continuous-Claude-v3/issues) — file a bug report
+- [Discussions](https://github.com/sam-growthpilot/Continuous-Claude-v3/discussions) — ask questions
+- [Documentation](https://github.com/sam-growthpilot/Continuous-Claude-v3/tree/main/docs) — detailed guides
 - [Architecture Docs](.claude/docs/architecture/INDEX.md) — navigable system diagrams
 
 </details>

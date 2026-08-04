@@ -193,7 +193,7 @@ The deployer agent automatically runs `e2e/smoke.spec.ts` against the deploy URL
 
 ---
 
-## For the Fourth Workbook Testing Session
+## For the Example Workbook Testing Session
 
 
 **Now available (from this work):**
@@ -281,4 +281,4 @@ Phase 4.2: merge
 | `787b773` | sentinel agent, qa-suite skill, @playwright/cli global install |
 | `9b04189` | Wire sentinel + qa-suite into Ralph GSD lifecycle (5 Ralph files) |
 
-Branch: `feature/playwright-cli-e2e` -- PR #167 against `parcadei/Continuous-Claude-v3`
+Branch: `feature/playwright-cli-e2e` -- PR #167 against `upstream/Continuous-Claude-v3`

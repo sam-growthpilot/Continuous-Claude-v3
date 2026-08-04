@@ -10,7 +10,7 @@ import {
   execCmd, execJson, skip, run,
 } from '../harness.mjs';
 
-const ROOT = 'C:/Users/david.hayes/continuous-claude';
+const ROOT = '~/continuous-claude';
 
 // ---- Smoke tier ----
 

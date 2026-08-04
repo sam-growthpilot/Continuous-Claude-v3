@@ -7,7 +7,7 @@ import {
   execCmd, fileContains, skip, run
 } from '../harness.mjs';
 
-const ROOT = 'C:/Users/david.hayes/continuous-claude';
+const ROOT = '~/continuous-claude';
 const SKILL = `${ROOT}/.claude/skills/neonctl`;
 
 describe('neonctl smoke', () => {

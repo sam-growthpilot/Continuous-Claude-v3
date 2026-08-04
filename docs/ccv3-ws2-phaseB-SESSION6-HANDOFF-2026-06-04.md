@@ -18,7 +18,7 @@
 
 ## 1. Current state (verified 2026-06-04)
 
-- **Git:** branch `main` @ **`0a2e75b`** (= merged `fork/main`). **WS-2 Phase B is COMPLETE and merged** — PR #5 (`1295fd4`, bus WRITE+READ+hardening) and PR #6 (`0a2e75b`, Phase 3 facade/enforcer/deploy-guard/eval + B.4b populator). Push target is `fork` (Rev4nchist), **never `origin`**.
+- **Git:** branch `main` @ **`0a2e75b`** (= merged `fork/main`). **WS-2 Phase B is COMPLETE and merged** — PR #5 (`1295fd4`, bus WRITE+READ+hardening) and PR #6 (`0a2e75b`, Phase 3 facade/enforcer/deploy-guard/eval + B.4b populator). Push target is `fork` (upstream), **never `origin`**.
 - **Working tree:** only pre-existing untracked/`M` files (ROADMAP.md, system-visualization/*, `.codex/`, etc.) — leave them.
 - **Phase B feature surface is LIVE in active `~/.claude/`:** bus read/write hooks, `/code-intel` facade, the (inert) enforcer, `pruneIntelBus` session-start wiring, and the `bus-tool-populator` (Read/Grep → files_in_play). `CCV3_BUS_OFF=1` kills all bus I/O; fail-open everywhere.
 

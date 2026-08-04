@@ -41,13 +41,13 @@ Copy the models_cache aside to `docs/<harness>-integration/snapshots/models_cach
 - grok: `grok update` (or let auto-update land; either way, treat any version change as requiring this playbook)
 
 ### Step 3 — Re-assert auth
-Same asserts as Step 1. FAIL → stop, tell Dave to re-login (`codex login` / `grok login`). Never proceed on an API-key fallback.
+Same asserts as Step 1. FAIL → stop, tell the user to re-login (`codex login` / `grok login`). Never proceed on an API-key fallback.
 
 ### Step 4 — Re-verify the capability surface (per-harness checklist)
 Run the harness's verification checklist and diff against its DESIGN-RESEARCH doc:
 
 **codex** (`docs/codex-integration/DESIGN-RESEARCH.md` §3, §13):
-- `codex exec --help` — confirm `-o`, `--ephemeral`, `--ignore-user-config`, `--json`, `-s/--sandbox` present; confirm NO approval dial appeared (if one did, that's a design-level change — flag to Dave).
+- `codex exec --help` — confirm `-o`, `--ephemeral`, `--ignore-user-config`, `--json`, `-s/--sandbox` present; confirm NO approval dial appeared (if one did, that's a design-level change — flag to the user).
 - Regression smoke on the current default model (read-only ask).
 - Workspace-write fixture (throwaway git repo): file created, no auto-commit, `file_claims` count unchanged.
 - Resume: `--json` still emits `thread_id`.
@@ -109,6 +109,6 @@ Update every registered location with the verified allowlist + new version stamp
 |---|---|---|
 | "requires a newer version" (codex) | CLI too old for the model | Step 2 upgrade, re-probe |
 | Auth assert fails post-upgrade | login state lost | user re-runs login; never API-key |
-| Guard probe regresses (grok --tools stops blocking) | safety boundary changed | STOP; do not ship; redesign guard; tell Dave |
+| Guard probe regresses (grok --tools stops blocking) | safety boundary changed | STOP; do not ship; redesign guard; tell the user |
 | Registry drift in --dry-run | someone edited by hand | reconcile via this playbook, not ad-hoc |
 | grok version changed without you | auto-update | run this playbook reactively |

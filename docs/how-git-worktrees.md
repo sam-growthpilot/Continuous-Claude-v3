@@ -150,15 +150,15 @@ git branch -d status-system
 On Windows, use forward slashes or escape backslashes:
 
 ```bash
-# From C:\Users\david.hayes\continuous-claude
+# From ~\continuous-claude
 git worktree add ../cc-feature-a feature-a
-# Creates: C:\Users\david.hayes\cc-feature-a
+# Creates: ~\cc-feature-a
 ```
 
 Or with full paths:
 
 ```bash
-git worktree add "C:/Users/david.hayes/cc-feature-a" feature-a
+git worktree add "~/cc-feature-a" feature-a
 ```
 
 ---
@@ -167,7 +167,7 @@ git worktree add "C:/Users/david.hayes/cc-feature-a" feature-a
 
 ```bash
 # 1. Go to your main repo
-cd C:/Users/david.hayes/continuous-claude
+cd ~/continuous-claude
 
 # 2. Ensure you're on main
 git checkout main
@@ -176,7 +176,7 @@ git checkout main
 git worktree add ../cc-status-system status-system
 
 # 4. Open a NEW Claude Code terminal in that directory
-# cd C:/Users/david.hayes/cc-status-system
+# cd ~/cc-status-system
 # Now you can work on status-system independently
 
 # 5. List your worktrees anytime

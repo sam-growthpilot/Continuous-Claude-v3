@@ -12,7 +12,7 @@ describe('TLDR CLI', () => {
   });
 
   test('tldr tree returns output for scripts dir', () => {
-    const r = execCmd('tldr tree C:/Users/david.hayes/continuous-claude/scripts --ext .mjs');
+    const r = execCmd('tldr tree ~/continuous-claude/scripts --ext .mjs');
     if (!r.success) skip('tldr not available');
     assertTruthy(r.stdout.trim().length > 0, 'tldr tree returned empty output');
   });
@@ -20,13 +20,13 @@ describe('TLDR CLI', () => {
   setTier('integration');
 
   test('tldr structure returns output for cdp.mjs', () => {
-    const r = execCmd('tldr structure C:/Users/david.hayes/continuous-claude/scripts/cdp.mjs --lang typescript');
+    const r = execCmd('tldr structure ~/continuous-claude/scripts/cdp.mjs --lang typescript');
     if (!r.success) skip('tldr structure failed — tool may not support this file');
     assertTruthy(r.stdout.trim().length > 0, 'tldr structure returned empty output');
   });
 
   test('tldr search finds functions in scripts dir', () => {
-    const r = execCmd('tldr search "function" C:/Users/david.hayes/continuous-claude/scripts/');
+    const r = execCmd('tldr search "function" ~/continuous-claude/scripts/');
     if (!r.success) skip('tldr search failed');
     assertTruthy(r.stdout.trim().length > 0, 'tldr search returned empty output');
   });

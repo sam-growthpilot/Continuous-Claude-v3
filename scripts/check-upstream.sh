@@ -1,5 +1,5 @@
 #!/bin/bash
-# check-upstream.sh - Check for updates from upstream (parcadei) repo
+# check-upstream.sh - Check for updates from upstream (upstream) repo
 #
 # Usage: ./scripts/check-upstream.sh [--diff] [--merge]
 #

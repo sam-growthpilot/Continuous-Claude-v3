@@ -14,7 +14,7 @@
  *   node scripts/system-coherence-stress.mjs --quick         # skip vitest/pytest
  *   node scripts/system-coherence-stress.mjs --isolation-only
  *   node scripts/system-coherence-stress.mjs --fresh-project-only
- *   node scripts/system-coherence-stress.mjs --include-real  # also probe LinkMap
+ *   node scripts/system-coherence-stress.mjs --include-real  # also probe ExampleMap
  *   node scripts/system-coherence-stress.mjs --keep-seeds    # preserve DB seeds for inspection
  */
 
@@ -44,7 +44,7 @@ const HOME = process.env.HOME || process.env.USERPROFILE || homedir();
 const REPO_ROOT = process.env.CCV3_REPO_ROOT || resolve(process.cwd());
 const HOOKS_DIST = process.env.CCV3_HOOKS_DIST || join(HOME, '.claude', 'hooks', 'dist').replace(/\\/g, '/');
 const SKILL_EVAL = process.env.CCV3_SKILL_EVAL || join(HOME, '.claude', 'skills', '_eval').replace(/\\/g, '/');
-const LINKMAP = process.env.CCV3_LINKMAP || join(HOME, 'Projects', 'LinkMap').replace(/\\/g, '/');
+const ExampleMap = process.env.CCV3_ExampleMap || join(HOME, 'Projects', 'ExampleMap').replace(/\\/g, '/');
 const PG_CONTAINER = 'continuous-claude-postgres';
 const TS = new Date().toISOString();
 const TS_SHORT = new Date().toISOString().slice(0, 10);
@@ -376,7 +376,7 @@ async function probe2_roadmap_contamination() {
   await mkdir(fakeDir, { recursive: true });
   await writeFile(join(fakeDir, 'README.md'), '# Stress Fake Project\n\nThis is a synthetic test fixture.\n');
 
-  const planBody = `# Adopt NorthStar Transformation Migration Plan\n\nThis plan describes the rollout of the NorthStar Transformation production launch. Steps include cutover from legacy systems, NorthStar deployment, and traffic shift to the new NorthStar pipeline. The NorthStar Transformation team will own delivery.\n\n## Decisions\n- NorthStar Transformation goes live next sprint\n- Legacy paths sunset within 30 days\n\n## Steps\n- Cutover NorthStar Transformation backend\n- Validate NorthStar Transformation health metrics`;
+  const planBody = `# Adopt ExampleApp Migration Plan\n\nThis plan describes the rollout of the ExampleApp production launch. Steps include cutover from legacy systems, ExampleApp deployment, and traffic shift to the new ExampleApp pipeline. The ExampleApp team will own delivery.\n\n## Decisions\n- ExampleApp goes live next sprint\n- Legacy paths sunset within 30 days\n\n## Steps\n- Cutover ExampleApp backend\n- Validate ExampleApp health metrics`;
 
   const sessionId = `stress-roadmap-${Date.now()}`;
   const input = {
@@ -390,14 +390,14 @@ async function probe2_roadmap_contamination() {
 
   const roadmapPath = join(fakeDir, 'ROADMAP.md');
   const written = existsSync(roadmapPath) ? await readFile(roadmapPath, 'utf8') : '';
-  const contaminated = written.includes('NorthStar Transformation');
+  const contaminated = written.includes('ExampleApp');
 
   const passed = !contaminated;
   return probeResult(
     'probe2_roadmap_contamination',
-    'guard blocks write OR ROADMAP.md does not contain "NorthStar Transformation"',
+    'guard blocks write OR ROADMAP.md does not contain "ExampleApp"',
     contaminated
-      ? `ROADMAP.md was written and contains "NorthStar Transformation" (fail-open guard)`
+      ? `ROADMAP.md was written and contains "ExampleApp" (fail-open guard)`
       : `ROADMAP.md ${written ? 'written but no contamination string' : 'not written'}`,
     'SOFT',
     'HIGH',
@@ -416,7 +416,7 @@ function probe3_hardcoded_paths() {
       const {readdirSync, readFileSync, statSync} = require('fs');
       const {join} = require('path');
       const root = String.raw\`${REPO_ROOT}/.claude/hooks/src\`;
-      const NEEDLE = 'C:/Users/david.hayes/';
+      const NEEDLE = '~/';
       const hits = [];
       function walk(dir) {
         for (const ent of readdirSync(dir)) {
@@ -445,7 +445,7 @@ function probe3_hardcoded_paths() {
   const passed = parsed.count === 0;
   return probeResult(
     'probe3_hardcoded_paths',
-    "0 occurrences of 'C:/Users/david.hayes/' in .claude/hooks/src/**/*.ts",
+    "0 occurrences of '~/' in .claude/hooks/src/**/*.ts",
     `${parsed.count} occurrences`,
     'HARD-WRONG',
     'HIGH',
@@ -804,7 +804,7 @@ async function synthesize(state, outPath) {
               const norm = h.replace(/\\/g, '/');
               const idx = norm.indexOf('.claude/hooks/src/');
               const rel = idx >= 0 ? norm.slice(idx) : norm;
-              filesToFix.push(`${rel} -- replace literal C:/Users/david.hayes/ with HOMEPATH/USERPROFILE`);
+              filesToFix.push(`${rel} -- replace literal ~/ with HOMEPATH/USERPROFILE`);
             });
             break;
           case 'probe4_dotclaude_skip':
@@ -958,15 +958,15 @@ function log(msg) {
 async function main() {
   const reportPath = join(REPO_ROOT, 'thoughts', 'audits', `system-coherence-stress-${TS_SHORT}.md`);
   const state = {};
-  let linkmapBackup = null;
+  let ExampleMapBackup = null;
 
   try {
     if (FLAGS.includeReal) {
-      log('Backing up LinkMap knowledge tree...');
-      const treePath = join(LINKMAP, '.claude', 'knowledge-tree.json');
-      linkmapBackup = await backupFile(treePath);
-      if (linkmapBackup) {
-        log(`LinkMap tree backed up to ${linkmapBackup.backupPath} (sha256=${linkmapBackup.sha256.slice(0, 16)}...)`);
+      log('Backing up ExampleMap knowledge tree...');
+      const treePath = join(ExampleMap, '.claude', 'knowledge-tree.json');
+      ExampleMapBackup = await backupFile(treePath);
+      if (ExampleMapBackup) {
+        log(`ExampleMap tree backed up to ${ExampleMapBackup.backupPath} (sha256=${ExampleMapBackup.sha256.slice(0, 16)}...)`);
       }
     }
 
@@ -978,7 +978,7 @@ async function main() {
       });
       const fresh = [await simulateFreshProject(synthDir, 'synthetic')];
       if (FLAGS.includeReal) {
-        fresh.push(await simulateFreshProject(LINKMAP, 'linkmap'));
+        fresh.push(await simulateFreshProject(ExampleMap, 'ExampleMap'));
       }
       state.fresh = fresh;
       await destroyFreshProject(synthDir);
@@ -1012,12 +1012,12 @@ async function main() {
     log(`Fatal error: ${err.message}`);
     state.fatalError = err.message;
   } finally {
-    // Restore LinkMap backup -- always do this, even on FAIL
-    if (linkmapBackup) {
-      log('Restoring LinkMap knowledge tree...');
-      const targetPath = join(LINKMAP, '.claude', 'knowledge-tree.json');
-      const restored = await restoreFile(linkmapBackup.backupPath, targetPath, linkmapBackup.sha256);
-      log(`LinkMap restore: ${JSON.stringify(restored)}`);
+    // Restore ExampleMap backup -- always do this, even on FAIL
+    if (ExampleMapBackup) {
+      log('Restoring ExampleMap knowledge tree...');
+      const targetPath = join(ExampleMap, '.claude', 'knowledge-tree.json');
+      const restored = await restoreFile(ExampleMapBackup.backupPath, targetPath, ExampleMapBackup.sha256);
+      log(`ExampleMap restore: ${JSON.stringify(restored)}`);
 
       // Leave a recovery breadcrumb if --keep-seeds OR if we hit a FAIL
       const haveFailures =
@@ -1025,10 +1025,10 @@ async function main() {
         (state.fresh && state.fresh.some((f) => !f.pass));
       if (FLAGS.keepSeeds || haveFailures) {
         try {
-          const breadcrumb = join(REPO_ROOT, 'thoughts', 'audits', `linkmap-tree-backup-${TS_SHORT}.json`);
+          const breadcrumb = join(REPO_ROOT, 'thoughts', 'audits', `ExampleMap-tree-backup-${TS_SHORT}.json`);
           await mkdir(join(REPO_ROOT, 'thoughts', 'audits'), { recursive: true });
           const { copyFile } = await import('node:fs/promises');
-          await copyFile(linkmapBackup.backupPath, breadcrumb);
+          await copyFile(ExampleMapBackup.backupPath, breadcrumb);
           log(`Recovery breadcrumb: ${breadcrumb}`);
         } catch (e) {
           log(`Could not write breadcrumb: ${e.message}`);

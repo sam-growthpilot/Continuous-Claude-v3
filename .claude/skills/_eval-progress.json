@@ -285,21 +285,21 @@
       "eval_tier": "verified",
       "notes": "split in phase 4"
     },
-    "fourth-brand-guidelines": {
+    "example-brand-guidelines": {
       "phase": "validated",
       "structural": "pass",
       "trigger_accuracy": null,
       "eval_tier": null,
       "notes": "split in phase 4"
     },
-    "fourth-presentation-builder": {
+    "example-presentation-builder": {
       "phase": "validated",
       "structural": "pass",
       "trigger_accuracy": null,
       "eval_tier": null,
       "notes": "split in phase 4"
     },
-    "fourth-presentation-suite": {
+    "example-presentation-suite": {
       "phase": "evaluated",
       "structural": "pass",
       "trigger_accuracy": 100,

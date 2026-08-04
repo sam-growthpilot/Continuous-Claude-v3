@@ -42,7 +42,7 @@ What is genuinely NEW from Fable, unavailable anywhere else in the system before
 The tri-model system is a **hub-and-booth architecture with human gates**:
 
 ```
-             Dave (Gate 1: contract · Gate 2: ship)
+             the user (Gate 1: contract · Gate 2: ship)
                             │
                     CLAUDE — THE HUB (Opus 4.8)
         judgment seat: decompose → contract → dispatch → smoke → grade

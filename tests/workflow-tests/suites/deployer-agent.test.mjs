@@ -7,7 +7,7 @@ import {
 } from '../harness.mjs';
 import { readFileSync } from 'fs';
 
-const ROOT = 'C:/Users/david.hayes/continuous-claude';
+const ROOT = '~/continuous-claude';
 const AGENT = `${ROOT}/.claude/agents/deployer.md`;
 
 describe('deployer-agent smoke', () => {

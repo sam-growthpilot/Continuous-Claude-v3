@@ -99,7 +99,7 @@ pip install llm-tldr
 
 The `tldr` CLI will be available on your PATH after installation.
 
-**Source:** [github.com/parcadei/tldr-code](https://github.com/parcadei/tldr-code)
+**Source:** [github.com/upstream/tldr-code](https://github.com/upstream/tldr-code)
 
 ## CLI Reference
 
@@ -715,7 +715,7 @@ For projects with 1000+ files:
 Run the test suite (for contributors):
 
 ```bash
-git clone https://github.com/parcadei/tldr-code
+git clone https://github.com/upstream/tldr-code
 cd tldr-code
 uv sync
 uv run pytest tests/ -v
@@ -829,7 +829,7 @@ tldr structure src/ --max 50  # Limit files analyzed
 
 TLDR-Code is a separate package. To contribute:
 
-1. Source: [github.com/parcadei/tldr-code](https://github.com/parcadei/tldr-code)
+1. Source: [github.com/upstream/tldr-code](https://github.com/upstream/tldr-code)
 2. Tests: Run `uv run pytest tests/` before submitting
 3. Documentation: Update this file for API changes
 4. Issues: File in the tldr-code repository
@@ -855,7 +855,7 @@ This design allows adding new languages without changing the analysis algorithms
 ## References
 
 - PyPI: [pypi.org/project/llm-tldr](https://pypi.org/project/llm-tldr/)
-- Source: [github.com/parcadei/tldr-code](https://github.com/parcadei/tldr-code)
+- Source: [github.com/upstream/tldr-code](https://github.com/upstream/tldr-code)
 - Skills: `.claude/skills/tldr-code/SKILL.md`
 - Hooks: `.claude/hooks/dist/tldr-*.mjs`
 

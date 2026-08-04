@@ -49,7 +49,7 @@ echo ""
 echo "3. Claude Code Configuration"
 check "~/.claude directory exists" "test -d $HOME/.claude"
 check "settings.json exists" "test -f $HOME/.claude/settings.json"
-check "settings.json has no foreign paths" "! grep -qi 'david.hayes' $HOME/.claude/settings.json 2>/dev/null || whoami | grep -qi 'david.hayes'"
+check "settings.json has no foreign paths" "! grep -qi 'test-user' $HOME/.claude/settings.json 2>/dev/null || whoami | grep -qi 'test-user'"
 check "CLAUDE.md exists" "test -f $HOME/.claude/CLAUDE.md"
 check "RULES.md exists" "test -f $HOME/.claude/RULES.md"
 

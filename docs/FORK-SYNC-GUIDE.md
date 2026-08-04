@@ -1,6 +1,6 @@
 # Fork Sync Guide
 
-How to safely pull updates from the upstream `parcadei/Continuous-Claude-v3` repo while preserving your local customizations.
+How to safely pull updates from the upstream `upstream/Continuous-Claude-v3` repo while preserving your local customizations.
 
 ## Quick Reference
 
@@ -24,8 +24,8 @@ bash -c 'cd ~/continuous-claude && source scripts/check-upstream.sh'
 
 | Remote | URL | Purpose |
 |--------|-----|---------|
-| `origin` | `github.com/parcadei/Continuous-Claude-v3` | Upstream (source of updates) |
-| `fork` | `github.com/Rev4nchist/Continuous-Claude-v3` | Your fork (push here) |
+| `origin` | `github.com/sam-growthpilot/Continuous-Claude-v3` | Upstream (source of updates) |
+| `fork` | `github.com/upstream/Continuous-Claude-v3` | Your fork (push here) |
 
 ## Files With Local Customizations
 

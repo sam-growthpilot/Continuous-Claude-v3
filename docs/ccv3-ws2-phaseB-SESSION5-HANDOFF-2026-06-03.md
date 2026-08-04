@@ -21,8 +21,8 @@
 
 ## 1. Current state (verified 2026-06-03)
 
-- **Git:** branch `main` locally @ **`1d1b3e7`**. A PR branch **`ws2/phase-b-context-bus`** (same tip, `1d1b3e7`) is pushed to **`fork`** (Rev4nchist) — **NEVER push to `origin` (parcadei).**
-- **PR #5 is OPEN:** https://github.com/Rev4nchist/Continuous-Claude-v3/pull/5 — base `main` ← head `ws2/phase-b-context-bus`, **19 commits** (the bus READ side + hardening + earlier unpushed B.0/B.4/B.4a + Codex-CLI repair). **CodeRabbit is the merge gate** (the user wants CodeRabbit review before merge).
+- **Git:** branch `main` locally @ **`1d1b3e7`**. A PR branch **`ws2/phase-b-context-bus`** (same tip, `1d1b3e7`) is pushed to **`fork`** (upstream) — **NEVER push to `origin` (upstream).**
+- **PR #5 is OPEN:** https://github.com/upstream/Continuous-Claude-v3/pull/5 — base `main` ← head `ws2/phase-b-context-bus`, **19 commits** (the bus READ side + hardening + earlier unpushed B.0/B.4/B.4a + Codex-CLI repair). **CodeRabbit is the merge gate** (the user wants CodeRabbit review before merge).
 - **CodeRabbit round 1** posted 2 "Major/Quick-win" findings; **both addressed in `1d1b3e7`** (see §2). A reply was posted on the PR explaining each resolution. CodeRabbit auto-re-reviews `1d1b3e7` — **confirm it comes back clean before merge.**
 - **Bus READ + WRITE sides are LIVE** in active `~/.claude/`: both recall hooks (`agent-recall-injector.ts` PreToolUse:Task, `memory-awareness.ts` UserPromptSubmit) read the bus via shared `shared/bus-focus.ts`. Query-bias gated to **hybrid** recall.
 - **Baseline (all GREEN this session):** `npm run build` clean · `audit-braintrust-emits.sh` **4/4** · bus test subset **235 pass** at `1d1b3e7` (the full bus subset shows up to 260; counts vary with which test files are scoped into a given run — all green) · cap-test loop ×5 clean · quality gate text-only −12.8% (correctly gated off) / **hybrid +33.6% top-score, 63%→88% hit-rate (KEEP ENABLED)**.
@@ -47,8 +47,8 @@
 ## 3. THE OPEN GATE — land PR #5 first
 
 Before any Phase 3 code:
-1. Confirm CodeRabbit's re-review of `1d1b3e7` has **no remaining actionable comments** (`gh pr view 5 --repo Rev4nchist/Continuous-Claude-v3 --comments`; check `gh api repos/Rev4nchist/Continuous-Claude-v3/pulls/5/comments`). Triage any new finding real-vs-noise (same skeptical bar); fix-and-push or reply.
-2. **Merge** when clean (user's call / on request): `gh pr merge 5 --repo Rev4nchist/Continuous-Claude-v3 --squash` (or `--merge` to preserve the 19-commit history — confirm the preference; the per-commit history is reviewed and meaningful, so `--merge` may be preferred). After merge, `fork/main` carries the bus READ side.
+1. Confirm CodeRabbit's re-review of `1d1b3e7` has **no remaining actionable comments** (`gh pr view 5 --repo upstream/Continuous-Claude-v3 --comments`; check `gh api repos/upstream/Continuous-Claude-v3/pulls/5/comments`). Triage any new finding real-vs-noise (same skeptical bar); fix-and-push or reply.
+2. **Merge** when clean (user's call / on request): `gh pr merge 5 --repo upstream/Continuous-Claude-v3 --squash` (or `--merge` to preserve the 19-commit history — confirm the preference; the per-commit history is reviewed and meaningful, so `--merge` may be preferred). After merge, `fork/main` carries the bus READ side.
 3. Phase 3 then branches off the merged `fork/main` (fresh feature branch → its own PR, same CodeRabbit gate).
 
 ---
@@ -110,7 +110,7 @@ docs/ccv3-ws2-phaseB-SESSION5-HANDOFF-2026-06-03.md — then the approved execut
 
 Your job, in order:
 
-(1) LAND PR #5 (https://github.com/Rev4nchist/Continuous-Claude-v3/pull/5, branch ws2/phase-b-context-bus on fork=Rev4nchist, NEVER origin). Confirm CodeRabbit's re-review of the tip (1d1b3e7) has no remaining actionable comments — triage any new finding real-vs-noise, fix-and-push or reply. Then merge on the user's go (gh pr merge 5 --repo Rev4nchist/Continuous-Claude-v3; confirm --merge vs --squash — the per-commit history is reviewed/meaningful).
+(1) LAND PR #5 (https://github.com/upstream/Continuous-Claude-v3/pull/5, branch ws2/phase-b-context-bus on fork=upstream, NEVER origin). Confirm CodeRabbit's re-review of the tip (1d1b3e7) has no remaining actionable comments — triage any new finding real-vs-noise, fix-and-push or reply. Then merge on the user's go (gh pr merge 5 --repo upstream/Continuous-Claude-v3; confirm --merge vs --squash — the per-commit history is reviewed/meaningful).
 
 (2) RESUME Phase 3 off the merged fork/main, as its own feature branch → its own PR (same CodeRabbit gate). Order: 3.0 pre-commit STALENESS guard (static src⇒dist, NO in-hook npm build — it hangs on Windows; + tracked install-hooks.sh, called from wizard.py) → 3.1 /code-intel facade (scripts/code-intel.mjs model cdp.mjs + SKILL.md; typed subcommands; executable backends = recall/TLDR/bus, codegraph absent + ast-grep/Serena MCP-only => route-with-fallback/guidance; bus-id discovery via --bus/env/most-recent) → 3.2 enforcer (code-intel-enforcer.ts default OFF, never denies, warn-only; wire pruneIntelBus at session-start + smoke test; dual settings.json registration via Node atomic write) → 3.3 stronger quality eval (read-only, 0 DB writes). B.4b is deferred.
 

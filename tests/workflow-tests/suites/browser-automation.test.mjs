@@ -9,7 +9,7 @@ import {
   assertTruthy, assertFileExists, assertContains, fileContains, run,
 } from '../harness.mjs';
 
-const ROOT = 'C:/Users/david.hayes/continuous-claude';
+const ROOT = '~/continuous-claude';
 const RULES = `${ROOT}/.claude/rules`;
 const SKILL = `${ROOT}/.claude/skills/browser-dev-cycle`;
 

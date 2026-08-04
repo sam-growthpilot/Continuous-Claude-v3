@@ -1,7 +1,7 @@
 # Notion CLI (ntn) Safety Rules
 
 Companion to `.claude/skills/notion-cli/SKILL.md`. The CLI's user-scoped token can read AND write
-everything Dave can — treat writes with the same care as the Notion MCP, plus CLI-specific traps.
+everything the user can — treat writes with the same care as the Notion MCP, plus CLI-specific traps.
 
 ## Safe Commands (no confirmation needed)
 
@@ -19,12 +19,12 @@ Before running ANY of these, explain what it does and wait for explicit user app
 
 - `ntn pages trash <id>` — trashes a page
 - `ntn pages edit <id>` on any page NOT created this session — **full-page content replace**; especially with `--allow-deleting-content` (can delete child pages/databases)
-- `ntn pages create` under a shared parent (Bridge HQ, Life Buckets, team pages)
+- `ntn pages create` under a shared parent (Workspace HQ, Life Buckets, team pages)
 - Any mutating `ntn api` call (POST/PATCH/DELETE) targeting shared surfaces, by ID:
-  - Bridge HQ `30e76fd7ac8281e99fe1c0b257088b34`
-  - Bridge Archive `30e76fd7ac8281258cd9d281aa873298`
-  - Reports hub `38f76fd7ac8280478e50dd2956ba6e8a` (exception: the registered dashboard-sync job's own scoped update)
-  - Life Buckets DB `9ec76fd7-ac82-8342-8bc3-87129f7cf1dc`, Projects DB `33b76fd7-ac82-8234-a202-8719384ac5b1`, Tasks DB `c3176fd7-ac82-825c-a03c-073837e5493c`
+  - Workspace HQ `<YOUR_NOTION_ID>`
+  - Workspace Archive `<YOUR_NOTION_ID>`
+  - Reports hub `<YOUR_NOTION_ID>` (exception: the registered dashboard-sync job's own scoped update)
+  - Life Buckets DB `<YOUR_NOTION_ID>`, Projects DB `<YOUR_NOTION_ID>`, Tasks DB `<YOUR_NOTION_ID>`
 - `ntn api -X DELETE v1/blocks/<id>` — deletes a block
 - `ntn files create` (uploads content to the workspace)
 - `ntn workers deploy / delete / create`, `ntn workers env set/unset/push`, `ntn workers sync trigger/pause/resume/state reset`, `ntn workers oauth start`
@@ -34,7 +34,7 @@ Before running ANY of these, explain what it does and wait for explicit user app
 
 Registered scheduled jobs may write WITHOUT per-run confirmation ONLY to pages declared job-owned:
 - Reports hub scheduled-tasks section (dashboard-sync job)
-- The **Report Runs** registry database `4e4c9460-8818-4352-a056-88badbaa94ce` (data source `c7d2d9e3-d388-4640-a66e-88f7dd50f854`) under the Reports hub — **row upserts only** (`ntn api v1/pages` create/update keyed by unique `Run ID`, append-all-attempts) by the 6 report pipelines via `scripts/report-registry/upsert.mjs`. Machine-owned; humans read the views, don't hand-edit rows. Its 6 report-type child pages (VP Weekly / FourthOS Sponsor / Team Dashboard / System Health / Project Portfolio / Self-Improvement) are likewise job-owned for machine `## Current run` refreshes. IDs pinned in `scripts/report-registry/report-runs.ids.json`.
+- The **Report Runs** registry database `<YOUR_NOTION_ID>` (data source `<YOUR_NOTION_ID>`) under the Reports hub — **row upserts only** (`ntn api v1/pages` create/update keyed by unique `Run ID`, append-all-attempts) by the 6 report pipelines via `scripts/report-registry/upsert.mjs`. Machine-owned; humans read the views, don't hand-edit rows. Its 6 report-type child pages (VP Weekly / ExampleOS Sponsor / Team Dashboard / System Health / Project Portfolio / Self-Improvement) are likewise job-owned for machine `## Current run` refreshes. IDs pinned in `scripts/report-registry/report-runs.ids.json`.
 - The Helm page + `Helm Projects` DB (helm sync job, once created)
 Everything else in the workspace is human/Eve territory — confirm first.
 

@@ -101,7 +101,7 @@ What could go wrong: R2's panel could deadlock a merge on a flaky Codex call (mi
 ## 6. Benefits
 
 - **Fewer silently-wrong merges.** R1+R2 close the two verification holes at the one irreversible gate: plan drift that passes tests, and single-judge threshold error. Cost is ~1 extra Codex call per feature.
-- **No lost work on crash.** R3 turns "resume probably works" into "resume verified idempotent" — directly protecting AFK Ralph runs, which is the mode where Dave isn't watching.
+- **No lost work on crash.** R3 turns "resume probably works" into "resume verified idempotent" — directly protecting AFK Ralph runs, which is the mode where the user isn't watching.
 - **Reliability without vigilance.** R4 moves the /review fan-out from "the model re-reads prose and hopefully does the same thing" to a deterministic code path with schema-enforced returns — the exact workflows-vs-agents trade the reference doctrine recommends (source 1).
 - **Docs that tell the truth.** R6 ends the state where RULES.md asserts C:10 enforcement that has never fired once — which misleads every future session that reads it.
 - **Validated bets, no rework.** The scan confirms the expensive parts already built — bounded fresh-context loops, premortem, delegation, cross-model review — are at or ahead of the frontier. Nothing here is a rebuild.

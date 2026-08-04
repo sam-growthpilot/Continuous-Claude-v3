@@ -51,9 +51,9 @@ Claude Code writes to `~/.claude.json` continuously (session stats, tip counters
 ```bash
 node -e "
 const fs = require('fs');
-const data = JSON.parse(fs.readFileSync('C:/Users/david.hayes/.claude.json', 'utf8'));
+const data = JSON.parse(fs.readFileSync('~/.claude.json', 'utf8'));
 // ... modify data ...
-fs.writeFileSync('C:/Users/david.hayes/.claude.json', JSON.stringify(data, null, 2) + '\n');
+fs.writeFileSync('~/.claude.json', JSON.stringify(data, null, 2) + '\n');
 "
 ```
 
@@ -94,16 +94,16 @@ Claude Code diagnostics will warn about this — fix immediately when seen.
 
 ## Git Bash paths require drive letter [H:9]
 
-`/Users/david.hayes/...` does NOT work on Windows Git Bash — it resolves to `C:\Program Files\Git\Users\...` which doesn't exist.
+`/Users/test-user/...` does NOT work on Windows Git Bash — it resolves to `C:\Program Files\Git\Users\...` which doesn't exist.
 
 Always use one of these formats:
-- `/c/Users/david.hayes/...` (Git Bash native)
-- `C:/Users/david.hayes/...` (Windows forward-slash)
+- `/c/Users/test-user/...` (Git Bash native)
+- `~/...` (Windows forward-slash)
 
 | Wrong | Right |
 |-------|-------|
-| `cd /Users/david.hayes/project` | `cd /c/Users/david.hayes/project` |
-| `cd "$HOME/project"` (if HOME unset) | `cd C:/Users/david.hayes/project` |
+| `cd /Users/test-user/project` | `cd /c/Users/test-user/project` |
+| `cd "$HOME/project"` (if HOME unset) | `cd ~/project` |
 
 This is the #1 cause of `Exit code 1` errors across sessions. The `$HOME` variable works when set, but literal paths MUST include the drive letter.
 
@@ -112,10 +112,10 @@ This is the #1 cause of `Exit code 1` errors across sessions. The `$HOME` variab
 When running multiple Bash commands in parallel that depend on a directory existing, verify access in a standalone command first. Otherwise one bad path cascades "Sibling tool call errored" to all parallel siblings.
 
 **Pattern:**
-1. First call: `ls C:/Users/david.hayes/project` (verify it exists)
+1. First call: `ls ~/project` (verify it exists)
 2. Then parallel calls that use that directory
 
-**Anti-pattern:** Launching 3 parallel `cd /Users/david.hayes/project && ...` commands — if the path is wrong, all 3 fail with cascade errors, tripling the noise.
+**Anti-pattern:** Launching 3 parallel `cd /Users/test-user/project && ...` commands — if the path is wrong, all 3 fail with cascade errors, tripling the noise.
 
 ## Bash tool hangs on git/network ops → use PowerShell [H:8]
 

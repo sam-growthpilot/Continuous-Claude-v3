@@ -10,7 +10,7 @@ describe('Qlty CLI', () => {
 
   test('qlty skill file exists', () => {
     assertFileExists(
-      'C:/Users/david.hayes/continuous-claude/.claude/skills/qlty-check/SKILL.md',
+      '~/continuous-claude/.claude/skills/qlty-check/SKILL.md',
       'qlty-check SKILL.md not found in repo'
     );
   });

@@ -29,11 +29,11 @@ Top MCP Servers:
 ## Your Setup Checklist
 
 ### Codebases
-- [ ] continuous-claude-v3 — https://github.com/parcadei/continuous-claude-v3 (the shared CCv3 toolkit — hooks, agents, skills, rules)
+- [ ] continuous-claude-v3 — https://github.com/sam-growthpilot/Continuous-Claude-v3 (the shared CCv3 toolkit — hooks, agents, skills, rules)
 
 ### MCP Servers to Activate
 - [ ] playwright — browser automation for testing, scraping, and visual QA. Install with `claude mcp add playwright -- npx @playwright/mcp@latest`.
-- [ ] claude_ai_Notion — Notion integration for the team's Bridge HQ and project docs. Activate via claude.ai → Settings → Connectors.
+- [ ] claude_ai_Notion — Notion integration for the team's Workspace HQ and project docs. Activate via claude.ai → Settings → Connectors.
 - [ ] serena — semantic code intelligence (LSP-backed go-to-definition, find-references). Install via `uvx --from git+https://github.com/oraios/serena serena-mcp-server`.
 - [ ] nia — search across indexed library docs and source code. Requires `NIA_API_KEY` env var; install with `cmd /c uv tool run nia-mcp-server` on Windows.
 - [ ] claude_ai_Excalidraw — collaborative diagramming for architecture sketches. Activate via claude.ai → Settings → Connectors.

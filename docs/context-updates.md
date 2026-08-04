@@ -74,7 +74,7 @@ Context Update: All Session Work (Feb 3, 2026)
   ---
   4. Memory Recall Fix (Commit 860d652)
 
-  Problem: Memory existed but wasn't being recalled ("Why didn't you remember to never push to parcadei?")
+  Problem: Memory existed but wasn't being recalled ("Why didn't you remember to never push to upstream?")
 
   Root Cause: DATABASE_URL mismatch:
   - ~/.claude/settings.json: localhost:5434 (WRONG)

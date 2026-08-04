@@ -92,7 +92,7 @@ Sequencing: **ST-01 (bus writer) and ST-04 (latency) are the unlock** — both a
 
 ## 6. Benefits
 
-- **Faster (Dave-visible):** warm codegraph turns the 62s facade median toward codegraph's real ~sub-second warm query — "who calls X" / "find symbol X" stop feeling like a stall, which also raises in-facade routing toward the 80% C.5 gate (agents avoid a slow tool).
+- **Faster (the user-visible):** warm codegraph turns the 62s facade median toward codegraph's real ~sub-second warm query — "who calls X" / "find symbol X" stop feeling like a stall, which also raises in-facade routing toward the 80% C.5 gate (agents avoid a slow tool).
 - **More reliable:** dirty-propagation makes `who-calls` correct after a callee edit without a manual `index --force`, removing a silent-under-report failure mode that currently needs a Serena escalation to catch.
 - **Cheaper / honest cost:** payload-size telemetry lets us see codegraph's true cost/benefit on our repo (the Hono benchmark's "steps ≠ dollars" crossover), so the C.5 deny-flip decision is evidence-based rather than routing-rate-only.
 - **Confidence to stand pat:** the strongest benefit is *not* building the wrong thing. This scan is evidence that our embedding-free structural-graph + LSP-escalation design is the convergent 2026 pattern — so we spend effort finishing ST-01/ST-04, not chasing a SCIP migration or a code-embedding index that the frontier is actively retreating from.

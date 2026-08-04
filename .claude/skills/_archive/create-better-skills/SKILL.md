@@ -77,8 +77,8 @@ skill-name/
 **Good example:**
 ```yaml
 ---
-name: fourth-excel-templates
-description: Generate Fourth-branded Excel reports with company formatting, formulas, and chart styles. Use when users request financial reports, budget templates, or data dashboards following Fourth brand standards.
+name: example-excel-templates
+description: Generate Example-branded Excel reports with company formatting, formulas, and chart styles. Use when users request financial reports, budget templates, or data dashboards following Example brand standards.
 ---
 ```
 
@@ -141,7 +141,7 @@ Files used within the output Claude produces, not loaded into context.
 - Brand resources (fonts, logos, color palettes)
 
 **Examples:**
-- `assets/template.xlsx` - Excel template with Fourth branding
+- `assets/template.xlsx` - Excel template with Example branding
 - `assets/logo.png` - Company logo for presentations
 - `assets/slides.pptx` - PowerPoint template
 - `assets/frontend-template/` - React boilerplate
@@ -185,7 +185,7 @@ Savings:       98% reduction in token usage
 ### Writing Effective Metadata for Discovery
 
 **Name Guidelines:**
-- Use lowercase with hyphens: `fourth-excel-templates`
+- Use lowercase with hyphens: `example-excel-templates`
 - Be specific and descriptive
 - Match user's mental model
 
@@ -197,8 +197,8 @@ Savings:       98% reduction in token usage
 
 **Good example:**
 ```yaml
-name: fourth-presentation-builder
-description: Expert guidance for creating Fourth-branded PowerPoint presentations (PPTX files only) using official brand guidelines, templates, colors, typography, and layout principles. Use when users request presentations, slides, decks, or PowerPoint files following Fourth brand standards.
+name: example-presentation-builder
+description: Expert guidance for creating Example-branded PowerPoint presentations (PPTX files only) using official brand guidelines, templates, colors, typography, and layout principles. Use when users request presentations, slides, decks, or PowerPoint files following Example brand standards.
 ```
 
 **Bad example:**
@@ -232,10 +232,10 @@ Follow these steps in order, skipping only when clearly not applicable.
 - "What would a user say that should trigger this skill?"
 - "What outputs should the skill generate?"
 
-**Example: Building fourth-excel-templates skill**
-- User request: "Create Q4 budget template with Fourth branding"
+**Example: Building example-excel-templates skill**
+- User request: "Create Q4 budget template with Example branding"
 - User request: "Generate P&L report in our standard format"
-- User request: "Build sales dashboard with Fourth colors and logo"
+- User request: "Build sales dashboard with Example colors and logo"
 
 **Best practices:**
 - Get 3-5 concrete examples before proceeding
@@ -253,20 +253,20 @@ For each concrete example, analyze:
 2. What can be reused (scripts, templates, documentation)?
 3. What would make execution faster and more reliable?
 
-**Example 1: fourth-excel-templates**
+**Example 1: example-excel-templates**
 
-User query: "Create Q4 budget template with Fourth branding"
+User query: "Create Q4 budget template with Example branding"
 
 Analysis:
 - Excel generation requires same formatting rules each time
-- Fourth brand colors, fonts, logo placement is consistent
+- Example brand colors, fonts, logo placement is consistent
 - Budget structure follows standard format
 
 **Solution - Package these resources:**
-- `scripts/excel_builder.py` - Script to generate Excel with Fourth formatting
-- `assets/fourth_logo.png` - Company logo for header
+- `scripts/excel_builder.py` - Script to generate Excel with Example formatting
+- `assets/example_logo.png` - Company logo for header
 - `assets/budget_template.xlsx` - Base template with formulas
-- `references/brand_colors.md` - Fourth color palette and usage rules
+- `references/brand_colors.md` - Example color palette and usage rules
 
 **Example 2: pdf-editor**
 
@@ -352,26 +352,26 @@ Start with the resources identified in Step 2:
 ```python
 #!/usr/bin/env python3
 """
-Excel builder for Fourth-branded reports
+Excel builder for Example-branded reports
 Dependencies: openpyxl, pandas
 """
 
-def create_fourth_branded_excel(title, data):
+def create_example_branded_excel(title, data):
     # Implementation here
     pass
 ```
 
 **References (`references/brand_colors.md`):**
 ```markdown
-# Fourth Brand Colors
+# Example Brand Colors
 
 ## Primary Palette
-- Fourth Blue: #0047AB
-- Fourth Gray: #6B7280
+- Example Blue: #0047AB
+- Example Gray: #6B7280
 - White: #FFFFFF
 
 ## Usage Guidelines
-- Headers: Fourth Blue background, White text
+- Headers: Example Blue background, White text
 - Data rows: Alternate White and light Gray
 ```
 
@@ -391,16 +391,16 @@ Answer these questions in SKILL.md:
 **Critical: Reference scripts explicitly**
 
 ```markdown
-## How to Generate Fourth-Branded Excel Reports
+## How to Generate Example-Branded Excel Reports
 
 1. **Load the Excel builder script**: Read `scripts/excel_builder.py`
 
 2. **Load brand guidelines**: Reference `references/brand_colors.md` for color codes
 
 3. **Execute generation**:
-   - Use `create_fourth_branded_excel()` function from the script
+   - Use `create_example_branded_excel()` function from the script
    - Apply brand colors from guidelines
-   - Insert logo from `assets/fourth_logo.png`
+   - Insert logo from `assets/example_logo.png`
    - Follow template structure from `assets/budget_template.xlsx`
 
 4. **Return the generated Excel file** to the user for download
@@ -439,28 +439,28 @@ When creating skills for Excel work:
 ```python
 #!/usr/bin/env python3
 """
-Fourth-branded Excel helper functions
+Example-branded Excel helper functions
 Dependencies: openpyxl>=3.1.0
 """
 
 from openpyxl import Workbook
 from openpyxl.styles import Font, PatternFill, Alignment
 
-FOURTH_BLUE = "0047AB"
-FOURTH_GRAY = "6B7280"
+EXAMPLE_BLUE = "0047AB"
+EXAMPLE_GRAY = "6B7280"
 
 def create_branded_workbook(title):
-    """Create new workbook with Fourth branding"""
+    """Create new workbook with Example branding"""
     wb = Workbook()
     ws = wb.active
     ws.title = title
     return wb, ws
 
 def apply_header_style(cell):
-    """Apply Fourth brand header styling"""
+    """Apply Example brand header styling"""
     cell.font = Font(color="FFFFFF", bold=True, size=12)
-    cell.fill = PatternFill(start_color=FOURTH_BLUE,
-                           end_color=FOURTH_BLUE,
+    cell.fill = PatternFill(start_color=EXAMPLE_BLUE,
+                           end_color=EXAMPLE_BLUE,
                            fill_type="solid")
     cell.alignment = Alignment(horizontal="center", vertical="center")
 ```
@@ -506,7 +506,7 @@ python excel_helper.py --test
 1. Install skill in `.claude/skills/` directory
 2. Test discovery with trigger phrases:
    ```bash
-   claude -p "Create a budget report with Fourth branding"
+   claude -p "Create a budget report with Example branding"
    ```
 3. Verify skill activates in Claude Code logs
 4. Test execution with realistic examples
@@ -690,20 +690,20 @@ Output: [Expected result]
 
 ```markdown
 ---
-name: fourth-excel-templates
-description: Generate Fourth-branded Excel reports with company formatting, colors, fonts, formulas, and logo placement. Use when users request financial reports, budget templates, sales dashboards, or data analysis spreadsheets following Fourth brand standards.
+name: example-excel-templates
+description: Generate Example-branded Excel reports with company formatting, colors, fonts, formulas, and logo placement. Use when users request financial reports, budget templates, sales dashboards, or data analysis spreadsheets following Example brand standards.
 ---
 
-# Fourth Excel Templates
+# Example Excel Templates
 
-Generate professional Excel reports and dashboards using Fourth's brand guidelines and formatting standards.
+Generate professional Excel reports and dashboards using Example's brand guidelines and formatting standards.
 
 ## When to Use This Skill
 
 Use this skill when users request:
 - Financial reports (P&L, budget, forecast)
 - Sales dashboards and analytics
-- Data templates with Fourth branding
+- Data templates with Example branding
 - Spreadsheets requiring consistent formatting
 
 ## How to Use This Skill
@@ -713,45 +713,45 @@ Use this skill when users request:
 1. **Load Excel builder script**: Read `scripts/excel_builder.py`
 
 2. **Load brand guidelines**: Reference `references/brand_guidelines.md` for:
-   - Fourth Blue (#0047AB) and Gray (#6B7280) color codes
+   - Example Blue (#0047AB) and Gray (#6B7280) color codes
    - Typography standards (Calibri, specific sizes)
    - Logo placement rules
 
 3. **Execute generation**:
-   - Use `create_fourth_branded_excel(title, data)` function
+   - Use `create_example_branded_excel(title, data)` function
    - Apply header styling with `apply_header_style(cell)`
-   - Insert logo from `assets/fourth_logo.png` in top-right
+   - Insert logo from `assets/example_logo.png` in top-right
    - Follow template structure from `assets/budget_template.xlsx` if applicable
 
 4. **Generate charts** (if requested):
    - Use `create_branded_chart(data, chart_type)` function
-   - Apply Fourth color palette
+   - Apply Example color palette
    - Position according to brand guidelines
 
 5. **Return Excel file** to user for download
 
 ### Bundled Resources
 
-- **`scripts/excel_builder.py`**: Python script with Fourth-branded Excel generation functions using openpyxl
-- **`references/brand_guidelines.md`**: Fourth brand colors, typography, and formatting standards
-- **`assets/fourth_logo.png`**: Company logo for header placement
+- **`scripts/excel_builder.py`**: Python script with Example-branded Excel generation functions using openpyxl
+- **`references/brand_guidelines.md`**: Example brand colors, typography, and formatting standards
+- **`assets/example_logo.png`**: Company logo for header placement
 - **`assets/budget_template.xlsx`**: Pre-formatted budget template with formulas
 
 ### Examples
 
 **Example 1: Q4 Budget Template**
 
-Input: "Create Q4 budget template with Fourth branding"
+Input: "Create Q4 budget template with Example branding"
 
 Process:
 1. Load `scripts/excel_builder.py`
-2. Execute `create_fourth_branded_excel("Q4 Budget", budget_structure)`
-3. Apply header styling with Fourth Blue background
-4. Insert logo from `assets/fourth_logo.png` in cell H1
+2. Execute `create_example_branded_excel("Q4 Budget", budget_structure)`
+3. Apply header styling with Example Blue background
+4. Insert logo from `assets/example_logo.png` in cell H1
 5. Add budget formulas for totals and variances
 6. Format currency cells with accounting format
 
-Output: `Q4_Budget_Template.xlsx` with Fourth branding, formulas, and formatting
+Output: `Q4_Budget_Template.xlsx` with Example branding, formulas, and formatting
 
 **Example 2: Sales Dashboard**
 
@@ -761,15 +761,15 @@ Process:
 1. Load `scripts/excel_builder.py` and `references/brand_guidelines.md`
 2. Create workbook with summary and detail tabs
 3. Generate regional performance chart using `create_branded_chart()`
-4. Apply Fourth color palette to chart series
+4. Apply Example color palette to chart series
 5. Add logo and format headers
 
 Output: `Sales_Dashboard.xlsx` with branded charts and data visualization
 
 ## Best Practices
 
-- Always insert Fourth logo in top-right corner (typically H1 or I1)
-- Use Fourth Blue (#0047AB) for headers, Fourth Gray (#6B7280) for alternating rows
+- Always insert Example logo in top-right corner (typically H1 or I1)
+- Use Example Blue (#0047AB) for headers, Example Gray (#6B7280) for alternating rows
 - Apply accounting format to currency values
 - Include data validation for input cells
 - Add print settings for professional output (landscape, fit to page)
@@ -778,7 +778,7 @@ Output: `Sales_Dashboard.xlsx` with branded charts and data visualization
 
 | Issue | Solution |
 |-------|----------|
-| Logo not displaying | Verify `assets/fourth_logo.png` exists and path is correct |
+| Logo not displaying | Verify `assets/example_logo.png` exists and path is correct |
 | Colors incorrect | Reference `brand_guidelines.md` for exact hex codes |
 | Formulas not calculating | Check formula syntax and cell references |
 | Script fails | Verify openpyxl dependency is installed: `pip install openpyxl` |
@@ -987,8 +987,8 @@ Study these for best practices:
 
 ### Example Skills in This Project
 
-- **fourth-presentation-builder**: Full-featured PowerPoint skill with brand guidelines
-- **fourth-brand-guidelines**: Brand identity reference skill
+- **example-presentation-builder**: Full-featured PowerPoint skill with brand guidelines
+- **example-brand-guidelines**: Brand identity reference skill
 
 ---
 

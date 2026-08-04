@@ -22,7 +22,7 @@ This prevents zombie processes when restarting dev servers during development se
 
 ## Port Registry
 
-**Source of truth: `~/continuous-claude/.claude/project-registry.json`** (repo-canonical, mirrored to `~/.claude/`). Derive used ports from it at run time — do not maintain a table here (a hardcoded copy rotted and nearly caused a double-assignment). Examples of the convention (illustrative only): Fourth Connect → 3000 / fourth-connect.localhost; NorthStar → 3002 / northstar.localhost. MCP servers use 8xxx; new web projects take the next free 3xxx.
+**Source of truth: `~/continuous-claude/.claude/project-registry.json`** (repo-canonical, mirrored to `~/.claude/`). Derive used ports from it at run time — do not maintain a table here (a hardcoded copy rotted and nearly caused a double-assignment). Examples of the convention (illustrative only): Example Connect → 3000 / example-connect.localhost; ExampleApp → 3002 / exampleapp.localhost. MCP servers use 8xxx; new web projects take the next free 3xxx.
 
 Note: `import.meta.dirname` requires Node 21.2+. Current machine runs Node 24.4.1.
 
@@ -35,7 +35,7 @@ npm run dev:cleanup
 
 ## Adding to New Projects
 
-1. Copy `scripts/dev-cleanup.mjs` and `scripts/dev-start.mjs` from NorthStar
+1. Copy `scripts/dev-cleanup.mjs` and `scripts/dev-start.mjs` from ExampleApp
 2. Set `DEV_PORT=<port>` in `.env.local`
 3. Update `package.json`: `"dev": "node scripts/dev-start.mjs"`
 4. Add `.dev-server.pid` to `.gitignore`

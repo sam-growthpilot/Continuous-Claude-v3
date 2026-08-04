@@ -205,7 +205,7 @@ This makes `/code-intel` who-calls / find-symbol queries live from day one.
 ```javascript
 // node -e, one process: read, push, validate, atomic rename
 const fs = require('fs');
-const p = 'C:/Users/david.hayes/continuous-claude/.claude/project-registry.json';
+const p = '~/continuous-claude/.claude/project-registry.json';
 const reg = JSON.parse(fs.readFileSync(p, 'utf8'));
 reg.projects.push({
   name: "Project Name",

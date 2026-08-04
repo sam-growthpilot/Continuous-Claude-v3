@@ -40,7 +40,7 @@ understand WHAT the system is meant to do and HOW we execute it via this harness
 5. INTEGRATION: For anything you would ADOPT, sketch HOW it integrates into CCv3 — which files/subsystems,
    how it ties to existing `docs/system-update/BACKLOG.md` arcs (reference item IDs like ST-01, ST-02,
    SG-04 where relevant), rough effort, risk, and what could go wrong.
-6. BENEFITS: What does the user (Dave) get — faster, more reliable, cheaper, more capable? Be specific.
+6. BENEFITS: What does the user (the user) get — faster, more reliable, cheaper, more capable? Be specific.
 
 ## Before you write — citation self-audit (mandatory)
 

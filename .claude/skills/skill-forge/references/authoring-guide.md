@@ -79,20 +79,20 @@ Output: [Expected result]
 
 ```markdown
 ---
-name: fourth-excel-templates
-description: Generate Fourth-branded Excel reports with company formatting, colors, fonts, formulas, and logo placement. Use when users request financial reports, budget templates, sales dashboards, or data analysis spreadsheets following Fourth brand standards.
+name: example-excel-templates
+description: Generate Example-branded Excel reports with company formatting, colors, fonts, formulas, and logo placement. Use when users request financial reports, budget templates, sales dashboards, or data analysis spreadsheets following Example brand standards.
 ---
 
-# Fourth Excel Templates
+# Example Excel Templates
 
-Generate professional Excel reports and dashboards using Fourth's brand guidelines.
+Generate professional Excel reports and dashboards using Example's brand guidelines.
 
 ## When to Use This Skill
 
 Use this skill when users request:
 - Financial reports (P&L, budget, forecast)
 - Sales dashboards and analytics
-- Data templates with Fourth branding
+- Data templates with Example branding
 - Spreadsheets requiring consistent formatting
 
 ## How to Use This Skill
@@ -102,44 +102,44 @@ Use this skill when users request:
 1. **Load Excel builder script**: Read `scripts/excel_builder.py`
 
 2. **Load brand guidelines**: Reference `references/brand_guidelines.md` for:
-   - Fourth Blue (#0047AB) and Gray (#6B7280) color codes
+   - Example Blue (#0047AB) and Gray (#6B7280) color codes
    - Typography standards (Calibri, specific sizes)
    - Logo placement rules
 
 3. **Execute generation**:
-   - Use `create_fourth_branded_excel(title, data)` function
+   - Use `create_example_branded_excel(title, data)` function
    - Apply header styling with `apply_header_style(cell)`
-   - Insert logo from `assets/fourth_logo.png` in top-right
+   - Insert logo from `assets/example_logo.png` in top-right
    - Follow template structure from `assets/budget_template.xlsx` if applicable
 
 4. **Generate charts** (if requested):
    - Use `create_branded_chart(data, chart_type)` function
-   - Apply Fourth color palette
+   - Apply Example color palette
    - Position according to brand guidelines
 
 5. **Return Excel file** to user for download
 
 ### Bundled Resources
 
-- **`scripts/excel_builder.py`**: Python script with Fourth-branded Excel generation functions using openpyxl
-- **`references/brand_guidelines.md`**: Fourth brand colors, typography, and formatting standards
-- **`assets/fourth_logo.png`**: Company logo for header placement
+- **`scripts/excel_builder.py`**: Python script with Example-branded Excel generation functions using openpyxl
+- **`references/brand_guidelines.md`**: Example brand colors, typography, and formatting standards
+- **`assets/example_logo.png`**: Company logo for header placement
 - **`assets/budget_template.xlsx`**: Pre-formatted budget template with formulas
 
 ### Examples
 
 **Example 1: Q4 Budget Template**
 
-Input: "Create Q4 budget template with Fourth branding"
+Input: "Create Q4 budget template with Example branding"
 
 Process:
 1. Load `scripts/excel_builder.py`
-2. Execute `create_fourth_branded_excel("Q4 Budget", budget_structure)`
-3. Apply header styling with Fourth Blue background
-4. Insert logo from `assets/fourth_logo.png` in cell H1
+2. Execute `create_example_branded_excel("Q4 Budget", budget_structure)`
+3. Apply header styling with Example Blue background
+4. Insert logo from `assets/example_logo.png` in cell H1
 5. Add budget formulas for totals and variances
 
-Output: `Q4_Budget_Template.xlsx` with Fourth branding, formulas, and formatting
+Output: `Q4_Budget_Template.xlsx` with Example branding, formulas, and formatting
 ```
 
 ---

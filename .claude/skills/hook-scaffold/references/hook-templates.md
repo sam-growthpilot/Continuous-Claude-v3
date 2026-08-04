@@ -439,7 +439,7 @@ Each event type has a different registration structure in `~/.claude/settings.js
   "hooks": [
     {
       "type": "command",
-      "command": "node C:/Users/david.hayes/.claude/hooks/dist/{{HOOK_NAME}}.mjs",
+      "command": "node ~/.claude/hooks/dist/{{HOOK_NAME}}.mjs",
       "timeout": 5000
     }
   ]
@@ -453,7 +453,7 @@ Each event type has a different registration structure in `~/.claude/settings.js
   "hooks": [
     {
       "type": "command",
-      "command": "node C:/Users/david.hayes/.claude/hooks/dist/{{HOOK_NAME}}.mjs",
+      "command": "node ~/.claude/hooks/dist/{{HOOK_NAME}}.mjs",
       "timeout": 5000
     }
   ]
@@ -469,7 +469,7 @@ These event types do not use matchers. Add the hook entry directly to the hooks 
   "hooks": [
     {
       "type": "command",
-      "command": "node C:/Users/david.hayes/.claude/hooks/dist/{{HOOK_NAME}}.mjs",
+      "command": "node ~/.claude/hooks/dist/{{HOOK_NAME}}.mjs",
       "timeout": 5000
     }
   ]

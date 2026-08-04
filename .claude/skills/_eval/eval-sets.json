@@ -8528,97 +8528,97 @@
       }
     ]
   },
-  "fourth-presentation-suite": {
-    "skill": "fourth-presentation-suite",
-    "description": "Generate Fourth-branded EBR/QBR and sales presentations with professional design system",
+  "example-presentation-suite": {
+    "skill": "example-presentation-suite",
+    "description": "Generate Example-branded EBR/QBR and sales presentations with professional design system",
     "priority": "medium",
     "enforcement": "suggest",
     "cases": [
       {
-        "prompt": "/fourth-presentation-suite",
-        "expectedSkill": "fourth-presentation-suite",
+        "prompt": "/example-presentation-suite",
+        "expectedSkill": "example-presentation-suite",
         "shouldTrigger": true,
         "source": "keyword",
-        "matchedTerm": "/fourth-presentation-suite"
+        "matchedTerm": "/example-presentation-suite"
       },
       {
-        "prompt": "Please fourth presentation",
-        "expectedSkill": "fourth-presentation-suite",
+        "prompt": "Please example presentation",
+        "expectedSkill": "example-presentation-suite",
         "shouldTrigger": true,
         "source": "keyword",
-        "matchedTerm": "fourth presentation"
+        "matchedTerm": "example presentation"
       },
       {
         "prompt": "Let's ebr presentation for this project",
-        "expectedSkill": "fourth-presentation-suite",
+        "expectedSkill": "example-presentation-suite",
         "shouldTrigger": true,
         "source": "keyword",
         "matchedTerm": "ebr presentation"
       },
       {
         "prompt": "Can you help me qbr presentation?",
-        "expectedSkill": "fourth-presentation-suite",
+        "expectedSkill": "example-presentation-suite",
         "shouldTrigger": true,
         "source": "keyword",
         "matchedTerm": "qbr presentation"
       },
       {
         "prompt": "I need to sales deck",
-        "expectedSkill": "fourth-presentation-suite",
+        "expectedSkill": "example-presentation-suite",
         "shouldTrigger": true,
         "source": "keyword",
         "matchedTerm": "sales deck"
       },
       {
         "prompt": "I want to create ebr in this project",
-        "expectedSkill": "fourth-presentation-suite",
+        "expectedSkill": "example-presentation-suite",
         "shouldTrigger": true,
         "source": "intent",
         "pattern": "(create|generate|build).*?(ebr|qbr|presentation|deck)"
       },
       {
-        "prompt": "I want to fourth brand in this project",
-        "expectedSkill": "fourth-presentation-suite",
+        "prompt": "I want to example brand in this project",
+        "expectedSkill": "example-presentation-suite",
         "shouldTrigger": true,
         "source": "intent",
-        "pattern": "fourth.*?(brand|style|presentation)"
+        "pattern": "example.*?(brand|style|presentation)"
       },
       {
         "prompt": "I want to executive review in this project",
-        "expectedSkill": "fourth-presentation-suite",
+        "expectedSkill": "example-presentation-suite",
         "shouldTrigger": true,
         "source": "intent",
         "pattern": "(executive|business|quarterly).*?review"
       },
       {
         "prompt": "I need to /ralph",
-        "expectedSkill": "fourth-presentation-suite",
+        "expectedSkill": "example-presentation-suite",
         "shouldTrigger": false,
         "source": "cross-domain",
         "domain": "workflow"
       },
       {
         "prompt": "I need to commit",
-        "expectedSkill": "fourth-presentation-suite",
+        "expectedSkill": "example-presentation-suite",
         "shouldTrigger": false,
         "source": "cross-domain",
         "domain": "git"
       },
       {
         "prompt": "What is the weather like today?",
-        "expectedSkill": "fourth-presentation-suite",
+        "expectedSkill": "example-presentation-suite",
         "shouldTrigger": false,
         "source": "unrelated"
       },
       {
         "prompt": "Tell me a joke about programming",
-        "expectedSkill": "fourth-presentation-suite",
+        "expectedSkill": "example-presentation-suite",
         "shouldTrigger": false,
         "source": "unrelated"
       },
       {
         "prompt": "How do I make pasta?",
-        "expectedSkill": "fourth-presentation-suite",
+        "expectedSkill": "example-presentation-suite",
         "shouldTrigger": false,
         "source": "generic-negative"
       }

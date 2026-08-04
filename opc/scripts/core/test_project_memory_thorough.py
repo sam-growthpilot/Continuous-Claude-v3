@@ -141,7 +141,7 @@ class TestProjectIdEdgeCases:
 
     def test_windows_path(self):
         """Windows-style paths should work."""
-        pid = get_project_id("C:\\Users\\david\\project")
+        pid = get_project_id("~\\project")
         assert pid is not None
         assert len(pid) == 16
 

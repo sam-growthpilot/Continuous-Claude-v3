@@ -23,7 +23,7 @@ I want to use /ralph to build a new feature for the Workbook platform (spark-pla
 
 Here's the context:
 
-The Workbook platform (C:\Users\david.hayes\spark-platform) is an AI-powered executive meeting and workspace platform. It's a Next.js 15 + React 19 monorepo with:
+The Workbook platform (~\spark-platform) is an AI-powered executive meeting and workspace platform. It's a Next.js 15 + React 19 monorepo with:
 - `apps/web/` — main Next.js app
 - `packages/database/` — Drizzle ORM + Neon Postgres schema (18 tables)
 - `packages/types/` — shared TypeScript types

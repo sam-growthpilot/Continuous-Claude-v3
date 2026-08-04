@@ -119,11 +119,11 @@ describe('post-edit-diagnostics: tsc output parsing', () => {
   });
 
   it('should handle Windows paths with drive letters', () => {
-    const output = `C:/Users/david.hayes/project/src/index.ts(10,5): error TS2322: Type mismatch.`;
+    const output = `~/project/src/index.ts(10,5): error TS2322: Type mismatch.`;
     const result = parseTscOutput(output);
 
     expect(result).toHaveLength(1);
-    expect(result[0].file).toBe('C:/Users/david.hayes/project/src/index.ts');
+    expect(result[0].file).toBe('~/project/src/index.ts');
   });
 });
 

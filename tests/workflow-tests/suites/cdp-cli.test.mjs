@@ -10,8 +10,8 @@ import {
   execJson, skip, run,
 } from '../harness.mjs';
 
-const CDP = 'node C:/Users/david.hayes/continuous-claude/scripts/cdp.mjs';
-const ROOT = 'C:/Users/david.hayes/continuous-claude';
+const CDP = 'node ~/continuous-claude/scripts/cdp.mjs';
+const ROOT = '~/continuous-claude';
 
 // ---- Smoke tier ----
 

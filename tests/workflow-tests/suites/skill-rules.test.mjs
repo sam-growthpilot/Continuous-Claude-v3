@@ -3,8 +3,8 @@
 import { readFileSync } from 'fs';
 import { describe, test, assertFileExists, assertTruthy, assertGte, assertEqual, run } from '../harness.mjs';
 
-const REPO_PATH = 'C:/Users/david.hayes/continuous-claude/.claude/skills/skill-rules.json';
-const ACTIVE_PATH = 'C:/Users/david.hayes/.claude/skills/skill-rules.json';
+const REPO_PATH = '~/continuous-claude/.claude/skills/skill-rules.json';
+const ACTIVE_PATH = '~/.claude/skills/skill-rules.json';
 
 describe('skill-rules.json', () => {
   test('repo copy exists', () => {

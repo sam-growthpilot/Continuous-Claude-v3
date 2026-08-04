@@ -94,7 +94,7 @@ Sequence unchanged from the internal plan: **ST-02 (R3) first**, then **R2** (ha
 ## 6. Benefits
 
 - **Safe parallel fan-out, immediately.** R1 lets an orchestrator run N writer-subagents concurrently with zero clobber risk using a primitive already in the harness — no new locking code, no `.git/index.lock` races (the exact failure the frontier tools cite).
-- **Correct multi-terminal work.** R2 removes the two silent-corruption paths: the TOCTOU double-claim and the paused-holder stale-steal. Dave can run two terminals on one checkout and trust the lock instead of manually avoiding overlap.
+- **Correct multi-terminal work.** R2 removes the two silent-corruption paths: the TOCTOU double-claim and the paused-holder stale-steal. the user can run two terminals on one checkout and trust the lock instead of manually avoiding overlap.
 - **Measurable coordination.** R3 makes cross-session/agent telemetry joinable (kills the 60.7% corr-null) and unlocks the SG-04 peer-awareness surface ("Session B is editing `foo.ts`, 2m ago").
 - **Right-sized effort.** The reframe means we build *less* — isolation replaces a chunk of would-be locking code, and the remaining lock gets smaller and safer, not bigger.
 

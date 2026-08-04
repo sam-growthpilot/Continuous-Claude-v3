@@ -44,7 +44,7 @@ Use conversation to collect these required inputs (ask if not provided):
 
 Create the hook source file at:
 ```
-C:/Users/david.hayes/continuous-claude/.claude/hooks/src/<hook-name>.ts
+~/continuous-claude/.claude/hooks/src/<hook-name>.ts
 ```
 
 **Process:**
@@ -74,7 +74,7 @@ Determine the correct registration based on event type:
   "matcher": "<TOOL_PATTERN>",
   "hooks": [{
     "type": "command",
-    "command": "node C:/Users/david.hayes/.claude/hooks/dist/<hook-name>.mjs",
+    "command": "node ~/.claude/hooks/dist/<hook-name>.mjs",
     "timeout": 5000
   }]
 }
@@ -85,7 +85,7 @@ Determine the correct registration based on event type:
 {
   "hooks": [{
     "type": "command",
-    "command": "node C:/Users/david.hayes/.claude/hooks/dist/<hook-name>.mjs",
+    "command": "node ~/.claude/hooks/dist/<hook-name>.mjs",
     "timeout": 5000
   }]
 }
@@ -98,13 +98,13 @@ Add to the existing hooks array for that event type (these have no matcher).
 ```bash
 node -e "
 const fs = require('fs');
-const settingsPath = 'C:/Users/david.hayes/.claude/settings.json';
+const settingsPath = '~/.claude/settings.json';
 const settings = JSON.parse(fs.readFileSync(settingsPath, 'utf8'));
 
 const eventType = '<EVENT_TYPE>';
 const hookEntry = {
   type: 'command',
-  command: 'node C:/Users/david.hayes/.claude/hooks/dist/<hook-name>.mjs',
+  command: 'node ~/.claude/hooks/dist/<hook-name>.mjs',
   timeout: 5000
 };
 
@@ -144,7 +144,7 @@ Adapt the `matcher`, `eventType`, `hook-name`, and `timeout` values for the spec
 ### Step 4: Build and Verify
 
 ```bash
-cd C:/Users/david.hayes/continuous-claude/.claude/hooks && npm run build
+cd ~/continuous-claude/.claude/hooks && npm run build
 ```
 
 **Verify:**

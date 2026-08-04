@@ -115,7 +115,7 @@ Sequencing: **R1 first** (trivial, immediate corpus hygiene), then **R3 decision
 
 - **Recall that returns lessons, not monologue (R2).** Today a `MEMORY MATCH` can surface 2000 chars of raw thinking; after R2 it surfaces "Hook X fails silently if dist/ missing — run `npm run build`." Higher signal density per recalled token, directly on the surface that injects context into prompts.
 - **A cleaner corpus and a truer SG-01 number (R1).** Removing the self-archiving checkpoint writes stops the pipeline from polluting its own denominator, so the 27.4% hit-rate re-baseline (SG-01) measures real learnings.
-- **No two-brains drift (R3).** Deciding roles for native Auto memory vs Postgres means Dave gets one coherent memory story, not two partial ones silently diverging per repo.
+- **No two-brains drift (R3).** Deciding roles for native Auto memory vs Postgres means the user gets one coherent memory story, not two partial ones silently diverging per repo.
 - **Cheaper than the alternative.** Every heavy frontier option (RL write policy, weight self-edits, LLM-judge gate) is explicitly SKIP/WATCH; the ADOPT set is one deletion + one background distill step + one decision — small, reversible, and it leans on distillation the harness already does for free.
 
 ## 7. Open questions

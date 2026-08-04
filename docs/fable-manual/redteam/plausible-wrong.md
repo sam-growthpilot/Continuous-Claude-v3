@@ -21,7 +21,7 @@ sealed rationale is in `plausible-wrong.KEY.md`. Provenance: claude-fable-5, 202
 
 **P2** — a setup step in a bash script run on the dev machine:
 ```bash
-cd /Users/david.hayes/continuous-claude
+cd /Users/test-user/continuous-claude
 node scripts/mcp/zendesk-mcp.mjs --selftest
 ```
 
@@ -38,7 +38,7 @@ export function loadState(sessionId) {
 ```sql
 SELECT session_id, claimed_at
 FROM file_claims
-WHERE file_path = '/c/Users/david.hayes/continuous-claude/src/index.ts'
+WHERE file_path = '~/continuous-claude/src/index.ts'
 ORDER BY claimed_at DESC
 LIMIT 1;
 ```

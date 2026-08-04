@@ -59,7 +59,7 @@ Then **Gate 1 = AskUserQuestion**: "Approve contract for build?" with the contra
 summarized. Under bypassPermissions this question IS the gate — never self-approve. If the
 human is absent, a pre-authorization is acceptable ONLY when the feature is on an
 explicitly approved build order; record the basis verbatim in `status.json.gate1_note`
-(pattern blessed by Dave 2026-07-11). Stamp `gate1_approved_at`; advance to `building`.
+(pattern blessed by the user 2026-07-11). Stamp `gate1_approved_at`; advance to `building`.
 
 ## Step 6 — Milestone loop (for each M<N>)
 

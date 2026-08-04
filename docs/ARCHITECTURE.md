@@ -254,7 +254,7 @@ All agents write their output to:
 
 ### TLDR-Code (5-Layer Code Analysis)
 
-**Install:** `uv tool install llm-tldr` | **Source:** [github.com/parcadei/tldr-code](https://github.com/parcadei/tldr-code)
+**Install:** `uv tool install llm-tldr` | **Source:** [github.com/upstream/tldr-code](https://github.com/upstream/tldr-code)
 
 A token-efficient code understanding system that provides 85% token savings compared to raw file reads.
 
@@ -720,7 +720,7 @@ No circular dependencies remain in active code.
 
 ### 10.7 TLDR-Code Package Structure
 
-**PyPI:** `llm-tldr` | **Source:** [github.com/parcadei/tldr-code](https://github.com/parcadei/tldr-code)
+**PyPI:** `llm-tldr` | **Source:** [github.com/upstream/tldr-code](https://github.com/upstream/tldr-code)
 
 | Module | Layer | Functions | Classes | Purpose |
 |--------|-------|-----------|---------|---------|

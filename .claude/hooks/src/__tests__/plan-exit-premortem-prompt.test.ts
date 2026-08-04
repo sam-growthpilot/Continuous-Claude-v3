@@ -38,8 +38,8 @@ describe('extractPlanPath', () => {
   });
 
   it('extracts a value under planPath when it looks like a path', () => {
-    const input = { planPath: 'C:/Users/dave/.claude/plans/my-plan.md' };
-    expect(extractPlanPath(input)).toBe('C:/Users/dave/.claude/plans/my-plan.md');
+    const input = { planPath: 'C:/Users/test-user/.claude/plans/my-plan.md' };
+    expect(extractPlanPath(input)).toBe('C:/Users/test-user/.claude/plans/my-plan.md');
   });
 
   it('extracts a value under plan_path when it looks like a path', () => {
@@ -212,11 +212,11 @@ describe('handlePlanExitPrompt -- ExitPlanMode with a plan path', () => {
     const input = {
       session_id: TEST_SESSION,
       tool_name: 'ExitPlanMode',
-      tool_input: { planPath: 'C:/Users/dave/.claude/plans/my-plan.md' },
+      tool_input: { planPath: 'C:/Users/test-user/.claude/plans/my-plan.md' },
     };
     const result = handlePlanExitPrompt(input);
     expect(result.hookSpecificOutput?.additionalContext).toContain(
-      'C:/Users/dave/.claude/plans/my-plan.md',
+      'C:/Users/test-user/.claude/plans/my-plan.md',
     );
   });
 

@@ -5,7 +5,7 @@
  * for relevant user preferences before allowing the action.
  *
  * Use cases:
- * - "NEVER push to origin (parcadei)" - warn before git push origin
+ * - "NEVER push to upstream" - warn before git push origin
  * - "Always use conventional commits" - remind before git commit
  * - "Never force push to main" - block git push --force
  */

@@ -203,7 +203,7 @@ opc/.python-version
 .scratch/
 
 # Large or one-off artifacts (kept on disk, not in git)
-fourth-transformation/
+example-transformation/
 test-screenshots/
 presentations/
 

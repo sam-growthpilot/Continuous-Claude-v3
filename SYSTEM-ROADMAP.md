@@ -81,7 +81,7 @@ When the current goal completes, promote one of these to `## Active Goal`:
 - Each phase produces one commit (or a small chain) on `feature/system-coherence`.
 - Health check between phases — never start phase N+1 with a non-green check from phase N.
 - Update this file when phase status changes; the goal-promotion hooks read it.
-- `git remote` convention: `origin = parcadei` (never push), `fork = Rev4nchist` (always push).
+- `git remote` convention: `origin = sam-growthpilot` (your fork, push here), `upstream = upstream` (never push).
 
 ---
 

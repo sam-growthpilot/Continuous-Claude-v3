@@ -777,12 +777,12 @@
       "verdict": "both_miss"
     },
     {
-      "query": "fork remote never push origin parcadei",
+      "query": "fork remote never push origin upstream",
       "relevant_id": "64adf038-d0f7-4b68-93a1-4c3defd4692e",
       "type": "WORKING_SOLUTION",
       "scope": "PROJECT",
       "confidence": "high",
-      "notes": "Never push to upstream parcadei; always to fork Rev4nchist",
+      "notes": "Never push to upstream upstream; always to fork upstream",
       "baseline": {
         "top_k_ids": [
           "65e742ca-0f19-4efc-b096-bd763bef8289",
@@ -1422,12 +1422,12 @@
       "verdict": "shuffled_no_change"
     },
     {
-      "query": "fourth salesforce middleware chain order",
+      "query": "example salesforce middleware chain order",
       "relevant_id": "6a172c1b-68c6-40ae-918b-887279f4b524",
       "type": "CODEBASE_PATTERN",
       "scope": "GLOBAL",
       "confidence": "high",
-      "notes": "fourth-salesforce-mcp Phase 5 6-layer FastMCP governance middleware chain",
+      "notes": "example-salesforce-mcp Phase 5 6-layer FastMCP governance middleware chain",
       "baseline": {
         "top_k_ids": [
           "6a172c1b-68c6-40ae-918b-887279f4b524",

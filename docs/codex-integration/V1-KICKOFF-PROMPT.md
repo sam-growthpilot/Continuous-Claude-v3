@@ -4,7 +4,7 @@ Paste the block below into a fresh Claude Code session (in the `continuous-claud
 
 ---
 
-We're continuing the CCv3 Codex integration. **v0** of the `/codex` worker is shipped (PR #15 on `Rev4nchist/Continuous-Claude-v3`, branch `feature/codex-worker`). Your job is **v1**.
+We're continuing the CCv3 Codex integration. **v0** of the `/codex` worker is shipped (PR #15 on `upstream/Continuous-Claude-v3`, branch `feature/codex-worker`). Your job is **v1**.
 
 **Orient yourself first (do this before any edits):**
 1. Read `docs/codex-integration/V1-HANDOFF.md` (your task brief) and skim `docs/codex-integration/DESIGN-RESEARCH.md` §3 (verified CLI surface), §7 (phased plan), §10 (dogfood findings).

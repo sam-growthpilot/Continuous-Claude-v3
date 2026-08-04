@@ -4,8 +4,8 @@ Best-practice flow for merging a feature branch into `main` (fork workflow) plus
 
 ## Remotes (this machine)
 
-- `fork` = `Rev4nchist/…` — **ALWAYS push here**; PRs target `fork/main`.
-- `origin` = `parcadei/…` — upstream, **NEVER push**.
+- `origin` = `sam-growthpilot/…` — your fork; PRs target `origin/main`.
+- `upstream` = `upstream/…` — read-only reference; NEVER push.
 
 ## The 5-step merge workflow
 

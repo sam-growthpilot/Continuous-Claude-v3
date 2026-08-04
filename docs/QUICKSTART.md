@@ -12,7 +12,7 @@ Get Claude Code with persistent memory running in 5 minutes.
 ## 1. Clone and Install (2 min)
 
 ```bash
-git clone https://github.com/parcadei/Continuous-Claude-v3.git
+git clone https://github.com/sam-growthpilot/Continuous-Claude-v3.git
 cd Continuous-Claude-v3/opc
 uv sync
 ```

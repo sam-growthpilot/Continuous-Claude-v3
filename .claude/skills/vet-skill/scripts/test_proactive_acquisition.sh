@@ -14,8 +14,8 @@
 
 set -euo pipefail
 
-HOOKS_DIR="C:/Users/david.hayes/.claude/hooks/dist"
-SKILLS_DIR="C:/Users/david.hayes/.claude/skills"
+HOOKS_DIR="~/.claude/hooks/dist"
+SKILLS_DIR="~/.claude/skills"
 SESSION_START="$HOOKS_DIR/session-start-init-check.mjs"
 ACTIVATION="$HOOKS_DIR/skill-activation-prompt.mjs"
 REGISTRAR="$HOOKS_DIR/skill-install-registrar.mjs"
@@ -37,7 +37,7 @@ echo ""
 # ------------------------------------------------------------------
 echo "T1: Session-start stack detection (agent-factory)"
 T1_OUT=$(echo '{"type":"startup","session_id":"t1"}' | \
-  CLAUDE_PROJECT_DIR="C:/Users/david.hayes/Projects/agent-factory" \
+  CLAUDE_PROJECT_DIR="~/Projects/agent-factory" \
   node "$SESSION_START" 2>/dev/null)
 
 if echo "$T1_OUT" | grep -q "azure-deploy"; then

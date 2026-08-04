@@ -118,16 +118,16 @@ az containerapp update --name <app> --image <acr>.azurecr.io/backend:latest
 # Frontend SWA
 URL: witty-coast-0e5f72203.3.azurestaticapps.net
 Name: agent-arch-web-prod
-RG: rg-agent-architecture
+RG: rg-my-project
 
 # Backend API
 URL: agent-arch-api.icyplant-75ca2495.westeurope.azurecontainerapps.io
 Name: agent-arch-api
-RG: rg-agent-architecture
+RG: rg-my-project
 
 # Container Registry
-ACR: agentarchacr.azurecr.io (NOT agentarchprodacr)
-Login: az acr login --name agentarchacr
+ACR: myregistry.azurecr.io (NOT agentarchprodacr)
+Login: az acr login --name myregistry
 
 # Get Deploy Token
 az staticwebapp secrets list --name agent-arch-web-prod --query "properties.apiKey" -o tsv

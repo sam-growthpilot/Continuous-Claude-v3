@@ -158,7 +158,7 @@ The first failure mode (whole-file rewrite) is the one our existing `agent-rewri
 ## Files / Evidence
 
 - Commit history: `git log --oneline d71e9ad..3fa2c7f` shows the full sequence
-- Memory entry: `~/.claude/projects/C--Users-david-hayes-continuous-claude/memory/MEMORY.md` "Agent Rewrite Collision" section
+- Memory entry: `~/.claude/projects/C--Users-test-user-continuous-claude/memory/MEMORY.md` "Agent Rewrite Collision" section
 - Rule: `.claude/rules/hook-dev-lifecycle.md` "Common Failure Modes" table (last row)
 - Audit script: `scripts/audit-braintrust-emits.sh` (baseline = 4)
 - Affected file (5 regressions): `.claude/hooks/src/memory-awareness.ts` lines 580-625 area

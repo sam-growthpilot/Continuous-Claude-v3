@@ -264,7 +264,7 @@ class TestTemplateContentIntegrity:
         """CLAUDE.md template uses {{DOCKER_PATH}} not a hardcoded path."""
         template = repo_root / ".claude" / "templates" / "CLAUDE.md.template"
         content = template.read_text(encoding="utf-8")
-        # Should not contain Dave's specific Docker path
+        # Should not contain the user's specific Docker path
         assert r"C:\Program Files\Docker" not in content
 
     def test_rules_md_template_has_severity_system(self, repo_root):

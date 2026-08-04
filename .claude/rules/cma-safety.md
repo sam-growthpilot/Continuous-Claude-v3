@@ -3,14 +3,14 @@
 Companion to `.claude/skills/cma/SKILL.md` and the `/launch-your-agent` + `/wrap-up` wizard skills.
 CMA is Anthropic's **cloud-hosted** agent harness (REST API at `api.anthropic.com/v1`, beta header
 `managed-agents-2026-04-01`). Every create/send call runs in Anthropic's cloud and **bills consumption
-on the `ANTHROPIC_API_KEY` — SEPARATE from Dave's Claude Code subscription** (standard tokens +
+on the `ANTHROPIC_API_KEY` — SEPARATE from the user's Claude Code subscription** (standard tokens +
 **$0.08/session-hour**, idle free, ms-metered + web search $10/1k). CMA is **NOT** ZDR/HIPAA-eligible.
 
 ## Auth prerequisite (verify FIRST)
 
 CMA needs a **valid Console API key** (`sk-ant-api03-…`) with consumption billing. Confirm it before any
 call: `curl -sS -o /dev/null -w "%{http_code}" https://api.anthropic.com/v1/models -H "x-api-key: $ANTHROPIC_API_KEY" -H "anthropic-version: 2023-06-01"` → expect **200**. A **401 `invalid x-api-key`** means the
-key is missing/revoked/expired — STOP and have Dave mint a fresh key at platform.claude.com → API keys.
+key is missing/revoked/expired — STOP and have the user mint a fresh key at platform.claude.com → API keys.
 (As of 2026-06-27 the env key 401s; the live path is blocked until replaced.) Never print the key value.
 
 ## Safe Commands (no confirmation needed — read-only, no spend)
@@ -25,7 +25,7 @@ key is missing/revoked/expired — STOP and have Dave mint a fresh key at platfo
 - workspace identity / `GET $BASE/me`
 - Any pure `GET` to `api.anthropic.com/v1/…`
 
-## Confirm-First Commands (ALWAYS explain + wait for Dave's approval)
+## Confirm-First Commands (ALWAYS explain + wait for the user's approval)
 
 These spend money, mutate cloud state, or are irreversible:
 
@@ -42,12 +42,12 @@ These spend money, mutate cloud state, or are irreversible:
 ## Pre-Flight (run before ANY create/send)
 
 1. **Auth + identity** — the 200 check above; confirm WHICH Console **workspace** the key maps to (objects only
-   appear in that workspace's Console — the answer to "I can't see it"). CMA spend is on Dave's consumption billing.
+   appear in that workspace's Console — the answer to "I can't see it"). CMA spend is on the user's consumption billing.
 2. **Confirm the target** — the exact agent/environment/session/deployment id you're about to act on.
 3. **Data-residency gate** — CMA is NOT ZDR/HIPAA-eligible and ships data to Anthropic's cloud. **Never route
    regulated/ZDR-required data, secrets, or sensitive private content into a CMA session.** For repo digests,
    scope to repos whose contents are acceptable to process in the cloud.
-4. **Cost estimate** — state "this spends on Dave's API key, workspace = X, est = ~tokens + $0.08×<hrs>, max_iterations = 3" BEFORE the billable call (heads-up-early / hand-over-late).
+4. **Cost estimate** — state "this spends on the user's API key, workspace = X, est = ~tokens + $0.08×<hrs>, max_iterations = 3" BEFORE the billable call (heads-up-early / hand-over-late).
 
 ## Cost Guard
 
@@ -66,7 +66,7 @@ A scheduled deployment fires **unattended**, so the interactive confirm-gates DO
 - Set a workspace spend cap.
 - Add a post-run monitor (read `deployment_runs?has_error=true` + verify the expected output landed) so a silent failure is caught.
 - **Pause / delete (the off switch):** `POST $BASE/deployments/:id/pause` (stop firing, keep config) ·
-  `…/unpause` · `…/archive`. Document the exact pause command alongside any cron you create so Dave can stop spend instantly.
+  `…/unpause` · `…/archive`. Document the exact pause command alongside any cron you create so the user can stop spend instantly.
 
 ## Secrets Hygiene
 
@@ -95,4 +95,4 @@ A scheduled deployment fires **unattended**, so the interactive confirm-gates DO
 `cma-operator` writes to the same `.claude/cache/agents/<name>/latest-output.md` convention as local agents and is
 spawnable from the same `claude -p` / Task Scheduler substrate. Any CMA job can move back to a local `claude -p`
 wrapper by swapping the invocation line — no downstream consumer rewrite. Existing recurring jobs
-(FourthOS weekly, weekly-report) **stay local**; CMA is additive for net-new off-box jobs only.
+(ExampleOS weekly, weekly-report) **stay local**; CMA is additive for net-new off-box jobs only.

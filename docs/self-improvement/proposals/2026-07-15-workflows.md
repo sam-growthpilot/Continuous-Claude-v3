@@ -117,7 +117,7 @@ DAAO (src 3) predicts difficulty to allocate workflow complexity. Ralph's 10/30/
 ## 6. Benefits
 
 - **Fewer silently-wrong merges, cheaply.** R1 closes plan-drift-that-passes-tests (17k-trajectory evidence, src 6); R2 adds one cross-model opinion at the single irreversible gate — refined *down* from a full panel by the new consistency-bias-paradox and selective-verification evidence (src 5, 4, 2). Net cost ≈ 1 Codex call/feature, not a jury on every step.
-- **No lost work on crash.** R3 turns "resume probably works" into "resume verified idempotent," protecting AFK Ralph runs — the mode where Dave isn't watching.
+- **No lost work on crash.** R3 turns "resume probably works" into "resume verified idempotent," protecting AFK Ralph runs — the mode where the user isn't watching.
 - **The deterministic bet finally used.** R4 moves the /review fan-out from prose the model re-executes to a schema-enforced code path — now with Anthropic itself shipping the identical pattern (src 8) as confirmation the direction is right — and, verified this session, it can back headless scheduled jobs too.
 - **Docs that match reality.** R6 ends a two-sided lie: the tracking docs say the workflow enforcers are dead (they're live), while the SKILLs say they hard-block (they may only log) — every future session that reads either is misled.
 - **Validated bets, no rework.** The scan re-confirms the expensive parts already built (bounded fresh-context loops — vindicated by the SWE-EVO cliff, src 7 — premortem, delegation, cross-model review) remain at/ahead of the mid-2026 frontier. Nothing here is a rebuild; it's finishing three cheap items from twelve days ago plus a fast doc/verify cleanup.
