@@ -22,6 +22,11 @@ cd continuous-claude
 # unconditionally (claude_integration.py has no exists-check on that file).
 cp ~/.claude/settings.json ~/.claude/settings.json.mine 2>/dev/null || true
 
+# Snapshot your plugins too. install_opc_integration() rmtree's ~/.claude/plugins
+# and replaces it with the repo's (braintrust-tracing only) — see the warning below.
+# Guarded because `cp -R src dst` nests into dst when dst already exists.
+[ -e ~/.claude/plugins.pre-wizard ] || cp -R ~/.claude/plugins ~/.claude/plugins.pre-wizard
+
 cd opc && uv run python -m scripts.setup.wizard
 cd ..
 
@@ -31,19 +36,59 @@ node scripts/merge-settings.mjs \
   --mine ~/.claude/settings.json.mine \
   --theirs ~/.claude/settings.json \
   --out ~/.claude/settings.json
+
+# Restore your plugins, keeping the framework's braintrust-tracing alongside them.
+# Copy INTO the wizard's dir rather than swapping the whole thing, so both survive.
+cp -R ~/.claude/plugins.pre-wizard/. ~/.claude/plugins/
 ```
+
+Then run `/reload-plugins` in Claude Code (no restart needed) and confirm your
+plugin count is back to what it was.
 
 > Your `permissions` live in `settings.local.json`, which the wizard never
 > touches — no action needed there.
 
+### Why the plugins step is separate
+
+The wizard takes a full `~/.claude` backup at Step 0 (`wizard.py:773`), so nothing
+is *unrecoverable* — but plugins are the one thing its own merge logic will not
+bring back. `install_opc_integration()` merges non-conflicting **hooks, skills,
+rules, and MCP servers** from your old config (`claude_integration.py:570-602`);
+`plugins` is not in that list. It only gets the `rmtree` + `copytree` at
+`claude_integration.py:520-523`.
+
+The guard on all seven `rmtree` calls tests whether the **repo** has the source
+directory, never what the **target** contains — so this repo shipping a nearly
+empty `plugins/` is enough to remove every marketplace plugin you have installed,
+along with `installed_plugins.json` and `known_marketplaces.json` (the registry
+Claude Code reads to know anything is installed at all).
+
+`~/.claude/skills` is wiped the same way, but *is* covered by the merge, so it
+should come back on its own. Verify rather than assume.
+
 The wizard handles:
 - Docker PostgreSQL + pgvector container (4 tables, idempotent schema)
-- Hook installation + TypeScript build (95 source hooks compiled to dist/*.mjs)
-- Skills (150+), agents (50), rules (28) installed to `~/.claude/`
+- Hook installation + TypeScript build (112 source hooks compiled to dist/*.mjs)
+- Skills (133), agents (43), rules (45) installed to `~/.claude/`
 - CLAUDE.md and RULES.md behavioral config from templates
 - Environment variables (`CLAUDE_OPC_DIR`, `PYTHONUTF8=1` on Windows)
 - Git post-commit hook for automatic repo-to-active sync
 - `settings.json` generated with correct local paths from template
+
+Counts above were re-derived 2026-08-04 — don't trust them after any bulk change,
+re-derive:
+
+```bash
+for d in .claude/skills/*/; do [ -f "$d/SKILL.md" ] && echo "$d"; done | wc -l  # skills
+ls .claude/agents/*.md | wc -l                                                  # agents
+ls .claude/rules/*.md | wc -l                                                   # rules
+ls .claude/hooks/src/*.ts | wc -l                                               # hooks
+```
+
+The skills count deliberately excludes nested `SKILL.md` files — a bare
+`find .claude/skills -name SKILL.md` returns 161, but 28 of those live under
+`archive/`, `.archive/`, `_eval/`, `_sandbox/`, or are double-nested
+(`railway-cli/railway-cli/`, `neonctl/neonctl/`).
 
 > **Windows users**: Open a **new terminal** after the wizard completes. `setx` sets permanent environment variables but they are not available in the current terminal session.
 
