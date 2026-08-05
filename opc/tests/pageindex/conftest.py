@@ -416,7 +416,7 @@ def require_anthropic_api():
             import anthropic
             client = anthropic.Anthropic(api_key=api_key)
             client.messages.create(
-                model="claude-haiku-4-5-20251001",  # Claude Haiku 4.5
+                model="claude-haiku-4-5",  # Claude Haiku 4.5
                 max_tokens=10,
                 messages=[{"role": "user", "content": "Hi"}]
             )

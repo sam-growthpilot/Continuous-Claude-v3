@@ -71,7 +71,7 @@ def rlm_complete(
     context: str,
     *,
     policy: RLMPolicy | None = None,
-    model: str = "claude-sonnet-4-6",
+    model: str = "claude-sonnet-5",
     api_key: str | None = None,
     on_trajectory: Callable[[dict[str, Any]], None] | None = None,
     trajectory_dir: Path | None = None,

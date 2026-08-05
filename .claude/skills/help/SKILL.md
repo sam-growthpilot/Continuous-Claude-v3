@@ -255,7 +255,7 @@ Agents declare their capabilities:
 ---
 name: my-agent
 description: Specialist for X
-model: sonnet|haiku|claude-opus-4-5-20251101
+model: sonnet|haiku|claude-opus-5
 tools: [Read, Grep, Glob, Bash]
 ---
 ```

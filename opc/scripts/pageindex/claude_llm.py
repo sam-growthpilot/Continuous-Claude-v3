@@ -15,9 +15,9 @@ logger = logging.getLogger(__name__)
 
 # Model IDs for Anthropic API (used when CLI not available)
 API_MODEL_MAP = {
-    "haiku": "claude-haiku-4-5-20251001",    # Claude Haiku 4.5
-    "sonnet": "claude-sonnet-4-5-20250929",  # Claude Sonnet 4.5
-    "opus": "claude-opus-4-20250514",        # Claude Opus 4
+    "haiku": "claude-haiku-4-5",    # Claude Haiku 4.5
+    "sonnet": "claude-sonnet-5",  # Claude Sonnet 4.5
+    "opus": "claude-opus-5",        # Claude Opus 4
 }
 
 # Model names for Claude CLI

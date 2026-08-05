@@ -86,7 +86,7 @@ claude --agents '{
 | `description` | Yes | When to invoke this agent |
 | `prompt` | Yes | System prompt for behavior |
 | `tools` | No | Allowed tools (inherits all if omitted) |
-| `model` | No | `sonnet`, `haiku`, or `claude-opus-4-5-20251101` |
+| `model` | No | `sonnet`, `haiku`, or `claude-opus-5` |
 
 ### Key Insight
 When Lead uses Task tool, it auto-spawns from these definitions. No manual spawn needed.
@@ -105,7 +105,7 @@ When Lead uses Task tool, it auto-spawns from these definitions. No manual spawn
 
 | Flag | Description | Example |
 |------|-------------|---------|
-| `--model` | Set model for session | `--model claude-sonnet-4-5` |
+| `--model` | Set model for session | `--model claude-sonnet-5` |
 | `--fallback-model` | Fallback if default overloaded | `--fallback-model sonnet` |
 
 Aliases: `sonnet`, `opus`, `haiku`

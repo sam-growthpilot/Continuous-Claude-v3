@@ -4,10 +4,19 @@ Every predefined agent (`.claude/agents/*.md` **and** its `.json` mirror) carrie
 
 ## The two tiers
 
-- **`model: opus`** = Opus 4.8 (high effort is its shipped default; effort is a **global** `~/.claude/settings.json` `effortLevel`, not a per-agent field). Reserve for judgment-dense work: planning/design (architect, phoenix, plan-agent), review/soundness gates (critic, plan-reviewer, principal-reviewer, review-agent), orchestration (maestro), deep forensics (sleuth, debug-agent), security (aegis), high-stakes bootstrap (wizard).
-- **`model: sonnet`** = Sonnet 5. The **default** for execution: implementation (kraken, spark, agentica-agent), exploration/research (scout, oracle, pathfinder, onboard), test execution (arbiter, atlas, sentinel), checklist review, mechanical ops, docs.
+The tier names are **bare aliases, deliberately unpinned** — `opus` and `sonnet` resolve at spawn
+time to whatever the running build maps them to, so this policy survives model releases without
+edits. Do not replace them with dated IDs (`claude-opus-5`, `claude-sonnet-5-…`): a pin freezes the
+agent on one model and has to be re-migrated every release. Pin only when reproducing a specific
+run.
 
-Tier by **judgment density**, not task size. Canonical map (37 agents, 12 Opus / 25 Sonnet): `~/.claude/plans/agent-skill-two-tier-model-policy` and the review artifact.
+- **`model: opus`** = the current Opus tier. Reserve for judgment-dense work: planning/design (architect, phoenix, plan-agent), review/soundness gates (critic, plan-reviewer, principal-reviewer, review-agent), orchestration (maestro), deep forensics (sleuth, debug-agent), security (aegis), high-stakes bootstrap (wizard).
+- **`model: sonnet`** = the current Sonnet tier. The **default** for execution: implementation (kraken, spark, agentica-agent), exploration/research (scout, oracle, pathfinder, onboard), test execution (arbiter, atlas, sentinel), checklist review, mechanical ops, docs.
+
+Effort is a **global** `~/.claude/settings.json` `effortLevel`, not a per-agent field.
+
+Tier by **judgment density**, not task size. Current split: **43 agents, 14 Opus / 29 Sonnet**
+(`grep -h '^model:' .claude/agents/*.md | sort | uniq -c` to re-derive — don't trust a stale count here).
 
 ## Never omit/inherit for a predefined agent
 
@@ -23,4 +32,7 @@ The env var overrides every agent's frontmatter and **flattens the whole tier ma
 
 ## Expression mechanics
 
-Use the bare aliases `model: opus` / `model: sonnet` — they resolve to Opus 4.8 / Sonnet 5 on this build (no `ANTHROPIC_DEFAULT_*_MODEL` pins). The `.json` mirror's `model` field is read at spawn by `opc/scripts/claude_spawn.py` and is **not** auto-synced from the `.md` (`sync-agent-json.py` preserves it) — edit both in lockstep.
+Use the bare aliases `model: opus` / `model: sonnet` (no `ANTHROPIC_DEFAULT_*_MODEL` pins). The
+`.json` mirror's `model` field is read at spawn by `opc/scripts/claude_spawn.py`, which passes it
+through as `--model` — so the alias is resolved by the CLI, not by this repo. The mirror is **not**
+auto-synced from the `.md` (`sync-agent-json.py` preserves it) — edit both in lockstep.

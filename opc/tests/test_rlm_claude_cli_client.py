@@ -21,7 +21,7 @@ def _fake_completed(stdout: str, returncode: int = 0, stderr: str = "") -> subpr
 
 def test_completion_flattens_messages_to_prompt_string():
     """Message list with system + user roles must flatten to a single prompt string."""
-    client = ClaudeCliClient(api_key=None, model_name="claude-sonnet-4-6")
+    client = ClaudeCliClient(api_key=None, model_name="claude-sonnet-5")
     messages = [
         {"role": "system", "content": "You are concise."},
         {"role": "user", "content": "What is 2+2?"},
@@ -49,7 +49,7 @@ def test_completion_flattens_messages_to_prompt_string():
 
 def test_completion_returns_correct_rlm_type():
     """BaseLM contract: completion must return a str."""
-    client = ClaudeCliClient(api_key=None, model_name="claude-sonnet-4-6")
+    client = ClaudeCliClient(api_key=None, model_name="claude-sonnet-5")
     with patch("scripts.core.rlm_claude_cli_client.subprocess.run") as mock_run:
         mock_run.return_value = _fake_completed("The answer is 4.\n")
         out = client.completion("What is 2+2?")
@@ -60,7 +60,7 @@ def test_completion_returns_correct_rlm_type():
 
 def test_completion_surfaces_subprocess_error():
     """Non-zero return code from claude -p must surface as a RuntimeError."""
-    client = ClaudeCliClient(api_key=None, model_name="claude-sonnet-4-6")
+    client = ClaudeCliClient(api_key=None, model_name="claude-sonnet-5")
     with patch("scripts.core.rlm_claude_cli_client.subprocess.run") as mock_run:
         mock_run.return_value = _fake_completed(
             stdout="", returncode=1, stderr="Error: authentication failed"
@@ -79,7 +79,7 @@ def test_completion_routes_large_prompt_via_stdin():
     from scripts.core.rlm_claude_cli_client import _MAX_ARGV_PROMPT_CHARS
 
     big_prompt = "X" * (_MAX_ARGV_PROMPT_CHARS + 100)
-    client = ClaudeCliClient(api_key=None, model_name="claude-sonnet-4-6")
+    client = ClaudeCliClient(api_key=None, model_name="claude-sonnet-5")
 
     with patch("scripts.core.rlm_claude_cli_client.subprocess.run") as mock_run:
         mock_run.return_value = _fake_completed("ok")
@@ -96,7 +96,7 @@ def test_completion_routes_large_prompt_via_stdin():
 
 def test_completion_routes_small_prompt_via_argv():
     """Prompts below threshold continue to use argv positional (no behavior regression)."""
-    client = ClaudeCliClient(api_key=None, model_name="claude-sonnet-4-6")
+    client = ClaudeCliClient(api_key=None, model_name="claude-sonnet-5")
 
     with patch("scripts.core.rlm_claude_cli_client.subprocess.run") as mock_run:
         mock_run.return_value = _fake_completed("ok")
@@ -116,7 +116,7 @@ def test_run_disambiguates_winerror_206():
     or extension is too long" (winerror=206). The pre-fix handler conflated
     them. This test pins the disambiguation.
     """
-    client = ClaudeCliClient(api_key=None, model_name="claude-sonnet-4-6")
+    client = ClaudeCliClient(api_key=None, model_name="claude-sonnet-5")
 
     fake_exc = FileNotFoundError(2, "fake")
     fake_exc.winerror = 206  # type: ignore[attr-defined]
@@ -128,7 +128,7 @@ def test_run_disambiguates_winerror_206():
 
 def test_run_preserves_cli_not_found_for_winerror_2():
     """ENOENT (winerror=2) must still report 'claude CLI not found' (regression guard)."""
-    client = ClaudeCliClient(api_key=None, model_name="claude-sonnet-4-6")
+    client = ClaudeCliClient(api_key=None, model_name="claude-sonnet-5")
 
     fake_exc = FileNotFoundError(2, "No such file")
     fake_exc.winerror = 2  # type: ignore[attr-defined]
@@ -140,7 +140,7 @@ def test_run_preserves_cli_not_found_for_winerror_2():
 
 def test_get_usage_summary_returns_empty():
     """Max billing is opaque at the call level -- usage summary starts empty."""
-    client = ClaudeCliClient(api_key=None, model_name="claude-sonnet-4-6")
+    client = ClaudeCliClient(api_key=None, model_name="claude-sonnet-5")
     summary = client.get_usage_summary()
     # UsageSummary has a model_usage_summaries dict; should be empty before any calls
     assert hasattr(summary, "model_usage_summaries")

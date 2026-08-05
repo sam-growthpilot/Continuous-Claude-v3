@@ -40,8 +40,8 @@ Session: `fable-opus-brain-transfer`, 2026-07-12, authored live by `claude-fable
 
 | Reviewer | Model | Recall | Over-caution | Unique lift |
 |---|---|---|---|---|
-| Opus r1 | claude-opus-4-8 | 8/8 | 0/2 | zero-contract-changes contradiction; 120s premise unsourced |
-| Opus r2 | claude-opus-4-8 | 8/8 | 0/2 | orphan-reparenting impossibility; PreToolUse architecture mismatch |
+| Opus r1 | claude-opus-5 | 8/8 | 0/2 | zero-contract-changes contradiction; 120s premise unsourced |
+| Opus r2 | claude-opus-5 | 8/8 | 0/2 | orphan-reparenting impossibility; PreToolUse architecture mismatch |
 | Sonnet r1 | claude-sonnet-5 | 7/8 (missed D7) | 0/2 | PID-recycling race; hardened-flag preservation gap |
 | Sonnet r2 | claude-sonnet-5 | 8/8 | 0/2 | destructive-guard blind spot + missing audit-log path |
 | Codex | gpt-5.5 | 8/8 | 0/2 | 10s SLA never tested; Job Object recommendation |

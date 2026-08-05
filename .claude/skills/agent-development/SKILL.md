@@ -62,7 +62,7 @@ model: opus
 | sonnet | Claude Sonnet 4 | Standard tasks, balanced cost/performance |
 | haiku | Claude Haiku | Fast, simple tasks, exploration |
 
-Never use full IDs like `claude-opus-4-5-20251101` — they won't be recognized.
+Never use full IDs like `claude-opus-5` — they won't be recognized.
 
 ---
 

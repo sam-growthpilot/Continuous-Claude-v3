@@ -37,7 +37,7 @@ def _build_parser() -> argparse.ArgumentParser:
     ap.add_argument("--question", required=True)
     ap.add_argument("--input-file", required=True)
     ap.add_argument("--budget-usd", type=float, default=2.00)
-    ap.add_argument("--model", default="claude-sonnet-4-6")
+    ap.add_argument("--model", default="claude-sonnet-5")
     return ap
 
 

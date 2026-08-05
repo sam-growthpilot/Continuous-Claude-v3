@@ -107,7 +107,7 @@ async def oracle_research(
     repositories: list[str] = None,
     data_sources: list[str] = None,
     output_format: str = None,
-    model: str = "claude-opus-4-5-20251101",
+    model: str = "claude-opus-5",
 ) -> dict:
     """Oracle autonomous research agent (Pro only).
 
@@ -116,7 +116,7 @@ async def oracle_research(
         repositories: Optional list of repository identifiers
         data_sources: Optional list of documentation source IDs
         output_format: Optional format specification
-        model: Model to use (claude-opus-4-5-20251101, claude-sonnet-4-5-20250929, claude-sonnet-4-5-1m)
+        model: Model to use (claude-opus-5, claude-sonnet-5, claude-sonnet-5)
 
     Returns:
         Research report with citations, tool calls, iterations, duration
@@ -145,7 +145,7 @@ async def oracle_research_stream(
     query: str,
     repositories: list[str] = None,
     data_sources: list[str] = None,
-    model: str = "claude-opus-4-5-20251101",
+    model: str = "claude-opus-5",
 ) -> None:
     """Oracle research with real-time streaming (Pro only). Prints events as they arrive."""
     import aiohttp
@@ -247,7 +247,7 @@ async def oracle_create_job(
     query: str,
     repositories: list[str] = None,
     data_sources: list[str] = None,
-    model: str = "claude-opus-4-5-20251101",
+    model: str = "claude-opus-5",
 ) -> dict:
     """Create Oracle research job (Pro only). Returns immediately, runs async."""
     import aiohttp
@@ -981,8 +981,8 @@ def build_parser() -> argparse.ArgumentParser:
     oracle_research_p.add_argument("--sources", nargs="*", help="Data source IDs")
     oracle_research_p.add_argument(
         "--model",
-        default="claude-opus-4-5-20251101",
-        choices=["claude-opus-4-5-20251101", "claude-sonnet-4-5-20250929", "claude-sonnet-4-5-1m"],
+        default="claude-opus-5",
+        choices=["claude-opus-5", "claude-sonnet-5", "claude-sonnet-5"],
     )
     oracle_research_p.add_argument("--stream", action="store_true", help="Stream results")
 
@@ -1007,7 +1007,7 @@ def build_parser() -> argparse.ArgumentParser:
     oracle_create_job_p = oracle_sub.add_parser("create-job", help="Create async job")
     oracle_create_job_p.add_argument("query", help="Research question")
     oracle_create_job_p.add_argument("--repos", nargs="*", help="Repository IDs")
-    oracle_create_job_p.add_argument("--model", default="claude-opus-4-5-20251101")
+    oracle_create_job_p.add_argument("--model", default="claude-opus-5")
 
     # Search commands
     search_parser = subparsers.add_parser("search", help="Search operations")

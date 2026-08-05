@@ -49,7 +49,7 @@ def test_rlm_cli_reads_input_file_and_invokes_rlm_complete(tmp_path, monkeypatch
     _, kwargs = mock_rlm.call_args
     assert kwargs["question"] == "what is the answer?"
     assert kwargs["context"] == "hello world"
-    assert kwargs["model"] == "claude-sonnet-4-6"
+    assert kwargs["model"] == "claude-sonnet-5"
     # trajectory dir should exist and be under .claude/cache/rlm-logs/
     traj = kwargs["trajectory_dir"]
     assert isinstance(traj, Path)

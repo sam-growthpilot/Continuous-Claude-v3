@@ -212,7 +212,7 @@ client = Anthropic(api_key="your-api-key")
 
 # Skills require these beta headers
 response = client.beta.messages.create(
-    model="claude-sonnet-4-20250514",
+    model="claude-sonnet-5",
     max_tokens=4096,
     betas=[
         "code-execution-2025-08-25",

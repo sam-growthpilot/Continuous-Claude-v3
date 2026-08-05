@@ -214,7 +214,7 @@ For each task in the plan:
    ```
    Task(
      subagent_type="general-purpose",
-     model="claude-opus-4-5-20251101",
+     model="claude-opus-5",
      prompt="""
      [Paste contents of .claude/skills/implement_task/SKILL.md here]
 

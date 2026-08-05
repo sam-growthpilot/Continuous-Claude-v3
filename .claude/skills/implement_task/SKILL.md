@@ -247,7 +247,7 @@ The orchestrator will spawn you like this:
 ```
 Task(
   subagent_type="general-purpose",
-  model="claude-opus-4-5-20251101",
+  model="claude-opus-5",
   prompt="""
   # Implementation Task Agent
 

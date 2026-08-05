@@ -184,7 +184,7 @@ Let me know when done.
 
 **Agent Spawn:**
 ```
-Task(subagent_type="general-purpose", model="claude-opus-4-5-20251101", prompt="""
+Task(subagent_type="general-purpose", model="claude-opus-5", prompt="""
 [implement_task SKILL.md]
 ## Context
 - Ledger: [content]

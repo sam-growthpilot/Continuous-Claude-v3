@@ -47,7 +47,7 @@ flowchart TD
     class SB sandbox
 
     %% Provider
-    C1["Anthropic API<br/>claude-sonnet-4-6"]:::llm
+    C1["Anthropic API<br/>claude-sonnet-5"]:::llm
 
     %% Callbacks / observability
     BT["Braintrust REST<br/>rlm_braintrust.py"]:::obs
